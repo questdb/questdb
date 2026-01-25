@@ -249,45 +249,6 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
     }
 
-    /**
-     * Merges intervals from another model with calendar-aware offset adjustment.
-     * Uses the provided addMethod to apply the offset to each interval boundary,
-     * which correctly handles variable-length units like months and years.
-     *
-     * @param model     the model to merge
-     * @param addMethod the timestamp add method for applying the offset
-     * @param offset    the offset value to apply (positive shifts forward)
-     */
-    public void mergeWithAddMethod(RuntimeIntervalModel model, TimestampDriver.TimestampAddMethod addMethod, int offset) {
-        if (model == null || isEmptySet() || addMethod == null) {
-            return;
-        }
-        ObjList<Function> dynamicRangeList = model.getDynamicRangeList();
-        LongList modelIntervals = model.getStaticIntervals();
-        if (modelIntervals != null && modelIntervals.size() > 0) {
-            int dynamicStart = modelIntervals.size() - (dynamicRangeList != null ? dynamicRangeList.size() * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL : 0);
-            TimestampDriver driver = model.getTimestampDriver();
-
-            for (int i = 0; i < dynamicStart; i += 2) {
-                long lo = modelIntervals.getQuick(i);
-                if (lo != Numbers.LONG_NULL && lo != Long.MAX_VALUE) {
-                    lo = timestampDriver.from(lo, driver.getTimestampType());
-                    lo = addMethod.add(lo, offset);
-                }
-                long hi = modelIntervals.getQuick(i + 1);
-                if (hi != Numbers.LONG_NULL && hi != Long.MAX_VALUE) {
-                    hi = timestampDriver.from(hi, driver.getTimestampType());
-                    hi = addMethod.add(hi, offset);
-                }
-                if (lo == Numbers.LONG_NULL && hi == Long.MAX_VALUE) {
-                    return;
-                } else {
-                    intersect(lo, hi);
-                }
-            }
-        }
-    }
-
     public void of(int timestampType, int partitionBy) {
         this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
         this.partitionBy = partitionBy;
@@ -473,5 +434,44 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         IntervalUtils.encodeInterval(constValue, 0, (short) 0, IntervalDynamicIndicator.IS_HI_DYNAMIC, operation, staticIntervals);
         dynamicRangeList.add(funcValue);
         intervalApplied = true;
+    }
+
+    /**
+     * Merges intervals from another model with calendar-aware offset adjustment.
+     * Uses the provided addMethod to apply the offset to each interval boundary,
+     * which correctly handles variable-length units like months and years.
+     *
+     * @param model     the model to merge
+     * @param addMethod the timestamp add method for applying the offset
+     * @param offset    the offset value to apply (positive shifts forward)
+     */
+    void mergeWithAddMethod(RuntimeIntervalModel model, TimestampDriver.TimestampAddMethod addMethod, int offset) {
+        if (model == null || isEmptySet() || addMethod == null) {
+            return;
+        }
+        ObjList<Function> dynamicRangeList = model.getDynamicRangeList();
+        LongList modelIntervals = model.getStaticIntervals();
+        if (modelIntervals != null && modelIntervals.size() > 0) {
+            int dynamicStart = modelIntervals.size() - (dynamicRangeList != null ? dynamicRangeList.size() * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL : 0);
+            TimestampDriver driver = model.getTimestampDriver();
+
+            for (int i = 0; i < dynamicStart; i += 2) {
+                long lo = modelIntervals.getQuick(i);
+                if (lo != Numbers.LONG_NULL && lo != Long.MAX_VALUE) {
+                    lo = timestampDriver.from(lo, driver.getTimestampType());
+                    lo = addMethod.add(lo, offset);
+                }
+                long hi = modelIntervals.getQuick(i + 1);
+                if (hi != Numbers.LONG_NULL && hi != Long.MAX_VALUE) {
+                    hi = timestampDriver.from(hi, driver.getTimestampType());
+                    hi = addMethod.add(hi, offset);
+                }
+                if (lo == Numbers.LONG_NULL && hi == Long.MAX_VALUE) {
+                    return;
+                } else {
+                    intersect(lo, hi);
+                }
+            }
+        }
     }
 }

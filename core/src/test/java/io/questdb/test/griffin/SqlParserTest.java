@@ -12241,9 +12241,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     // Tests for and_offset rewrite when pushing timestamp predicates through virtual models with dateadd offset
-    // Current behavior: predicate is pushed to select-virtual level but WITHOUT and_offset wrapper
-    // The and_offset rewrite is NOT working yet - predicates reference the virtual 'ts' column
-    // EXPECTED behavior: predicate should be wrapped in and_offset and reference the real 'timestamp' column
+    // Predicates are wrapped in and_offset and reference the real 'timestamp' column (not the virtual 'ts' column)
+    // The and_offset wrapper allows WhereClauseParser to apply the inverse offset when extracting intervals
 
     @Test
     public void testTimestampPredicateNoPushdownNonConstantOffset() throws Exception {

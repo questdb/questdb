@@ -3587,7 +3587,7 @@ public class SqlOptimiser implements Mutable {
      */
     private void detectTimestampOffset(QueryModel parent, QueryModel nested) {
         ExpressionNode modelTimestamp = parent.getTimestamp();
-        if (modelTimestamp == null || nested == null) {
+        if (modelTimestamp == null) {
             return;
         }
 

@@ -461,7 +461,7 @@ public final class WhereClauseParser implements Mutable {
             return false;  // Reject bind variables, columns, etc.
         }
         CharSequence unitToken = unitNode.token;
-        if (unitToken == null || unitToken.length() == 0) {
+        if (unitToken == null || unitToken.isEmpty()) {
             return false;  // Reject empty tokens
         }
         char unit;
@@ -511,12 +511,12 @@ public final class WhereClauseParser implements Mutable {
         );
 
         if (extracted || tempModel.hasIntervalFilters()) {
-            RuntimeIntrinsicIntervalModel intervalModel = tempModel.buildIntervalModel();
-            if (intervalModel instanceof RuntimeIntervalModel) {
+            RuntimeIntrinsicIntervalModel im = tempModel.buildIntervalModel();
+            if (im instanceof RuntimeIntervalModel runtimeIntervalModel) {
                 // Use the calendar-aware merge method that applies the offset
                 // to each interval boundary using the timestamp driver's add method.
                 // This correctly handles variable-length units like months and years.
-                model.mergeIntervalModelWithAddMethod((RuntimeIntervalModel) intervalModel, addMethod, offsetValue);
+                model.mergeIntervalModelWithAddMethod(runtimeIntervalModel, addMethod, offsetValue);
                 node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
             }
