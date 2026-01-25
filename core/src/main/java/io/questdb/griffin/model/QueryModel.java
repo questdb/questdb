@@ -226,6 +226,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode tableNameExpr;
     private RecordCursorFactory tableNameFunction;
     private ExpressionNode timestamp;
+    private CharSequence timestampOffsetAlias;  // The alias name for the transformed timestamp (e.g., "ts")
+    // Timestamp offset information for virtual models where timestamp is computed via dateadd
+    // Used to enable timestamp predicate pushdown with appropriate offset adjustment
+    private char timestampOffsetUnit;           // 'h', 'd', 'm', 's', etc. (0 means no offset)
+    private long timestampOffsetValue;          // The offset value (inverse, e.g., +1 for dateadd -1)
+    private CharSequence timestampSourceColumn; // The original column name before dateadd transformation
     private QueryModel unionModel;
     private QueryModel updateTableModel;
     private TableToken updateTableToken;
@@ -476,6 +482,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         limitAdviceLo = null;
         limitPosition = 0;
         timestamp = null;
+        timestampOffsetUnit = 0;
+        timestampOffsetValue = 0;
+        timestampSourceColumn = null;
+        timestampOffsetAlias = null;
         sqlNodeStack.clear();
         joinColumns.clear();
         withClauseModel.clear();
@@ -983,6 +993,26 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ExpressionNode getTimestamp() {
         return timestamp;
+    }
+
+    public CharSequence getTimestampOffsetAlias() {
+        return timestampOffsetAlias;
+    }
+
+    public char getTimestampOffsetUnit() {
+        return timestampOffsetUnit;
+    }
+
+    public long getTimestampOffsetValue() {
+        return timestampOffsetValue;
+    }
+
+    public CharSequence getTimestampSourceColumn() {
+        return timestampSourceColumn;
+    }
+
+    public boolean hasTimestampOffset() {
+        return timestampOffsetUnit != 0;
     }
 
     public ObjList<QueryColumn> getTopDownColumns() {
@@ -1511,6 +1541,22 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setTimestamp(ExpressionNode timestamp) {
         this.timestamp = timestamp;
+    }
+
+    public void setTimestampOffsetAlias(CharSequence alias) {
+        this.timestampOffsetAlias = alias;
+    }
+
+    public void setTimestampOffsetUnit(char unit) {
+        this.timestampOffsetUnit = unit;
+    }
+
+    public void setTimestampOffsetValue(long value) {
+        this.timestampOffsetValue = value;
+    }
+
+    public void setTimestampSourceColumn(CharSequence col) {
+        this.timestampSourceColumn = col;
     }
 
     public void setUnionModel(QueryModel unionModel) {

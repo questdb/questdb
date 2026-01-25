@@ -37,6 +37,8 @@ import io.questdb.griffin.model.AliasTranslator;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.griffin.model.RuntimeIntervalModel;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
@@ -64,6 +66,7 @@ import static io.questdb.griffin.SqlKeywords.*;
  * - indexed symbol column expressions to use for index scan
  **/
 public final class WhereClauseParser implements Mutable {
+    private static final int INTRINSIC_OP_AND_OFFSET = 10;
     private static final int INTRINSIC_OP_BETWEEN = 9;
     private static final int INTRINSIC_OP_EQUAL = 6;
     private static final int INTRINSIC_OP_GREATER = 2;
@@ -417,6 +420,113 @@ public final class WhereClauseParser implements Mutable {
         }
 
         return false;
+    }
+
+    /**
+     * Analyzes an and_offset node, which wraps a timestamp predicate that needs offset adjustment.
+     * The and_offset function has the form: and_offset(predicate, unit, offset)
+     * where:
+     * - predicate is the inner timestamp predicate (e.g., ts in '2022')
+     * - unit is the time unit character (e.g., 'h', 'd', 'm')
+     * - offset is the offset value to apply (in the given unit)
+     *
+     * @return true if intervals were extracted and offset applied
+     */
+    private boolean analyzeAndOffset(
+            TimestampDriver timestampDriver,
+            AliasTranslator translator,
+            IntrinsicModel model,
+            ExpressionNode node,
+            RecordMetadata m,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext,
+            boolean latestByMultiColumn,
+            TableReader reader
+    ) throws SqlException {
+        // and_offset args are stored in reverse order: [offset, unit, predicate]
+        // This matches how ExpressionNode.toSink renders function args
+        ObjList<ExpressionNode> args = node.args;
+        if (args == null || args.size() != 3) {
+            return false;
+        }
+
+        ExpressionNode predicate = args.getQuick(2);
+        ExpressionNode unitNode = args.getQuick(1);
+        ExpressionNode offsetNode = args.getQuick(0);
+
+        // Parse unit character (skip quotes if present)
+        CharSequence unitToken = unitNode.token;
+        char unit;
+        if (unitToken.length() >= 2 && unitToken.charAt(0) == '\'') {
+            unit = unitToken.charAt(1);
+        } else {
+            unit = unitToken.charAt(0);
+        }
+
+        // Parse offset value
+        long offsetValue;
+        try {
+            offsetValue = Numbers.parseLong(offsetNode.token);
+        } catch (NumericException e) {
+            return false;
+        }
+
+        // Convert offset to microseconds based on unit
+        long offsetMicros = convertToMicroseconds(unit, offsetValue);
+
+        // Create a temporary model to extract intervals from the inner predicate
+        IntrinsicModel tempModel = models.next();
+        int timestampType = reader.getMetadata().getTimestampType();
+        tempModel.of(timestampType, reader.getPartitionedBy());
+
+        // Process the inner predicate recursively
+        boolean extracted = removeAndIntrinsics(
+                timestampDriver,
+                translator,
+                tempModel,
+                predicate,
+                m,
+                functionParser,
+                metadata,
+                executionContext,
+                latestByMultiColumn,
+                reader
+        );
+
+        if (extracted || tempModel.hasIntervalFilters()) {
+            // Merge intervals with offset adjustment
+            // The merge method applies: lo = lo - loOffset, hi = hi + hiOffset
+            // To shift BOTH lo and hi by +offsetMicros, we need:
+            //   loOffset = -offsetMicros (so lo = lo - (-offset) = lo + offset)
+            //   hiOffset = +offsetMicros (so hi = hi + offset)
+            RuntimeIntrinsicIntervalModel intervalModel = tempModel.buildIntervalModel();
+            if (intervalModel instanceof RuntimeIntervalModel) {
+                model.mergeIntervalModel((RuntimeIntervalModel) intervalModel, -offsetMicros, offsetMicros);
+                node.intrinsicValue = IntrinsicModel.TRUE;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Converts a time offset value to microseconds based on the given unit.
+     */
+    private long convertToMicroseconds(char unit, long value) {
+        return switch (unit) {
+            case 'u' -> value;  // microseconds
+            case 'T' -> value * 1000L;  // milliseconds to micros
+            case 's' -> value * 1_000_000L;
+            case 'm' -> value * 60_000_000L;
+            case 'h' -> value * 3_600_000_000L;
+            case 'd' -> value * 86_400_000_000L;
+            case 'w' -> value * 604_800_000_000L;  // 7 days
+            case 'M' -> value * 2_592_000_000_000L;  // ~30 days
+            case 'y' -> value * 31_536_000_000_000L; // ~365 days
+            default -> value;
+        };
     }
 
     private boolean analyzeEquals(
@@ -2422,6 +2532,8 @@ public final class WhereClauseParser implements Mutable {
             );
             case INTRINSIC_OP_BETWEEN ->
                     analyzeBetween(timestampDriver, translator, model, node, m, functionParser, metadata, executionContext);
+            case INTRINSIC_OP_AND_OFFSET ->
+                    analyzeAndOffset(timestampDriver, translator, model, node, m, functionParser, metadata, executionContext, latestByMultiColumn, reader);
             default -> false;
         };
     }
@@ -2702,5 +2814,6 @@ public final class WhereClauseParser implements Mutable {
         intrinsicOps.put("!=", INTRINSIC_OP_NOT_EQ);
         intrinsicOps.put("not", INTRINSIC_OP_NOT);
         intrinsicOps.put("between", INTRINSIC_OP_BETWEEN);
+        intrinsicOps.put("and_offset", INTRINSIC_OP_AND_OFFSET);
     }
 }

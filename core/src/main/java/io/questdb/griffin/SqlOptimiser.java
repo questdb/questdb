@@ -3577,6 +3577,392 @@ public class SqlOptimiser implements Mutable {
         return checkSimpleIntegerColumn(column, model) != null;
     }
 
+    /**
+     * Detects if the model's timestamp column is derived from a dateadd expression
+     * on the nested model's timestamp. If so, stores the offset information on the model
+     * for use during predicate pushdown.
+     *
+     * @param parent the parent model to detect and annotate
+     * @param nested the nested model
+     */
+    private void detectTimestampOffset(QueryModel parent, QueryModel nested) {
+        ExpressionNode modelTimestamp = parent.getTimestamp();
+        if (modelTimestamp == null || nested == null) {
+            return;
+        }
+
+        // First try parent's column map (for cases where parent defines the column)
+        QueryColumn tsColumn = parent.getAliasToColumnMap().get(modelTimestamp.token);
+        ExpressionNode ast = tsColumn != null ? tsColumn.getAst() : null;
+
+        // Track where we found the dateadd definition - that's where we need to set offset
+        QueryModel modelToAnnotate = parent;
+
+        // If parent just passes through the column, look at nested model's column map
+        // This handles: SELECT * FROM (SELECT dateadd(...) as ts FROM ...) timestamp(ts)
+        // where the outer select-choose just references 'ts' but doesn't define it
+        if (ast == null || ast.type == LITERAL) {
+            // The timestamp column is defined in the nested model
+            tsColumn = nested.getAliasToColumnMap().get(modelTimestamp.token);
+            if (tsColumn == null) {
+                return;
+            }
+            ast = tsColumn.getAst();
+            // Set offset on nested model since that's where dateadd is defined
+            // The NonLiteralException will be thrown when pushing FROM nested
+            modelToAnnotate = nested;
+        }
+
+        // Check nested model for its timestamp to validate dateadd argument
+        QueryModel timestampSourceModel = nested.getNestedModel();
+        if (timestampSourceModel == null) {
+            timestampSourceModel = nested;
+        }
+
+        if (!isDateaddTimestampExpression(ast, timestampSourceModel)) {
+            return;
+        }
+
+        // Extract offset info (args are reversed: [timestamp, stride, unit])
+        ObjList<ExpressionNode> args = ast.args;
+        ExpressionNode unitArg = args.getQuick(2);
+        ExpressionNode strideArg = args.getQuick(1);
+        ExpressionNode timestampArg = args.getQuick(0);
+
+        // Parse the unit character (skip the quotes, e.g., 'h' -> h)
+        CharSequence unitToken = unitArg.token;
+        char unit;
+        if (unitToken.length() >= 2 && unitToken.charAt(0) == '\'') {
+            unit = unitToken.charAt(1);
+        } else {
+            unit = unitToken.charAt(0);
+        }
+
+        try {
+            long stride = extractConstantLong(strideArg);
+            // Store INVERSE offset (negate stride) for pushdown
+            // When timestamp = dateadd('h', -1, original), pushing predicate needs +1h offset
+            modelToAnnotate.setTimestampOffsetUnit(unit);
+            modelToAnnotate.setTimestampOffsetValue(-stride);
+            modelToAnnotate.setTimestampSourceColumn(timestampArg.token);
+            // Store the alias name so predicates can be matched
+            modelToAnnotate.setTimestampOffsetAlias(modelTimestamp.token);
+        } catch (NumericException e) {
+            // Cannot parse stride, don't set offset
+        }
+    }
+
+    /**
+     * Extracts a constant long value from an expression node.
+     * Handles both positive constants and unary minus expressions.
+     */
+    private long extractConstantLong(ExpressionNode node) throws NumericException {
+        if (node.type == CONSTANT) {
+            return Numbers.parseLong(node.token);
+        }
+        // Handle unary minus: -(constant)
+        if (node.type == OPERATION && Chars.equals(node.token, "-") && node.paramCount == 1) {
+            return -Numbers.parseLong(node.rhs.token);
+        }
+        throw NumericException.INSTANCE;
+    }
+
+    /**
+     * Checks if the given expression is a constant integer (positive or negative).
+     */
+    private boolean isConstantIntegerExpression(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == CONSTANT) {
+            try {
+                Numbers.parseLong(node.token);
+                return true;
+            } catch (NumericException e) {
+                return false;
+            }
+        }
+        // Handle unary minus: -(constant)
+        if (node.type == OPERATION && Chars.equals(node.token, "-") && node.paramCount == 1) {
+            return node.rhs != null && node.rhs.type == CONSTANT;
+        }
+        return false;
+    }
+
+    /**
+     * Detects if the given expression is a dateadd function call with constant unit and stride,
+     * where the timestamp argument references the nested model's designated timestamp.
+     *
+     * @param ast         the expression node to check
+     * @param nestedModel the nested model whose timestamp we're checking against
+     * @return true if the expression is dateadd(unit, constant, timestamp)
+     */
+    private boolean isDateaddTimestampExpression(ExpressionNode ast, QueryModel nestedModel) {
+        if (ast == null || ast.type != FUNCTION) {
+            return false;
+        }
+        if (!Chars.equalsLowerCaseAscii(ast.token, "dateadd")) {
+            return false;
+        }
+        if (ast.paramCount != 3) {
+            return false;
+        }
+
+        // Args are reversed: args[0]=timestamp, args[1]=stride, args[2]=unit
+        ObjList<ExpressionNode> args = ast.args;
+        if (args == null || args.size() != 3) {
+            return false;
+        }
+
+        ExpressionNode timestampArg = args.getQuick(0);
+        ExpressionNode strideArg = args.getQuick(1);
+        ExpressionNode unitArg = args.getQuick(2);
+
+        // Check unit is constant char (like 'h', 'd', etc.)
+        if (unitArg == null || unitArg.type != CONSTANT) {
+            return false;
+        }
+
+        // Check stride is constant integer
+        if (!isConstantIntegerExpression(strideArg)) {
+            return false;
+        }
+
+        // Check timestamp arg references the designated timestamp
+        if (timestampArg == null || timestampArg.type != LITERAL) {
+            return false;
+        }
+
+        ExpressionNode nestedTimestamp = nestedModel.getTimestamp();
+        if (nestedTimestamp == null) {
+            return false;
+        }
+
+        return Chars.equalsIgnoreCase(timestampArg.token, nestedTimestamp.token);
+    }
+
+    /**
+     * Checks if the given predicate references the model's timestamp column or offset alias.
+     */
+    private boolean isTimestampPredicate(ExpressionNode node, QueryModel model) {
+        // Check against the model's designated timestamp
+        ExpressionNode ts = model.getTimestamp();
+        if (ts != null && referencesColumn(node, ts.token)) {
+            return true;
+        }
+        // Also check against the timestamp offset alias (for virtual models without timestamp designation)
+        CharSequence alias = model.getTimestampOffsetAlias();
+        return alias != null && referencesColumn(node, alias);
+    }
+
+    private void moveWhereInsideSubQueries(QueryModel model) throws SqlException {
+        if (
+                model.getSelectModelType() != SELECT_MODEL_DISTINCT
+                        // in theory, we could push down predicates as long as they align with ALL partition by clauses and remove whole partition(s)
+                        && model.getSelectModelType() != SELECT_MODEL_WINDOW
+        ) {
+            model.getParsedWhere().clear();
+            final ObjList<ExpressionNode> nodes = model.parseWhereClause();
+            model.setWhereClause(null);
+
+            final int n = nodes.size();
+            if (n > 0) {
+                for (int i = 0; i < n; i++) {
+                    final ExpressionNode node = nodes.getQuick(i);
+                    // collect table references this where clause element
+                    literalCollectorAIndexes.clear();
+                    literalCollectorANames.clear();
+                    literalCollector.withModel(model);
+                    literalCollector.resetCounts();
+                    traversalAlgo.traverse(node, literalCollector.lhs());
+
+                    tempIntList.clear();
+                    for (int j = 0; j < literalCollectorAIndexes.size(); j++) {
+                        int tableExpressionReference = literalCollectorAIndexes.get(j);
+                        int position = tempIntList.binarySearchUniqueList(tableExpressionReference);
+                        if (position < 0) {
+                            tempIntList.insert(-(position + 1), tableExpressionReference);
+                        }
+                    }
+
+                    int distinctIndexes = tempIntList.size();
+
+                    // at this point, we must not have constant conditions in where clause
+                    // this could be either referencing constant of a sub-query
+                    if (literalCollectorAIndexes.size() == 0) {
+                        // keep condition with this model
+                        addWhereNode(model, node);
+                        continue;
+                    } else if (distinctIndexes > 1) {
+                        int greatest = tempIntList.get(distinctIndexes - 1);
+                        final QueryModel m = model.getJoinModels().get(greatest);
+                        m.setPostJoinWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, m.getPostJoinWhereClause(), nodes.getQuick(i)));
+                        continue;
+                    }
+
+                    // by now all where clause must reference single table only and all column references have to be valid,
+                    // they would have been rewritten and validated as join analysis stage
+                    final int tableIndex = literalCollectorAIndexes.get(0);
+                    final QueryModel parent = model.getJoinModels().getQuick(tableIndex);
+
+                    // Do not move where clauses inside outer join models because that'd change result
+                    int joinType = parent.getJoinType();
+                    if (tableIndex > 0
+                            && (joinBarriers.contains(joinType))
+                    ) {
+                        QueryModel joinModel = model.getJoinModels().getQuick(tableIndex);
+                        joinModel.setPostJoinWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, joinModel.getPostJoinWhereClause(), node));
+                        continue;
+                    }
+
+                    final QueryModel nested = parent.getNestedModel();
+
+                    // Detect if the parent's timestamp column is derived from a dateadd expression
+                    // on the nested model's timestamp. This enables timestamp predicate pushdown with offset.
+                    if (nested != null && !parent.hasTimestampOffset()) {
+                        detectTimestampOffset(parent, nested);
+                    }
+
+                    if (nested == null
+                            || nested.getLatestBy().size() > 0
+                            || nested.getLimitLo() != null
+                            || nested.getLimitHi() != null
+                            || nested.getUnionModel() != null
+                            || (nested.getSampleBy() != null && !canPushToSampleBy(nested, literalCollectorANames))
+                    ) {
+                        // there is no nested model for this table, keep where clause element with this model
+                        addWhereNode(parent, node);
+                    } else {
+                        // now that we have identified sub-query we have to rewrite our where clause
+                        // to potentially replace all column references with actual literals used inside
+                        // sub-query, for example:
+                        // (select a x, b from T) where x = 10
+                        // we can't move "x" inside sub-query because it is not a field.
+                        // Instead, we have to translate "x" to actual column expression, which is "a":
+                        // select a x, b from T where a = 10
+
+                        // because we are rewriting SqlNode in-place we need to make sure that
+                        // none of expression literals reference non-literals in nested query, e.g.
+                        // (select a+b x from T) where x > 10
+                        // does not warrant inlining of "x > 10" because "x" is not a column
+                        //
+                        // at this step we would throw exception if one of our literals hits non-literal
+                        // in sub-query
+
+                        try {
+                            traversalAlgo.traverse(node, literalCheckingVisitor.of(parent.getAliasToColumnMap()));
+
+                            // go ahead and rewrite expression
+                            traversalAlgo.traverse(node, literalRewritingVisitor.of(parent.getAliasToColumnNameMap()));
+
+                            // whenever nested model has explicitly defined columns it must also
+                            // have its own nested model, where we assign new "where" clauses
+                            addWhereNode(nested, node);
+                            // we do not have to deal with "union" models here
+                            // because "where" clause is made to apply to the result of the union
+                        } catch (NonLiteralException ignore) {
+                            // Check if this is a timestamp predicate on a model with timestamp offset.
+                            // If so, we can still push it down by wrapping it in and_offset.
+                            if (parent.hasTimestampOffset() && isTimestampPredicate(node, parent)) {
+                                // Rewrite column references from virtual timestamp to source column
+                                rewriteTimestampColumnForOffset(node, parent);
+                                // Wrap in and_offset and push to nested model
+                                ExpressionNode wrapped = wrapInAndOffset(node, parent);
+                                addWhereNode(nested, wrapped);
+                            } else {
+                                // keep node where it is
+                                addWhereNode(parent, node);
+                            }
+                        }
+                    }
+                }
+                model.getParsedWhere().clear();
+            }
+        }
+
+        QueryModel nested = model.getNestedModel();
+        if (nested != null) {
+            moveWhereInsideSubQueries(nested);
+        }
+
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, m = joinModels.size(); i < m; i++) {
+            nested = joinModels.getQuick(i);
+            if (nested != model) {
+                moveWhereInsideSubQueries(nested);
+            }
+        }
+
+        nested = model.getUnionModel();
+        if (nested != null) {
+            moveWhereInsideSubQueries(nested);
+        }
+    }
+
+    /**
+     * Checks if the given expression references a specific column name.
+     */
+    private boolean referencesColumn(ExpressionNode node, CharSequence columnName) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == LITERAL && Chars.equalsIgnoreCase(node.token, columnName)) {
+            return true;
+        }
+        // Check children
+        if (node.paramCount < 3) {
+            return referencesColumn(node.lhs, columnName) || referencesColumn(node.rhs, columnName);
+        } else {
+            ObjList<ExpressionNode> args = node.args;
+            if (args != null) {
+                for (int i = 0, n = args.size(); i < n; i++) {
+                    if (referencesColumn(args.getQuick(i), columnName)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Recursively rewrites all column references from one name to another.
+     */
+    private void rewriteColumnReferences(ExpressionNode node, CharSequence from, CharSequence to) {
+        if (node == null) {
+            return;
+        }
+        if (node.type == LITERAL && Chars.equalsIgnoreCase(node.token, from)) {
+            node.token = to;
+        }
+        if (node.paramCount < 3) {
+            rewriteColumnReferences(node.lhs, from, to);
+            rewriteColumnReferences(node.rhs, from, to);
+        } else {
+            ObjList<ExpressionNode> args = node.args;
+            if (args != null) {
+                for (int i = 0, n = args.size(); i < n; i++) {
+                    rewriteColumnReferences(args.getQuick(i), from, to);
+                }
+            }
+        }
+    }
+
+    /**
+     * Rewrites column references in the expression from the virtual timestamp alias to the source column.
+     */
+    private void rewriteTimestampColumnForOffset(ExpressionNode node, QueryModel model) {
+        // Get the alias to rewrite from - use stored alias or timestamp token
+        CharSequence virtualTs = model.getTimestampOffsetAlias();
+        if (virtualTs == null && model.getTimestamp() != null) {
+            virtualTs = model.getTimestamp().token;
+        }
+        CharSequence sourceTs = model.getTimestampSourceColumn();
+        if (virtualTs != null && sourceTs != null) {
+            rewriteColumnReferences(node, virtualTs, sourceTs);
+        }
+    }
+
     private ExpressionNode makeJoinAlias() {
         CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
         characterStoreEntry.put(SUB_QUERY_ALIAS_PREFIX).put(defaultAliasCount++);
@@ -3838,131 +4224,48 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void moveWhereInsideSubQueries(QueryModel model) throws SqlException {
-        if (
-                model.getSelectModelType() != SELECT_MODEL_DISTINCT
-                        // in theory, we could push down predicates as long as they align with ALL partition by clauses and remove whole partition(s)
-                        && model.getSelectModelType() != SELECT_MODEL_WINDOW
-        ) {
-            model.getParsedWhere().clear();
-            final ObjList<ExpressionNode> nodes = model.parseWhereClause();
-            model.setWhereClause(null);
+    /**
+     * Wraps a predicate in an and_offset expression for timestamp predicate pushdown.
+     * The and_offset wrapper indicates that interval extraction should apply an offset.
+     *
+     * @param predicate the predicate to wrap
+     * @param model     the model containing timestamp offset info
+     * @return the wrapped expression: and_offset(predicate, unit, offset)
+     */
+    private ExpressionNode wrapInAndOffset(ExpressionNode predicate, QueryModel model) {
+        // Create: and_offset(predicate, unit, offset)
+        // Using args list for multi-argument function
+        ExpressionNode wrapper = expressionNodePool.next().of(
+                FUNCTION,
+                "and_offset",
+                0,
+                predicate.position
+        );
+        wrapper.paramCount = 3;
 
-            final int n = nodes.size();
-            if (n > 0) {
-                for (int i = 0; i < n; i++) {
-                    final ExpressionNode node = nodes.getQuick(i);
-                    // collect table references this where clause element
-                    literalCollectorAIndexes.clear();
-                    literalCollectorANames.clear();
-                    literalCollector.withModel(model);
-                    literalCollector.resetCounts();
-                    traversalAlgo.traverse(node, literalCollector.lhs());
+        // Unit as constant char (quoted to match dateadd format)
+        ExpressionNode unitNode = expressionNodePool.next().of(
+                CONSTANT,
+                "'" + model.getTimestampOffsetUnit() + "'",
+                0,
+                0
+        );
 
-                    tempIntList.clear();
-                    for (int j = 0; j < literalCollectorAIndexes.size(); j++) {
-                        int tableExpressionReference = literalCollectorAIndexes.get(j);
-                        int position = tempIntList.binarySearchUniqueList(tableExpressionReference);
-                        if (position < 0) {
-                            tempIntList.insert(-(position + 1), tableExpressionReference);
-                        }
-                    }
+        // Offset value as constant
+        ExpressionNode offsetNode = expressionNodePool.next().of(
+                CONSTANT,
+                Long.toString(model.getTimestampOffsetValue()),
+                0,
+                0
+        );
 
-                    int distinctIndexes = tempIntList.size();
+        // Add arguments to wrapper (args list is pre-initialized in ExpressionNode)
+        // Note: args are stored in reverse order for rendering, so add [offset, unit, predicate]
+        wrapper.args.add(offsetNode);
+        wrapper.args.add(unitNode);
+        wrapper.args.add(predicate);
 
-                    // at this point, we must not have constant conditions in where clause
-                    // this could be either referencing constant of a sub-query
-                    if (literalCollectorAIndexes.size() == 0) {
-                        // keep condition with this model
-                        addWhereNode(model, node);
-                        continue;
-                    } else if (distinctIndexes > 1) {
-                        int greatest = tempIntList.get(distinctIndexes - 1);
-                        final QueryModel m = model.getJoinModels().get(greatest);
-                        m.setPostJoinWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, m.getPostJoinWhereClause(), nodes.getQuick(i)));
-                        continue;
-                    }
-
-                    // by now all where clause must reference single table only and all column references have to be valid,
-                    // they would have been rewritten and validated as join analysis stage
-                    final int tableIndex = literalCollectorAIndexes.get(0);
-                    final QueryModel parent = model.getJoinModels().getQuick(tableIndex);
-
-                    // Do not move where clauses inside outer join models because that'd change result
-                    int joinType = parent.getJoinType();
-                    if (tableIndex > 0
-                            && (joinBarriers.contains(joinType))
-                    ) {
-                        QueryModel joinModel = model.getJoinModels().getQuick(tableIndex);
-                        joinModel.setPostJoinWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, joinModel.getPostJoinWhereClause(), node));
-                        continue;
-                    }
-
-                    final QueryModel nested = parent.getNestedModel();
-                    if (nested == null
-                            || nested.getLatestBy().size() > 0
-                            || nested.getLimitLo() != null
-                            || nested.getLimitHi() != null
-                            || nested.getUnionModel() != null
-                            || (nested.getSampleBy() != null && !canPushToSampleBy(nested, literalCollectorANames))
-                    ) {
-                        // there is no nested model for this table, keep where clause element with this model
-                        addWhereNode(parent, node);
-                    } else {
-                        // now that we have identified sub-query we have to rewrite our where clause
-                        // to potentially replace all column references with actual literals used inside
-                        // sub-query, for example:
-                        // (select a x, b from T) where x = 10
-                        // we can't move "x" inside sub-query because it is not a field.
-                        // Instead, we have to translate "x" to actual column expression, which is "a":
-                        // select a x, b from T where a = 10
-
-                        // because we are rewriting SqlNode in-place we need to make sure that
-                        // none of expression literals reference non-literals in nested query, e.g.
-                        // (select a+b x from T) where x > 10
-                        // does not warrant inlining of "x > 10" because "x" is not a column
-                        //
-                        // at this step we would throw exception if one of our literals hits non-literal
-                        // in sub-query
-
-                        try {
-                            traversalAlgo.traverse(node, literalCheckingVisitor.of(parent.getAliasToColumnMap()));
-
-                            // go ahead and rewrite expression
-                            traversalAlgo.traverse(node, literalRewritingVisitor.of(parent.getAliasToColumnNameMap()));
-
-                            // whenever nested model has explicitly defined columns it must also
-                            // have its own nested model, where we assign new "where" clauses
-                            addWhereNode(nested, node);
-                            // we do not have to deal with "union" models here
-                            // because "where" clause is made to apply to the result of the union
-                        } catch (NonLiteralException ignore) {
-                            // keep node where it is
-                            addWhereNode(parent, node);
-                        }
-                    }
-                }
-                model.getParsedWhere().clear();
-            }
-        }
-
-        QueryModel nested = model.getNestedModel();
-        if (nested != null) {
-            moveWhereInsideSubQueries(nested);
-        }
-
-        ObjList<QueryModel> joinModels = model.getJoinModels();
-        for (int i = 1, m = joinModels.size(); i < m; i++) {
-            nested = joinModels.getQuick(i);
-            if (nested != model) {
-                moveWhereInsideSubQueries(nested);
-            }
-        }
-
-        nested = model.getUnionModel();
-        if (nested != null) {
-            moveWhereInsideSubQueries(nested);
-        }
+        return wrapper;
     }
 
     private QueryColumn nextColumn(CharSequence name) {
