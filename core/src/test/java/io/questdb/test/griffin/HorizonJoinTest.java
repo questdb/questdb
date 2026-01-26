@@ -28,7 +28,6 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -37,8 +36,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Ignore;
 import org.junit.Test;
-
-import static org.junit.Assert.fail;
 
 /**
  * Tests for HORIZON JOIN SQL syntax.
@@ -54,32 +51,26 @@ public class HorizonJoinTest extends AbstractCairoTest {
             execute("CREATE TABLE other (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)");
 
             // HORIZON JOIN after another join
-            try {
-                assertSql(
-                        "SELECT h.offset, avg(p.price) " +
-                                "FROM trades AS t " +
-                                "JOIN other AS o ON (t.sym = o.sym) " +
-                                "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                                "RANGE FROM -10s TO 10s STEP 1s AS h"
-                );
-                fail("Expected SqlException");
-            } catch (SqlException e) {
-                assertContains(e.getFlyweightMessage(), "horizon join cannot be combined with other joins");
-            }
+            assertExceptionNoLeakCheck(
+                    "SELECT h.offset, avg(p.price) " +
+                            "FROM trades AS t " +
+                            "JOIN other AS o ON (t.sym = o.sym) " +
+                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                            "RANGE FROM -10s TO 10s STEP 1s AS h",
+                    82,
+                    "horizon join cannot be combined with other joins"
+            );
 
             // Another join after HORIZON JOIN
-            try {
-                assertSql(
-                        "SELECT h.offset, avg(p.price) " +
-                                "FROM trades AS t " +
-                                "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                                "RANGE FROM -10s TO 10s STEP 1s AS h " +
-                                "JOIN other AS o ON (t.sym = o.sym)"
-                );
-                fail("Expected SqlException");
-            } catch (SqlException e) {
-                assertContains(e.getFlyweightMessage(), "horizon join cannot be combined with other joins");
-            }
+            assertExceptionNoLeakCheck(
+                    "SELECT h.offset, avg(p.price) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                            "RANGE FROM -10s TO 10s STEP 1s AS h " +
+                            "JOIN other AS o ON (t.sym = o.sym)",
+                    127,
+                    "horizon join cannot be combined with other joins"
+            );
         });
     }
 
@@ -89,17 +80,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
             execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
             execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
 
-            try {
-                assertSql(
-                        "SELECT h.offset, avg(p.price) " +
-                                "FROM trades AS t " +
-                                "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                                "LIST () AS h"
-                );
-                fail("Expected SqlException");
-            } catch (SqlException e) {
-                assertContains(e.getFlyweightMessage(), "at least one offset expression expected");
-            }
+            assertExceptionNoLeakCheck(
+                    "SELECT h.offset, avg(p.price) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                            "LIST () AS h",
+                    97,
+                    "at least one offset expression expected"
+            );
         });
     }
 
@@ -109,17 +97,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
             execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
             execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
 
-            try {
-                assertSql(
-                        "SELECT h.offset, avg(p.price) " +
-                                "FROM trades AS t " +
-                                "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                                "AS h"  // Missing RANGE or LIST
-                );
-                fail("Expected SqlException");
-            } catch (SqlException e) {
-                assertContains(e.getFlyweightMessage(), "'range' or 'list' expected");
-            }
+            assertExceptionNoLeakCheck(
+                    "SELECT h.offset, avg(p.price) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                            "AS h", // Missing RANGE or LIST
+                    91,
+                    "'range' or 'list' expected"
+            );
         });
     }
 
@@ -344,7 +329,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
                     "LIST (-600000000, 0, 600000000) AS h";
 
-            assertSql(sql);
+            assertPlanNoLeakCheck(sql, "");
         });
     }
 
@@ -361,23 +346,80 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM -600s TO 600s STEP 1s AS h " +
                     "GROUP BY h.offset, t.sym";
 
-            assertSql(sql);
+            assertPlanNoLeakCheck(sql, "");
         });
     }
 
-    @Ignore("HORIZON JOIN code generation not yet complete")
     @Test
     public void testHorizonJoinWithRangeBasic() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)");
             execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
 
-            String sql = "SELECT h.offset, avg(p.price) " +
+            // Insert test data
+            // Prices at 0s, 1s, 2s, 3s for sym 'AX'
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                (0_000_000, 'AX', 10),
+                                (1_000_000, 'AX', 20),
+                                (2_000_000, 'AX', 30),
+                                (3_000_000, 'AX', 40)
+                            """
+            );
+
+            // Trade at 1s for sym 'AX'
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                (1_000_000, 'AX', 100)
+                            """
+            );
+
+            // RANGE FROM 0s TO 2s STEP 1s gives offsets: 0, 1000000, 2000000 microseconds
+            // For trade at 1s:
+            //   offset=0: look at 1s+0=1s -> ASOF to price at 1s -> 20
+            //   offset=1s: look at 1s+1s=2s -> ASOF to price at 2s -> 30
+            //   offset=2s: look at 1s+2s=3s -> ASOF to price at 3s -> 40
+            String sql = "SELECT h.offset / 1000000 AS sec_offs, avg(p.price) " +
                     "FROM trades AS t " +
                     "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                    "RANGE FROM -10s TO 10s STEP 1s AS h";
+                    "RANGE FROM 0s TO 2s STEP 1s AS h " +
+                    "ORDER BY sec_offs";
 
-            assertSql(sql);
+            // Verify the query plan
+            assertPlanNoLeakCheck(
+                    sql,
+                    """
+                            Radix sort light
+                              keys: [sec_offs]
+                                VirtualRecord
+                                  functions: [offset/1000000,avg]
+                                    Async Markout GroupBy workers: 1 offsets: 3
+                                      keys: [offset]
+                                      values: [avg(p.price)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: prices
+                            """
+            );
+
+            // Verify results
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg
+                            0\t20.0
+                            1\t30.0
+                            2\t40.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
@@ -393,7 +435,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
                     "RANGE FROM -10m TO 10m STEP 1m AS h";
 
-            assertSql(sql);
+            assertPlanNoLeakCheck(sql, "");
         });
     }
 
@@ -457,18 +499,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "HORIZON JOIN prices AS p " +
                     "RANGE FROM -10s TO 10s STEP 1s AS h";
 
-            assertSql(sql);
+            assertPlanNoLeakCheck(sql, "");
         });
-    }
-
-    private static void assertContains(CharSequence actual, String expected) {
-        if (!actual.toString().contains(expected)) {
-            fail("Expected message to contain '" + expected + "' but was: " + actual);
-        }
-    }
-
-    private void assertSql(String sql) throws SqlException {
-        // Just compile the query to verify parsing works
-        execute("EXPLAIN " + sql);
     }
 }
