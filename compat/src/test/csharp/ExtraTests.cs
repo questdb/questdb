@@ -13,6 +13,7 @@ public static class ExtraTests
     {
         await CheckBindVarsInBatchedQueriesAreConsistent();
         await CheckNpgsqlMultiUrlWorks();
+        await CheckPrepareDoesNotCauseGarbledTimestamps();
     }
 
     // Regression test for https://github.com/questdb/questdb/issues/6123
@@ -35,7 +36,7 @@ public static class ExtraTests
                 $"Host=localhost;Port={port};Username=admin;Password=quest;Database=qdb;ServerCompatibilityMode=NoTypeLoading;"
             ).Build();
 
-            const int batchSize = 5;
+            const int       batchSize  = 5;
             await using var connection = await dataSource.OpenConnectionAsync();
 
             await using var batch = new NpgsqlBatch(connection);
@@ -55,6 +56,7 @@ public static class ExtraTests
                 {
                     await reader.NextResultAsync();
                 }
+
                 first = false;
 
                 if (!await reader.ReadAsync())
@@ -63,7 +65,7 @@ public static class ExtraTests
                 }
 
                 var unboundIndex = reader.GetInt32(0);
-                var boundIndex = reader.GetInt32(1);
+                var boundIndex   = reader.GetInt32(1);
                 if (unboundIndex != boundIndex)
                 {
                     throw new InvalidOperationException(
@@ -101,6 +103,40 @@ public static class ExtraTests
         {
             Console.WriteLine($"Test '{testName}' failed: {e.Message}");
             Environment.Exit(1);
+        }
+    }
+
+
+    private static async Task CheckPrepareDoesNotCauseGarbledTimestamps()
+    {
+        await using var dataSource = new NpgsqlDataSourceBuilder(
+            "Host=127.0.0.1;Port=8812;Username=admin;Password=quest;Database=qdb;ServerCompatibilityMode=NoTypeLoading;"
+        ).Build();
+
+        await using var connection = await dataSource.OpenConnectionAsync();
+        await using var batch      = new NpgsqlBatch(connection);
+
+        var cmd1 = new NpgsqlBatchCommand("SELECT @time;");
+        cmd1.Parameters.AddWithValue("time", DateTime.UtcNow);
+        batch.BatchCommands.Add(cmd1);
+
+        var cmd2 = new NpgsqlBatchCommand("SELECT @time;");
+        cmd2.Parameters.AddWithValue("time", DateTime.UtcNow);
+        batch.BatchCommands.Add(cmd2);
+
+        await batch.PrepareAsync(); // It works if we do not prepare the batch
+
+        await using var reader = await batch.ExecuteReaderAsync();
+
+        while (await reader.ReadAsync())
+        {
+            Console.WriteLine(reader.GetDateTime(0));
+        }
+
+        await reader.NextResultAsync();
+        while (await reader.ReadAsync())
+        {
+            Console.WriteLine(reader.GetDateTime(0));
         }
     }
 }
