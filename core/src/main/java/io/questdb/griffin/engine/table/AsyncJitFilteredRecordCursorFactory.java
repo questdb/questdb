@@ -311,27 +311,27 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         final long frameRowCount = task.getFrameRowCount();
         final PageFrameSequence<AsyncJitFilterAtom> frameSequence = task.getFrameSequence(AsyncJitFilterAtom.class);
         final AsyncJitFilterAtom atom = frameSequence.getAtom();
-
-        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
-        final int filterId = atom.maybeAcquireFilter(workerId, owner, circuitBreaker);
-        final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMaterialization = atom.shoulduseLateMaterialization(filterId, isParquetFrame, task.isCountOnly());
-
-        final PageFrameMemory frameMemory;
-        if (useLateMaterialization) {
-            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = task.populateFrameMemory();
-        }
-        record.init(frameMemory);
-
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
+        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
+        final int filterId = atom.maybeAcquireFilter(workerId, owner, circuitBreaker);
 
-        if (frameMemory.hasColumnTops()) {
-            // Use Java-based filter in case of a page frame with column tops.
-            final Function filter = atom.getFilter(filterId);
-            try {
+        try {
+            final boolean isParquetFrame = task.isParquetFrame();
+            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, isParquetFrame, task.isCountOnly());
+
+            final PageFrameMemory frameMemory;
+            if (useLateMaterialization) {
+                frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = task.populateFrameMemory();
+            }
+            record.init(frameMemory);
+
+            if (frameMemory.hasColumnTops()) {
+                // Use Java-based filter in case of a page frame with column tops.
+                final Function filter = atom.getFilter(filterId);
+
                 if (task.isCountOnly()) {
                     long count = 0;
                     for (long r = 0; r < frameRowCount; r++) {
@@ -358,13 +358,9 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                     task.setFilteredRowCount(rows.size());
                 }
                 return;
-            } finally {
-                atom.releaseFilter(filterId);
             }
-        }
 
-        // Use JIT-compiled filter.
-        try {
+            // Use JIT-compiled filter.
             task.populateJitData();
             final DirectLongList dataAddresses = task.getDataAddresses();
             final DirectLongList auxAddresses = task.getAuxAddresses();

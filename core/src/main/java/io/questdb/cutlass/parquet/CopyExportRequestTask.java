@@ -400,7 +400,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(i);
                     int symbolColumnType = columnType;
                     if (!symbolTable.containsNullValue()) {
-                        symbolColumnType |= 1 << 31;
+                        symbolColumnType |= Integer.MIN_VALUE;
                     }
                     columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | (symbolColumnType & 0xFFFFFFFFL));
                 } else {

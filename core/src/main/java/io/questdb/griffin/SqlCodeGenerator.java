@@ -805,7 +805,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (node != null) {
                 if (node.type == LITERAL) {
                     int index = metadata.getColumnIndexQuiet(node.token);
-                    outIndexes.add(index);
+                    if (index < 0) {
+                        int dot = Chars.indexOfLastUnquoted(node.token, '.');
+                        if (dot > -1) {
+                            index = metadata.getColumnIndexQuiet(node.token, dot + 1, node.token.length());
+                        }
+                    }
+                    if (index >= 0) {
+                        outIndexes.add(index);
+                    }
                     node = null;
                     continue;
                 } else {

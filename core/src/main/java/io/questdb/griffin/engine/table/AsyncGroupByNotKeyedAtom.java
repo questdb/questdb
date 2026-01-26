@@ -206,7 +206,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         return perWorkerFilters.getQuick(slotId);
     }
 
-    public IntHashSet getFilterUsedColumnIndexes() {
+    public @Nullable IntHashSet getFilterUsedColumnIndexes() {
         return filterUsedColumnIndexes;
     }
 
@@ -319,7 +319,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         if (filterUsedColumnIndexes == null || filterUsedColumnIndexes.size() == 0) {
             return false;
         }
-        return getSelectivityStats(slotId).shoulduseLateMaterialization();
+        return getSelectivityStats(slotId).shouldUseLateMaterialization();
     }
 
     @Override

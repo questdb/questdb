@@ -266,7 +266,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         final boolean isParquetFrame = task.isParquetFrame();
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int filterId = atom.maybeAcquireFilter(workerId, owner, circuitBreaker);
-        final boolean useLateMaterialization = atom.shoulduseLateMaterialization(filterId, isParquetFrame, task.isCountOnly());
+        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, isParquetFrame, task.isCountOnly());
 
         final PageFrameMemory frameMemory;
         if (useLateMaterialization) {

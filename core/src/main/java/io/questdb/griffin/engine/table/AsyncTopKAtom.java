@@ -195,7 +195,7 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
         return perWorkerFilters.getQuick(slotId);
     }
 
-    public IntHashSet getFilterUsedColumnIndexes() {
+    public @Nullable IntHashSet getFilterUsedColumnIndexes() {
         return filterUsedColumnIndexes;
     }
 
@@ -323,7 +323,7 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
         if (filterUsedColumnIndexes == null || filterUsedColumnIndexes.size() == 0) {
             return false;
         }
-        return getSelectivityStats(slotId).shoulduseLateMaterialization();
+        return getSelectivityStats(slotId).shouldUseLateMaterialization();
     }
 
     @Override

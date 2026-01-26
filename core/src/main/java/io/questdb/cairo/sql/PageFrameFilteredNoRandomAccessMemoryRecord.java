@@ -449,15 +449,6 @@ public class PageFrameFilteredNoRandomAccessMemoryRecord extends PageFrameMemory
         cursor++;
     }
 
-    private SymbolTable getSymbolTable(int columnIndex) {
-        SymbolTable symbolTable = symbolTableCache.getQuiet(columnIndex);
-        if (symbolTable == null) {
-            symbolTable = symbolTableSource.newSymbolTable(columnIndex);
-            symbolTableCache.extendAndSet(columnIndex, symbolTable);
-        }
-        return symbolTable;
-    }
-
     private long rowIndex(int columnIndex) {
         if (filteredColumns.get(columnIndex)) {
             return rowIndex;

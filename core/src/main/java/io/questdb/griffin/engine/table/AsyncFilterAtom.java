@@ -104,7 +104,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         return perWorkerFilters.getQuick(filterId);
     }
 
-    public IntHashSet getFilterUsedColumnIndexes() {
+    public @Nullable IntHashSet getFilterUsedColumnIndexes() {
         return filterUsedColumnIndexes;
     }
 
@@ -246,7 +246,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         }
     }
 
-    public boolean shoulduseLateMaterialization(int slotId, boolean isParquetFrame, boolean isCountOnly) {
+    public boolean shouldUseLateMaterialization(int slotId, boolean isParquetFrame, boolean isCountOnly) {
         if (!isParquetFrame) {
             return false;
         }
@@ -256,7 +256,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         if (isCountOnly) {
             return true;
         }
-        return getSelectivityStats(slotId).shoulduseLateMaterialization();
+        return getSelectivityStats(slotId).shouldUseLateMaterialization();
     }
 
     @Override

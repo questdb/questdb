@@ -335,7 +335,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         return perWorkerFilters.getQuick(slotId);
     }
 
-    public IntHashSet getFilterUsedColumnIndexes() {
+    public @Nullable IntHashSet getFilterUsedColumnIndexes() {
         return filterUsedColumnIndexes;
     }
 
@@ -643,7 +643,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         if (filterUsedColumnIndexes == null || filterUsedColumnIndexes.size() == 0) {
             return false;
         }
-        return getSelectivityStats(slotId).shoulduseLateMaterialization();
+        return getSelectivityStats(slotId).shouldUseLateMaterialization();
     }
 
     @Override

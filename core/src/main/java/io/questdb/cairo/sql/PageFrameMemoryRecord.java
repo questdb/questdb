@@ -580,15 +580,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         NullMemoryCMR.INSTANCE.getLong256(0, sink);
     }
 
-    private SymbolTable getSymbolTable(int columnIndex) {
-        SymbolTable symbolTable = symbolTableCache.getQuiet(columnIndex);
-        if (symbolTable == null) {
-            symbolTable = symbolTableSource.newSymbolTable(columnIndex);
-            symbolTableCache.extendAndSet(columnIndex, symbolTable);
-        }
-        return symbolTable;
-    }
-
     private @NotNull Long256Impl long256A(int columnIndex) {
         Long256Impl long256 = longs256A.getQuiet(columnIndex);
         if (long256 != null) {
@@ -704,6 +695,15 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             return getStr(dataPageAddress, dataOffset, dataPageLim, csView);
         }
         return NullMemoryCMR.INSTANCE.getStrB(0);
+    }
+
+    protected SymbolTable getSymbolTable(int columnIndex) {
+        SymbolTable symbolTable = symbolTableCache.getQuiet(columnIndex);
+        if (symbolTable == null) {
+            symbolTable = symbolTableSource.newSymbolTable(columnIndex);
+            symbolTableCache.extendAndSet(columnIndex, symbolTable);
+        }
+        return symbolTable;
     }
 
     @Nullable

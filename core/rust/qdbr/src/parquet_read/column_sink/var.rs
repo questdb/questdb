@@ -27,7 +27,7 @@ fn write_offset_sequence(
     while remaining > 0 {
         let n = remaining.min(BATCH);
         for slot in buf.iter_mut().take(n) {
-            *slot = offset as u64;
+            *slot = (offset as u64).to_le();
             offset += step;
         }
         aux_vec.extend_from_slice(unsafe {

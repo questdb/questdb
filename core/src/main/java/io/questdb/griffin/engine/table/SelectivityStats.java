@@ -54,7 +54,7 @@ public class SelectivityStats implements Mutable {
         sampleCount = 0;
     }
 
-    public boolean shoulduseLateMaterialization() {
+    public boolean shouldUseLateMaterialization() {
         if (sampleCount < MIN_SAMPLES) {
             return true;
         }
