@@ -1604,6 +1604,7 @@ public class SqlParser {
                 final int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
                 PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
                 builder.setTtlHoursOrMonths(ttlHoursOrMonths);
+                builder.setTtlPosition(ttlValuePos);
                 tok = optTok(lexer);
             }
 

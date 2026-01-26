@@ -1895,7 +1895,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     return;
                 }
                 if (isTtlKeyword(tok)) {
-                    alterTableSetTtl(matViewToken, matViewNamePosition, tableMetadata);
+                    alterTableOrMatViewSetTtl(matViewToken, matViewNamePosition, tableMetadata);
                 } else if (isRefreshKeyword(tok)) {
                     tok = expectToken(lexer, "'immediate' or 'manual' or 'period' or 'every' or 'limit'");
                     if (isLimitKeyword(tok)) {
@@ -2297,7 +2297,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
                     }
                 } else if (isTtlKeyword(tok)) {
-                    alterTableSetTtl(tableToken, tableNamePosition, tableMetadata);
+                    alterTableOrMatViewSetTtl(tableToken, tableNamePosition, tableMetadata);
                 } else if (isTypeKeyword(tok)) {
                     tok = expectToken(lexer, "'bypass' or 'wal'");
                     if (isBypassKeyword(tok)) {
@@ -4766,7 +4766,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    protected void alterTableSetTtl(TableToken tableToken, int tableNamePosition, TableRecordMetadata tableMetadata) throws SqlException {
+    protected void alterTableOrMatViewSetTtl(TableToken tableToken, int tableNamePosition, TableRecordMetadata tableMetadata) throws SqlException {
         final int ttlValuePos = lexer.getPosition();
         final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
         try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
