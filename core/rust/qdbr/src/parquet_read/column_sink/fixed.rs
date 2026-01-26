@@ -170,6 +170,7 @@ impl<const N: usize, T: DataPageSlicer> Pushable for ReverseFixedColumnSink<'_, 
             _ => {
                 let base = self.buffers.data_vec.len();
                 let total_bytes = count * N;
+                debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
 
                 unsafe {
                     let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
@@ -216,6 +217,7 @@ impl<const N: usize, T: DataPageSlicer> Pushable for ReverseFixedColumnSink<'_, 
             _ => {
                 let base = self.buffers.data_vec.len();
                 let total_bytes = count * N;
+                debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
 
                 unsafe {
                     let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
@@ -306,6 +308,7 @@ impl<T: DataPageSlicer> Pushable for NanoTimestampColumnSink<'_, T> {
                 let null_size = self.null_value.len();
                 let base = self.buffers.data_vec.len();
                 let total_bytes = count * null_size;
+                debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
 
                 unsafe {
                     let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
@@ -415,6 +418,7 @@ impl<T: DataPageSlicer> Pushable for IntDecimalColumnSink<'_, T> {
             _ => {
                 let base = self.buffers.data_vec.len();
                 let total_bytes = count * 8;
+                debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
 
                 unsafe {
                     let out_ptr = self.buffers.data_vec.as_mut_ptr().add(base);
@@ -465,6 +469,7 @@ impl<T: DataPageSlicer> Pushable for IntDecimalColumnSink<'_, T> {
                 let null_size = self.null_value.len();
                 let base = self.buffers.data_vec.len();
                 let total_bytes = count * null_size;
+                debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
 
                 unsafe {
                     let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
