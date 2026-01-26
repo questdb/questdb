@@ -3638,11 +3638,13 @@ public class SqlOptimiser implements Mutable {
         ExpressionNode timestampArg = args.getQuick(0);
 
         // Parse the unit character (skip the quotes, e.g., 'h' -> h)
+        // SQL char constants are always quoted, but we handle unquoted as defensive fallback
         CharSequence unitToken = unitArg.token;
         char unit;
         if (unitToken.length() >= 2 && unitToken.charAt(0) == '\'') {
             unit = unitToken.charAt(1);
         } else {
+            // Defensive fallback for unexpected token formats
             unit = unitToken.charAt(0);
         }
 
@@ -3790,11 +3792,13 @@ public class SqlOptimiser implements Mutable {
                 ExpressionNode timestampArg = args.getQuick(0);
 
                 // Parse the unit character (skip the quotes, e.g., 'h' -> h)
+                // SQL char constants are always quoted, but we handle unquoted as defensive fallback
                 CharSequence unitToken = unitArg.token;
                 char unit;
                 if (unitToken.length() >= 2 && unitToken.charAt(0) == '\'') {
                     unit = unitToken.charAt(1);
                 } else {
+                    // Defensive fallback for unexpected token formats
                     unit = unitToken.charAt(0);
                 }
 

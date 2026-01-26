@@ -12257,8 +12257,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testTimestampPredicateNoPushdownWithoutDateadd() throws Exception {
-        // Without dateadd, predicates ARE pushed all the way through (alias resolved to column name)
-        // This is the DESIRED behavior for simple column aliasing
+        // Without dateadd, no and_offset wrapper is needed - regular predicate pushdown works.
+        // The alias 'ts' is resolved to 'timestamp' and the predicate is pushed to the base table.
         assertQuery(
                 "select-choose ts, price from (select-choose [ts, price] ts, price from (select-choose [timestamp ts, price] timestamp ts, price from (select [timestamp, price] from trades timestamp (timestamp) where timestamp in '2022')) timestamp (ts))",
                 "SELECT * FROM ((SELECT timestamp as ts, price FROM trades) timestamp (ts)) WHERE ts in '2022'",
