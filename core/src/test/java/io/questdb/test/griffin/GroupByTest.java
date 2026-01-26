@@ -3121,6 +3121,54 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelectDistinctOnTimestampWithOrderBy() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
+
+        assertMemoryLeak(() -> {
+            execute("create table tab (created timestamp, i int) timestamp(created)");
+            execute("insert into tab select x::timestamp, x from long_sequence(3)");
+            drainWalQueue();
+
+            String query = "SELECT DISTINCT tab.created AS ref0 " +
+                    "FROM tab " +
+                    "WHERE (tab.created) IS NOT NULL " +
+                    "GROUP BY tab.created " +
+                    "ORDER BY tab.created";
+
+
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Radix sort light
+                              keys: [ref0]
+                                VirtualRecord
+                                  functions: [dateadd('h',1,created)]
+                                    Async JIT Group By workers: 1
+                                      keys: [created]
+                                      filter: null!=created
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                            """
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            ref0
+                            1970-01-01T01:00:00.000001Z
+                            1970-01-01T01:00:00.000002Z
+                            1970-01-01T01:00:00.000003Z
+                            """,
+                    query,
+                    "ref0",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testSelectDistinctOnUnaliasedColumnWithOrderBy() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));

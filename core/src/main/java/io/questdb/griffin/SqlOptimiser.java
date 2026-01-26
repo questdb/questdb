@@ -3756,6 +3756,11 @@ public class SqlOptimiser implements Mutable {
             return;
         }
 
+        // Skip if nested model is a GROUP BY - GROUP BY doesn't preserve row ordering
+        if (nested.getSelectModelType() == SELECT_MODEL_GROUP_BY) {
+            return;
+        }
+
         // Find the source of the timestamp - traverse down through nested models
         // We look for a model that has either:
         // 1. A designated timestamp (getTimestamp() != null)
