@@ -923,13 +923,13 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
      * Handles receive for protocol-switched connections (e.g., WebSocket).
      * Instead of parsing HTTP, delegates to the processor's resumeRecv.
      */
-    private boolean handleProtocolSwitchedRecv() throws PeerIsSlowToWriteException, ServerDisconnectException {
+    private boolean handleProtocolSwitchedRecv() throws PeerIsSlowToWriteException, ServerDisconnectException, PeerIsSlowToReadException {
         try {
             resumeProcessor.resumeRecv(this);
             // If resumeRecv returns normally, keep processing
             return true;
-        } catch (PeerIsSlowToWriteException e) {
-            // Need more data from peer, register for read
+        } catch (PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
+            // Need more data from/to peer
             throw e;
         } catch (ServerDisconnectException e) {
             // Connection should be closed

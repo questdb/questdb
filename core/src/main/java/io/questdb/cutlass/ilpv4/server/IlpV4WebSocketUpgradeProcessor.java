@@ -208,7 +208,7 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
     }
 
     @Override
-    public void resumeRecv(HttpConnectionContext context) throws PeerIsSlowToWriteException, ServerDisconnectException {
+    public void resumeRecv(HttpConnectionContext context) throws PeerIsSlowToWriteException, ServerDisconnectException, PeerIsSlowToReadException {
         // Ensure state is available
         state = LV.get(context);
         if (state == null) {
@@ -242,7 +242,7 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
             // Parse WebSocket frames
             processWebSocketFrames(context, recvBuffer, recvBufferLen);
 
-        } catch (ServerDisconnectException | PeerIsSlowToWriteException e) {
+        } catch (ServerDisconnectException | PeerIsSlowToWriteException | PeerIsSlowToReadException e) {
             throw e;
         } catch (Throwable e) {
             LOG.error().$("WebSocket error [fd=").$(context.getFd()).$(", error=").$(e).I$();

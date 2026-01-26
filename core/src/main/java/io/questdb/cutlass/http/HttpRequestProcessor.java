@@ -92,7 +92,7 @@ public interface HttpRequestProcessor {
         return false;
     }
 
-    default void resumeRecv(HttpConnectionContext context) throws PeerIsSlowToWriteException, ServerDisconnectException {
+    default void resumeRecv(HttpConnectionContext context) throws PeerIsSlowToWriteException, ServerDisconnectException, PeerIsSlowToReadException {
     }
 
     default void resumeSend(

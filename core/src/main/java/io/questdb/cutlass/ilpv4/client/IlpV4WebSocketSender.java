@@ -364,7 +364,7 @@ public class IlpV4WebSocketSender implements Sender {
                 throw new LineSenderException("Failed to connect to " + host + ":" + port, e);
             }
 
-            // Create InFlightWindow for tracking batches awaiting ACK (both modes)
+            // a window for tracking batches awaiting ACK (both modes)
             inFlightWindow = new InFlightWindow(inFlightWindowSize, InFlightWindow.DEFAULT_TIMEOUT_MS);
 
             // Initialize send queue for async mode (window > 1)
