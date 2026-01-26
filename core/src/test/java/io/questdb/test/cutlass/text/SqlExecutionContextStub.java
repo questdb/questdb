@@ -56,6 +56,10 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     }
 
     @Override
+    public void changePageFrameSizes(int minRows, int maxRows) {
+    }
+
+    @Override
     public void clearWindowContext() {
     }
 
@@ -144,6 +148,16 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     @Override
     public int getNowTimestampType() {
         return ColumnType.TIMESTAMP_MICRO;
+    }
+
+    @Override
+    public int getPageFrameMaxRows() {
+        return engine.getConfiguration().getSqlPageFrameMaxRows();
+    }
+
+    @Override
+    public int getPageFrameMinRows() {
+        return engine.getConfiguration().getSqlPageFrameMinRows();
     }
 
     @Override
@@ -266,6 +280,10 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
 
     @Override
     public void reset() {
+    }
+
+    @Override
+    public void restoreToDefaultPageFrameSizes() {
     }
 
     @Override

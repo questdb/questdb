@@ -294,6 +294,7 @@ public class MutableModelsTest {
         model.setFillFrom(newExpressionNode());
         model.setFillStride(newExpressionNode());
         model.setAllowPropagationOfOrderByAdvice(false);
+        model.getAliasSequenceMap().put("foobar", 1);
         // Setup HorizonJoinContext
         HorizonJoinContext hjc = model.getHorizonJoinContext();
         hjc.setMode(HorizonJoinContext.MODE_RANGE);

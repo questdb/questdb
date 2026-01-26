@@ -51,6 +51,8 @@ public class WindowJoinTest extends AbstractCairoTest {
     private final TestTimestampType rightTableTimestampType;
     private final StringSink sink = new StringSink();
     private boolean includePrevailing;
+    private boolean leftConvertParquet;
+    private boolean rightConvertParquet;
 
     public WindowJoinTest(TestTimestampType leftTimestampType, TestTimestampType rightTimestampType) {
         this.leftTableTimestampType = leftTimestampType;
@@ -75,6 +77,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         AsyncWindowJoinAtom.GROUP_BY_VALUE_USE_COMPACT_DIRECT_MAP = rnd.nextBoolean();
         sink.clear();
         includePrevailing = rnd.nextBoolean();
+        leftConvertParquet = rnd.nextBoolean();
+        rightConvertParquet = rnd.nextBoolean();
     }
 
     @Test
@@ -2157,7 +2161,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             2023-01-01T09:16:00.000000Z\tTSLA\t401.5\t802.0
                             2023-01-01T09:17:00.000000Z\tAMZN\t501.5\t1002.0
                             2023-01-01T09:18:00.000000Z\tMETA\t601.5\t1202.0
-                            2023-01-01T09:19:00.000000Z\tNFLX\t699.5\t699.5
+                            2023-01-02T09:19:00.000000Z\tNFLX\t699.5\t699.5
                             """, leftTableTimestampType.getTypeName())
                     : replaceTimestampSuffix("""
                     ts	sym	window_price1	window_price2
@@ -2180,7 +2184,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     2023-01-01T09:16:00.000000Z	TSLA	401.5	401.5
                     2023-01-01T09:17:00.000000Z	AMZN	501.5	501.5
                     2023-01-01T09:18:00.000000Z	META	601.5	601.5
-                    2023-01-01T09:19:00.000000Z	NFLX	699.5	699.5
+                    2023-01-02T09:19:00.000000Z	NFLX	699.5	699.5
                     """, leftTableTimestampType.getTypeName());
             assertQueryAndPlan(
                     expect,
@@ -2241,7 +2245,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             2023-01-01T09:16:00.000000Z\tTSLA\t802.0
                             2023-01-01T09:17:00.000000Z\tAMZN\t1002.0
                             2023-01-01T09:18:00.000000Z\tMETA\t1202.0
-                            2023-01-01T09:19:00.000000Z\tNFLX\t699.5
+                            2023-01-02T09:19:00.000000Z\tNFLX\t699.5
                             """, leftTableTimestampType.getTypeName())
                     : replaceTimestampSuffix("""
                     ts	sym	window_price2
@@ -2264,7 +2268,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     2023-01-01T09:16:00.000000Z	TSLA	401.5
                     2023-01-01T09:17:00.000000Z	AMZN	501.5
                     2023-01-01T09:18:00.000000Z	META	601.5
-                    2023-01-01T09:19:00.000000Z	NFLX	699.5
+                    2023-01-02T09:19:00.000000Z	NFLX	699.5
                     """, leftTableTimestampType.getTypeName());
             assertQueryAndPlan(
                     expect,
@@ -2322,9 +2326,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                     2023-01-01T09:14:00.000000Z	META	1601.5	null
                     2023-01-01T09:15:00.000000Z	META	1503.5	null
                     2023-01-01T09:16:00.000000Z	TSLA	1504.5	null
-                    2023-01-01T09:17:00.000000Z	AMZN	1802.5	null
-                    2023-01-01T09:18:00.000000Z	META	1301.0	null
-                    2023-01-01T09:19:00.000000Z	NFLX	699.5	null
+                    2023-01-01T09:17:00.000000Z	AMZN	1103.0	null
+                    2023-01-01T09:18:00.000000Z	META	601.5	null
+                    2023-01-02T09:19:00.000000Z	NFLX	699.5	null
                     """, leftTableTimestampType.getTypeName());
             assertQueryAndPlan(
                     expect,
@@ -2377,7 +2381,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             2023-01-01T09:16:00.000000Z	TSLA	null	802.0
                             2023-01-01T09:17:00.000000Z	AMZN	null	1002.0
                             2023-01-01T09:18:00.000000Z	META	null	1202.0
-                            2023-01-01T09:19:00.000000Z	NFLX	null	699.5
+                            2023-01-02T09:19:00.000000Z	NFLX	null	699.5
                             """, leftTableTimestampType.getTypeName())
                     : replaceTimestampSuffix("""
                     ts	sym	window_price1	window_price2
@@ -2400,7 +2404,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     2023-01-01T09:16:00.000000Z	TSLA	null	401.5
                     2023-01-01T09:17:00.000000Z	AMZN	null	501.5
                     2023-01-01T09:18:00.000000Z	META	null	601.5
-                    2023-01-01T09:19:00.000000Z	NFLX	null	699.5
+                    2023-01-02T09:19:00.000000Z	NFLX	null	699.5
                     """, leftTableTimestampType.getTypeName());
             assertQueryAndPlan(
                     expect,
@@ -2455,7 +2459,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             2023-01-01T09:16:00.000000Z	TSLA	401.5	401.5	1
                             2023-01-01T09:17:00.000000Z	AMZN	501.5	501.5	1
                             2023-01-01T09:18:00.000000Z	META	601.5	601.5	1
-                            2023-01-01T09:19:00.000000Z	NFLX	699.5	699.5	1
+                            2023-01-02T09:19:00.000000Z	NFLX	699.5	699.5	1
                             """,
                     leftTableTimestampType.getTypeName()
             );
@@ -2614,7 +2618,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from (trades limit 5) t " +
-                            "window join (select * from prices where ts in '2023-01-01T09:03:00.000000Z' or ts = '2023-01-01T09:07:00.000000Z' or ts = '2023-01-01T09:08:00.000000Z') p " +
+                            "window join (select * from prices where ts in '2023-01-01T09:03:00.000000Z' or ts = '2023-01-01T09:07:00.000000Z' and ts = '2023-01-01T09:08:00.000000Z') p " +
                             "on (t.sym = p.sym) " +
                             " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
                             "order by t.ts, t.sym;",
@@ -3770,6 +3774,172 @@ public class WindowJoinTest extends AbstractCairoTest {
         });
     }
 
+    // Regression test for https://github.com/questdb/questdb/issues/6661
+    // SIGSEGV when closing cursor while workers still access slave frame cache.
+    @Test
+    public void testWindowJoinWithPrevailingOnEmptyResultSetRegression() throws Exception {
+        // The bug was in AsyncWindowJoinRecordCursor.close() freeing slaveTimeFrameAddressCache
+        // before awaiting worker threads. With small page frames (4-8 rows), parallel execution
+        // is triggered even with moderate data sizes.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+
+        assertMemoryLeak(() -> {
+            // Create trades table (master)
+            execute(
+                    "CREATE TABLE trades (" +
+                            "    symbol SYMBOL," +
+                            "    side SYMBOL," +
+                            "    price DOUBLE," +
+                            "    amount DOUBLE," +
+                            "    timestamp TIMESTAMP" +
+                            ") timestamp(timestamp) PARTITION BY HOUR"
+            );
+
+            // Insert trades - enough rows to create multiple page frames for parallel execution
+            execute(
+                    "INSERT INTO trades SELECT " +
+                            "    rnd_symbol(100, 4, 4, 0) AS symbol," +
+                            "    rnd_symbol('buy', 'sell') as side," +
+                            "    rnd_double() * 20 + 10 AS price," +
+                            "    rnd_double() * 20 + 10 AS amount," +
+                            "    timestamp_sequence('2025-01-01', 10000) as timestamp " +
+                            "FROM long_sequence(1000)"
+            );
+
+            // Create prices table (slave)
+            execute(
+                    "CREATE TABLE prices (" +
+                            "    ts TIMESTAMP," +
+                            "    sym SYMBOL," +
+                            "    bid DOUBLE," +
+                            "    ask DOUBLE" +
+                            ") timestamp(ts) PARTITION BY HOUR BYPASS WAL"
+            );
+
+            // Insert prices - enough to keep workers busy during close()
+            execute(
+                    "INSERT INTO prices " +
+                            "SELECT " +
+                            "    timestamp_sequence('2024-12-31T23', 1000) as ts," +
+                            "    rnd_symbol(100, 4, 4, 0)," +
+                            "    rnd_double() * 10.0 + 5.0," +
+                            "    rnd_double() * 10.0 + 5.0 " +
+                            "FROM long_sequence(100000)"
+            );
+
+            // Query exercises the window join with parallel execution
+            assertSql(
+                    """
+                            symbol\tside\tprice\tamount\ttimestamp\tavg_bid\tavg_ask
+                            IBBT\tsell\t27.62658038426882\t25.755174211876263\t2025-01-01T00:00:00.000000Z\tnull\tnull
+                            SRGO\tsell\t23.775851060898002\t10.159709099174506\t2025-01-01T00:00:00.010000Z\tnull\tnull
+                            SSMP\tbuy\t11.565604136302905\t16.244392764407145\t2025-01-01T00:00:00.020000Z\tnull\tnull
+                            XKUI\tsell\t10.048915397521615\t13.947353449965911\t2025-01-01T00:00:00.030000Z\tnull\tnull
+                            HMLL\tsell\t14.021324739768806\t16.009749043773716\t2025-01-01T00:00:00.040000Z\tnull\tnull
+                            FLPB\tbuy\t19.839800343262496\t27.863620707156855\t2025-01-01T00:00:00.050000Z\tnull\tnull
+                            VLJU\tsell\t15.83019601640128\t29.917959191564314\t2025-01-01T00:00:00.060000Z\tnull\tnull
+                            OUOJ\tsell\t24.934027336260215\t26.80592941625909\t2025-01-01T00:00:00.070000Z\tnull\tnull
+                            IBBT\tsell\t20.61751353375695\t21.524088094210946\t2025-01-01T00:00:00.080000Z\tnull\tnull
+                            CTGQ\tsell\t13.49968514450758\t11.026703113256238\t2025-01-01T00:00:00.090000Z\tnull\tnull
+                            OUOJ\tbuy\t16.843632751428714\t15.84854969504557\t2025-01-01T00:00:00.100000Z\tnull\tnull
+                            LTJC\tsell\t29.22396570248674\t29.09283466161919\t2025-01-01T00:00:00.110000Z\tnull\tnull
+                            GSHO\tsell\t25.88504507239604\t28.117800596816146\t2025-01-01T00:00:00.120000Z\tnull\tnull
+                            DOTS\tsell\t16.41868117763792\t24.86294443626393\t2025-01-01T00:00:00.130000Z\tnull\tnull
+                            DYOP\tsell\t26.435305077197874\t15.413707089338455\t2025-01-01T00:00:00.140000Z\tnull\tnull
+                            YSBE\tsell\t10.2792159091968\t27.31259131836934\t2025-01-01T00:00:00.150000Z\tnull\tnull
+                            ZIMN\tsell\t13.384768613590621\t17.457309579815103\t2025-01-01T00:00:00.160000Z\tnull\tnull
+                            SHRU\tsell\t16.3235720755334\t17.701813396489623\t2025-01-01T00:00:00.170000Z\tnull\tnull
+                            HYHB\tbuy\t28.86493132935254\t22.759984186895146\t2025-01-01T00:00:00.180000Z\tnull\tnull
+                            RGII\tbuy\t19.221926182810602\t18.537842800419824\t2025-01-01T00:00:00.190000Z\tnull\tnull
+                            CXZO\tbuy\t10.591679371443165\t21.557635704613368\t2025-01-01T00:00:00.200000Z\tnull\tnull
+                            OXPK\tbuy\t28.96576151757136\t20.050827613754144\t2025-01-01T00:00:00.210000Z\tnull\tnull
+                            LTJC\tsell\t26.92242339501047\t20.899941634158836\t2025-01-01T00:00:00.220000Z\tnull\tnull
+                            DEYY\tsell\t27.533817292847473\t16.116016640182213\t2025-01-01T00:00:00.230000Z\tnull\tnull
+                            TJRS\tbuy\t22.959234881347033\t22.10100638570894\t2025-01-01T00:00:00.240000Z\tnull\tnull
+                            CTGQ\tsell\t12.921049998677834\t25.435105535889953\t2025-01-01T00:00:00.250000Z\tnull\tnull
+                            EDYY\tbuy\t16.30669914546051\t10.06503983223096\t2025-01-01T00:00:00.260000Z\tnull\tnull
+                            RXGZ\tsell\t11.786917367439454\t14.001364901858706\t2025-01-01T00:00:00.270000Z\tnull\tnull
+                            ZVQE\tsell\t27.791831657324227\t21.39546636906466\t2025-01-01T00:00:00.280000Z\tnull\tnull
+                            WCKY\tsell\t13.198423008539908\t13.339624263396804\t2025-01-01T00:00:00.290000Z\tnull\tnull
+                            TKVV\tsell\t13.688551244044207\t24.597321155459404\t2025-01-01T00:00:00.300000Z\tnull\tnull
+                            LGMX\tsell\t15.941031673027107\t11.20557575211648\t2025-01-01T00:00:00.310000Z\tnull\tnull
+                            EPIH\tbuy\t24.17402366454753\t12.73092931821326\t2025-01-01T00:00:00.320000Z\tnull\tnull
+                            YFFD\tbuy\t10.880800171783589\t18.085020227121333\t2025-01-01T00:00:00.330000Z\tnull\tnull
+                            NWIF\tsell\t20.729207504030697\t26.766120445035824\t2025-01-01T00:00:00.340000Z\tnull\tnull
+                            OOZZ\tbuy\t24.795632981855434\t12.15981147992586\t2025-01-01T00:00:00.350000Z\tnull\tnull
+                            VTJW\tbuy\t29.12355658415776\t10.22198531343937\t2025-01-01T00:00:00.360000Z\tnull\tnull
+                            RFBV\tsell\t22.00243118985623\t24.48473748327055\t2025-01-01T00:00:00.370000Z\tnull\tnull
+                            ROMN\tsell\t20.47740062300111\t20.671907152614516\t2025-01-01T00:00:00.380000Z\tnull\tnull
+                            FFYU\tbuy\t17.667129080102733\t27.707351259388567\t2025-01-01T00:00:00.390000Z\tnull\tnull
+                            SSMP\tsell\t24.67675977610084\t10.033065601247618\t2025-01-01T00:00:00.400000Z\tnull\tnull
+                            MSSU\tbuy\t29.953792861511868\t16.978557147036504\t2025-01-01T00:00:00.410000Z\tnull\tnull
+                            CTGQ\tsell\t11.476692834981783\t24.030822777492983\t2025-01-01T00:00:00.420000Z\tnull\tnull
+                            EDYY\tsell\t27.796452822328803\t23.881835850296664\t2025-01-01T00:00:00.430000Z\tnull\tnull
+                            RFBV\tbuy\t19.129335075801645\t12.257218521256053\t2025-01-01T00:00:00.440000Z\tnull\tnull
+                            HRIP\tsell\t25.566703507780534\t20.67048768117076\t2025-01-01T00:00:00.450000Z\tnull\tnull
+                            ZSRY\tbuy\t25.454640764755734\t16.248916021224627\t2025-01-01T00:00:00.460000Z\tnull\tnull
+                            HYHB\tsell\t25.886371535000865\t18.84310317447792\t2025-01-01T00:00:00.470000Z\tnull\tnull
+                            HYHB\tbuy\t17.30854044094422\t11.534495828195148\t2025-01-01T00:00:00.480000Z\tnull\tnull
+                            QULO\tsell\t26.818160509651435\t13.024224060779295\t2025-01-01T00:00:00.490000Z\tnull\tnull
+                            VDZJ\tbuy\t13.167957482341812\t23.085119757130766\t2025-01-01T00:00:00.500000Z\tnull\tnull
+                            LPDX\tbuy\t13.212893502033927\t20.129161502324173\t2025-01-01T00:00:00.510000Z\tnull\tnull
+                            LPDX\tbuy\t15.728020543309029\t19.826684208375337\t2025-01-01T00:00:00.520000Z\tnull\tnull
+                            HRIP\tsell\t18.082032632105324\t10.407817683892535\t2025-01-01T00:00:00.530000Z\tnull\tnull
+                            ZLUO\tsell\t23.888298107508575\t21.953229092823626\t2025-01-01T00:00:00.540000Z\tnull\tnull
+                            NWIF\tsell\t19.52077225629195\t11.134476656172474\t2025-01-01T00:00:00.550000Z\tnull\tnull
+                            ELLK\tbuy\t14.184340811274318\t15.094057822706276\t2025-01-01T00:00:00.560000Z\tnull\tnull
+                            DGLO\tsell\t27.738795234919074\t11.621840472934776\t2025-01-01T00:00:00.570000Z\tnull\tnull
+                            SLUQ\tbuy\t22.491335936372202\t16.485053950897814\t2025-01-01T00:00:00.580000Z\tnull\tnull
+                            LNVT\tsell\t23.98781919191839\t22.137131832694806\t2025-01-01T00:00:00.590000Z\tnull\tnull
+                            RXGZ\tsell\t26.29758525834465\t10.423559548894774\t2025-01-01T00:00:00.600000Z\tnull\tnull
+                            TMHG\tbuy\t22.723475346083802\t19.901230470039927\t2025-01-01T00:00:00.610000Z\tnull\tnull
+                            XKUI\tsell\t25.272695529329088\t20.789125031105968\t2025-01-01T00:00:00.620000Z\tnull\tnull
+                            FLRB\tbuy\t15.026396384114975\t21.647820237948338\t2025-01-01T00:00:00.630000Z\tnull\tnull
+                            IPHZ\tsell\t24.519935543823234\t14.916923042764703\t2025-01-01T00:00:00.640000Z\tnull\tnull
+                            CTGQ\tsell\t17.84229695014247\t28.479029586850537\t2025-01-01T00:00:00.650000Z\tnull\tnull
+                            ZSRY\tsell\t25.75285961005529\t14.176304090055979\t2025-01-01T00:00:00.660000Z\tnull\tnull
+                            DSWU\tsell\t15.425868155389564\t15.603843765010279\t2025-01-01T00:00:00.670000Z\tnull\tnull
+                            CTGQ\tsell\t12.35375275769121\t11.065736133015472\t2025-01-01T00:00:00.680000Z\tnull\tnull
+                            ZFKW\tbuy\t25.201101771231546\t23.768298047455954\t2025-01-01T00:00:00.690000Z\tnull\tnull
+                            HNIM\tsell\t19.42157626936415\t12.705119479615949\t2025-01-01T00:00:00.700000Z\tnull\tnull
+                            MYIC\tsell\t22.493764775978917\t19.71468597797314\t2025-01-01T00:00:00.710000Z\tnull\tnull
+                            GXHF\tsell\t27.775586730199752\t21.832838972867037\t2025-01-01T00:00:00.720000Z\tnull\tnull
+                            LTJC\tsell\t21.725613069659403\t26.5554305057099\t2025-01-01T00:00:00.730000Z\tnull\tnull
+                            GYVF\tsell\t18.092419400178116\t17.60003057461975\t2025-01-01T00:00:00.740000Z\tnull\tnull
+                            OQMY\tbuy\t21.85982392034898\t13.26416715258983\t2025-01-01T00:00:00.750000Z\tnull\tnull
+                            GLUO\tbuy\t14.657105656174414\t14.424549589606041\t2025-01-01T00:00:00.760000Z\tnull\tnull
+                            SRGO\tbuy\t20.719868855416763\t19.693053535393567\t2025-01-01T00:00:00.770000Z\tnull\tnull
+                            TJRS\tsell\t14.734617548001221\t16.456405634856537\t2025-01-01T00:00:00.780000Z\tnull\tnull
+                            HFOW\tsell\t15.392189805885586\t21.571290760949427\t2025-01-01T00:00:00.790000Z\tnull\tnull
+                            VTJW\tbuy\t12.64531233173071\t24.779545760438296\t2025-01-01T00:00:00.800000Z\tnull\tnull
+                            FMBE\tbuy\t12.543125456431344\t17.731290506506138\t2025-01-01T00:00:00.810000Z\tnull\tnull
+                            VTJW\tsell\t29.532569717902796\t11.232934355723161\t2025-01-01T00:00:00.820000Z\tnull\tnull
+                            HFOW\tbuy\t27.844068772068546\t23.87333982916651\t2025-01-01T00:00:00.830000Z\tnull\tnull
+                            XKUI\tbuy\t21.038381932392795\t29.348705762370983\t2025-01-01T00:00:00.840000Z\tnull\tnull
+                            ZZRM\tbuy\t12.638088085987135\t16.65230824310371\t2025-01-01T00:00:00.850000Z\tnull\tnull
+                            FJGE\tsell\t28.043043693990846\t16.15244013383554\t2025-01-01T00:00:00.860000Z\tnull\tnull
+                            GSHO\tbuy\t25.175720049547856\t10.225270236798849\t2025-01-01T00:00:00.870000Z\tnull\tnull
+                            DGLO\tbuy\t16.787019028000493\t17.96374488715091\t2025-01-01T00:00:00.880000Z\tnull\tnull
+                            EDYY\tbuy\t15.648153791985521\t26.109490964090764\t2025-01-01T00:00:00.890000Z\tnull\tnull
+                            GIFO\tbuy\t27.17935642395738\t27.285600063219317\t2025-01-01T00:00:00.900000Z\tnull\tnull
+                            OQMY\tsell\t10.526727955566603\t27.317233833129286\t2025-01-01T00:00:00.910000Z\tnull\tnull
+                            HYHB\tbuy\t10.946844747851184\t22.078349323344476\t2025-01-01T00:00:00.920000Z\tnull\tnull
+                            ZSQL\tbuy\t28.53385914328215\t21.02368330902948\t2025-01-01T00:00:00.930000Z\tnull\tnull
+                            OLYX\tbuy\t15.30448399238092\t26.809100994112733\t2025-01-01T00:00:00.940000Z\tnull\tnull
+                            ROMN\tsell\t21.527383568112796\t20.700330943529384\t2025-01-01T00:00:00.950000Z\tnull\tnull
+                            LTJC\tbuy\t11.12198693638817\t13.962977138980627\t2025-01-01T00:00:00.960000Z\tnull\tnull
+                            HNZH\tbuy\t28.820793409876465\t13.814646966480208\t2025-01-01T00:00:00.970000Z\tnull\tnull
+                            IPHZ\tbuy\t10.37439621579069\t16.06275240804409\t2025-01-01T00:00:00.980000Z\tnull\tnull
+                            OXPK\tbuy\t25.128429718796674\t27.43678869894423\t2025-01-01T00:00:00.990000Z\tnull\tnull
+                            """,
+                    "SELECT t.*, avg(p.bid) avg_bid, avg(p.ask) avg_ask " +
+                            "FROM trades t " +
+                            "WINDOW JOIN prices p ON p.sym = t.symbol " +
+                            "RANGE BETWEEN 1 second PRECEDING and 1 second FOLLOWING LIMIT 100");
+        });
+    }
+
     @Test
     public void testWindowJoinWithRndFilter() throws Exception {
         // timestamp types don't matter for this test
@@ -4202,6 +4372,66 @@ public class WindowJoinTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testWindowJoinSelfJoinWithAggregatesInSelectAndWhere() throws Exception {
+        // Reproducer for: https://demo.questdb.io error "Invalid column: price" at position 0
+        // Query: SELECT t.timestamp, t.order_id, t.symbol, t.side, t.price AS fill_price,
+        //        sum(w.price * w.quantity) / sum(w.quantity) AS vwap_5m, ...
+        //        FROM fx_trades t WINDOW JOIN fx_trades w ON (t.symbol = w.symbol)
+        //        RANGE BETWEEN 5 minutes PRECEDING AND 1 microseconds PRECEDING EXCLUDE PREVAILING
+        //        WHERE t.symbol = 'EURUSD' ORDER BY t.timestamp LIMIT 100
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fx_trades (" +
+                    "timestamp TIMESTAMP, " +
+                    "symbol SYMBOL, " +
+                    "side SYMBOL, " +
+                    "price DOUBLE, " +
+                    "quantity DOUBLE, " +
+                    "order_id UUID" +
+                    ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            execute("INSERT INTO fx_trades VALUES " +
+                    "('2025-01-01T00:00:00.000000Z', 'EURUSD', 'buy', 1.05, 1000, rnd_uuid4())," +
+                    "('2025-01-01T00:01:00.000000Z', 'EURUSD', 'sell', 1.051, 500, rnd_uuid4())," +
+                    "('2025-01-01T00:02:00.000000Z', 'EURUSD', 'buy', 1.052, 750, rnd_uuid4())," +
+                    "('2025-01-01T00:03:00.000000Z', 'GBPUSD', 'buy', 1.25, 1000, rnd_uuid4())," +
+                    "('2025-01-01T00:04:00.000000Z', 'EURUSD', 'sell', 1.053, 250, rnd_uuid4())," +
+                    "('2025-01-01T00:05:00.000000Z', 'EURUSD', 'buy', 1.054, 600, rnd_uuid4())");
+            drainWalQueue();
+
+            // Self-join with aggregates and WHERE clause - this was reproducing the "Invalid column: price" error
+            assertQueryNoLeakCheck(
+                    """
+                            timestamp\torder_id\tsymbol\tside\tfill_price\tvwap_5m\tslippage_bps
+                            2025-01-01T00:00:00.000000Z\t0010cde8-12ce-40ee-8010-a928bb8b9650\tEURUSD\tbuy\t1.05\tnull\tnull
+                            2025-01-01T00:01:00.000000Z\t9f9b2131-d49f-4d1d-ab81-39815c50d341\tEURUSD\tsell\t1.051\t1.05\t9.523809523808474
+                            2025-01-01T00:02:00.000000Z\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\tEURUSD\tbuy\t1.052\t1.0503333333333333\t15.867978419549715
+                            2025-01-01T00:04:00.000000Z\te8beef38-cd7b-43d8-9b2d-34586f6275fa\tEURUSD\tsell\t1.053\t1.050888888888889\t20.088813702684046
+                            2025-01-01T00:05:00.000000Z\t322a2198-864b-4b14-b97f-a69eb8fec6cc\tEURUSD\tbuy\t1.054\t1.0511\t27.590143659025067
+                            """,
+                    "SELECT " +
+                            "t.timestamp, " +
+                            "t.order_id, " +
+                            "t.symbol, " +
+                            "t.side, " +
+                            "t.price AS fill_price, " +
+                            "sum(w.price * w.quantity) / sum(w.quantity) AS vwap_5m, " +
+                            "(t.price - sum(w.price * w.quantity) / sum(w.quantity)) " +
+                            "    / (sum(w.price * w.quantity) / sum(w.quantity)) * 10000 AS slippage_bps " +
+                            "FROM fx_trades t " +
+                            "WINDOW JOIN fx_trades w " +
+                            "    ON (t.symbol = w.symbol) " +
+                            "    RANGE BETWEEN 5 minutes PRECEDING AND 1 microseconds PRECEDING " +
+                            "    EXCLUDE PREVAILING " +
+                            "WHERE t.symbol = 'EURUSD' " +
+                            "ORDER BY t.timestamp " +
+                            "LIMIT 100",
+                    "timestamp",
+                    false,
+                    false
+            );
+        });
+    }
+
     private void prepareTable() throws SqlException {
         executeWithRewriteTimestamp(
                 "create table trades (" +
@@ -4261,7 +4491,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                         "('TSLA', 402.0, cast('2023-01-01T09:16:00.000000Z' as #TIMESTAMP))," +
                         "('AMZN', 502.0, cast('2023-01-01T09:17:00.000000Z' as #TIMESTAMP))," +
                         "('META', 602.0, cast('2023-01-01T09:18:00.000000Z' as #TIMESTAMP))," +
-                        "('NFLX', 700.0, cast('2023-01-01T09:19:00.000000Z' as #TIMESTAMP));",
+                        "('NFLX', 700.0, cast('2023-01-02T09:19:00.000000Z' as #TIMESTAMP));",
                 leftTableTimestampType.getTypeName()
         );
         executeWithRewriteTimestamp(
@@ -4275,8 +4505,15 @@ public class WindowJoinTest extends AbstractCairoTest {
                         "('TSLA', 401.5, cast('2023-01-01T09:15:00.000000Z' as #TIMESTAMP))," +
                         "('AMZN', 501.5, cast('2023-01-01T09:16:00.000000Z' as #TIMESTAMP))," +
                         "('META', 601.5, cast('2023-01-01T09:17:00.000000Z' as #TIMESTAMP))," +
-                        "('NFLX', 699.5, cast('2023-01-01T09:18:00.000000Z' as #TIMESTAMP));",
+                        "('NFLX', 699.5, cast('2023-01-02T09:18:00.000000Z' as #TIMESTAMP));",
                 rightTableTimestampType.getTypeName()
         );
+        if (leftConvertParquet) {
+            execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+        }
+        if (rightConvertParquet) {
+            execute("ALTER TABLE prices CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+        }
+        drainWalQueue();
     }
 }

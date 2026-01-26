@@ -265,18 +265,19 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             parquetDecoder.of(frameDecoder);
         }
         final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
-        if (parquetMetadata.getColumnCount() < addressCache.getColumnCount()) {
+        int readParquetColumnCount = addressCache.getColumnIndexes().size();
+        if (parquetMetadata.getColumnCount() < readParquetColumnCount) {
             throw CairoException.nonCritical().put("parquet column count is less than number of queried table columns [parquetColumnCount=")
                     .put(parquetMetadata.getColumnCount())
                     .put(", columnCount=")
-                    .put(addressCache.getColumnCount());
+                    .put(readParquetColumnCount);
         }
 
         parquetColumns.reopen();
         parquetColumns.clear();
         fromParquetColumnIndexes.clear();
         fromParquetColumnIndexes.setAll(parquetMetadata.getColumnCount(), -1);
-        for (int i = 0, n = addressCache.getColumnCount(); i < n; i++) {
+        for (int i = 0; i < readParquetColumnCount; i++) {
             final int parquetColumnIndex = addressCache.getColumnIndexes().getQuick(i);
             final int columnType = addressCache.getColumnTypes().getQuick(i);
             parquetColumns.add(parquetColumnIndex);

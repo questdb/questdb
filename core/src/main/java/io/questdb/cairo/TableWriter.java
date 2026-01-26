@@ -202,6 +202,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final long dataAppendPageSize;
     private final DdlListener ddlListener;
     private final MemoryMAR ddlMem;
+    private final LongAdder dedupRowsRemovedSinceLastCommit = new LongAdder();
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final ObjList<MapWriter> denseSymbolMapWriters;
     private final int detachedMkDirMode;
@@ -245,7 +246,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final int pathRootSize;
     private final int pathSize;
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
-    private final LongAdder dedupRowsRemovedSinceLastCommit = new LongAdder();
     private final LongAdder physicallyWrittenRowsSinceLastCommit = new LongAdder();
     private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
@@ -725,6 +725,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    public void addDedupRowsRemoved(long count) {
+        dedupRowsRemovedSinceLastCommit.add(count);
+    }
+
     @Override
     public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize) {
         assert indexValueBlockSize == Numbers.ceilPow2(indexValueBlockSize) : "power of 2 expected";
@@ -776,8 +780,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$("]' to ").$substr(pathRootSize, path).$();
     }
 
-    public void addDedupRowsRemoved(long count) {
-        dedupRowsRemovedSinceLastCommit.add(count);
+    public void addPhysicallyWrittenRows(long rows) {
+        physicallyWrittenRowsSinceLastCommit.add(rows);
+        metrics.tableWriterMetrics().addPhysicallyWrittenRows(rows);
     }
 
     public long apply(AbstractOperation operation, long seqTxn) {
@@ -1284,9 +1289,99 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.commit(denseSymbolMapWriters);
     }
 
-    public void addPhysicallyWrittenRows(long rows) {
-        physicallyWrittenRowsSinceLastCommit.add(rows);
-        metrics.tableWriterMetrics().addPhysicallyWrittenRows(rows);
+    public void commitWalInsertTransactions(
+            @Transient Path walPath,
+            long seqTxn,
+            TableWriterPressureControl pressureControl
+    ) {
+        if (hasO3() || columnVersionWriter.hasChanges()) {
+            // When the writer is returned to the pool, it should be rolled back. Having an open transaction is very suspicious.
+            // Set the writer to distressed state and throw exception so that the writer is re-created.
+            distressed = true;
+            throw CairoException.critical(0).put("cannot process WAL while in transaction");
+        }
+
+        physicallyWrittenRowsSinceLastCommit.reset();
+        dedupRowsRemovedSinceLastCommit.reset();
+        txWriter.beginPartitionSizeUpdate();
+        long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
+        int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
+        // Capture wall clock once to reduce syscalls. Used for:
+        // - commit latency threshold check in processWalCommit()
+        // - recording last WAL commit timestamp
+        // - TTL wall clock comparison in housekeep()
+        final long wallClockMicros = configuration.getMicrosecondClock().getTicks();
+
+        boolean committed;
+        final long initialCommittedRowCount = txWriter.getRowCount();
+        walRowsProcessed = 0;
+
+        try {
+            if (transactionBlock == 1) {
+                committed = processWalCommit(walPath, seqTxn, pressureControl, commitToTimestamp, wallClockMicros);
+            } else {
+                try {
+                    int blockSize = processWalCommitBlock(
+                            seqTxn,
+                            transactionBlock,
+                            pressureControl
+                    );
+                    committed = blockSize > 0;
+                    seqTxn += blockSize - 1;
+                } catch (CairoException e) {
+                    if (e.isBlockApplyError()) {
+                        if (configuration.getDebugWalApplyBlockFailureNoRetry()) {
+                            // Do not re-try the application as 1 by 1 in tests.
+                            throw e;
+                        }
+                        pressureControl.onBlockApplyError();
+                        pressureControl.updateInflightTxnBlockLength(
+                                1,
+                                Math.max(1, walTxnDetails.getSegmentRowHi(seqTxn) - walTxnDetails.getSegmentRowLo(seqTxn))
+                        );
+                        LOG.info().$("failed to apply block, trying to apply 1 by 1 [table=").$(tableToken)
+                                .$(", startTxn=").$(seqTxn)
+                                .I$();
+                        // Try applying 1 transaction at a time
+                        committed = processWalCommit(walPath, seqTxn, pressureControl, commitToTimestamp, wallClockMicros);
+                    } else {
+                        throw e;
+                    }
+                }
+            }
+        } catch (CairoException e) {
+            if (e.isOutOfMemory()) {
+                // oom -> we cannot rely on internal TableWriter consistency, all bets are off, better to discard it and re-recreate
+                distressed = true;
+            }
+            throw e;
+        }
+
+        walTxnDetails.setIncrementRowsCommitted(walRowsProcessed);
+        if (committed) {
+            assert txWriter.getLagRowCount() == 0;
+
+            txWriter.setSeqTxn(seqTxn);
+            txWriter.setLagTxnCount(0);
+            txWriter.setLagOrdered(true);
+
+            commit00();
+            lastWalCommitTimestampMicros = wallClockMicros;
+            housekeep(wallClockMicros);
+            shrinkO3Mem();
+
+            assert txWriter.getPartitionCount() == 0 || txWriter.getMinTimestamp() >= txWriter.getPartitionTimestampByIndex(0);
+            LOG.debug().$("table ranges after the commit [table=").$(tableToken)
+                    .$(", minTs=").$ts(timestampDriver, txWriter.getMinTimestamp())
+                    .$(", maxTs=").$ts(timestampDriver, txWriter.getMaxTimestamp()).I$();
+        }
+
+        // Sometimes nothing is committed to the table, only copied to LAG.
+        // Sometimes data from LAG is made visible to the table using fast commit that increment transient row count.
+        // Keep in memory last committed seq txn, but do not write it to _txn file.
+        assert txWriter.getLagTxnCount() == (seqTxn - txWriter.getSeqTxn());
+        long rowsCommitted = txWriter.getRowCount() - initialCommittedRowCount;
+        metrics.tableWriterMetrics().addCommittedRows(rowsCommitted);
     }
 
     @Override
@@ -2167,6 +2262,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return dedupColumnCommitAddresses;
     }
 
+    public long getDedupRowsRemovedSinceLastCommit() {
+        return dedupRowsRemovedSinceLastCommit.sum();
+    }
+
     @TestOnly
     public ObjList<MapWriter> getDenseSymbolMapWriters() {
         return denseSymbolMapWriters;
@@ -2184,10 +2283,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getMaxTimestamp();
     }
 
-    public long getMinTimestamp() {
-        return txWriter.getMinTimestamp();
-    }
-
     @Override
     public int getMetaMaxUncommittedRows() {
         return metadata.getMaxUncommittedRows();
@@ -2201,6 +2296,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public long getMetadataVersion() {
         return txWriter.getMetadataVersion();
+    }
+
+    public long getMinTimestamp() {
+        return txWriter.getMinTimestamp();
     }
 
     public long getO3RowCount() {
@@ -2251,105 +2350,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public long getPartitionTimestamp(int partitionIndex) {
         return txWriter.getPartitionTimestampByIndex(partitionIndex);
-    }
-
-    public void commitWalInsertTransactions(
-            @Transient Path walPath,
-            long seqTxn,
-            TableWriterPressureControl pressureControl
-    ) {
-        if (hasO3() || columnVersionWriter.hasChanges()) {
-            // When the writer is returned to the pool, it should be rolled back. Having an open transaction is very suspicious.
-            // Set the writer to distressed state and throw exception so that the writer is re-created.
-            distressed = true;
-            throw CairoException.critical(0).put("cannot process WAL while in transaction");
-        }
-
-        physicallyWrittenRowsSinceLastCommit.reset();
-        dedupRowsRemovedSinceLastCommit.reset();
-        txWriter.beginPartitionSizeUpdate();
-        long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
-        int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
-        // Capture wall clock once to reduce syscalls. Used for:
-        // - commit latency threshold check in processWalCommit()
-        // - recording last WAL commit timestamp
-        // - TTL wall clock comparison in housekeep()
-        final long wallClockMicros = configuration.getMicrosecondClock().getTicks();
-
-        boolean committed;
-        final long initialCommittedRowCount = txWriter.getRowCount();
-        walRowsProcessed = 0;
-
-        try {
-            if (transactionBlock == 1) {
-                committed = processWalCommit(walPath, seqTxn, pressureControl, commitToTimestamp, wallClockMicros);
-            } else {
-                try {
-                    int blockSize = processWalCommitBlock(
-                            seqTxn,
-                            transactionBlock,
-                            pressureControl
-                    );
-                    committed = blockSize > 0;
-                    seqTxn += blockSize - 1;
-                } catch (CairoException e) {
-                    if (e.isBlockApplyError()) {
-                        if (configuration.getDebugWalApplyBlockFailureNoRetry()) {
-                            // Do not re-try the application as 1 by 1 in tests.
-                            throw e;
-                        }
-                        pressureControl.onBlockApplyError();
-                        pressureControl.updateInflightTxnBlockLength(
-                                1,
-                                Math.max(1, walTxnDetails.getSegmentRowHi(seqTxn) - walTxnDetails.getSegmentRowLo(seqTxn))
-                        );
-                        LOG.info().$("failed to apply block, trying to apply 1 by 1 [table=").$(tableToken)
-                                .$(", startTxn=").$(seqTxn)
-                                .I$();
-                        // Try applying 1 transaction at a time
-                        committed = processWalCommit(walPath, seqTxn, pressureControl, commitToTimestamp, wallClockMicros);
-                    } else {
-                        throw e;
-                    }
-                }
-            }
-        } catch (CairoException e) {
-            if (e.isOutOfMemory()) {
-                // oom -> we cannot rely on internal TableWriter consistency, all bets are off, better to discard it and re-recreate
-                distressed = true;
-            }
-            throw e;
-        }
-
-        walTxnDetails.setIncrementRowsCommitted(walRowsProcessed);
-        if (committed) {
-            assert txWriter.getLagRowCount() == 0;
-
-            txWriter.setSeqTxn(seqTxn);
-            txWriter.setLagTxnCount(0);
-            txWriter.setLagOrdered(true);
-
-            commit00();
-            lastWalCommitTimestampMicros = wallClockMicros;
-            housekeep(wallClockMicros);
-            shrinkO3Mem();
-
-            assert txWriter.getPartitionCount() == 0 || txWriter.getMinTimestamp() >= txWriter.getPartitionTimestampByIndex(0);
-            LOG.debug().$("table ranges after the commit [table=").$(tableToken)
-                    .$(", minTs=").$ts(timestampDriver, txWriter.getMinTimestamp())
-                    .$(", maxTs=").$ts(timestampDriver, txWriter.getMaxTimestamp()).I$();
-        }
-
-        // Sometimes nothing is committed to the table, only copied to LAG.
-        // Sometimes data from LAG is made visible to the table using fast commit that increment transient row count.
-        // Keep in memory last committed seq txn, but do not write it to _txn file.
-        assert txWriter.getLagTxnCount() == (seqTxn - txWriter.getSeqTxn());
-        long rowsCommitted = txWriter.getRowCount() - initialCommittedRowCount;
-        metrics.tableWriterMetrics().addCommittedRows(rowsCommitted);
-    }
-
-    public long getDedupRowsRemovedSinceLastCommit() {
-        return dedupRowsRemovedSinceLastCommit.sum();
     }
 
     public long getPhysicallyWrittenRowsSinceLastCommit() {
@@ -3156,7 +3156,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private static void configureNullSetters(ObjList<Runnable> nullers, int columnType, MemoryA dataMem, MemoryA auxMem) {
+    private static void configureNullSetters(ObjList<Runnable> nullers, int columnType, MemoryA dataMem, MemoryA auxMem, int columnIndex, ObjList<MapWriter> symbolWriters) {
         short columnTag = ColumnType.tagOf(columnType);
         if (ColumnType.isVarSize(columnTag)) {
             final ColumnTypeDriver typeDriver = ColumnType.getDriver(columnTag);
@@ -3199,7 +3199,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     nullers.add(() -> dataMem.putChar((char) 0));
                     break;
                 case ColumnType.SYMBOL:
-                    nullers.add(() -> dataMem.putInt(SymbolTable.VALUE_IS_NULL));
+                    nullers.add(() -> {
+                        symbolWriters.getQuick(columnIndex).updateNullFlag(true);
+                        dataMem.putInt(SymbolTable.VALUE_IS_NULL);
+                    });
                     break;
                 case ColumnType.GEOBYTE:
                     nullers.add(() -> dataMem.putByte(GeoHashes.BYTE_NULL));
@@ -4165,9 +4168,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3MemColumns1.extendAndSet(baseIndex + 1, o3AuxMem1);
         o3MemColumns2.extendAndSet(baseIndex, o3DataMem2);
         o3MemColumns2.extendAndSet(baseIndex + 1, o3AuxMem2);
-        configureNullSetters(nullSetters, type, dataMem, auxMem);
-        configureNullSetters(o3NullSetters1, type, o3DataMem1, o3AuxMem1);
-        configureNullSetters(o3NullSetters2, type, o3DataMem2, o3AuxMem2);
+        configureNullSetters(nullSetters, type, dataMem, auxMem, index, symbolMapWriters);
+        configureNullSetters(o3NullSetters1, type, o3DataMem1, o3AuxMem1, index, symbolMapWriters);
+        configureNullSetters(o3NullSetters2, type, o3DataMem2, o3AuxMem2, index, symbolMapWriters);
 
         if (indexFlag && type > 0) {
             indexers.extendAndSet(index, new SymbolColumnIndexer(configuration));
@@ -10100,6 +10103,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             txWriter.updatePartitionSizeByTimestamp(targetPartition, targetFrame.getRowCount());
+            if (!txWriter.incrementPartitionSquashCounter(targetPartitionIndex)) {
+                // The squash counter overflew its 16 bits
+                // To help back to detect partition changes we will save a file inside the partition with the current timestamp
+                // to indicate the squash timing. When squash timing/version has changed, even when the partitition has
+                // the same version and row count it will be included in a backup.
+                // It is OK to overwrite the file, it is not read by backup process at the moment
+                // because backup locks scoreboard to not allow to squash into the partitions it operates on
+                squashSplitPartitions_updateSquashTimestampFile(targetPartition, targetPartitionNameTxn);
+            }
+
+
             if (lastPartitionSquashed) {
                 // last partition is squashed, adjust fixed/transient row sizes
                 long newTransientRowCount = targetFrame.getRowCount() - txWriter.getLagRowCount();
@@ -10130,6 +10144,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return -partitionIndex - 1;
         }
         return partitionIndex;
+    }
+
+    private void squashSplitPartitions_updateSquashTimestampFile(long targetPartition, long targetPartitionNameTxn) {
+        try {
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, targetPartition, targetPartitionNameTxn);
+            other.concat(TableUtils.PARTITION_LAST_SQUASH_TIMESTAMP_FILE);
+            long squashCounterFileFd = TableUtils.openRW(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
+            Unsafe.getUnsafe().putLong(tempMem16b, configuration.getMicrosecondClock().getTicks());
+
+            if (ff.write(squashCounterFileFd, tempMem16b, Long.BYTES, 0) != Long.BYTES) {
+                // Log as critical, this is not fatal
+                LOG.critical().$("cannot write partition squash timestamp, " +
+                                "incremental backup may not be able to track partition update [path=")
+                        .$(other).$(", errno=").$(ff.errno())
+                        .I$();
+
+            }
+            ff.close(squashCounterFileFd);
+        } finally {
+            other.trimTo(pathSize);
+        }
     }
 
     private void swapO3ColumnsExcept(int timestampIndex) {

@@ -50,37 +50,27 @@ public class ViewFuzzTest extends AbstractFuzzTest {
     private static final String[] timestampTypes = new String[]{"timestamp", "timestamp_ns"};
 
     @Test
-    public void testBaseTableCanHaveColumnsAdded() throws Exception {
+    public void testSingleView() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = fuzzer.generateRandom(LOG);
-            setFuzzParams(rnd, 0.2);
+            setFuzzParams(rnd);
             setFuzzProperties(rnd);
-            runViewFuzz(rnd, getTestName(), 1, true);
+            runViewFuzz(rnd, getTestName(), 1);
         });
     }
 
     @Test
-    public void testManyTablesCompilerJobRace() throws Exception {
+    public void testManyIndependentViews() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = fuzzer.generateRandom(LOG);
-            setFuzzParams(rnd, 1_000, 10_000, 0, 0.0);
+            setFuzzParams(rnd);
             setFuzzProperties(rnd);
-            runViewFuzz(rnd, getTestName(), 1 + rnd.nextInt(4), false);
+            runViewFuzz(rnd, getTestName(), 2 + rnd.nextInt(4));
         });
     }
 
     @Test
-    public void testManyTablesView() throws Exception {
-        assertMemoryLeak(() -> {
-            Rnd rnd = fuzzer.generateRandom(LOG);
-            setFuzzParams(rnd, 0);
-            setFuzzProperties(rnd);
-            runViewFuzz(rnd, getTestName(), 1 + rnd.nextInt(4), true);
-        });
-    }
-
-    @Test
-    public void testMultipleLevelDependencyViews() throws Exception {
+    public void testMultipleLevelDependencyViewsWithRandomSelect() throws Exception {
         final Rnd rnd = fuzzer.generateRandom(LOG);
         final RandomSelectGenerator selectGenerator = new RandomSelectGenerator(engine, rnd);
 
@@ -93,7 +83,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
-    public void testOneView() throws Exception {
+    public void testSingleViewWithRandomSelect() throws Exception {
         final Rnd rnd = fuzzer.generateRandom(LOG);
         final RandomSelectGenerator selectGenerator = new RandomSelectGenerator(engine, rnd);
 
@@ -108,21 +98,21 @@ public class ViewFuzzTest extends AbstractFuzzTest {
 
     private ObjList<FuzzTransaction> createTransactionsAndView(
             Rnd rnd,
-            String tableNameBase,
+            String tableName,
             String viewName,
             String viewSql
     ) throws SqlException, NumericException {
-        fuzzer.createInitialTableWal(tableNameBase, timestampTypes[rnd.nextInt(10) % 2]);
+        fuzzer.createInitialTableWal(tableName, timestampTypes[rnd.nextInt(10) % 2]);
         createView(viewName, viewSql);
 
-        ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameBase, rnd);
+        ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableName, rnd);
 
         // Release table writers to reduce memory pressure
         engine.releaseInactive();
         return transactions;
     }
 
-    private void runViewFuzz(Rnd rnd, String testTableName, int tableCount, boolean expectValidViews) throws Exception {
+    private void runViewFuzz(Rnd rnd, String tableNameBase, int tableCount) throws Exception {
         final AtomicBoolean stop = new AtomicBoolean();
         final ObjList<Thread> viewCompilerJobs = new ObjList<>();
         final int viewCompilerJobCount = 1 + rnd.nextInt(4);
@@ -135,17 +125,17 @@ public class ViewFuzzTest extends AbstractFuzzTest {
         final ObjList<String> viewSqls = new ObjList<>();
 
         for (int i = 0; i < tableCount; i++) {
-            String tableNameBase = testTableName + "_" + i;
-            String tableNameView = tableNameBase + "_v";
-            String viewSql = "select min(c3), max(c3), ts from " + tableNameBase + " sample by 1h";
-            ObjList<FuzzTransaction> transactions = createTransactionsAndView(rnd, tableNameBase, tableNameView, viewSql);
+            String tableName = tableNameBase + "_" + i;
+            String viewName = tableName + "_v";
+            String viewSql = "select min(c3), max(c3), ts from " + tableName + " sample by 1h";
+            ObjList<FuzzTransaction> transactions = createTransactionsAndView(rnd, tableName, viewName, viewSql);
             fuzzTransactions.add(transactions);
             viewSqls.add(viewSql);
         }
 
         // Can help to reduce memory consumption.
         engine.releaseInactive();
-        fuzzer.applyManyWalParallel(fuzzTransactions, rnd, testTableName, true, true);
+        fuzzer.applyManyWalParallel(fuzzTransactions, rnd, tableNameBase, true, true);
 
         stop.set(true);
         for (int i = 0; i < viewCompilerJobCount; i++) {
@@ -160,54 +150,39 @@ public class ViewFuzzTest extends AbstractFuzzTest {
 
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             for (int i = 0; i < tableCount; i++) {
-                final String viewName = testTableName + "_" + i + "_v";
+                final String viewName = tableNameBase + "_" + i + "_v";
                 final String viewSql = viewSqls.getQuick(i);
                 LOG.info().$("asserting view ").$(viewName).$(" against ").$(viewSql).$();
-                // Check that the view exists.
+                // check that the view exists and it is valid
                 assertSql(
                         """
-                                count
-                                1
+                                view_status
+                                valid
                                 """,
-                        "select count() " +
+                        "select view_status " +
                                 "from views() " +
                                 "where view_name = '" + viewName + "'"
                 );
-                if (expectValidViews) {
-                    assertSql(
-                            """
-                                    count
-                                    1
-                                    """,
-                            "select count() " +
-                                    "from views() " +
-                                    "where view_name = '" + viewName + "' and view_status <> 'invalid'"
-                    );
-                    TestUtils.assertSqlCursors(
-                            compiler,
-                            sqlExecutionContext,
-                            viewSql,
-                            viewName,
-                            LOG
-                    );
-                }
+                TestUtils.assertSqlCursors(
+                        compiler,
+                        sqlExecutionContext,
+                        viewSql,
+                        viewName,
+                        LOG
+                );
             }
         }
     }
 
-    private void setFuzzParams(Rnd rnd, double colAddProb) {
-        setFuzzParams(rnd, 10_000, 100_000, colAddProb, 0);
-    }
-
-    private void setFuzzParams(Rnd rnd, int transactionCount, int initialRowCount, double colAddProb, double truncateProb) {
+    private void setFuzzParams(Rnd rnd) {
         fuzzer.setFuzzCounts(
                 rnd.nextBoolean(),
-                rnd.nextInt(transactionCount),
-                rnd.nextInt(1000),
+                rnd.nextInt(300),
+                rnd.nextInt(150),
                 rnd.nextInt(3),
                 rnd.nextInt(5),
                 rnd.nextInt(1000),
-                rnd.nextInt(initialRowCount),
+                rnd.nextInt(3000),
                 5 + rnd.nextInt(10)
         );
 
@@ -217,14 +192,14 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0.0,
                 0.0,
-                colAddProb,
+                0.3,
                 0.0,
                 0.0,
                 0.0,
-                1,
+                0.8,
                 0.0,
                 0.0,
-                truncateProb,
+                0.3,
                 0.0,
                 0.0,
                 0.1,
@@ -262,15 +237,11 @@ public class ViewFuzzTest extends AbstractFuzzTest {
         return th;
     }
 
-    private void testViewFuzz(RandomSelectGenerator selectGenerator, Rnd rnd, String baseTableName, String... viewNames) throws Exception {
+    private void testViewFuzz(RandomSelectGenerator selectGenerator, Rnd rnd, String tableName, String... viewNames) throws Exception {
         long start = MicrosTimestampDriver.floor("2022-02-24T17");
-        testViewFuzz(selectGenerator, rnd, baseTableName, start, viewNames);
-    }
-
-    private void testViewFuzz(RandomSelectGenerator selectGenerator, Rnd rnd, String baseTableName, long start, String... viewNames) throws Exception {
         assertMemoryLeak(() -> {
-            fuzzer.createInitialTableWal(baseTableName, timestampTypes[rnd.nextInt(10) % 2]);
-            selectGenerator.registerTable(baseTableName);
+            fuzzer.createInitialTableWal(tableName, timestampTypes[rnd.nextInt(10) % 2]);
+            selectGenerator.registerTable(tableName);
 
             final ObjList<String> viewSqls = new ObjList<>();
             try (ViewCompilerJob viewCompiler = new ViewCompilerJob(0, engine, 0)) {
@@ -279,7 +250,8 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                     viewSqls.add(viewSql);
                     createView(viewName, viewSql);
                     LOG.info().$("created view ").$(viewName).$(" as ").$(viewSql).$();
-                    viewCompiler.run(0); // compile the view before registering it. so if there is a dependant view it gets to see this view's metadata
+                    // compile the view before registering it, so dependent views can see this view's metadata
+                    viewCompiler.run(0);
                     selectGenerator.registerTable(viewName);
                 }
             }
@@ -287,15 +259,15 @@ public class ViewFuzzTest extends AbstractFuzzTest {
             AtomicBoolean stop = new AtomicBoolean();
             Thread viewCompilerJob = startViewCompilerJob(0, stop, rnd);
 
-            setFuzzParams(rnd, 0);
+            setFuzzParams(rnd);
 
-            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(baseTableName, rnd, start);
+            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableName, rnd, start);
             ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
             fuzzTransactions.add(transactions);
             fuzzer.applyManyWalParallel(
                     fuzzTransactions,
                     rnd,
-                    baseTableName,
+                    tableName,
                     false,
                     true
             );

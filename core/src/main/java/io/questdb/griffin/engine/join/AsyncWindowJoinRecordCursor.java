@@ -126,24 +126,28 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     @Override
     public void close() {
         if (isOpen) {
-            Misc.free(slaveFrameCursor);
-            Misc.free(slaveTimeFrameAddressCache);
-            if (masterFrameSequence != null) {
-                LOG.debug()
-                        .$("closing [shard=").$(masterFrameSequence.getShard())
-                        .$(", frameIndex=").$(frameIndex)
-                        .$(", frameCount=").$(frameLimit)
-                        .$(", frameId=").$(masterFrameSequence.getId())
-                        .$(", cursor=").$(cursor)
-                        .I$();
+            try {
+                if (masterFrameSequence != null) {
+                    LOG.debug()
+                            .$("closing [shard=").$(masterFrameSequence.getShard())
+                            .$(", frameIndex=").$(frameIndex)
+                            .$(", frameCount=").$(frameLimit)
+                            .$(", frameId=").$(masterFrameSequence.getId())
+                            .$(", cursor=").$(cursor)
+                            .I$();
 
-                collectCursor(true);
-                if (frameLimit > -1) {
-                    masterFrameSequence.await();
+                    collectCursor(true);
+                    if (frameLimit > -1) {
+                        masterFrameSequence.await();
+                    }
+                    masterFrameSequence.reset();
                 }
-                masterFrameSequence.reset();
+            } finally {
+                // Free shared resources only after workers have finished
+                Misc.free(slaveFrameCursor);
+                Misc.free(slaveTimeFrameAddressCache);
+                isOpen = false;
             }
-            isOpen = false;
         }
     }
 

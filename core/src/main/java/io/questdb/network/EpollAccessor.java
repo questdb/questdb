@@ -40,10 +40,6 @@ public class EpollAccessor {
 
     private static native int epollWait(int epfd, long eventPtr, int eventCount, int timeout);
 
-    private static native long readEventFd(int fd);
-
-    private static native int writeEventFd(int fd);
-
     static native int epollCreate();
 
     static native int epollCtl(int epfd, int op, int fd, long eventPtr);
@@ -51,8 +47,6 @@ public class EpollAccessor {
     static int epollWait(long epfd, long eventPtr, int eventCount, int timeout) {
         return epollWait(toOsFd(epfd), eventPtr, eventCount, timeout);
     }
-
-    static native int eventFd();
 
     static native int getCtlAdd();
 
@@ -73,14 +67,6 @@ public class EpollAccessor {
     static native short getEventSize();
 
     static native short getEventsOffset();
-
-    static long readEventFd(long fd) {
-        return readEventFd(toOsFd(fd));
-    }
-
-    static int writeEventFd(long fd) {
-        return writeEventFd(toOsFd(fd));
-    }
 
     static {
         DATA_OFFSET = getDataOffset();

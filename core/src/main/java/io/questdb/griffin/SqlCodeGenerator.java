@@ -4061,6 +4061,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 //  - if `false`, the join may or may not be self-join
                                 boolean isSelfJoin = isSameTable(master, slave);
                                 processJoinContext(index == 1, isSelfJoin, slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
+                                validateTimestampNotInJoinKeys(slaveModel, masterMetadata, slaveMetadata);
                                 master = joinType == JOIN_ASOF
                                         ? generateJoinAsof(isSelfJoin, model, slaveModel, master, masterMetadata, masterAlias, slave, slaveMetadata)
                                         : generateJoinLt(model, slaveModel, master, masterMetadata, masterAlias, slave, slaveMetadata);
@@ -4224,7 +4225,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
 
                                 if (!isLastWindowJoin) {
-                                    final GenericRecordMetadata metadata = GenericRecordMetadata.copyOf(joinMetadata, splitIndex);
+                                    final GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(joinMetadata, splitIndex);
                                     for (int j = 0, m = outerProjectionMetadata.getColumnCount(); j < m; j++) {
                                         metadata.add(outerProjectionMetadata.getColumnMetadata(j));
                                     }
@@ -4312,7 +4313,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             if (columnIndex == null) {
                                                 factory = new ExtraNullColumnCursorFactory(outerProjectionMetadata, masterMetadata.getColumnCount(), master);
                                             } else {
-                                                GenericRecordMetadata metadata = GenericRecordMetadata.copyOf(masterMetadata);
+                                                GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(masterMetadata);
                                                 for (int k = 0, m = aggregateCols.size(); k < m; k++) {
                                                     metadata.add(new TableColumnMetadata(aggregateCols.get(k).getAlias().toString(), groupByFunctions.get(k).getType()));
                                                 }
@@ -4785,7 +4786,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     model.getMetadataVersion(),
                     intervalModel,
                     timestampIndex,
-                    GenericRecordMetadata.deepCopyOf(reader.getMetadata()),
+                    GenericRecordMetadata.copyOfNew(reader.getMetadata()),
                     ORDER_DESC,
                     getViewName(viewExpr),
                     getViewPosition(viewExpr),
@@ -4795,7 +4796,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             partitionFrameCursorFactory = new FullPartitionFrameCursorFactory(
                     tableToken,
                     model.getMetadataVersion(),
-                    GenericRecordMetadata.deepCopyOf(reader.getMetadata()),
+                    GenericRecordMetadata.copyOfNew(reader.getMetadata()),
                     ORDER_DESC,
                     getViewName(viewExpr),
                     getViewPosition(viewExpr),
@@ -5449,7 +5450,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             tempColumnsList.clear();
             for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
                 final QueryColumn column = model.getBottomUpColumns().getQuick(i);
-                if (!column.isWindowColumn()) {
+                if (!column.isWindowExpression()) {
                     final ExpressionNode node = column.getAst();
                     if (node.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
                         tempColumnsList.add(column);
@@ -6745,7 +6746,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn qc = columns.getQuick(i);
-                if (qc.isWindowColumn()) {
+                if (qc.isWindowExpression()) {
                     final WindowExpression ac = (WindowExpression) qc;
                     final ExpressionNode ast = qc.getAst();
 
@@ -6927,7 +6928,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final IntList columnIndexes = new IntList();
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn qc = columns.getQuick(i);
-                if (!qc.isWindowColumn()) {
+                if (!qc.isWindowExpression()) {
                     final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
                     final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
                     chainMetadata.addIfNotExists(i, m);
@@ -6983,7 +6984,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             deferredWindowMetadata.clear();
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn qc = columns.getQuick(i);
-                if (qc.isWindowColumn()) {
+                if (qc.isWindowExpression()) {
                     final WindowExpression ac = (WindowExpression) qc;
                     final ExpressionNode ast = qc.getAst();
 
@@ -7419,7 +7420,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return new EmptyTableRecordCursorFactory(queryMeta, metadata.getTableToken());
         }
 
-        GenericRecordMetadata dfcFactoryMeta = GenericRecordMetadata.deepCopyOf(metadata);
+        GenericRecordMetadata dfcFactoryMeta = GenericRecordMetadata.copyOfNew(metadata);
         final int latestByColumnCount = prepareLatestByColumnIndexes(latestBy, queryMeta);
         final TableToken tableToken = metadata.getTableToken();
         ExpressionNode withinExtracted;
@@ -7472,6 +7473,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 intrinsicModel = whereClauseParser.extract(
                         model,
+                        expressionNodePool,
                         whereClause,
                         metadata,
                         preferredKeyColumn,
@@ -7485,7 +7487,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             } else {
                 intrinsicModel = whereClauseParser.getEmpty(
                         reader.getMetadata().getTimestampType(),
-                        reader.getPartitionedBy()
+                        reader.getPartitionedBy(),
+                        executionContext.getCairoEngine().getConfiguration()
                 );
             }
 
@@ -8499,6 +8502,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         .put(metadata.getColumnName(0))
                         .put(": ")
                         .put(ColumnType.nameOf(columnType));
+        }
+    }
+
+    private void validateTimestampNotInJoinKeys(QueryModel slaveModel, RecordMetadata masterMetadata, RecordMetadata slaveMetadata) throws SqlException {
+        // When timestamp is the ONLY join key, isKeyedTemporalJoin() will return false and simplify
+        // "ASOF JOIN ON (ts)" to a non-keyed join, which is harmless. But when timestamp is combined
+        // with other keys like "ON (sym, ts)", it causes problems in the join implementation.
+        int keyCount = listColumnFilterA.getColumnCount();
+        if (keyCount <= 1) {
+            return; // Single key (or no key) is fine - handled by isKeyedTemporalJoin()
+        }
+        // listColumnFilterA contains slave column indices, listColumnFilterB contains master column indices
+        int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
+        int masterTimestampIndex = masterMetadata.getTimestampIndex();
+        for (int i = 0; i < keyCount; i++) {
+            if (listColumnFilterA.getColumnIndexFactored(i) == slaveTimestampIndex ||
+                    listColumnFilterB.getColumnIndexFactored(i) == masterTimestampIndex) {
+                throw SqlException.$(slaveModel.getJoinKeywordPosition(),
+                        "ASOF/LT JOIN cannot use designated timestamp as a join key");
+            }
         }
     }
 

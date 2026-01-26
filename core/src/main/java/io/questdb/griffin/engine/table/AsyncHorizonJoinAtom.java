@@ -210,7 +210,7 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
             this.ownerGroupByFunctions = ownerGroupByFunctions;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
 
-            final Class<GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
+            final Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
             this.ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);
             this.perWorkerFunctionUpdaters = new ObjList<>(slotCount);
             if (perWorkerGroupByFunctions != null) {

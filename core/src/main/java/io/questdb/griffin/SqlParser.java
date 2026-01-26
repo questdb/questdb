@@ -69,6 +69,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -106,6 +107,7 @@ public class SqlParser {
     private final IntList accumulatedColumnPositions = new IntList();
     private final ObjList<QueryColumn> accumulatedColumns = new ObjList<>();
     private final LowerCaseCharSequenceHashSet aliasMap = new LowerCaseCharSequenceHashSet();
+    private final LowerCaseCharSequenceIntHashMap aliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
     private final CairoEngine cairoEngine;
     private final CharacterStore characterStore;
     private final CharSequence column;
@@ -148,6 +150,9 @@ public class SqlParser {
     private final LowerCaseCharSequenceHashSet viewsBeingCompiled = new LowerCaseCharSequenceHashSet();
     private final ObjectPool<WindowExpression> windowExpressionPool;
     private final ObjectPool<WithClauseModel> withClauseModelPool;
+    private boolean copyMode = false;
+    private boolean createTableMode = false;
+    private boolean createViewMode = false;
     private int digit;
     private boolean pivotMode = false;
     private boolean subQueryMode = false;
@@ -556,6 +561,7 @@ public class SqlParser {
                 unquote(token),
                 Chars.indexOfLastUnquoted(token, '.'),
                 aliasToColumnMap,
+                aliasSequenceMap,
                 type != ExpressionNode.LITERAL
         );
     }
@@ -782,6 +788,7 @@ public class SqlParser {
                     characterStore,
                     entry.toImmutable(),
                     aliasMap,
+                    aliasSequenceMap,
                     configuration.getColumnAliasGeneratedMaxSize(),
                     qc.getAst().type != ExpressionNode.LITERAL
             );
@@ -790,7 +797,7 @@ public class SqlParser {
                 alias = createConstColumnAlias(aliasMap);
             } else {
                 CharSequence tokenAlias = qc.getAst().token;
-                if (qc.isWindowColumn() && ((WindowExpression) qc).isIgnoreNulls()) {
+                if (qc.isWindowExpression() && ((WindowExpression) qc).isIgnoreNulls()) {
                     tokenAlias += "_ignore_nulls";
                 }
                 alias = createColumnAlias(tokenAlias, qc.getAst().type, aliasMap);
@@ -942,10 +949,15 @@ public class SqlParser {
 
         if (tok.length() == 1 && tok.charAt(0) == '(') {
             startOfSelect = lexer.getPosition();
-            parseDml(lexer, startOfSelect, sqlParserCallback);
-            final int endOfSelect = lexer.getPosition() - 1;
-            selectText = lexer.getContent().subSequence(startOfSelect, endOfSelect);
-            expectTok(lexer, ')');
+            copyMode = true;
+            try {
+                parseDml(lexer, startOfSelect, sqlParserCallback);
+                final int endOfSelect = lexer.getPosition() - 1;
+                selectText = lexer.getContent().subSequence(startOfSelect, endOfSelect);
+                expectTok(lexer, ')');
+            } finally {
+                copyMode = false;
+            }
         } else {
             lexer.unparseLast();
             target = expectExpr(lexer, sqlParserCallback);
@@ -1759,7 +1771,13 @@ public class SqlParser {
         final int startOfSelect = lexer.getPosition();
         // Parse SELECT for the sake of basic SQL validation.
         // It'll be compiled and optimized later, at the execution phase.
-        final QueryModel selectModel = parseDml(lexer, startOfSelect, sqlParserCallback);
+        QueryModel selectModel;
+        createTableMode = true;
+        try {
+            selectModel = parseDml(lexer, startOfSelect, sqlParserCallback);
+        } finally {
+            createTableMode = false;
+        }
         final int endOfSelect = lexer.getPosition() - 1;
         final String selectText = Chars.toString(lexer.getContent(), startOfSelect, endOfSelect);
         createTableOperationBuilder.setSelectText(selectText, startOfSelect);
@@ -2035,7 +2053,13 @@ public class SqlParser {
             expectTok(lexer, "select");
         }
         lexer.unparseLast();
-        final QueryModel queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
+        final QueryModel queryModel;
+        try {
+            createViewMode = true;
+            queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
+        } finally {
+            createViewMode = false;
+        }
         final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
 
         final String viewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);
@@ -2814,8 +2838,9 @@ public class SqlParser {
                     throw SqlException.$(lexer.lastTokenPosition(), "literal or expression expected");
                 }
 
+                // token can sometimes be null, like during parsing of CASE clause
                 if ((n.type == ExpressionNode.CONSTANT && Chars.equals("''", n.token))
-                        || (n.type == ExpressionNode.LITERAL && n.token.isEmpty())) {
+                        || (n.type == ExpressionNode.LITERAL && (n.token == null || n.token.isEmpty()))) {
                     throw SqlException.$(lexer.lastTokenPosition(), "non-empty literal or expression expected");
                 }
 
@@ -3485,6 +3510,7 @@ public class SqlParser {
                         characterStore,
                         entry.toImmutable(),
                         pivotAliasMap,
+                        aliasSequenceMap,
                         configuration.getColumnAliasGeneratedMaxSize(),
                         true
                 );
@@ -3535,6 +3561,7 @@ public class SqlParser {
             } else {
                 tempCharSequenceSet.clear();
                 pivotAliasMap.clear();
+                aliasSequenceMap.clear();
                 do {
                     ExpressionNode expr = expr(lexer, model, sqlParserCallback);
                     if (expr == null) {
@@ -3573,6 +3600,7 @@ public class SqlParser {
                                 characterStore,
                                 unquote(exprName),
                                 pivotAliasMap,
+                                aliasSequenceMap,
                                 configuration.getColumnAliasGeneratedMaxSize(),
                                 true
                         );
@@ -3840,10 +3868,20 @@ public class SqlParser {
                 accumulatedColumns.add(col);
                 accumulatedColumnPositions.add(colPosition);
 
-                if (tok == null || Chars.equals(tok, ';') || Chars.equals(tok, ')')) {
-                    //accept ending ')' in create table as
+                if (tok == null || Chars.equals(tok, ';')) {
                     lexer.unparseLast();
                     break;
+                }
+
+                if (Chars.equals(tok, ')')) {
+                    if (subQueryMode || createTableMode || copyMode || createViewMode) {
+                        // it's a balanced: ')'
+                        lexer.unparseLast();
+                        break;
+                    } else {
+                        // it's an unbalanced ')' in top-level SELECT
+                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [)]");
+                    }
                 }
 
                 if (isFromKeyword(tok)) {
@@ -3876,6 +3914,7 @@ public class SqlParser {
             accumulatedColumns.clear();
             accumulatedColumnPositions.clear();
             aliasMap.clear();
+            aliasSequenceMap.clear();
         }
     }
 
@@ -3885,7 +3924,7 @@ public class SqlParser {
             LowerCaseCharSequenceObjHashMap<WithClauseModel> masterModel,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        ExpressionNode expr = expr(lexer, model, sqlParserCallback);
+        ExpressionNode expr = expr(lexer, model, sqlParserCallback, model.getDecls());
         if (expr == null) {
             throw SqlException.position(lexer.lastTokenPosition()).put("table name expected");
         }
@@ -4675,7 +4714,7 @@ public class SqlParser {
                 QueryColumn windowFuncColumn = null;
                 for (int i = 0, n = columns.size(); i < n; i++) {
                     QueryColumn column = columns.getQuick(i);
-                    if (column.isWindowColumn()) {
+                    if (column.isWindowExpression()) {
                         windowFuncColumn = column;
                     }
 
@@ -4733,6 +4772,9 @@ public class SqlParser {
         withClauseModelPool.clear();
         compileViewModelPool.clear();
         subQueryMode = false;
+        createTableMode = false;
+        copyMode = false;
+        createViewMode = false;
         characterStore.clear();
         insertModelPool.clear();
         pivotQueryColumnPool.clear();
@@ -4744,6 +4786,8 @@ public class SqlParser {
         digit = 1;
         traversalAlgo.clear();
         tempCharSequenceSet.clear();
+        aliasMap.clear();
+        aliasSequenceMap.clear();
         pivotAliasMap.clear();
         clearRecordedViews();
     }

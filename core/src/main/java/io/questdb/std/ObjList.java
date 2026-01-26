@@ -242,19 +242,6 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         return -1;
     }
 
-    public int indexOfRef(Object o) {
-        if (o == null) {
-            return indexOfNull();
-        } else {
-            for (int i = 0, n = pos; i < n; i++) {
-                if (o == getQuick(i)) {
-                    return i;
-                }
-            }
-            return -1;
-        }
-    }
-
     public void insert(int index, int length, T defaultValue) {
         checkCapacity(pos + length);
         if (pos > index) {

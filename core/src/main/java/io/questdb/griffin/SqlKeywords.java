@@ -37,6 +37,17 @@ public class SqlKeywords {
     protected static final LowerCaseCharSequenceHashSet KEYWORDS = new LowerCaseCharSequenceHashSet();
     private static final LowerCaseCharSequenceHashSet TIMESTAMP_PART_SET = new LowerCaseCharSequenceHashSet();
 
+    // Used to abort enterprise backups
+    @SuppressWarnings("unused")
+    public static boolean isAbortKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'a'
+                && (tok.charAt(1) | 32) == 'b'
+                && (tok.charAt(2) | 32) == 'o'
+                && (tok.charAt(3) | 32) == 'r'
+                && (tok.charAt(4) | 32) == 't';
+    }
+
     public static boolean isAddKeyword(CharSequence tok) {
         return tok.length() == 3
                 && (tok.charAt(0) | 32) == 'a'
@@ -58,6 +69,15 @@ public class SqlKeywords {
                 && (tok.charAt(0) | 32) == 'a'
                 && (tok.charAt(1) | 32) == 'l'
                 && (tok.charAt(2) | 32) == 'l';
+    }
+
+    public static boolean isAlphaKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'a'
+                && (tok.charAt(1) | 32) == 'l'
+                && (tok.charAt(2) | 32) == 'p'
+                && (tok.charAt(3) | 32) == 'h'
+                && (tok.charAt(4) | 32) == 'a';
     }
 
     public static boolean isAlterKeyword(CharSequence tok) {
@@ -365,6 +385,8 @@ public class SqlKeywords {
                 ;
     }
 
+    // Used in enterprise backups
+    @SuppressWarnings("unused")
     public static boolean isDatabaseKeyword(CharSequence tok) {
         return tok.length() == 8
                 && (tok.charAt(0) | 32) == 'd'
@@ -2301,6 +2323,15 @@ public class SqlKeywords {
                 && (tok.charAt(1) | 32) == 'e'
                 && (tok.charAt(2) | 32) == 'e'
                 && (tok.charAt(3) | 32) == 'k';
+    }
+
+    public static boolean isWeeksKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'w'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 'e'
+                && (tok.charAt(3) | 32) == 'k'
+                && (tok.charAt(4) | 32) == 's';
     }
 
     public static boolean isWhereKeyword(CharSequence tok) {

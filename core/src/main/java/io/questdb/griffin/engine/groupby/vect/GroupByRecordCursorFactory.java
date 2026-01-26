@@ -31,7 +31,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -527,14 +526,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         }
                     }
                 }
-            } catch (DataUnavailableException e) {
-                // We're not yet done, so no need to cancel the circuit breaker.
-                throw e;
-            } catch (Throwable e) {
+            } catch (Throwable th) {
                 sharedCircuitBreaker.cancel();
-                // Release page frame memory.
-                Misc.freeObjListAndKeepObjects(frameMemoryPools);
-                throw e;
+                throw th;
             } finally {
                 // all done? great start consuming the queue we just published
                 // how do we get to the end? If we consume our own queue there is chance we will be consuming
@@ -560,10 +554,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 if (sharedCircuitBreaker.checkIfTripped()) {
                     resetRostiMemorySize();
                 }
+                // Release page frame memory now, when no worker is using it.
+                Misc.freeObjListAndKeepObjects(frameMemoryPools);
             }
-
-            // Release page frame memory.
-            Misc.freeObjListAndKeepObjects(frameMemoryPools);
 
             if (oomCounter.get() > 0) {
                 resetRostiMemorySize();

@@ -142,26 +142,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public DateFormat getBackupDirTimestampFormat() {
-        return null;
-    }
-
-    @Override
-    public int getBackupMkDirMode() {
-        return 509;
-    }
-
-    @Override
-    public CharSequence getBackupRoot() {
-        return null;
-    }
-
-    @Override
-    public @NotNull CharSequence getBackupTempDirName() {
-        return "tmp";
-    }
-
-    @Override
     public int getBinaryEncodingMaxLength() {
         return 32768;
     }
@@ -179,6 +159,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean getCairoSqlLegacyOperatorPrecedence() {
         return false;
+    }
+
+    @Override
+    public boolean getCheckpointRecoveryRebuildColumnIndexes() {
+        return false;
+    }
+
+    @Override
+    public int getCheckpointRecoveryThreadpoolMax() {
+        return 12;
+    }
+
+    @Override
+    public int getCheckpointRecoveryThreadpoolMin() {
+        return 4;
     }
 
     @Override
@@ -712,7 +707,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getParquetExportRowGroupSize() {
-        return 0; // use default (512*512) rows
+        return 100_000;
     }
 
     @Override
@@ -1178,6 +1173,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlIntervalIncrementalMergeThreshold() {
+        return 256;
+    }
+
+    @Override
+    public int getSqlIntervalMaxBracketDepth() {
+        return 8;
+    }
+
+    @Override
+    public int getSqlIntervalMaxIntervalsAfterMerge() {
+        return 1024;
+    }
+
+    @Override
     public int getStrFunctionMaxBufferLength() {
         return 1024 * 1024;
     }
@@ -1434,6 +1444,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isMatViewParallelSqlEnabled() {
         return true;
+    }
+
+    @Override
+    public boolean isMatViewRefreshMissingWalFilesFatal() {
+        return false;
     }
 
     @Override

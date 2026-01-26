@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -132,23 +131,25 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     @Override
     public void close() {
         if (isOpen) {
-            isOpen = false;
-            Misc.free(frameMemoryPool);
+            try {
+                if (frameSequence != null) {
+                    LOG.debug()
+                            .$("closing [shard=").$(frameSequence.getShard())
+                            .$(", frameIndex=").$(frameIndex)
+                            .$(", frameCount=").$(frameLimit)
+                            .$(", frameId=").$(frameSequence.getId())
+                            .$(", cursor=").$(cursor)
+                            .I$();
 
-            if (frameSequence != null) {
-                LOG.debug()
-                        .$("closing [shard=").$(frameSequence.getShard())
-                        .$(", frameIndex=").$(frameIndex)
-                        .$(", frameCount=").$(frameLimit)
-                        .$(", frameId=").$(frameSequence.getId())
-                        .$(", cursor=").$(cursor)
-                        .I$();
-
-                collectCursor(true);
-                if (frameLimit > -1) {
-                    frameSequence.await();
+                    collectCursor(true);
+                    if (frameLimit > -1) {
+                        frameSequence.await();
+                    }
+                    frameSequence.reset();
                 }
-                frameSequence.reset();
+            } finally {
+                Misc.free(frameMemoryPool);
+                isOpen = false;
             }
         }
     }
@@ -247,7 +248,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void skipRows(Counter rowCount) throws DataUnavailableException {
+    public void skipRows(Counter rowCount) {
         if (frameIndex == -1) {
             fetchNextFrame(dispatchLimit, false);
         }
@@ -407,17 +408,17 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     void of(PageFrameSequence<?> frameSequence, long rowsRemaining) {
-        isOpen = true;
+        this.isOpen = true;
         this.frameSequence = frameSequence;
         this.rowsRemaining = rowsRemaining;
-        ogRowsRemaining = rowsRemaining;
+        this.ogRowsRemaining = rowsRemaining;
         // put a cap the number of in-flight page frame tasks in case of LIMIT N query
-        dispatchLimit = rowsRemaining != Long.MAX_VALUE ? defaultDispatchLimit : Integer.MAX_VALUE;
-        frameIndex = -1;
-        frameLimit = -1;
-        frameRowIndex = -1;
-        frameRowCount = -1;
-        allFramesActive = true;
+        this.dispatchLimit = rowsRemaining != Long.MAX_VALUE ? defaultDispatchLimit : Integer.MAX_VALUE;
+        this.frameIndex = -1;
+        this.frameLimit = -1;
+        this.frameRowIndex = -1;
+        this.frameRowCount = -1;
+        this.allFramesActive = true;
         frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         record.of(frameSequence.getSymbolTableSource());
         if (recordB != null) {

@@ -287,6 +287,16 @@ public class TableUpdateDetails implements Closeable {
         return this.isDropped;
     }
 
+    public boolean isFirstRow() {
+        return writerAPI.getUncommittedRowCount() == 0;
+    }
+
+    public boolean isTableRenamed() {
+        var currentTableToken = writerAPI.getTableToken();
+        var newTableToken = engine.getUpdatedTableToken(currentTableToken);
+        return newTableToken != currentTableToken;
+    }
+
     public boolean isWal() {
         return tableToken.isWal();
     }

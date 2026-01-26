@@ -153,7 +153,18 @@ public class LineHttpTudCache implements QuietCloseable {
     ) throws TableCreateException {
         int key = tableUpdateDetails.keyIndex(parser.getMeasurementName());
         if (key < 0) {
-            return tableUpdateDetails.valueAt(key);
+            WalTableUpdateDetails tud = tableUpdateDetails.valueAt(key);
+            // We only need to check for rename if there are no uncommitted rows
+            // it's too taxing to check for renames for every row
+            if (!tud.isFirstRow() || !tud.isTableRenamed()) {
+                return tud;
+            } else {
+                // Table was renamed, we need to evict this TUD from cache
+                tableUpdateDetails.removeAt(key);
+                Misc.free(tud);
+                // continue and re-create the tud
+                key = -key - 1;
+            }
         }
 
         tableNameUtf16.clear();
