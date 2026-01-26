@@ -6988,7 +6988,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             } else {
                 intrinsicModel = whereClauseParser.getEmpty(
                         reader.getMetadata().getTimestampType(),
-                        reader.getPartitionedBy()
+                        reader.getPartitionedBy(),
+                        executionContext.getCairoEngine().getConfiguration()
                 );
             }
 

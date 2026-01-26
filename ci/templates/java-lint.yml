@@ -16,4 +16,44 @@ steps:
     displayName: "List of affected files"
   - bash: git diff --exit-code
     displayName: "List of required changes"
+  - bash: |
+      RESULTS_DIR="$(Agent.TempDirectory)/qodana-results"
+      mkdir -p "$RESULTS_DIR"
+
+      git fetch origin $(System.PullRequest.TargetBranch) --depth=1 || true
+
+      docker run --rm \
+        -v "$(pwd):/data/project" \
+        -v "$RESULTS_DIR:/data/results" \
+        jetbrains/qodana-jvm-community:latest \
+        --diff-start=origin/$(System.PullRequest.TargetBranch) \
+        --print-problems 2>&1 | tee "$RESULTS_DIR/qodana-output.txt"
+    displayName: "Run Qodana inspections"
+    timeoutInMinutes: 55
+  - bash: |
+      RESULTS_DIR="$(Agent.TempDirectory)/qodana-results"
+      SARIF_FILE="$RESULTS_DIR/qodana.sarif.json"
+
+      if [ ! -f "$SARIF_FILE" ]; then
+        echo "##vso[task.logissue type=error]SARIF results file not found"
+        exit 1
+      fi
+
+      echo "=== Qodana Inspection Results ==="
+      echo ""
+
+      # Parse SARIF JSON and output problems with descriptions
+      jq -r '.runs[0].results[] | "\(.level | ascii_upcase) \(.ruleId)\n  File: \(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine)\n  \(.message.text)\n"' "$SARIF_FILE" | head -500
+
+      PROBLEM_COUNT=$(jq '.runs[0].results | length' "$SARIF_FILE")
+
+      echo "=== Summary ==="
+      echo "Total problems found: $PROBLEM_COUNT"
+
+      # Fail the build if any problems are found
+      if [ "$PROBLEM_COUNT" -gt 0 ]; then
+        echo "##vso[task.logissue type=error]Qodana found $PROBLEM_COUNT code inspection problems"
+        exit 1
+      fi
+    displayName: "Check inspection results"
 

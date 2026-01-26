@@ -129,6 +129,49 @@ public class IntervalUtilsTest {
     }
 
     @Test
+    public void testIntersectInplaceCopiedIntervalAboveNextB() {
+        // This test covers line 328 in intersectInPlace:
+        // When an A interval is copied to the end (because it would be overwritten),
+        // and the copied interval is then compared with a later B interval
+        // where aHi < bLo (a fully above b), we increment aUpper.
+        LongList intervals = new LongList();
+        // A
+        add(intervals, 0, 5);
+        add(intervals, 10, 15);
+
+        // B
+        add(intervals, 0, 2);  // intersects with A[0]
+        add(intervals, 20, 25);  // no intersection with A[1] or copied A[0]
+
+        // When A[0] intersects B[0], A[0] is copied to end since writePoint==aLower.
+        // Then the copied interval [0,5] is compared with B[1]=[20,25].
+        // Since 5 < 20, aHi < bLo triggers the aUpper++ branch.
+        runTestIntersectInplace(intervals, 4, "[0,2]");
+    }
+
+    @Test
+    public void testIntersectInplaceCopiedIntervalPartialOverlap() {
+        // This test covers line 341 in intersectInPlace:
+        // When a copied A interval intersects a B interval where aHi < bHi
+        // (b hanging lower than a), we increment aUpper.
+        LongList intervals = new LongList();
+        // A
+        add(intervals, 0, 5);
+        add(intervals, 100, 110);
+
+        // B
+        add(intervals, 0, 2);  // intersects A[0], aHi(5) >= bHi(2), so intervalB++, A[0] copied
+        add(intervals, 4, 20); // intersects copied A[0]=[0,5] where aHi(5) < bHi(20)
+
+        // Iteration 1: A[0]=[0,5] intersects B[0]=[0,2]. Since aHi >= bHi, intervalB++.
+        //              A[0] is copied to end, aUpperSize increases.
+        // Iteration 2: Copied interval [0,5] intersects B[1]=[4,20].
+        //              aHi(5) < bHi(20), so aUpper++ is triggered (line 341).
+        // Note: gap between [0,2] and [4,5] prevents merging by append().
+        runTestIntersectInplace(intervals, 4, "[0,2], [4,5]");
+    }
+
+    @Test
     public void testIntersectRandomInplaceVsNonInplace() {
         long seed = System.currentTimeMillis();
         Random r = new Random(seed);
