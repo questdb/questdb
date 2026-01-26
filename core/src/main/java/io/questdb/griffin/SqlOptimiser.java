@@ -7420,6 +7420,10 @@ public class SqlOptimiser implements Mutable {
             if (isWindowJoin) {
                 throw SqlException.$(baseModel.getGroupBy().getQuick(0).position, "GROUP BY cannot be used with WINDOW JOIN");
             }
+            // TODO(puzpuzpuz): support explicit GROUP BY with HORIZON JOIN
+            if (isHorizonJoin) {
+                throw SqlException.$(baseModel.getGroupBy().getQuick(0).position, "GROUP BY cannot be used with HORIZON JOIN");
+            }
             groupByModel.moveGroupByFrom(baseModel);
             // group by should be implemented even if there are no aggregate functions
             rewriteStatus |= REWRITE_STATUS_USE_GROUP_BY_MODEL;
@@ -9618,6 +9622,7 @@ public class SqlOptimiser implements Mutable {
         joinBarriers.add(JOIN_SPLICE);
         joinBarriers.add(JOIN_LT);
         joinBarriers.add(JOIN_WINDOW);
+        joinBarriers.add(JOIN_HORIZON);
 
         nullConstants.add("null");
         nullConstants.add("NaN");

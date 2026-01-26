@@ -111,7 +111,6 @@ public class HorizonJoinTest extends AbstractCairoTest {
     /**
      * Test parallel execution of HORIZON JOIN GROUP BY with larger dataset.
      */
-    @Ignore("HORIZON JOIN code generation not yet complete")
     @Test
     public void testHorizonJoinParallelExecution() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 10);
@@ -185,7 +184,6 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             FROM orders AS t
                             HORIZON JOIN prices AS p ON (t.sym = p.sym)
                             RANGE FROM -600s TO 600s STEP 1s AS h
-                            GROUP BY h.offset
                             ORDER BY h.offset
                             """;
 
@@ -212,7 +210,6 @@ public class HorizonJoinTest extends AbstractCairoTest {
     /**
      * Test that the Async Markout GroupBy factory appears in the query plan.
      */
-    @Ignore("HORIZON JOIN code generation not yet complete")
     @Test
     public void testHorizonJoinQueryPlan() throws Exception {
         assertMemoryLeak(() -> {
@@ -225,18 +222,19 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             FROM trades AS t
                             HORIZON JOIN prices AS p ON (t.sym = p.sym)
                             RANGE FROM 0s TO 1s STEP 1s AS h
-                            GROUP BY h.offset
                             """,
                     """
-                            Async Markout GroupBy workers: 1
-                              keys: [offset]
-                              values: [avg(bid),avg(ask)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trades
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: prices
+                            VirtualRecord
+                              functions: [offset/1000000,avg,avg1]
+                                Async Markout GroupBy workers: 1 offsets: 2
+                                  keys: [offset]
+                                  values: [avg(p.bid),avg(p.ask)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: prices
                             """
             );
         });
@@ -317,36 +315,68 @@ public class HorizonJoinTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore("HORIZON JOIN code generation not yet complete")
     @Test
     public void testHorizonJoinWithListBasic() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)");
             execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
 
-            String sql = "SELECT h.offset, avg(p.price) " +
+            // Insert test data
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                (0, 'AX', 10),
+                                (1_000_000, 'AX', 20),
+                                (2_000_000, 'AX', 30)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                (1_000_000, 'AX', 100)
+                            """
+            );
+
+            // LIST with explicit offsets in microseconds: 0, 1000000 (1s)
+            // For trade at 1s:
+            //   offset=0: look at 1s+0=1s -> ASOF to price at 1s -> 20
+            //   offset=1000000: look at 1s+1s=2s -> ASOF to price at 2s -> 30
+            String sql = "SELECT h.offset / 1000000 AS sec_offs, avg(p.price) " +
                     "FROM trades AS t " +
                     "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                    "LIST (-600000000, 0, 600000000) AS h";
+                    "LIST (0, 1000000) AS h " +
+                    "ORDER BY sec_offs";
 
-            assertPlanNoLeakCheck(sql, "");
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg
+                            0\t20.0
+                            1\t30.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
-    @Ignore("HORIZON JOIN code generation not yet complete")
     @Test
-    public void testHorizonJoinWithRangeAndGroupBy() throws Exception {
+    public void testHorizonJoinWithRangeAndGroupByNotSupported() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
             execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
 
-            String sql = "SELECT h.offset, t.sym, avg(p.price) " +
-                    "FROM trades AS t " +
-                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                    "RANGE FROM -600s TO 600s STEP 1s AS h " +
-                    "GROUP BY h.offset, t.sym";
-
-            assertPlanNoLeakCheck(sql, "");
+            // Explicit GROUP BY is not supported with HORIZON JOIN
+            assertExceptionNoLeakCheck(
+                    "SELECT h.offset, t.sym, avg(p.price) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                            "RANGE FROM -600s TO 600s STEP 1s AS h " +
+                            "GROUP BY h.offset, t.sym",
+                    145,
+                    "GROUP BY cannot be used with HORIZON JOIN"
+            );
         });
     }
 
@@ -423,23 +453,59 @@ public class HorizonJoinTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore("HORIZON JOIN code generation not yet complete")
     @Test
     public void testHorizonJoinWithRangeMinuteUnits() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)");
             execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
 
-            String sql = "SELECT h.offset, avg(p.price) " +
+            // Insert test data with minute-level timestamps
+            // Prices at 0m, 1m, 2m, 3m for sym 'AX'
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                (0, 'AX', 10),
+                                (60_000_000, 'AX', 20),
+                                (120_000_000, 'AX', 30),
+                                (180_000_000, 'AX', 40)
+                            """
+            );
+
+            // Trade at 1m for sym 'AX'
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                (60_000_000, 'AX', 100)
+                            """
+            );
+
+            // RANGE FROM 0m TO 2m STEP 1m gives offsets: 0, 60000000, 120000000 microseconds
+            // For trade at 1m (60s):
+            //   offset=0m: look at 1m+0=1m -> ASOF to price at 1m -> 20
+            //   offset=1m: look at 1m+1m=2m -> ASOF to price at 2m -> 30
+            //   offset=2m: look at 1m+2m=3m -> ASOF to price at 3m -> 40
+            String sql = "SELECT h.offset / 60000000 AS min_offs, avg(p.price) " +
                     "FROM trades AS t " +
                     "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                    "RANGE FROM -10m TO 10m STEP 1m AS h";
+                    "RANGE FROM 0m TO 2m STEP 1m AS h " +
+                    "ORDER BY min_offs";
 
-            assertPlanNoLeakCheck(sql, "");
+            // Verify results
+            assertQueryNoLeakCheck(
+                    """
+                            min_offs\tavg
+                            0\t20.0
+                            1\t30.0
+                            2\t40.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
-    @Ignore("HORIZON JOIN code generation not yet complete")
     @Test
     public void testHorizonJoinWithSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
@@ -464,21 +530,16 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     """
-                            sec_off\tsym\tavg\tavg1
-                            -1\t\tnull\tnull
-                            0\tsym1\t1.0\t2.0
-                            1\tsym1\t1.0\t2.0
-                            0\tsym2\t3.0\t4.0
-                            1\tsym2\t3.0\t4.0
-                            0\tsym3\t5.0\t6.0
-                            1\tsym3\t5.0\t6.0
+                            sec_off\tavg\tavg1
+                            0\t3.0\t4.0
+                            1\t3.0\t4.0
                             """,
                     """
-                            SELECT h.offset / 1000000 AS sec_off, p.sym, avg(p.bid), avg(p.ask)
+                            SELECT h.offset / 1000000 AS sec_off, avg(p.bid), avg(p.ask)
                             FROM trades AS t
                             HORIZON JOIN prices AS p ON (t.sym = p.sym)
-                            RANGE FROM -1s TO 1s STEP 1s AS h
-                            GROUP BY h.offset, p.sym
+                            RANGE FROM 0s TO 1s STEP 1s AS h
+                            ORDER BY sec_off
                             """,
                     null,
                     true,
@@ -487,19 +548,54 @@ public class HorizonJoinTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore("HORIZON JOIN code generation not yet complete")
+    @Ignore("HORIZON JOIN without ON clause not yet supported")
     @Test
     public void testHorizonJoinWithoutOnClause() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE trades (ts TIMESTAMP, qty DOUBLE) TIMESTAMP(ts)");
             execute("CREATE TABLE prices (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)");
 
-            String sql = "SELECT h.offset, avg(p.price) " +
+            // Insert test data
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                (0, 10),
+                                (1_000_000, 20),
+                                (2_000_000, 30),
+                                (3_000_000, 40)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                (1_000_000, 100)
+                            """
+            );
+
+            // HORIZON JOIN without ON clause - ASOF by timestamp only
+            // RANGE FROM 0s TO 2s STEP 1s gives offsets: 0, 1000000, 2000000 microseconds
+            // For trade at 1s:
+            //   offset=0: look at 1s+0=1s -> ASOF to price at 1s -> 20
+            //   offset=1s: look at 1s+1s=2s -> ASOF to price at 2s -> 30
+            //   offset=2s: look at 1s+2s=3s -> ASOF to price at 3s -> 40
+            String sql = "SELECT h.offset / 1000000 AS sec_offs, avg(p.price) " +
                     "FROM trades AS t " +
                     "HORIZON JOIN prices AS p " +
-                    "RANGE FROM -10s TO 10s STEP 1s AS h";
+                    "RANGE FROM 0s TO 2s STEP 1s AS h " +
+                    "ORDER BY sec_offs";
 
-            assertPlanNoLeakCheck(sql, "");
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg
+                            0\t20.0
+                            1\t30.0
+                            2\t40.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 }

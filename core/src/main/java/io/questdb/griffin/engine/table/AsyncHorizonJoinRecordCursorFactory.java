@@ -157,6 +157,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     configuration,
                     messageBus,
                     atom,
+                    // TODO(puzpuzpuz): support HORIZON JOIN without ON clause (timestamp-only ASOF lookup)
                     filter != null ? FILTER_AND_REDUCE : REDUCE,
                     reduceTaskFactory,
                     workerCount,
