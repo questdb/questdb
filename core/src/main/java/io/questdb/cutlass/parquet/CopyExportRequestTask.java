@@ -398,6 +398,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 if (ColumnType.isSymbol(columnType)) {
                     assert pageFrameCursor != null;
                     StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(i);
+                    assert symbolTable != null;
                     int symbolColumnType = columnType;
                     if (!symbolTable.containsNullValue()) {
                         symbolColumnType |= 1 << 31;

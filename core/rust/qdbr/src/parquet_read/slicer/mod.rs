@@ -618,7 +618,6 @@ impl<'a> BooleanBitmapSlicer<'a> {
 
 pub struct ValueConvertSlicer<const N: usize, T: DataPageSlicer, C: Converter<N>> {
     inner_slicer: T,
-    error: ParquetResult<()>,
     buffer: [u8; N],
     _converter: std::marker::PhantomData<C>,
 }
@@ -661,7 +660,7 @@ impl<const N: usize, T: DataPageSlicer, C: Converter<N>> DataPageSlicer
     }
 
     fn result(&self) -> ParquetResult<()> {
-        self.error.clone().or(self.inner_slicer.result())
+        self.inner_slicer.result()
     }
 }
 
@@ -669,7 +668,6 @@ impl<const N: usize, T: DataPageSlicer, C: Converter<N>> ValueConvertSlicer<N, T
     pub fn new(inner_slicer: T) -> Self {
         Self {
             inner_slicer,
-            error: Ok(()),
             buffer: [0; N],
             _converter: std::marker::PhantomData,
         }
