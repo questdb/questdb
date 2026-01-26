@@ -617,8 +617,7 @@ impl<const N: usize, T: DataPageSlicer, C: Converter<N>> DataPageSlicer
     #[inline]
     fn next(&mut self) -> &[u8] {
         let slice = self.inner_slicer.next();
-        C::convert(slice, &mut SliceSink(&mut self.buffer))
-            .unwrap_or_else(|e| self.error = Err(e));
+        _ = C::convert(slice, &mut SliceSink(&mut self.buffer));
         &self.buffer
     }
 
