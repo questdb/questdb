@@ -147,6 +147,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
     private final boolean allowTableRegistrySharedWrite;
     private final boolean asyncMunmapEnabled;
+    private final WorkerPoolConfiguration asyncMunmapPoolConfiguration = new PropAsyncMunmapPoolConfiguration();
+    private final int[] asyncMunmapWorkerAffinity;
+    private final boolean asyncMunmapWorkerHaltOnError;
+    private final long asyncMunmapWorkerNapThreshold;
+    private final int asyncMunmapWorkerPriority;
+    private final long asyncMunmapWorkerSleepThreshold;
+    private final long asyncMunmapWorkerSleepTimeout;
+    private final long asyncMunmapWorkerYieldThreshold;
     private final DateFormat backupDirTimestampFormat;
     private final int backupMkdirMode;
     private final String backupRoot;
@@ -466,8 +474,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelReadParquetEnabled;
     private final boolean sqlParallelTopKEnabled;
     private final boolean sqlParallelWindowJoinEnabled;
-    private final int sqlParallelWorkStealingThreshold;
     private final long sqlParallelWorkStealingSpinTimeout;
+    private final int sqlParallelWorkStealingThreshold;
     private final int sqlParquetFrameCacheCapacity;
     private final int sqlPivotForColumnPoolCapacity;
     private final int sqlPivotMaxProducedColumns;
@@ -1573,6 +1581,17 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (asyncMunmapEnabled && Os.isWindows()) {
                 throw new ServerConfigurationException("Async munmap is not supported on Windows");
             }
+
+            // Async munmap pool configuration (single-thread dedicated pool)
+            this.asyncMunmapWorkerAffinity = getAffinity(properties, env, PropertyKey.ASYNC_MUNMAP_WORKER_AFFINITY, 1);
+            this.asyncMunmapWorkerHaltOnError = getBoolean(properties, env, PropertyKey.ASYNC_MUNMAP_WORKER_HALT_ON_ERROR, false);
+            this.asyncMunmapWorkerNapThreshold = getLong(properties, env, PropertyKey.ASYNC_MUNMAP_WORKER_NAP_THRESHOLD, 7_000);
+            final int asyncMunmapWorkerPriorityRaw = getInt(properties, env, PropertyKey.ASYNC_MUNMAP_WORKER_PRIORITY, Thread.MAX_PRIORITY);
+            this.asyncMunmapWorkerPriority = Math.min(Thread.MAX_PRIORITY, Math.max(Thread.MIN_PRIORITY, asyncMunmapWorkerPriorityRaw));
+            this.asyncMunmapWorkerSleepThreshold = getLong(properties, env, PropertyKey.ASYNC_MUNMAP_WORKER_SLEEP_THRESHOLD, 10_000);
+            this.asyncMunmapWorkerSleepTimeout = getMillis(properties, env, PropertyKey.ASYNC_MUNMAP_WORKER_SLEEP_TIMEOUT, 10);
+            this.asyncMunmapWorkerYieldThreshold = getLong(properties, env, PropertyKey.ASYNC_MUNMAP_WORKER_YIELD_THRESHOLD, 10);
+
             this.rmdirMaxDepth = getInt(properties, env, PropertyKey.CAIRO_RMDIR_MAX_DEPTH, 5);
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
@@ -1978,6 +1997,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             return sink.put(subdir).toString();
         }
         return null;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getAsyncMunmapPoolConfiguration() {
+        return asyncMunmapPoolConfiguration;
     }
 
     @Override
@@ -2982,6 +3006,64 @@ public class PropServerConfiguration implements ServerConfiguration {
     public record ValidationResult(boolean isError, String message) {
     }
 
+    private class PropAsyncMunmapPoolConfiguration implements WorkerPoolConfiguration {
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
+        @Override
+        public long getNapThreshold() {
+            return asyncMunmapWorkerNapThreshold;
+        }
+
+        @Override
+        public String getPoolName() {
+            return "async-munmap";
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return asyncMunmapWorkerSleepThreshold;
+        }
+
+        @Override
+        public long getSleepTimeout() {
+            return asyncMunmapWorkerSleepTimeout;
+        }
+
+        @Override
+        public int[] getWorkerAffinity() {
+            return asyncMunmapWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            // Always a single-thread pool
+            return 1;
+        }
+
+        @Override
+        public long getYieldThreshold() {
+            return asyncMunmapWorkerYieldThreshold;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return asyncMunmapWorkerHaltOnError;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return asyncMunmapEnabled;
+        }
+
+        @Override
+        public int workerPoolPriority() {
+            return asyncMunmapWorkerPriority;
+        }
+    }
+
     class PropCairoConfiguration implements CairoConfiguration {
         private final LongSupplier randomIDSupplier = () -> getRandom().nextPositiveLong();
         private final LongSupplier sequentialIDSupplier = new LongSupplier() {
@@ -3984,13 +4066,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlParallelWorkStealingThreshold() {
-            return sqlParallelWorkStealingThreshold;
+        public long getSqlParallelWorkStealingSpinTimeout() {
+            return sqlParallelWorkStealingSpinTimeout;
         }
 
         @Override
-        public long getSqlParallelWorkStealingSpinTimeout() {
-            return sqlParallelWorkStealingSpinTimeout;
+        public int getSqlParallelWorkStealingThreshold() {
+            return sqlParallelWorkStealingThreshold;
         }
 
         @Override

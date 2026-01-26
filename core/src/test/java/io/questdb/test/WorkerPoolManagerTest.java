@@ -305,6 +305,11 @@ public class WorkerPoolManagerTest {
             public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
                 return null;
             }
+
+            @Override
+            public WorkerPoolConfiguration getAsyncMunmapPoolConfiguration() {
+                return null;
+            }
         };
     }
 

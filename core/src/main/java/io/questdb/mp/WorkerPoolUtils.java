@@ -48,16 +48,18 @@ import io.questdb.std.datetime.Clock;
 
 public class WorkerPoolUtils {
 
+    /**
+     * Sets up the async munmap flag based on configuration.
+     * The dedicated async munmap pool is created in ServerMain.configureWorkerPools()
+     * when async munmap is enabled.
+     *
+     * @deprecated Use ServerMain's dedicated async munmap pool configuration instead.
+     *             This method is kept for backward compatibility but no longer assigns the job.
+     */
+    @Deprecated
     public static void setupAsyncMunmapJob(WorkerPool pool, CairoEngine engine) {
-        CairoConfiguration config = engine.getConfiguration();
-        if (config.getAsyncMunmapEnabled()) {
-            assert Os.isPosix();
-            Files.ASYNC_MUNMAP_ENABLED = true;
-            AsyncMunmapJob asyncMunmapJob = new AsyncMunmapJob();
-            pool.assign(asyncMunmapJob);
-        } else {
-            Files.ASYNC_MUNMAP_ENABLED = false;
-        }
+        // This method is deprecated - the dedicated pool is now created in ServerMain.
+        // The flag is set in ServerMain.configureWorkerPools() when the dedicated pool is created.
     }
 
     public static void setupQueryJobs(

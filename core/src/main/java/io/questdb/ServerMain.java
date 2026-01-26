@@ -49,7 +49,10 @@ import io.questdb.mp.Job;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
+import io.questdb.std.AsyncMunmapJob;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.Os;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.Clock;
@@ -302,7 +305,22 @@ public class ServerMain implements Closeable {
                     if (engineMaintenanceJob != null) {
                         sharedPoolWrite.assign(engineMaintenanceJob);
                     }
-                    WorkerPoolUtils.setupAsyncMunmapJob(sharedPoolQuery, engine);
+
+                    // Setup dedicated async munmap pool when enabled
+                    if (cairoConfig.getAsyncMunmapEnabled()) {
+                        assert Os.isPosix();
+                        Files.ASYNC_MUNMAP_ENABLED = true;
+                        WorkerPool asyncMunmapPool = getWorkerPool(
+                                config.getAsyncMunmapPoolConfiguration(),
+                                Requester.OTHER,
+                                sharedPoolQuery
+                        );
+                        AsyncMunmapJob asyncMunmapJob = new AsyncMunmapJob();
+                        asyncMunmapPool.assign(asyncMunmapJob);
+                    } else {
+                        Files.ASYNC_MUNMAP_ENABLED = false;
+                    }
+
                     WorkerPoolUtils.setupQueryJobs(sharedPoolQuery, engine);
 
                     if (!config.getCairoConfiguration().isReadOnlyInstance()) {
