@@ -33,6 +33,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -254,6 +255,7 @@ public class TablesFunctionFactory implements FunctionFactory {
                 private StringSink lazyStringSink = null;
                 private CairoTable table;
                 private TableSequencerAPI tableSequencerAPI;
+                private TimestampDriver timestampDriver;
                 private RecentWriteTracker.WriteStats writeStats;
 
                 @Override
@@ -397,10 +399,11 @@ public class TablesFunctionFactory implements FunctionFactory {
                         return Numbers.LONG_NULL;
                     }
                     return switch (col) {
-                        case TABLE_MIN_TIMESTAMP_COLUMN -> writeStats.getTableMinTimestamp();
-                        case TABLE_MAX_TIMESTAMP_COLUMN -> writeStats.getTableMaxTimestamp();
+                        case TABLE_MIN_TIMESTAMP_COLUMN -> timestampDriver.toMicros(writeStats.getTableMinTimestamp());
+                        case TABLE_MAX_TIMESTAMP_COLUMN -> timestampDriver.toMicros(writeStats.getTableMaxTimestamp());
+                        case WAL_MAX_TIMESTAMP_COLUMN -> timestampDriver.toMicros(writeStats.getLastWalTimestamp());
+                        // table_last_write_timestamp is always in microseconds (system clock)
                         case TABLE_LAST_WRITE_TIMESTAMP_COLUMN -> writeStats.getTimestamp();
-                        case WAL_MAX_TIMESTAMP_COLUMN -> writeStats.getLastWalTimestamp();
                         default -> Numbers.LONG_NULL;
                     };
                 }
@@ -409,6 +412,7 @@ public class TablesFunctionFactory implements FunctionFactory {
                     this.table = table;
                     this.tableSequencerAPI = tableSequencerAPI;
                     this.writeStats = recentWriteTracker.getWriteStats(table.getTableToken());
+                    this.timestampDriver = ColumnType.getTimestampDriver(table.getTimestampType());
                 }
             }
         }
