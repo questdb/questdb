@@ -497,7 +497,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         mem.close(true, Vm.TRUNCATE_TO_POINTER);
 
                                         // Record WAL table seqTxn for checkpoint listener
-                                        checkpointSeqTxns.put(tableToken.getDirName(), seqTxn);
+                                        checkpointSeqTxns.put(tableToken.getDirName(), lastTxn);
                                     }
 
                                     LogRecord logRecord = LOG.info().$("table included in the checkpoint [table=").$(tableToken)

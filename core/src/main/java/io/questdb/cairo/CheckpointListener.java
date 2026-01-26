@@ -41,7 +41,7 @@ public interface CheckpointListener {
      * Note: This is called while the checkpoint lock is still held, before the
      * checkpoint files are cleaned up.
      *
-     * @param timestampMicros the timestamp when CHECKPOINT CREATE was initiated (epoch microseconds)
+     * @param timestampMicros       the timestamp when CHECKPOINT CREATE was initiated (epoch microseconds)
      * @param tableDirNamesToSeqTxn map of table directory names to sequencer txn numbers;
      *                              the map is owned by the caller and must not be retained
      */
