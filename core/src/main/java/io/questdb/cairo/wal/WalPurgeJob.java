@@ -160,6 +160,20 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     /**
      * Perform a broad sweep that searches for all tables that have closed
      * WAL segments across the database and deletes any which are no longer needed.
+     * <p>
+     * Note:
+     * Purge uses three phases: (1) lock & discover, (2) query sequencer, (3) delete & unlock.
+     * We cannot delete during discovery because delete decisions require sequencer state
+     * (nextToApply position, materialized view dependencies) which we only learn in phase 2.
+     * <p>
+     * Locking all WALs before querying the sequencer ensures consistency:
+     * - Exclusive lock (no writer): safe to delete entire WAL, no new txns possible;
+     * new downloaders block until purge unlocks
+     * - Shared lock (writer active): purge gets minSegmentId boundary; segments below are
+     * finalized (no new txns will reference them), segments at/above belong to writer
+     * <p>
+     * In enterprise, the WAL downloader can add segments to unlocked WALs and commit txns.
+     * By locking first, we ensure the sequencer returns a consistent "safe to delete" view.
      */
     private void broadSweep() {
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, true, broadSweepRef);
@@ -553,6 +567,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     public static class Logic {
         private final Deleter deleter;
+        // discovered stores the WAL and their segments and the sequencer parts
         // [ { walId, maxSegmentLocked, n segments, segmentId... | WalUtils.METADATA_WALID, seqPartNo } [, ...] ]
         private final IntList discovered = new IntList();
         private final IntIntHashMap nextToApply = new IntIntHashMap();
@@ -580,10 +595,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             for (int i = 0, n = discovered.size(); i < n; ) {
                 final int walId = discovered.get(i);
                 if (walId != WalUtils.METADATA_WALID) {
+                    // We've a valid WAL entry, unlock it
                     deleter.unlock(walId);
                     i += 3 + discovered.get(i + 2);
                 } else {
-                    i += 2; // skip seq part
+                    // If walId is METADATA_WALID, it's a sequencer part, skip it
+                    i += 2;
                 }
             }
         }
@@ -613,6 +630,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             logDebugInfo();
                             deleter.deleteSequencerPart(seqPart);
                         }
+                        // Move to next discovered entry, sequencer parts are composed of 2 ints (walId, seqPart)
                         i += 2;
                         continue;
                     }
@@ -638,16 +656,20 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         }
                     }
                     deleter.unlock(walId);
+                    // Move to next discovered entry, wal entries are composed of 3 + nSegments ints:
+                    // (walId, maxSegmentLocked, nSegments, segmentId...)
                     i += 3 + nSegments;
                 }
             } finally {
                 while (i < n) {
                     final int walId = discovered.get(i);
                     if (walId != WalUtils.METADATA_WALID) {
+                        // We've a valid WAL entry, unlock it
                         deleter.unlock(walId);
                         i += 3 + discovered.get(i + 2);
                     } else {
-                        i += 2; // skip seq part
+                        // If walId is METADATA_WALID, it's a sequencer part, skip it
+                        i += 2;
                     }
                 }
             }
