@@ -396,9 +396,9 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         // ========================================
         // FIRST OFFSET (bootstrap) - handles cache lookup and update
         // ========================================
-        long secOffsValue0 = atom.getSequenceOffsetValue(0);
-        // TODO(puzpuzpuz): support nanos
-        long horizonTs0 = masterTimestamp + secOffsValue0 * 1_000_000L;
+        long offset = atom.getSequenceOffsetValue(0);
+        // Offset values are already in microseconds from computeHorizonOffsets
+        long horizonTs0 = masterTimestamp + offset;
 
         long match0RowId = Long.MIN_VALUE;
         long asOfRowId0 = Long.MIN_VALUE;  // Track first offset's ASOF position for bookmark optimization
@@ -432,16 +432,16 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             slaveTimeFrameHelper.recordAt(match0RowId);
             matchedSlaveRecord0 = slaveRecord;
         }
-        markoutRecord.of(masterRecord, secOffsValue0, matchedSlaveRecord0);
+        markoutRecord.of(masterRecord, offset, matchedSlaveRecord0);
         aggregateRecord(markoutRecord, masterRowId, partialMap, groupByKeyCopier, functionUpdater);
 
         // ========================================
         // REMAINING OFFSETS
         // ========================================
         for (int seqIdx = 1; seqIdx < sequenceRowCount; seqIdx++) {
-            long secOffsValue = atom.getSequenceOffsetValue(seqIdx);
-            // TODO(puzpuzpuz): support nanos
-            long horizonTs = masterTimestamp + secOffsValue * 1_000_000L;
+            long offset0 = atom.getSequenceOffsetValue(seqIdx);
+            // Offset values are already in microseconds from computeHorizonOffsets
+            long horizonTs = masterTimestamp + offset0;
 
             long matchRowId = Long.MIN_VALUE;
             if (asOfJoinMap != null && masterKeyCopier != null) {
@@ -484,7 +484,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                 slaveTimeFrameHelper.recordAt(effectiveMatchRowId);
                 matchedSlaveRecord = slaveRecord;
             }
-            markoutRecord.of(masterRecord, secOffsValue, matchedSlaveRecord);
+            markoutRecord.of(masterRecord, offset0, matchedSlaveRecord);
             aggregateRecord(markoutRecord, masterRowId, partialMap, groupByKeyCopier, functionUpdater);
         }
 

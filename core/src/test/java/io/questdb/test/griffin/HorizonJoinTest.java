@@ -257,7 +257,6 @@ public class HorizonJoinTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore // FIXME
     @Test
     public void testHorizonJoinSmoke() throws Exception {
         assertMemoryLeak(() -> {
@@ -302,7 +301,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     SELECT h.offset / 1000000 AS sec_offs, avg(p.price)
                     FROM orders AS t
                     HORIZON JOIN prices AS p ON (t.sym = p.sym)
-                    RANGE FROM -2s TO 0s STEP 1s AS h;
+                    RANGE FROM 0s TO 2s STEP 1s AS h
+                    ORDER BY sec_offs;
                     """;
 
             // Verify the query plan contains the Async Markout GroupBy factory
