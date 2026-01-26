@@ -3585,7 +3585,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         //    See: https://github.com/questdb/questdb/issues/6123 and CheckBindVarsInBatchedQueriesAreConsistent C# test in the Compat module
 
         // INSERTs, UPDATE, ALTER, etc. use binding variables at the EXEC time only -> we don't have to populate it before SYNC
-        if (cursor == null || isError()) {
+        if (!hasResultSet() || isError()) {
             return false;
         }
         copyParameterValuesToBindVariableService(
