@@ -379,8 +379,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                         frameRowCount
                 );
                 task.setFilteredRowCount(filteredRowCount);
-                // Update selectivity stats for this slot
-                atom.getSelectivityStats(filterId).update(filteredRowCount, frameRowCount);
             } else { // normal filter task
                 final long filteredRowCount = atom.compiledFilter.call(
                         dataAddresses.getAddress(),
@@ -391,9 +389,10 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                         rows.getAddress(),
                         frameRowCount
                 );
-                // Update selectivity stats for this slot
-                atom.getSelectivityStats(filterId).update(filteredRowCount, frameRowCount);
-                // If late materialization was used, now load remaining columns for filtered rows
+
+                if (isParquetFrame) {
+                    atom.getSelectivityStats(filterId).update(filteredRowCount, frameRowCount);
+                }
                 if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
                     record.init(frameMemory);
                 }

@@ -35,17 +35,17 @@ impl ByteSink for SliceSink<'_> {
 }
 
 pub trait Converter<const N: usize> {
-    fn convert<S: ByteSink>(input: &[u8], output: &mut S);
+    fn convert<S: ByteSink>(input: &[u8], output: &mut S) -> ParquetResult<()>;
 }
 
 pub struct DaysToMillisConverter;
 
 impl Converter<8> for DaysToMillisConverter {
     #[inline]
-    fn convert<S: ByteSink>(input: &[u8], output: &mut S) {
+    fn convert<S: ByteSink>(input: &[u8], output: &mut S) -> ParquetResult<()> {
         let days_since_epoch = unsafe { ptr::read_unaligned(input.as_ptr() as *const i32) };
         let date = days_since_epoch as i64 * 24 * 60 * 60 * 1000;
-        let _ = output.extend_from_slice(&date.to_le_bytes());
+         output.extend_from_slice(&date.to_le_bytes())
     }
 }
 
@@ -618,14 +618,15 @@ impl<const N: usize, T: DataPageSlicer, C: Converter<N>> DataPageSlicer
     #[inline]
     fn next(&mut self) -> &[u8] {
         let slice = self.inner_slicer.next();
-        C::convert(slice, &mut SliceSink(&mut self.buffer));
+        C::convert(slice, &mut SliceSink(&mut self.buffer))
+            .unwrap_or_else(|e| self.error = Err(e));
         &self.buffer
     }
 
     #[inline]
     fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()> {
         let slice = self.inner_slicer.next();
-        C::convert(slice, dest);
+        C::convert(slice, dest)?;
         Ok(())
     }
 

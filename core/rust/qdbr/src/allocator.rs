@@ -325,6 +325,7 @@ unsafe impl Allocator for QdbAllocator {
 
 pub type AcVec<T> = alloc_checked::vec::Vec<T, QdbAllocator>;
 
+// TODO: Remove once alloc_checked::vec::Vec exposes set_len
 pub trait AcVecSetLen {
     unsafe fn set_len(&mut self, new_len: usize);
 }
@@ -332,8 +333,6 @@ pub trait AcVecSetLen {
 impl<T> AcVecSetLen for AcVec<T> {
     #[inline]
     unsafe fn set_len(&mut self, new_len: usize) {
-        // alloc_checked::vec::Vec is a single-field struct wrapping alloc::vec::Vec
-        // The memory layout is compatible, so we can safely transmute the pointer
         let inner_ptr = self as *mut Self as *mut Vec<T, QdbAllocator>;
         (*inner_ptr).set_len(new_len);
     }

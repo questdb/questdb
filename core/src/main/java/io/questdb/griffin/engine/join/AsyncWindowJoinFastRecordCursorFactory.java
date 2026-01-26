@@ -1225,22 +1225,20 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final AsyncWindowJoinFastAtom atom = task.getFrameSequence(AsyncWindowJoinFastAtom.class).getAtom();
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-
-        final PageFrameMemory frameMemory;
-        final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMaterialization = atom.shoulduseLateMaterialization(slotId, isParquetFrame);
-        if (useLateMaterialization) {
-            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = task.populateFrameMemory();
-        }
-        record.init(frameMemory);
-        final DirectLongList rows = task.getFilteredRows();
-        rows.clear();
-        final Function filter = atom.getMasterFilter(slotId);
-        final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
-
         try {
+            final PageFrameMemory frameMemory;
+            final boolean isParquetFrame = task.isParquetFrame();
+            final boolean useLateMaterialization = atom.shoulduseLateMaterialization(slotId, isParquetFrame);
+            if (useLateMaterialization) {
+                frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = task.populateFrameMemory();
+            }
+            record.init(frameMemory);
+            final DirectLongList rows = task.getFilteredRows();
+            rows.clear();
+            final Function filter = atom.getMasterFilter(slotId);
+            final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
             if (compiledFilter == null || frameMemory.hasColumnTops()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
@@ -1392,22 +1390,22 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final AsyncWindowJoinFastAtom atom = task.getFrameSequence(AsyncWindowJoinFastAtom.class).getAtom();
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-
-        final PageFrameMemory frameMemory;
-        final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMaterialization = atom.shoulduseLateMaterialization(slotId, isParquetFrame);
-        if (useLateMaterialization) {
-            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = task.populateFrameMemory();
-        }
-        record.init(frameMemory);
-        final DirectLongList rows = task.getFilteredRows();
-        rows.clear();
-
-        final Function filter = atom.getMasterFilter(slotId);
-        final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
         try {
+            final PageFrameMemory frameMemory;
+            final boolean isParquetFrame = task.isParquetFrame();
+            final boolean useLateMaterialization = atom.shoulduseLateMaterialization(slotId, isParquetFrame);
+            if (useLateMaterialization) {
+                frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = task.populateFrameMemory();
+            }
+            record.init(frameMemory);
+            final DirectLongList rows = task.getFilteredRows();
+            rows.clear();
+
+            final Function filter = atom.getMasterFilter(slotId);
+            final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
+
             if (compiledFilter == null || frameMemory.hasColumnTops()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
@@ -1560,22 +1558,22 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final AsyncWindowJoinFastAtom atom = task.getFrameSequence(AsyncWindowJoinFastAtom.class).getAtom();
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-
-        final PageFrameMemory frameMemory;
-        final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMaterialization = atom.shoulduseLateMaterialization(slotId, isParquetFrame);
-        if (useLateMaterialization) {
-            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = task.populateFrameMemory();
-        }
-        record.init(frameMemory);
-        final DirectLongList rows = task.getFilteredRows();
-        rows.clear();
-
-        final Function filter = atom.getMasterFilter(slotId);
-        final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
         try {
+            final PageFrameMemory frameMemory;
+            final boolean isParquetFrame = task.isParquetFrame();
+            final boolean useLateMaterialization = atom.shoulduseLateMaterialization(slotId, isParquetFrame);
+            if (useLateMaterialization) {
+                frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = task.populateFrameMemory();
+            }
+            record.init(frameMemory);
+            final DirectLongList rows = task.getFilteredRows();
+            rows.clear();
+
+            final Function filter = atom.getMasterFilter(slotId);
+            final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
+
             if (compiledFilter == null || frameMemory.hasColumnTops()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
@@ -1790,23 +1788,22 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final AsyncWindowJoinFastAtom atom = task.getFrameSequence(AsyncWindowJoinFastAtom.class).getAtom();
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-
-        final PageFrameMemory frameMemory;
-        final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMaterialization = atom.shoulduseLateMaterialization(slotId, isParquetFrame);
-        if (useLateMaterialization) {
-            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = task.populateFrameMemory();
-        }
-        record.init(frameMemory);
-        final DirectLongList rows = task.getFilteredRows();
-        rows.clear();
-
-        final Function filter = atom.getMasterFilter(slotId);
-        final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
-
         try {
+            final PageFrameMemory frameMemory;
+            final boolean isParquetFrame = task.isParquetFrame();
+            final boolean useLateMaterialization = atom.shoulduseLateMaterialization(slotId, isParquetFrame);
+            if (useLateMaterialization) {
+                frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = task.populateFrameMemory();
+            }
+            record.init(frameMemory);
+            final DirectLongList rows = task.getFilteredRows();
+            rows.clear();
+
+            final Function filter = atom.getMasterFilter(slotId);
+            final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
+
             if (compiledFilter == null || frameMemory.hasColumnTops()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
@@ -1996,23 +1993,21 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final AsyncWindowJoinFastAtom atom = task.getFrameSequence(AsyncWindowJoinFastAtom.class).getAtom();
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-
-        final PageFrameMemory frameMemory;
-        final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMaterialization = atom.shoulduseLateMaterialization(slotId, isParquetFrame);
-        if (useLateMaterialization) {
-            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = task.populateFrameMemory();
-        }
-        record.init(frameMemory);
-        final DirectLongList rows = task.getFilteredRows();
-        rows.clear();
-
-        final Function filter = atom.getMasterFilter(slotId);
-        final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
-
         try {
+            final PageFrameMemory frameMemory;
+            final boolean isParquetFrame = task.isParquetFrame();
+            final boolean useLateMaterialization = atom.shoulduseLateMaterialization(slotId, isParquetFrame);
+            if (useLateMaterialization) {
+                frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = task.populateFrameMemory();
+            }
+            record.init(frameMemory);
+            final DirectLongList rows = task.getFilteredRows();
+            rows.clear();
+
+            final Function filter = atom.getMasterFilter(slotId);
+            final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
             if (compiledFilter == null || frameMemory.hasColumnTops()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {

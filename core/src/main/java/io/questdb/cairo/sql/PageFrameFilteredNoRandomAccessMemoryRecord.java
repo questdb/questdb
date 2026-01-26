@@ -128,9 +128,9 @@ public class PageFrameFilteredNoRandomAccessMemoryRecord extends PageFrameMemory
         return NullMemoryCMR.INSTANCE.getBin(0);
     }
 
-    // Note: This method is only called by {@link PageFrameMemoryPool#preTouchColumns},
+    // Note: This method is only called by {`@link` PageFrameMemoryPool#preTouchColumns},
     // which only operates on native format partitions (not Parquet). As a result,
-    // this code path is not reachable and nor cna be test converged.
+    // this code path is not reachable and cannot be test covered.
     @Override
     public long getBinLen(int columnIndex) {
         final long dataPageAddress = pageAddresses.get(columnOffset + columnIndex);
