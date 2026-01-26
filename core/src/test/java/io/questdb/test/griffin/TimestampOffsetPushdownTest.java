@@ -372,6 +372,56 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOriginalTimestampPrecedenceOverDateaddQualifiedAlias() throws Exception {
+        // Test that when the original timestamp is referenced through a table alias (t.timestamp),
+        // it should still take precedence over dateadd columns.
+        // This is a regression test for the case where Chars.equalsIgnoreCase fails to match
+        // qualified column names like "t.timestamp" against "timestamp".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T01:00:00.000000Z');");
+            execute("INSERT INTO trades VALUES (150, '2022-01-01T02:00:00.000000Z');");
+
+            // Query with table alias and qualified timestamp reference
+            // The inner query uses alias 't' and references t.timestamp
+            String query = """
+                    SELECT * FROM (
+                        SELECT dateadd('h', -1, t.timestamp) as ts, t.timestamp as original_ts, price FROM trades t
+                    ) WHERE ts >= '2022-01-01T00:00:00' AND ts < '2022-01-01T01:00:00'
+                    """;
+
+            // Plan should NOT show interval pushdown because original timestamp (t.timestamp) is in projection
+            // Filter should stay at outer level, not be pushed down with offset
+            // Note: qualified column reference results in SelectedRecord wrapper and alias renaming
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Filter filter: (ts>=2022-01-01T00:00:00.000000Z and ts<2022-01-01T01:00:00.000000Z)
+                                VirtualRecord
+                                  functions: [dateadd('h',-1,timestamp),original_ts,price]
+                                    SelectedRecord
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
+                            """
+            );
+
+            // Row 1: ts = 2022-01-01 00:00 (in range), original_ts = 2022-01-01 01:00
+            // Row 2: ts = 2022-01-01 01:00 (NOT in range)
+            assertQueryNoLeakCheck(
+                    """
+                            ts\toriginal_ts\tprice
+                            2022-01-01T00:00:00.000000Z\t2022-01-01T01:00:00.000000Z\t100.0
+                            """,
+                    query,
+                    null,  // Filter model doesn't propagate timestamp
+                    true,  // supports random access
+                    false  // Filter cursor doesn't know size
+            );
+        });
+    }
+
+    @Test
     public void testNegativeIntegerOffsetPushdown() throws Exception {
         // Verify that negative integer offsets (using unary minus) are correctly handled
         // This is a regression test for isConstantIntegerExpression handling of unary minus

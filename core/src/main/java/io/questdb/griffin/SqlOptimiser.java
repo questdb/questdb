@@ -3773,7 +3773,7 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0, n = columns.size(); i < n; i++) {
                 QueryColumn col = columns.getQuick(i);
                 ExpressionNode ast = col.getAst();
-                if (ast != null && ast.type == LITERAL && Chars.equalsIgnoreCase(ast.token, sourceTimestampName)) {
+                if (ast != null && ast.type == LITERAL && isLiteralTimestampReference(ast, nested, sourceTimestampName)) {
                     // Original timestamp is in projection - it takes precedence over dateadd columns
                     return;
                 }
@@ -4099,6 +4099,28 @@ public class SqlOptimiser implements Mutable {
         if (nested != null) {
             moveWhereInsideSubQueries(nested);
         }
+    }
+
+    /**
+     * Checks if a literal expression references the timestamp column, either directly or through
+     * nested model aliases. This handles the case where qualified column references like "t.timestamp"
+     * get resolved to aliases in intermediate translating models.
+     */
+    private boolean isLiteralTimestampReference(ExpressionNode ast, QueryModel nested, CharSequence sourceTimestampName) {
+        // First, check direct match
+        if (matchesColumnName(ast.token, sourceTimestampName)) {
+            return true;
+        }
+
+        // Check if ast.token references a column in the nested model that maps to the timestamp
+        if (nested != null) {
+            QueryColumn nestedCol = nested.getAliasToColumnMap().get(ast.token);
+            if (nestedCol != null) {
+                ExpressionNode nestedAst = nestedCol.getAst();
+                return nestedAst != null && nestedAst.type == LITERAL && matchesColumnName(nestedAst.token, sourceTimestampName);
+            }
+        }
+        return false;
     }
 
     /**
