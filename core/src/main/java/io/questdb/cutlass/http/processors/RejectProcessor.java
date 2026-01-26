@@ -29,7 +29,6 @@ import io.questdb.cutlass.http.HttpMultipartContentProcessor;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.str.CharSink;
 
@@ -63,7 +62,7 @@ public interface RejectProcessor extends HttpMultipartContentProcessor {
     RejectProcessor reject(int rejectCode, CharSequence rejectMessage);
 
     default void resumeSend(HttpConnectionContext context)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         onRequestComplete(context);
     }
 

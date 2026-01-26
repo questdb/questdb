@@ -3803,7 +3803,7 @@ public class SqlParser {
             LowerCaseCharSequenceObjHashMap<WithClauseModel> masterModel,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        ExpressionNode expr = expr(lexer, model, sqlParserCallback);
+        ExpressionNode expr = expr(lexer, model, sqlParserCallback, model.getDecls());
         if (expr == null) {
             throw SqlException.position(lexer.lastTokenPosition()).put("table name expected");
         }

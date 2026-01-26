@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.std.DirectLongLongSortedList;
 
 import java.io.Closeable;
@@ -57,10 +56,6 @@ import java.io.Closeable;
  * <strong>Thread Safety:</strong><br>
  * RecordCursor implementations are generally not thread-safe. For concurrent
  * access, use {@link #newSymbolTable(int)} to create thread-local symbol table instances.
- * <p>
- * <strong>Exception Handling:</strong><br>
- * Many operations may throw {@link DataUnavailableException} when accessing
- * partitions stored in cold storage or when data is temporarily unavailable.
  */
 public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTableSource {
 
@@ -88,10 +83,9 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * @param cursor   the record cursor to skip rows in
      * @param rowCount a counter indicating how many rows to skip; this value is
      *                 decremented as rows are actually skipped
-     * @throws DataUnavailableException if data is temporarily unavailable during the skip operation
      * @see #skipRows(Counter)
      */
-    static void skipRows(RecordCursor cursor, Counter rowCount) throws DataUnavailableException {
+    static void skipRows(RecordCursor cursor, Counter rowCount) {
         while (rowCount.get() > 0 && cursor.hasNext()) {
             rowCount.dec();
         }
@@ -103,15 +97,10 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * This method iterates through all remaining records in the cursor and updates the
      * provided counter with the total count. The cursor position will be at the end
      * after this operation completes.
-     * <p>
-     * Note: This method should return a correct result even if interrupted by
-     * {@link DataUnavailableException}. The number of rows counted so far is kept
-     * in the counter parameter, allowing for resumption if needed.
      *
      * @param circuitBreaker circuit breaker to check for timeouts or stale connections;
      *                       may be null to disable circuit breaking
      * @param counter        counter object to store the partial or complete result
-     * @throws DataUnavailableException if data is temporarily unavailable during counting
      * @see #size()
      */
     default void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
@@ -216,9 +205,8 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * can be called to access the current record's data.
      *
      * @return true if more records are available and the cursor has advanced, false otherwise
-     * @throws DataUnavailableException when the queried partition is in cold storage or temporarily unavailable
      */
-    boolean hasNext() throws DataUnavailableException;
+    boolean hasNext();
 
     /**
      * Indicates whether this cursor is using an index for data access.
@@ -316,10 +304,9 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * count without consuming the cursor's position.
      *
      * @return the total number of records available, or -1 if the size cannot be determined
-     * @throws DataUnavailableException when the queried partition is in cold storage or temporarily unavailable
      * @see #calculateSize(SqlExecutionCircuitBreaker, Counter)
      */
-    long size() throws DataUnavailableException;
+    long size();
 
     /**
      * Attempts to efficiently skip the specified number of rows from the current cursor position.
@@ -335,10 +322,9 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      *
      * @param rowCount a counter containing the number of rows to skip; this value is
      *                 decremented by the number of rows actually skipped
-     * @throws DataUnavailableException when the queried partition is in cold storage or temporarily unavailable
      * @see #skipRows(RecordCursor, Counter)
      */
-    default void skipRows(Counter rowCount) throws DataUnavailableException {
+    default void skipRows(Counter rowCount) {
         while (rowCount.get() > 0 && hasNext()) {
             rowCount.dec();
         }

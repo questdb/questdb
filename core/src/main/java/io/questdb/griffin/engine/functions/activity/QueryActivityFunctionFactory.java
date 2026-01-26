@@ -28,7 +28,6 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
@@ -91,7 +90,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean hasNext() throws DataUnavailableException {
+        public boolean hasNext() {
             while (++entryIndex < entryIds.size()) {
                 entry = queryRegistry.getEntry(entryIds.get(entryIndex));
                 if (entry != null) {
@@ -100,7 +99,6 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                     }
                 }
             }
-
             return false;
         }
 
@@ -123,7 +121,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long size() throws DataUnavailableException {
+        public long size() {
             return -1;
         }
 

@@ -29,7 +29,6 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -317,9 +316,6 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
                 frameIndex++;
             }
-        } catch (DataUnavailableException e) {
-            // We're not yet done, so no need to cancel the circuit breaker. 
-            throw e;
         } catch (Throwable th) {
             sharedCircuitBreaker.cancel();
             throw th;

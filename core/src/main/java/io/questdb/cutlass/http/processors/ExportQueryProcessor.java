@@ -30,7 +30,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.PartitionBy;
@@ -65,7 +64,6 @@ import io.questdb.log.LogRecord;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -86,11 +84,11 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
+import static io.questdb.TelemetryEvent.QUERY_RESULT_EXPORT_CSV;
+import static io.questdb.TelemetryEvent.QUERY_RESULT_EXPORT_PARQUET;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 import static io.questdb.cairo.sql.RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
-import static io.questdb.TelemetryEvent.QUERY_RESULT_EXPORT_CSV;
-import static io.questdb.TelemetryEvent.QUERY_RESULT_EXPORT_PARQUET;
 import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.griffin.model.ExportModel.COPY_FORMAT_PARQUET;
 
@@ -155,7 +153,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     public void execute(
             HttpConnectionContext context,
             ExportQueryProcessorState state
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         try {
             boolean isExpRequest = isExpUrl(context.getRequestHeader().getUrl());
 
@@ -265,7 +263,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     @Override
     public void onRequestComplete(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         ExportQueryProcessorState state = LV.get(context);
         if (state == null) {
             LV.set(context, state = new ExportQueryProcessorState(context, engine.getCopyExportContext()));
@@ -318,7 +316,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     @Override
     public void resumeSend(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         try {
             doResumeSend(context);
         } catch (CairoError | CairoException e) {
@@ -682,9 +680,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         return LOG.critical().$('[').$(state.getFd()).$("] ");
     }
 
-    private void doParquetExport(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
+    private void doParquetExport(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         ExportQueryProcessorState state = LV.get(context);
         final HttpChunkedResponse response = context.getChunkedResponse();
 
@@ -765,8 +761,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     default:
                         break OUT;
                 }
-            } catch (DataUnavailableException e) {
-                throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
             } catch (NoSpaceLeftInResponseBufferException ignored) {
                 if (response.resetToBookmark()) {
                     response.sendChunk(false);
@@ -781,8 +775,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         readyForNextRequest(context);
     }
 
-    private void doResumeSend(HttpConnectionContext context)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
+    private void doResumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         ExportQueryProcessorState state = LV.get(context);
         if (state == null) {
             return;
@@ -902,9 +895,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     default:
                         break OUT;
                 }
-            } catch (DataUnavailableException e) {
-                response.resetToBookmark();
-                throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
             } catch (NoSpaceLeftInResponseBufferException ignored) {
                 if (response.resetToBookmark()) {
                     response.sendChunk(false);

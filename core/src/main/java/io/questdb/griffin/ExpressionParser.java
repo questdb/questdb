@@ -2328,9 +2328,8 @@ public class ExpressionParser {
                     node.lhs = stack.pop();
                     break;
                 default:
-                    // Pop returns args in reverse order (LIFO), so place them at correct indices
-                    for (int i = node.paramCount - 1; i >= 0; i--) {
-                        node.args.extendAndSet(i, stack.pop());
+                    for (int i = 0; i < node.paramCount; i++) {
+                        node.args.add(stack.pop());
                     }
                     break;
             }

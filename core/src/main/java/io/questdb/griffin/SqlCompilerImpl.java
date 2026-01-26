@@ -108,7 +108,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.QueryPausedException;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
@@ -411,7 +410,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * @throws SqlException              - in case of syntax error
      * @throws PeerDisconnectedException - when peer is disconnected
      * @throws PeerIsSlowToReadException - when peer is too slow
-     * @throws QueryPausedException      - when query is paused
      * @see <a href="https://www.postgresql.org/docs/current/protocol-flow.html#id-1.10.5.7.4">PostgreSQL documentation</a>
      */
     @Override
