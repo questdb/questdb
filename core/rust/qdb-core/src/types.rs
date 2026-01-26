@@ -30,11 +30,11 @@ macro_rules! impl_strong_id_type {
         pub struct $name($int_type);
 
         impl $name {
-            pub fn new(value: $int_type) -> Self {
+            pub const fn new(value: $int_type) -> Self {
                 Self(value)
             }
 
-            pub fn zero() -> Self {
+            pub const fn zero() -> Self {
                 Self(0)
             }
         }
