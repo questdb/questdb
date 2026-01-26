@@ -136,6 +136,7 @@ impl<const N: usize, T: DataPageSlicer> Pushable for ReverseFixedColumnSink<'_, 
     fn push(&mut self) -> ParquetResult<()> {
         let slice = self.slicer.next();
         let base = self.buffers.data_vec.len();
+        debug_assert!(base + N <= self.buffers.data_vec.capacity());
 
         unsafe {
             let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
