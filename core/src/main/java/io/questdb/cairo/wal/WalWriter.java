@@ -1593,6 +1593,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 segmentRowCount = uncommittedRows;
                 currentTxnStartRowNum = 0;
             } finally {
+                // oldSegmentLocked might be -1 if we previously failed to lock the new segment
                 if (oldSegmentLocked > -1) {
                     releaseSegmentLock(oldSegmentLocked, oldLastSegmentTxn, newSegmentId);
                 }
