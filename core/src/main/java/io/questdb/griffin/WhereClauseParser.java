@@ -66,6 +66,9 @@ import static io.questdb.griffin.SqlKeywords.*;
  * - indexed symbol column expressions to use for index scan
  **/
 public final class WhereClauseParser implements Mutable {
+    // Internal optimization marker for timestamp predicates pushed through dateadd transforms.
+    // and_offset(predicate, unit, offset) wraps predicates that need offset adjustment.
+    // This is NOT a user-facing function - it's injected by SqlOptimiser during predicate pushdown.
     private static final int INTRINSIC_OP_AND_OFFSET = 10;
     private static final int INTRINSIC_OP_BETWEEN = 9;
     private static final int INTRINSIC_OP_EQUAL = 6;

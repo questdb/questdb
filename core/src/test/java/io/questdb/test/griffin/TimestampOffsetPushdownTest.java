@@ -236,9 +236,56 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testModelTimestampPrecedenceOverLiteral() throws Exception {
-        // Test that when the model detects a dateadd timestamp column (ts), it takes precedence
-        // over a literal column that happens to match the base table's timestamp name.
+    public void testOriginalTimestampPrecedenceNoOffsetPushdown() throws Exception {
+        // When both original timestamp AND dateadd are in projection, filtering on the
+        // dateadd column should NOT use and_offset pushdown (original timestamp is designated)
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T00:30:00.000000Z');");
+            execute("INSERT INTO trades VALUES (150, '2022-01-01T01:30:00.000000Z');");
+            execute("INSERT INTO trades VALUES (200, '2022-01-01T02:30:00.000000Z');");
+
+            // Query with both timestamp columns and filter on the dateadd column
+            String query = """
+                    SELECT * FROM (
+                        SELECT dateadd('h', -1, timestamp) as ts, timestamp as original_ts, price FROM trades
+                    ) WHERE ts >= '2022-01-01T00:00:00' AND ts < '2022-01-01T01:00:00'
+                    """;
+
+            // Plan should NOT show interval pushdown - filter stays at outer level
+            // because original timestamp takes precedence (no ts_offset set)
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Filter filter: (ts>=2022-01-01T00:00:00.000000Z and ts<2022-01-01T01:00:00.000000Z)
+                                VirtualRecord
+                                  functions: [dateadd('h',-1,timestamp),timestamp,price]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """
+            );
+
+            // Row 1: ts = 2021-12-31 23:30 (NOT in range)
+            // Row 2: ts = 2022-01-01 00:30 (in range)
+            // Row 3: ts = 2022-01-01 01:30 (NOT in range)
+            assertQueryNoLeakCheck(
+                    """
+                            ts\toriginal_ts\tprice
+                            2022-01-01T00:30:00.000000Z\t2022-01-01T01:30:00.000000Z\t150.0
+                            """,
+                    query,
+                    "original_ts",  // Original timestamp is designated
+                    true,
+                    false  // Filter cursor doesn't know size
+            );
+        });
+    }
+
+    @Test
+    public void testOriginalTimestampPrecedenceOverDateadd() throws Exception {
+        // Test that when BOTH the original timestamp AND a dateadd column are in the projection,
+        // the original timestamp takes precedence as the designated timestamp.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T01:00:00.000000Z');");
@@ -249,8 +296,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     SELECT dateadd('h', -1, timestamp) as ts, timestamp, price FROM trades
                     """;
 
-            // Plan should show ts as the designated timestamp column (first column)
-            // The dateadd pattern is detected internally for predicate pushdown
+            // Plan should show VirtualRecord - no ts_offset because original timestamp is present
             assertPlanNoLeakCheck(
                     query,
                     """
@@ -262,7 +308,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             """
             );
 
-            // The result should have 'ts' as the timestamp column (index 0), not 'timestamp' (index 1)
+            // The result should have 'timestamp' as the designated timestamp column (index 1),
+            // not 'ts' (index 0), because the original timestamp takes precedence
             assertQueryNoLeakCheck(
                     """
                             ts\ttimestamp\tprice
@@ -270,55 +317,9 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             2022-01-01T01:00:00.000000Z\t2022-01-01T02:00:00.000000Z\t150.0
                             """,
                     query,
-                    "ts",  // ts should be the timestamp, not 'timestamp'
+                    "timestamp",  // Original timestamp takes precedence
                     true,
                     true
-            );
-        });
-    }
-
-    @Test
-    public void testModelTimestampPrecedenceWithFilter() throws Exception {
-        // Same as above but with a filter on the transformed timestamp
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
-            execute("INSERT INTO trades VALUES (100, '2022-01-01T00:30:00.000000Z');");
-            execute("INSERT INTO trades VALUES (150, '2022-01-01T01:30:00.000000Z');");
-            execute("INSERT INTO trades VALUES (200, '2022-01-01T02:30:00.000000Z');");
-
-            // Query with dateadd and filter - ts column should be detected as timestamp
-            String query = """
-                    SELECT * FROM (
-                        SELECT dateadd('h', -1, timestamp) as ts, timestamp as original_ts, price FROM trades
-                    ) WHERE ts >= '2022-01-01T00:00:00' AND ts < '2022-01-01T01:00:00'
-                    """;
-
-            // Plan should show interval pushdown using the dateadd-transformed timestamp
-            assertPlanNoLeakCheck(
-                    query,
-                    """
-                            VirtualRecord
-                              functions: [dateadd('h',-1,timestamp),timestamp,price]
-                                PageFrame
-                                    Row forward scan
-                                    Interval forward scan on: trades
-                                      intervals: [("2022-01-01T01:00:00.000000Z","2022-01-01T01:59:59.999999Z")]
-                            """
-            );
-
-            // ts (column 0) should be the timestamp, enabling proper interval pushdown
-            // Row 1: ts = 2021-12-31 23:30 (NOT in range)
-            // Row 2: ts = 2022-01-01 00:30 (in range)
-            // Row 3: ts = 2022-01-01 01:30 (NOT in range)
-            assertQueryNoLeakCheck(
-                    """
-                            ts\toriginal_ts\tprice
-                            2022-01-01T00:30:00.000000Z\t2022-01-01T01:30:00.000000Z\t150.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
             );
         });
     }
@@ -591,15 +592,59 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testQualifiedColumnNamePushdown() throws Exception {
-        // Test that qualified column names like "v.ts" are correctly matched and rewritten
-        // for timestamp predicate pushdown
+    public void testQualifiedColumnNameInDateaddExpression() throws Exception {
+        // Test that qualified column names like "trades.timestamp" in the dateadd expression
+        // are correctly recognized as referencing the designated timestamp
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T01:30:00.000000Z');");
             execute("INSERT INTO trades VALUES (150, '2022-01-01T02:30:00.000000Z');");
 
-            // Use explicit table alias with qualified column reference
+            // Use qualified column reference in dateadd expression: trades.timestamp
+            String query = """
+                    SELECT * FROM (
+                        SELECT dateadd('h', -1, trades.timestamp) as ts, price FROM trades
+                    ) WHERE ts IN '2022'
+                    """;
+
+            // Plan should show interval pushdown - qualified trades.timestamp should be detected
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            VirtualRecord
+                              functions: [dateadd('h',-1,timestamp),price]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: trades
+                                      intervals: [("2022-01-01T01:00:00.000000Z","2023-01-01T00:59:59.999999Z")]
+                            """
+            );
+
+            // Verify correct data
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tprice
+                            2022-01-01T00:30:00.000000Z\t100.0
+                            2022-01-01T01:30:00.000000Z\t150.0
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testQualifiedColumnNameInPredicatePushdown() throws Exception {
+        // Test that qualified column names like "v.ts" in WHERE clause are correctly matched
+        // and rewritten for timestamp predicate pushdown
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T01:30:00.000000Z');");
+            execute("INSERT INTO trades VALUES (150, '2022-01-01T02:30:00.000000Z');");
+
+            // Use explicit table alias with qualified column reference in WHERE
             String query = """
                     SELECT * FROM (
                         SELECT dateadd('h', -1, timestamp) as ts, price FROM trades
@@ -801,6 +846,154 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     query,
                     "ts",
                     true,
+                    false
+            );
+        });
+    }
+
+    // ==================== Window Function Timestamp Tests ====================
+    // Window functions don't support predicate pushdown (they need all rows first),
+    // but timestamp detection should still work correctly.
+
+    @Test
+    public void testWindowFunctionPreservesTimestamp() throws Exception {
+        // Window function should preserve the designated timestamp from the nested model
+        // Row ordering is maintained because window functions process rows in order
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T00:00:00.000000Z');");
+            execute("INSERT INTO trades VALUES (150, '2022-01-01T01:00:00.000000Z');");
+            execute("INSERT INTO trades VALUES (200, '2022-01-01T02:00:00.000000Z');");
+
+            // Query with window function - timestamp should be preserved
+            String query = "SELECT timestamp, price, row_number() OVER (ORDER BY timestamp) as rn FROM trades";
+
+            // Verify data is correct and ordered
+            // Window functions don't support random access but may know size
+            assertQueryNoLeakCheck(
+                    """
+                            timestamp\tprice\trn
+                            2022-01-01T00:00:00.000000Z\t100.0\t1
+                            2022-01-01T01:00:00.000000Z\t150.0\t2
+                            2022-01-01T02:00:00.000000Z\t200.0\t3
+                            """,
+                    query,
+                    "timestamp",
+                    false,  // Window functions don't support random access
+                    true    // but they may know their size
+            );
+        });
+    }
+
+    @Test
+    public void testWindowFunctionTimestampConsistency() throws Exception {
+        // Verify that shifted and non-shifted timestamps produce consistent results
+        // The window function should see the same row ordering in both cases
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T00:00:00.000000Z');");
+            execute("INSERT INTO trades VALUES (150, '2022-01-01T01:00:00.000000Z');");
+            execute("INSERT INTO trades VALUES (200, '2022-01-01T02:00:00.000000Z');");
+
+            // Query 1: Without dateadd
+            String queryNoShift = "SELECT timestamp, price, row_number() OVER (ORDER BY timestamp) as rn FROM trades";
+
+            // Query 2: With dateadd (shift by 0 - effectively same timestamps)
+            String queryWithShift = """
+                    SELECT ts, price, row_number() OVER (ORDER BY ts) as rn
+                    FROM (SELECT dateadd('h', 0, timestamp) as ts, price FROM trades)
+                    """;
+
+            // Both should produce the same row numbers
+            String expectedNoShift = """
+                    timestamp\tprice\trn
+                    2022-01-01T00:00:00.000000Z\t100.0\t1
+                    2022-01-01T01:00:00.000000Z\t150.0\t2
+                    2022-01-01T02:00:00.000000Z\t200.0\t3
+                    """;
+
+            String expectedWithShift = """
+                    ts\tprice\trn
+                    2022-01-01T00:00:00.000000Z\t100.0\t1
+                    2022-01-01T01:00:00.000000Z\t150.0\t2
+                    2022-01-01T02:00:00.000000Z\t200.0\t3
+                    """;
+
+            // Window functions don't support random access but may know size
+            assertQueryNoLeakCheck(expectedNoShift, queryNoShift, "timestamp", false, true);
+            assertQueryNoLeakCheck(expectedWithShift, queryWithShift, "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testWindowFunctionWithDateaddTimestamp() throws Exception {
+        // Window function with dateadd on timestamp - should still work correctly
+        // The dateadd-transformed column should be usable as timestamp
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T01:00:00.000000Z');");
+            execute("INSERT INTO trades VALUES (150, '2022-01-01T02:00:00.000000Z');");
+            execute("INSERT INTO trades VALUES (200, '2022-01-01T03:00:00.000000Z');");
+
+            // Query with dateadd on timestamp and window function
+            String query = """
+                    SELECT ts, price, row_number() OVER (ORDER BY ts) as rn
+                    FROM (SELECT dateadd('h', -1, timestamp) as ts, price FROM trades)
+                    """;
+
+            // Verify data is correct - dateadd shifts timestamps by -1 hour
+            // Window functions don't support random access but may know size
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tprice\trn
+                            2022-01-01T00:00:00.000000Z\t100.0\t1
+                            2022-01-01T01:00:00.000000Z\t150.0\t2
+                            2022-01-01T02:00:00.000000Z\t200.0\t3
+                            """,
+                    query,
+                    "ts",
+                    false,  // Window functions don't support random access
+                    true    // but they may know their size
+            );
+        });
+    }
+
+    @Test
+    public void testWindowFunctionWithDateaddTimestampAndPredicate() throws Exception {
+        // Window function with dateadd timestamp and WHERE clause
+        // Predicate should NOT be pushed through window function (window needs all rows first)
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T01:00:00.000000Z');");
+            execute("INSERT INTO trades VALUES (150, '2022-01-01T02:00:00.000000Z');");
+            execute("INSERT INTO trades VALUES (200, '2022-01-01T03:00:00.000000Z');");
+            execute("INSERT INTO trades VALUES (250, '2022-01-02T01:00:00.000000Z');");
+
+            // Query: dateadd shifts by -1h, then window function, then filter
+            // Row 1: ts = 00:00, rn = 1
+            // Row 2: ts = 01:00, rn = 2
+            // Row 3: ts = 02:00, rn = 3
+            // Row 4: ts = 2022-01-02 00:00, rn = 4 (outside filter)
+            String query = """
+                    SELECT * FROM (
+                        SELECT ts, price, row_number() OVER (ORDER BY ts) as rn
+                        FROM (SELECT dateadd('h', -1, timestamp) as ts, price FROM trades)
+                    ) WHERE ts IN '2022-01-01'
+                    """;
+
+            // Verify window function computes row numbers BEFORE filter is applied
+            // All 4 rows get numbered, then we filter to 2022-01-01
+            // Window functions don't support random access
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tprice\trn
+                            2022-01-01T00:00:00.000000Z\t100.0\t1
+                            2022-01-01T01:00:00.000000Z\t150.0\t2
+                            2022-01-01T02:00:00.000000Z\t200.0\t3
+                            """,
+                    query,
+                    "ts",
+                    false,  // Window functions don't support random access
                     false
             );
         });

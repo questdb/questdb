@@ -440,6 +440,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      * Merges intervals from another model with calendar-aware offset adjustment.
      * Uses the provided addMethod to apply the offset to each interval boundary,
      * which correctly handles variable-length units like months and years.
+     * <p>
+     * Note: This method only processes static intervals. Dynamic intervals (from
+     * functions like now()) are not adjusted with the offset. Queries using dynamic
+     * predicates like "ts > dateadd('d', -7, now())" will have the dynamic portion
+     * evaluated without offset adjustment.
      *
      * @param model     the model to merge
      * @param addMethod the timestamp add method for applying the offset
