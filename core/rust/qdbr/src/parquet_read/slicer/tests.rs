@@ -748,3 +748,25 @@ fn test_rle_dictionary_slicer_zero_bit_width() {
     slicer.skip(3);
     assert_eq!(slicer.next(), b"only_value");
 }
+
+#[test]
+fn test_boolean_bitmap_slicer_advance_exact_byte_boundary() {
+    let bools: Vec<bool> = (0..24).map(|i| i % 2 == 0).collect();
+    let bitmap = bools_to_bitmap(&bools);
+
+    // Start at bit 5, bits_left = 3, advance(3) should move to byte 1
+    let mut slicer_advance = BooleanBitmapSlicer::new(&bitmap, bools.len(), bools.len());
+    let mut slicer_next = BooleanBitmapSlicer::new(&bitmap, bools.len(), bools.len());
+
+    slicer_advance.skip(5);
+    slicer_next.skip(5);
+
+    slicer_advance.skip(3);
+    for _ in 0..3 {
+        slicer_next.next();
+    }
+
+    for i in 8..16 {
+        assert_eq!(slicer_advance.next(), slicer_next.next(), "mismatch at bit {}", i);
+    }
+}
