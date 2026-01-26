@@ -43,6 +43,11 @@ public class QdbrWalLocker implements WalLocker, Closeable {
     }
 
     @Override
+    public void clearTable(@NotNull DirectUtf8Sequence tableDirName) {
+        clearTable0(ptr, tableDirName.ptr(), tableDirName.size());
+    }
+
+    @Override
     public void close() {
         destroy(ptr);
         ptr = 0;
@@ -82,11 +87,6 @@ public class QdbrWalLocker implements WalLocker, Closeable {
     }
 
     @Override
-    public void purgeTable(@NotNull DirectUtf8Sequence tableDirName) {
-        purgeTable0(ptr, tableDirName.ptr(), tableDirName.size());
-    }
-
-    @Override
     public void setWalSegmentMinId(@NotNull DirectUtf8Sequence tableDirName, int walId, int newMinSegmentId) {
         setWalSegmentMinId0(ptr, tableDirName.ptr(), tableDirName.size(), walId, newMinSegmentId);
     }
@@ -103,6 +103,9 @@ public class QdbrWalLocker implements WalLocker, Closeable {
 
     // Java_io_questdb_std_cairo_wal_QdbrWalLocker_clear0
     private static native void clear0(long ptr);
+
+    // Java_io_questdb_std_cairo_wal_QdbrWalLocker_clearTable0
+    private static native void clearTable0(long ptr, long tableDirNamePtr, int tableDirNameSize);
 
     // Java_io_questdb_std_cairo_wal_QdbrWalLocker_create
     private static native long create();
@@ -121,9 +124,6 @@ public class QdbrWalLocker implements WalLocker, Closeable {
 
     // Java_io_questdb_std_cairo_wal_QdbrWalLocker_lockWriter0
     private static native void lockWriter0(long ptr, long tableDirNamePtr, int tableDirNameSize, int walId, int minSegmentId);
-
-    // Java_io_questdb_std_cairo_wal_QdbrWalLocker_purgeTable0
-    private static native void purgeTable0(long ptr, long tableDirNamePtr, int tableDirNameSize);
 
     // Java_io_questdb_std_cairo_wal_QdbrWalLocker_setWalSegmentMinId0
     private static native void setWalSegmentMinId0(long ptr, long tableDirNamePtr, int tableDirNameSize, int walId, int newMinSegmentId);

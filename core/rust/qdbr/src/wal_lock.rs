@@ -112,7 +112,7 @@ pub extern "system" fn Java_io_questdb_cairo_wal_QdbrWalLocker_lockPurge0(
     };
     let wal_id = WalId::new(wal_id as u32);
     wal_lock
-        .purge_lock(table_dir_name, wal_id)
+        .lock_for_purge(table_dir_name, wal_id)
         .map(|min_segment_id| {
             min_segment_id.map_or(jni::sys::jint::MAX, |sid| sid.value() as jni::sys::jint)
         })
@@ -137,7 +137,7 @@ pub extern "system" fn Java_io_questdb_cairo_wal_QdbrWalLocker_unlockPurge0(
     };
     let wal_id = WalId::new(wal_id as u32);
     wal_lock
-        .purge_unlock(table_dir_name, wal_id)
+        .unlock_purge(table_dir_name, wal_id)
         .or_throw_to_java(&mut env);
 }
 
@@ -161,7 +161,7 @@ pub extern "system" fn Java_io_questdb_cairo_wal_QdbrWalLocker_lockWriter0(
     let wal_id = WalId::new(wal_id as u32);
     let min_segment_id = SegmentId::new(min_segment_id);
     wal_lock
-        .writer_lock(table_dir_name, wal_id, min_segment_id)
+        .lock_for_write(table_dir_name, wal_id, min_segment_id)
         .or_throw_to_java(&mut env);
 }
 
@@ -183,7 +183,7 @@ pub extern "system" fn Java_io_questdb_cairo_wal_QdbrWalLocker_unlockWriter0(
     };
     let wal_id = WalId::new(wal_id as u32);
     wal_lock
-        .writer_unlock(table_dir_name, wal_id)
+        .unlock_write(table_dir_name, wal_id)
         .or_throw_to_java(&mut env);
 }
 
@@ -212,7 +212,7 @@ pub extern "system" fn Java_io_questdb_cairo_wal_QdbrWalLocker_setWalSegmentMinI
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_wal_QdbrWalLocker_purgeTable0(
+pub extern "system" fn Java_io_questdb_cairo_wal_QdbrWalLocker_clearTable0(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
     ptr: *mut Arc<wal_lock::WalLock>,
@@ -226,7 +226,7 @@ pub extern "system" fn Java_io_questdb_cairo_wal_QdbrWalLocker_purgeTable0(
             table_dir_name_size as usize,
         ))
     };
-    wal_lock.purge_table(table_dir_name);
+    wal_lock.clear_table(table_dir_name);
 }
 
 #[no_mangle]

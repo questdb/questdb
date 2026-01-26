@@ -152,7 +152,7 @@ impl WalLock {
     // If a purge job is currently holding an exclusive lock on the WAL,
     // this function will block until the purge is done.
     // If another writer already holds a lock on the WAL, an error is returned.
-    pub fn writer_lock(
+    pub fn lock_for_write(
         &self,
         table_dir_name: &str,
         wal_id: WalId,
@@ -205,17 +205,16 @@ impl WalLock {
         if let Some(shared) = shared {
             // We need to wait for the purge to finish.
             let (lock, cvar) = &*shared;
-            let mut started = lock.lock().unwrap();
-            while !*started {
-                started = cvar.wait(started).unwrap();
-            }
+            let _started = cvar
+                .wait_while(lock.lock().unwrap(), |started| !*started)
+                .unwrap();
         }
 
         Ok(())
     }
 
     // Release a writer lock for the given table and wal id.
-    pub fn writer_unlock(
+    pub fn unlock_write(
         &self,
         table_dir_name: &str,
         wal_id: WalId,
@@ -259,7 +258,7 @@ impl WalLock {
     // Acquire a purge lock for the given table and wal id.
     // If a writer is currently holding a lock on the WAL,
     // this function will return the max segment id that the purge can delete up to.
-    pub fn purge_lock(
+    pub fn lock_for_purge(
         &self,
         table_dir_name: &str,
         wal_id: WalId,
@@ -302,7 +301,7 @@ impl WalLock {
     }
 
     // Release a purge lock for the given table and wal id.
-    pub fn purge_unlock(
+    pub fn unlock_purge(
         &self,
         table_dir_name: &str,
         wal_id: WalId,
@@ -433,7 +432,7 @@ impl WalLock {
 
     // Remove a table id mapping.
     // The caller must ensure that there are no locks for the given table.
-    pub fn purge_table(&self, table_dir_name: &str) {
+    pub fn clear_table(&self, table_dir_name: &str) {
         self.table_ids.remove(table_dir_name);
     }
 }
@@ -597,13 +596,15 @@ mod tests {
     #[test]
     fn test_writer_lock_unlock() {
         let lock_manager = WalLock::new();
-        lock_manager.writer_lock("1", wal_id(1), seg_id(0)).unwrap();
+        lock_manager
+            .lock_for_write("1", wal_id(1), seg_id(0))
+            .unwrap();
 
         assert!(lock_manager.is_locked("1", wal_id(1)));
         assert!(lock_manager.is_segment_locked("1", wal_id(1), seg_id(0)));
         assert!(lock_manager.is_segment_locked("1", wal_id(1), seg_id(1)));
 
-        lock_manager.writer_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_write("1", wal_id(1)).unwrap();
 
         assert!(!lock_manager.is_locked("1", wal_id(1)));
     }
@@ -611,25 +612,27 @@ mod tests {
     #[test]
     fn test_writer_lock_with_high_min_segment() {
         let lock_manager = WalLock::new();
-        lock_manager.writer_lock("1", wal_id(1), seg_id(5)).unwrap();
+        lock_manager
+            .lock_for_write("1", wal_id(1), seg_id(5))
+            .unwrap();
 
         assert!(lock_manager.is_locked("1", wal_id(1)));
         assert!(!lock_manager.is_segment_locked("1", wal_id(1), seg_id(4)));
         assert!(lock_manager.is_segment_locked("1", wal_id(1), seg_id(5)));
         assert!(lock_manager.is_segment_locked("1", wal_id(1), seg_id(6)));
 
-        lock_manager.writer_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_write("1", wal_id(1)).unwrap();
     }
 
     #[test]
     fn test_purge_lock_unlock() {
         let lock_manager = WalLock::new();
-        let max_purgeable_segment = lock_manager.purge_lock("1", wal_id(1)).unwrap();
+        let max_purgeable_segment = lock_manager.lock_for_purge("1", wal_id(1)).unwrap();
 
         assert!(max_purgeable_segment.is_none());
         assert!(lock_manager.is_locked("1", wal_id(1)));
 
-        lock_manager.purge_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_purge("1", wal_id(1)).unwrap();
 
         assert!(!lock_manager.is_locked("1", wal_id(1)));
     }
@@ -637,23 +640,25 @@ mod tests {
     #[test]
     fn test_double_writer_lock_fails() {
         let lock_manager = WalLock::new();
-        lock_manager.writer_lock("1", wal_id(1), seg_id(0)).unwrap();
+        lock_manager
+            .lock_for_write("1", wal_id(1), seg_id(0))
+            .unwrap();
 
-        let result = lock_manager.writer_lock("1", wal_id(1), seg_id(5));
+        let result = lock_manager.lock_for_write("1", wal_id(1), seg_id(5));
         assert!(matches!(
             result,
             Err(WriterLockError::WriterAlreadyExists(_, _))
         ));
 
-        lock_manager.writer_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_write("1", wal_id(1)).unwrap();
     }
 
     #[test]
     fn test_double_purge_lock_fails() {
         let lock_manager = WalLock::new();
-        lock_manager.purge_lock("1", wal_id(1)).unwrap();
+        lock_manager.lock_for_purge("1", wal_id(1)).unwrap();
 
-        let result = lock_manager.purge_lock("1", wal_id(1));
+        let result = lock_manager.lock_for_purge("1", wal_id(1));
         assert!(matches!(
             result,
             Err(PurgeLockError::PurgeAlreadyExists(_, _))
@@ -663,19 +668,21 @@ mod tests {
         assert!(err_msg.contains("dir_name=1"));
         assert!(err_msg.contains("wal_id=1"));
 
-        lock_manager.purge_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_purge("1", wal_id(1)).unwrap();
     }
 
     #[test]
     fn test_purge_lock_on_writer_purge_state_fails() {
         let lock_manager = WalLock::new();
         // Writer locks first
-        lock_manager.writer_lock("1", wal_id(1), seg_id(0)).unwrap();
+        lock_manager
+            .lock_for_write("1", wal_id(1), seg_id(0))
+            .unwrap();
         // Purge attaches (now in WriterAndPurge state)
-        lock_manager.purge_lock("1", wal_id(1)).unwrap();
+        lock_manager.lock_for_purge("1", wal_id(1)).unwrap();
 
         // Another purge tries to attach - should fail
-        let result = lock_manager.purge_lock("1", wal_id(1));
+        let result = lock_manager.lock_for_purge("1", wal_id(1));
         assert!(matches!(
             result,
             Err(PurgeLockError::PurgeAlreadyExists(_, _))
@@ -685,29 +692,31 @@ mod tests {
         assert!(err_msg.contains("dir_name=1"));
         assert!(err_msg.contains("wal_id=1"));
 
-        lock_manager.purge_unlock("1", wal_id(1)).unwrap();
-        lock_manager.writer_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_purge("1", wal_id(1)).unwrap();
+        lock_manager.unlock_write("1", wal_id(1)).unwrap();
     }
 
     #[test]
     fn test_writer_then_purge_shared_mode() {
         let lock_manager = WalLock::new();
         // Writer locks first with minSegment = 5
-        lock_manager.writer_lock("1", wal_id(1), seg_id(5)).unwrap();
+        lock_manager
+            .lock_for_write("1", wal_id(1), seg_id(5))
+            .unwrap();
 
         // Purge attaches, should return minSegment - 1 = 4
-        let max_purgeable_segment = lock_manager.purge_lock("1", wal_id(1)).unwrap();
+        let max_purgeable_segment = lock_manager.lock_for_purge("1", wal_id(1)).unwrap();
         assert_eq!(max_purgeable_segment, Some(seg_id(5)));
 
         // Both are sharing the lock
         assert!(lock_manager.is_locked("1", wal_id(1)));
 
         // Purge unlocks first, writer should still hold the lock
-        lock_manager.purge_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_purge("1", wal_id(1)).unwrap();
         assert!(lock_manager.is_locked("1", wal_id(1)));
 
         // Writer unlocks, lock should be released
-        lock_manager.writer_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_write("1", wal_id(1)).unwrap();
         assert!(!lock_manager.is_locked("1", wal_id(1)));
     }
 
@@ -716,19 +725,19 @@ mod tests {
         let lock_manager = WalLock::new();
         // Writer locks first with minSegment = 10
         lock_manager
-            .writer_lock("1", wal_id(1), seg_id(10))
+            .lock_for_write("1", wal_id(1), seg_id(10))
             .unwrap();
 
         // Purge attaches
-        let max_purgeable_segment = lock_manager.purge_lock("1", wal_id(1)).unwrap();
+        let max_purgeable_segment = lock_manager.lock_for_purge("1", wal_id(1)).unwrap();
         assert_eq!(max_purgeable_segment, Some(seg_id(10)));
 
         // Writer unlocks first, purge should still hold the lock
-        lock_manager.writer_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_write("1", wal_id(1)).unwrap();
         assert!(lock_manager.is_locked("1", wal_id(1)));
 
         // Purge unlocks, lock should be released
-        lock_manager.purge_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_purge("1", wal_id(1)).unwrap();
         assert!(!lock_manager.is_locked("1", wal_id(1)));
     }
 
@@ -737,7 +746,7 @@ mod tests {
         let lock_manager = Arc::new(WalLock::new());
 
         // Purge locks first
-        let max_purgeable_segment = lock_manager.purge_lock("1", wal_id(1)).unwrap();
+        let max_purgeable_segment = lock_manager.lock_for_purge("1", wal_id(1)).unwrap();
         assert!(max_purgeable_segment.is_none());
 
         let writer_acquired = Arc::new(AtomicBool::new(false));
@@ -751,7 +760,7 @@ mod tests {
         let writer_thread = thread::spawn(move || {
             writer_started_clone.store(true, Ordering::SeqCst);
             lock_manager_clone
-                .writer_lock("1", wal_id(1), seg_id(3))
+                .lock_for_write("1", wal_id(1), seg_id(3))
                 .unwrap();
             writer_acquired_clone.store(true, Ordering::SeqCst);
         });
@@ -766,7 +775,7 @@ mod tests {
         assert!(!writer_acquired.load(Ordering::SeqCst));
 
         // Purge unlocks
-        lock_manager.purge_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_purge("1", wal_id(1)).unwrap();
 
         // Writer should now acquire the lock
         writer_thread.join().unwrap();
@@ -774,7 +783,7 @@ mod tests {
         assert!(lock_manager.is_locked("1", wal_id(1)));
 
         // Clean up
-        lock_manager.writer_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_write("1", wal_id(1)).unwrap();
     }
 
     #[test]
@@ -782,7 +791,7 @@ mod tests {
         let lock_manager = Arc::new(WalLock::new());
 
         // Purge locks first (exclusive)
-        lock_manager.purge_lock("1", wal_id(1)).unwrap();
+        lock_manager.lock_for_purge("1", wal_id(1)).unwrap();
 
         let writer_acquired = Arc::new(AtomicBool::new(false));
 
@@ -792,7 +801,7 @@ mod tests {
         // Writer tries to lock, will block
         let writer_thread = thread::spawn(move || {
             lock_manager_clone
-                .writer_lock("1", wal_id(1), seg_id(7))
+                .lock_for_write("1", wal_id(1), seg_id(7))
                 .unwrap();
             writer_acquired_clone.store(true, Ordering::SeqCst);
         });
@@ -801,7 +810,7 @@ mod tests {
         assert!(!writer_acquired.load(Ordering::SeqCst));
 
         // Purge unlocks, writer should acquire with its minSegment
-        lock_manager.purge_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_purge("1", wal_id(1)).unwrap();
 
         writer_thread.join().unwrap();
 
@@ -809,52 +818,62 @@ mod tests {
         assert!(lock_manager.is_segment_locked("1", wal_id(1), seg_id(7)));
         assert!(!lock_manager.is_segment_locked("1", wal_id(1), seg_id(6)));
 
-        lock_manager.writer_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_write("1", wal_id(1)).unwrap();
     }
 
     #[test]
     fn test_multiple_tables() {
         let lock_manager = WalLock::new();
-        lock_manager.writer_lock("1", wal_id(1), seg_id(0)).unwrap();
-        lock_manager.writer_lock("2", wal_id(1), seg_id(0)).unwrap();
-        lock_manager.purge_lock("3", wal_id(1)).unwrap();
+        lock_manager
+            .lock_for_write("1", wal_id(1), seg_id(0))
+            .unwrap();
+        lock_manager
+            .lock_for_write("2", wal_id(1), seg_id(0))
+            .unwrap();
+        lock_manager.lock_for_purge("3", wal_id(1)).unwrap();
 
         assert!(lock_manager.is_locked("1", wal_id(1)));
         assert!(lock_manager.is_locked("2", wal_id(1)));
         assert!(lock_manager.is_locked("3", wal_id(1)));
 
-        lock_manager.writer_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_write("1", wal_id(1)).unwrap();
         assert!(!lock_manager.is_locked("1", wal_id(1)));
         assert!(lock_manager.is_locked("2", wal_id(1)));
         assert!(lock_manager.is_locked("3", wal_id(1)));
 
-        lock_manager.writer_unlock("2", wal_id(1)).unwrap();
-        lock_manager.purge_unlock("3", wal_id(1)).unwrap();
+        lock_manager.unlock_write("2", wal_id(1)).unwrap();
+        lock_manager.unlock_purge("3", wal_id(1)).unwrap();
     }
 
     #[test]
     fn test_multiple_wals_same_table() {
         let lock_manager = WalLock::new();
-        lock_manager.writer_lock("1", wal_id(1), seg_id(0)).unwrap();
-        lock_manager.writer_lock("1", wal_id(2), seg_id(5)).unwrap();
-        lock_manager.purge_lock("1", wal_id(3)).unwrap();
+        lock_manager
+            .lock_for_write("1", wal_id(1), seg_id(0))
+            .unwrap();
+        lock_manager
+            .lock_for_write("1", wal_id(2), seg_id(5))
+            .unwrap();
+        lock_manager.lock_for_purge("1", wal_id(3)).unwrap();
 
         assert!(lock_manager.is_locked("1", wal_id(1)));
         assert!(lock_manager.is_locked("1", wal_id(2)));
         assert!(lock_manager.is_locked("1", wal_id(3)));
 
-        lock_manager.writer_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_write("1", wal_id(1)).unwrap();
         assert!(!lock_manager.is_locked("1", wal_id(1)));
         assert!(lock_manager.is_locked("1", wal_id(2)));
 
-        lock_manager.writer_unlock("1", wal_id(2)).unwrap();
-        lock_manager.purge_unlock("1", wal_id(3)).unwrap();
+        lock_manager.unlock_write("1", wal_id(2)).unwrap();
+        lock_manager.unlock_purge("1", wal_id(3)).unwrap();
     }
 
     #[test]
     fn test_update_writer_min_segment_id_increase() {
         let lock_manager = WalLock::new();
-        lock_manager.writer_lock("1", wal_id(1), seg_id(0)).unwrap();
+        lock_manager
+            .lock_for_write("1", wal_id(1), seg_id(0))
+            .unwrap();
 
         // Initially all segments from 0 are locked
         assert!(lock_manager.is_segment_locked("1", wal_id(1), seg_id(0)));
@@ -868,17 +887,19 @@ mod tests {
         assert!(!lock_manager.is_segment_locked("1", wal_id(1), seg_id(4)));
         assert!(lock_manager.is_segment_locked("1", wal_id(1), seg_id(5)));
 
-        lock_manager.writer_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_write("1", wal_id(1)).unwrap();
     }
 
     #[test]
     fn test_update_writer_min_segment_id_affects_purge_lock() {
         let lock_manager = WalLock::new();
         // Writer locks with minSegment = 5
-        lock_manager.writer_lock("1", wal_id(1), seg_id(5)).unwrap();
+        lock_manager
+            .lock_for_write("1", wal_id(1), seg_id(5))
+            .unwrap();
 
         // Purge attaches, max purgeable = 5 (the min_segment_id)
-        let max_purgeable1 = lock_manager.purge_lock("1", wal_id(1)).unwrap();
+        let max_purgeable1 = lock_manager.lock_for_purge("1", wal_id(1)).unwrap();
         assert_eq!(max_purgeable1, Some(seg_id(5)));
 
         // Writer advances to segment 10
@@ -887,12 +908,12 @@ mod tests {
             .unwrap();
 
         // Unlock purge and re-lock to see updated value
-        lock_manager.purge_unlock("1", wal_id(1)).unwrap();
-        let max_purgeable2 = lock_manager.purge_lock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_purge("1", wal_id(1)).unwrap();
+        let max_purgeable2 = lock_manager.lock_for_purge("1", wal_id(1)).unwrap();
         assert_eq!(max_purgeable2, Some(seg_id(10)));
 
-        lock_manager.purge_unlock("1", wal_id(1)).unwrap();
-        lock_manager.writer_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_purge("1", wal_id(1)).unwrap();
+        lock_manager.unlock_write("1", wal_id(1)).unwrap();
     }
 
     #[test]
@@ -911,10 +932,12 @@ mod tests {
     fn test_unlock_purge_on_active_writer_only_fails() {
         let lock_manager = WalLock::new();
         // Only writer locks (no purge)
-        lock_manager.writer_lock("1", wal_id(1), seg_id(0)).unwrap();
+        lock_manager
+            .lock_for_write("1", wal_id(1), seg_id(0))
+            .unwrap();
 
         // Try to unlock purge when only writer has the lock - should fail
-        let result = lock_manager.purge_unlock("1", wal_id(1));
+        let result = lock_manager.unlock_purge("1", wal_id(1));
         assert!(matches!(result, Err(PurgeUnlockError::InvalidState(_, _))));
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("cannot release purge lock: invalid state"));
@@ -922,17 +945,17 @@ mod tests {
         assert!(err_msg.contains("wal_id=1"));
 
         // Clean up
-        lock_manager.writer_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_write("1", wal_id(1)).unwrap();
     }
 
     #[test]
     fn test_unlock_writer_on_purge_exclusive_fails() {
         let lock_manager = WalLock::new();
         // Only purge locks (no writer)
-        lock_manager.purge_lock("1", wal_id(1)).unwrap();
+        lock_manager.lock_for_purge("1", wal_id(1)).unwrap();
 
         // Try to unlock writer when only purge has the lock - should fail
-        let result = lock_manager.writer_unlock("1", wal_id(1));
+        let result = lock_manager.unlock_write("1", wal_id(1));
         assert!(matches!(result, Err(WriterUnlockError::InvalidState(_, _))));
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("cannot release writer lock: invalid state"));
@@ -940,14 +963,14 @@ mod tests {
         assert!(err_msg.contains("wal_id=1"));
 
         // Clean up
-        lock_manager.purge_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_purge("1", wal_id(1)).unwrap();
     }
 
     #[test]
     fn test_unlock_writer_on_non_existent_wal_fails() {
         let lock_manager = WalLock::new();
         // Try to unlock writer on a non-existent entry - should fail
-        let result = lock_manager.writer_unlock("1", wal_id(1));
+        let result = lock_manager.unlock_write("1", wal_id(1));
         assert!(matches!(result, Err(WriterUnlockError::NotFound(_, _))));
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("cannot release writer lock: not found"));
@@ -959,7 +982,7 @@ mod tests {
     fn test_unlock_purge_on_non_existent_wal_fails() {
         let lock_manager = WalLock::new();
         // Try to unlock purge on a non-existent entry - should fail
-        let result = lock_manager.purge_unlock("1", wal_id(1));
+        let result = lock_manager.unlock_purge("1", wal_id(1));
         assert!(matches!(result, Err(PurgeUnlockError::NotFound(_, _))));
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("cannot release purge lock: not found"));
@@ -971,7 +994,7 @@ mod tests {
     fn test_update_writer_min_segment_id_decrease_fails() {
         let lock_manager = WalLock::new();
         lock_manager
-            .writer_lock("1", wal_id(1), seg_id(10))
+            .lock_for_write("1", wal_id(1), seg_id(10))
             .unwrap();
 
         let result = lock_manager.update_writer_min_segment_id("1", wal_id(1), seg_id(5));
@@ -990,14 +1013,14 @@ mod tests {
         assert!(lock_manager.is_segment_locked("1", wal_id(1), seg_id(10)));
         assert!(!lock_manager.is_segment_locked("1", wal_id(1), seg_id(9)));
 
-        lock_manager.writer_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_write("1", wal_id(1)).unwrap();
     }
 
     #[test]
     fn test_update_writer_min_segment_id_on_purge_exclusive_is_noop() {
         let lock_manager = WalLock::new();
         // Only purge holds the lock (no writer)
-        lock_manager.purge_lock("1", wal_id(1)).unwrap();
+        lock_manager.lock_for_purge("1", wal_id(1)).unwrap();
 
         // Updating segment ID should be a no-op (not error, not change anything)
         lock_manager
@@ -1007,14 +1030,18 @@ mod tests {
         // No segments should be locked by writer since there's no writer
         assert!(!lock_manager.is_segment_locked("1", wal_id(1), seg_id(10)));
 
-        lock_manager.purge_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_purge("1", wal_id(1)).unwrap();
     }
 
     #[test]
     fn test_clear() {
         let lock_manager = WalLock::new();
-        lock_manager.writer_lock("1", wal_id(1), seg_id(0)).unwrap();
-        lock_manager.writer_lock("2", wal_id(1), seg_id(0)).unwrap();
+        lock_manager
+            .lock_for_write("1", wal_id(1), seg_id(0))
+            .unwrap();
+        lock_manager
+            .lock_for_write("2", wal_id(1), seg_id(0))
+            .unwrap();
 
         assert!(lock_manager.is_locked("1", wal_id(1)));
         assert!(lock_manager.is_locked("2", wal_id(1)));
@@ -1040,14 +1067,14 @@ mod tests {
                 thread::spawn(move || {
                     barrier.wait();
                     if lock_manager
-                        .writer_lock("1", wal_id(i as u32), seg_id(0))
+                        .lock_for_write("1", wal_id(i as u32), seg_id(0))
                         .is_err()
                     {
                         error.store(true, Ordering::SeqCst);
                         return;
                     }
                     thread::sleep(Duration::from_millis(10));
-                    if lock_manager.writer_unlock("1", wal_id(i as u32)).is_err() {
+                    if lock_manager.unlock_write("1", wal_id(i as u32)).is_err() {
                         error.store(true, Ordering::SeqCst);
                     }
                 })
@@ -1074,14 +1101,14 @@ mod tests {
             let error_writer = Arc::clone(&error);
             let writer = thread::spawn(move || {
                 if lock_manager_writer
-                    .writer_lock("1", wal_id(1), seg_id(min_segment_id))
+                    .lock_for_write("1", wal_id(1), seg_id(min_segment_id))
                     .is_err()
                 {
                     error_writer.store(true, Ordering::SeqCst);
                     return;
                 }
                 thread::sleep(Duration::from_millis(1));
-                if lock_manager_writer.writer_unlock("1", wal_id(1)).is_err() {
+                if lock_manager_writer.unlock_write("1", wal_id(1)).is_err() {
                     error_writer.store(true, Ordering::SeqCst);
                 }
             });
@@ -1090,7 +1117,7 @@ mod tests {
             let error_purge = Arc::clone(&error);
             let purge = thread::spawn(move || {
                 thread::sleep(Duration::from_millis(1)); // Small delay to increase chance of interleaving
-                let max_purgeable = match lock_manager_purge.purge_lock("1", wal_id(1)) {
+                let max_purgeable = match lock_manager_purge.lock_for_purge("1", wal_id(1)) {
                     Ok(seg) => seg,
                     Err(_) => {
                         error_purge.store(true, Ordering::SeqCst);
@@ -1104,7 +1131,7 @@ mod tests {
                     }
                 }
                 thread::sleep(Duration::from_millis(1));
-                if lock_manager_purge.purge_unlock("1", wal_id(1)).is_err() {
+                if lock_manager_purge.unlock_purge("1", wal_id(1)).is_err() {
                     error_purge.store(true, Ordering::SeqCst);
                 }
             });
@@ -1124,7 +1151,7 @@ mod tests {
         let lock_manager = Arc::new(WalLock::new());
 
         // Purge locks first
-        lock_manager.purge_lock("1", wal_id(1)).unwrap();
+        lock_manager.lock_for_purge("1", wal_id(1)).unwrap();
 
         let segment_correct = Arc::new(AtomicBool::new(false));
 
@@ -1133,7 +1160,7 @@ mod tests {
 
         let writer_thread = thread::spawn(move || {
             lock_manager_clone
-                .writer_lock("1", wal_id(1), seg_id(42))
+                .lock_for_write("1", wal_id(1), seg_id(42))
                 .unwrap();
             // After acquiring, verify segment is correctly set
             segment_correct_clone.store(
@@ -1143,13 +1170,13 @@ mod tests {
         });
 
         thread::sleep(Duration::from_millis(50));
-        lock_manager.purge_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_purge("1", wal_id(1)).unwrap();
 
         writer_thread.join().unwrap();
         assert!(segment_correct.load(Ordering::SeqCst));
         assert!(!lock_manager.is_segment_locked("1", wal_id(1), seg_id(41)));
 
-        lock_manager.writer_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_write("1", wal_id(1)).unwrap();
     }
 
     #[test]
@@ -1160,18 +1187,20 @@ mod tests {
         assert!(!lock_manager.is_segment_locked("1", wal_id(1), seg_id(0)));
 
         // Purge lock exists
-        lock_manager.purge_lock("1", wal_id(1)).unwrap();
+        lock_manager.lock_for_purge("1", wal_id(1)).unwrap();
         assert!(!lock_manager.is_segment_locked("1", wal_id(1), seg_id(0)));
-        lock_manager.purge_unlock("1", wal_id(1)).unwrap();
+        lock_manager.unlock_purge("1", wal_id(1)).unwrap();
     }
 
     #[test]
     fn test_writer_already_exists() {
         let lock_manager = WalLock::new();
 
-        lock_manager.writer_lock("1", wal_id(1), seg_id(0)).unwrap();
+        lock_manager
+            .lock_for_write("1", wal_id(1), seg_id(0))
+            .unwrap();
 
-        let result = lock_manager.writer_lock("1", wal_id(1), seg_id(1));
+        let result = lock_manager.lock_for_write("1", wal_id(1), seg_id(1));
         assert!(matches!(
             result,
             Err(WriterLockError::WriterAlreadyExists(_, _))
@@ -1186,14 +1215,14 @@ mod tests {
     fn test_next_writer_already_exists() {
         let lock_manager = Arc::new(WalLock::new());
 
-        lock_manager.purge_lock("0", wal_id(0)).unwrap();
+        lock_manager.lock_for_purge("0", wal_id(0)).unwrap();
         let lm = Arc::clone(&lock_manager);
         let _first_writer = thread::spawn(move || {
-            lm.writer_lock("0", wal_id(0), seg_id(0)).unwrap();
+            lm.lock_for_write("0", wal_id(0), seg_id(0)).unwrap();
         });
 
         thread::sleep(Duration::from_millis(5)); // Ensure first writer is waiting
-        let result = lock_manager.writer_lock("0", wal_id(0), seg_id(1));
+        let result = lock_manager.lock_for_write("0", wal_id(0), seg_id(1));
         assert!(matches!(
             result,
             Err(WriterLockError::WriterAlreadyExists(_, _))

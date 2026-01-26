@@ -53,6 +53,14 @@ public interface WalLocker extends QuietCloseable {
     void clear();
 
     /**
+     * Drop a table ID mapping. Should be called when a table is dropped and no more writers/purge jobs
+     * will access its WAL directories.
+     *
+     * @param tableDirName the table directory name identifying the table
+     */
+    void clearTable(DirectUtf8Sequence tableDirName);
+
+    /**
      * Checks if a specific WAL segment is currently locked.
      *
      * @param tableDirName the table directory name identifying the table
@@ -94,14 +102,6 @@ public interface WalLocker extends QuietCloseable {
      * @param minSegmentId the minimum segment ID that the writer will be working with
      */
     void lockWriter(DirectUtf8Sequence tableDirName, int walId, int minSegmentId);
-
-    /**
-     * Drop a table ID mapping. Should be called when a table is dropped and no more writers/purge jobs
-     * will access its WAL directories.
-     *
-     * @param tableDirName the table directory name identifying the table
-     */
-    void purgeTable(DirectUtf8Sequence tableDirName);
 
     /**
      * Sets the minimum segment ID for the specified WAL directory.
