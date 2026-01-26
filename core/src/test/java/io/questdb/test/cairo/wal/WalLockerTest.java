@@ -25,11 +25,11 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.QdbrWalLocker;
 import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
@@ -46,19 +46,16 @@ import java.util.concurrent.atomic.AtomicReference;
 public class WalLockerTest {
 
     private WalLocker locker;
-    private DirectUtf8Sink table1;
-    private DirectUtf8Sink table2;
-    private DirectUtf8Sink table3;
+    private TableToken table1;
+    private TableToken table2;
+    private TableToken table3;
 
     @Before
     public void setUp() {
         locker = new QdbrWalLocker();
-        table1 = new DirectUtf8Sink(16);
-        table1.putAscii("table1");
-        table2 = new DirectUtf8Sink(16);
-        table2.putAscii("table2");
-        table3 = new DirectUtf8Sink(16);
-        table3.putAscii("table3");
+        table1 = new TableToken("table1", "table1", null, 1, false, false, false);
+        table2 = new TableToken("table2", "table2", null, 2, false, false, false);
+        table3 = new TableToken("table3", "table3", null, 3, false, false, false);
     }
 
     @After
@@ -66,9 +63,6 @@ public class WalLockerTest {
         if (locker != null) {
             locker.close();
         }
-        table1.close();
-        table2.close();
-        table3.close();
     }
 
     @Test

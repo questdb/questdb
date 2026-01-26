@@ -24,8 +24,8 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.str.DirectUtf8Sequence;
 
 
 /**
@@ -56,28 +56,28 @@ public interface WalLocker extends QuietCloseable {
      * Drop a table ID mapping. Should be called when a table is dropped and no more writers/purge jobs
      * will access its WAL directories.
      *
-     * @param tableDirName the table directory name identifying the table
+     * @param token the table token
      */
-    void clearTable(DirectUtf8Sequence tableDirName);
+    void clearTable(TableToken token);
 
     /**
      * Checks if a specific WAL segment is currently locked.
      *
-     * @param tableDirName the table directory name identifying the table
-     * @param walId        the WAL identifier (e.g., 1 for wal1)
-     * @param segmentId    the segment identifier within the WAL
+     * @param token     the table token
+     * @param walId     the WAL identifier (e.g., 1 for wal1)
+     * @param segmentId the segment identifier within the WAL
      * @return {@code true} if the segment is locked, {@code false} otherwise
      */
-    boolean isSegmentLocked(DirectUtf8Sequence tableDirName, int walId, int segmentId);
+    boolean isSegmentLocked(TableToken token, int walId, int segmentId);
 
     /**
      * Checks if a WAL directory is currently locked.
      *
-     * @param tableDirName the table directory name identifying the table
-     * @param walId        the WAL identifier (e.g., 1 for wal1)
+     * @param token the table token
+     * @param walId the WAL identifier (e.g., 1 for wal1)
      * @return {@code true} if the WAL is locked, {@code false} otherwise
      */
-    boolean isWalLocked(DirectUtf8Sequence tableDirName, int walId);
+    boolean isWalLocked(TableToken token, int walId);
 
     /**
      * Locks the purge lock on the specified WAL directory.
@@ -85,52 +85,52 @@ public interface WalLocker extends QuietCloseable {
      * If an active writer is present, this method will take a shared lock with the writer and return the maximum segment ID
      * that can be safely purged.
      *
-     * @param tableDirName the table directory name identifying the table
-     * @param walId        the WAL identifier (e.g., 1 for wal1)
+     * @param token the table token
+     * @param walId the WAL identifier (e.g., 1 for wal1)
      * @return the maximum segment ID that can be safely purged, or {@link WalUtils#SEG_NONE_ID} if exclusive lock is held
      * and the whole WAL can be purged.
      */
-    int lockPurge(DirectUtf8Sequence tableDirName, int walId);
+    int lockPurge(TableToken token, int walId);
 
     /**
      * Locks the writer lock on the specified WAL directory.
      * This will block if a purge job is currently holding an exclusive lock on the WAL.
-     * The caller must ensure to call {@link #unlockWriter(DirectUtf8Sequence, int)} to release the lock.
+     * The caller must ensure to call {@link #unlockWriter(TableToken, int)} to release the lock.
      *
-     * @param tableDirName the table directory name identifying the table
+     * @param token        the table token
      * @param walId        the WAL identifier (e.g., 1 for wal1)
      * @param minSegmentId the minimum segment ID that the writer will be working with
      */
-    void lockWriter(DirectUtf8Sequence tableDirName, int walId, int minSegmentId);
+    void lockWriter(TableToken token, int walId, int minSegmentId);
 
     /**
      * Sets the minimum segment ID for the specified WAL directory.
      * As the purge job may also hold the lock, the new minimum segment ID must be
      * greater than or equal to the current minimum segment ID.
      *
-     * @param tableDirName    the table directory name identifying the table
+     * @param token           the table token
      * @param walId           the WAL identifier (e.g., 1 for wal1)
      * @param newMinSegmentId the new minimum segment ID to set
      */
-    void setWalSegmentMinId(DirectUtf8Sequence tableDirName, int walId, int newMinSegmentId);
+    void setWalSegmentMinId(TableToken token, int walId, int newMinSegmentId);
 
     /**
      * Unlock the purge lock on the specified WAL directory.
      * This will either release the lock if no writers are active,
      * or downgrade the lock to active writer if a writer is active/waiting.
      *
-     * @param tableDirName the table directory name identifying the table
-     * @param walId        the WAL identifier (e.g., 1 for wal1)
+     * @param token the table token
+     * @param walId the WAL identifier (e.g., 1 for wal1)
      */
-    void unlockPurge(DirectUtf8Sequence tableDirName, int walId);
+    void unlockPurge(TableToken token, int walId);
 
     /**
      * Unlock the writer lock on the specified WAL directory.
      * This will either release the lock if no purge is active,
      * or downgrade the lock to purge exclusive if a purge is also active.
      *
-     * @param tableDirName the table directory name identifying the table
-     * @param walId        the WAL identifier (e.g., 1 for wal1)
+     * @param token the table token
+     * @param walId the WAL identifier (e.g., 1 for wal1)
      */
-    void unlockWriter(DirectUtf8Sequence tableDirName, int walId);
+    void unlockWriter(TableToken token, int walId);
 }

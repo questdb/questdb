@@ -24,12 +24,12 @@
 
 package org.questdb;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.wal.QdbrWalLocker;
 import io.questdb.cairo.wal.WalLocker;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.openjdk.jmh.annotations.Benchmark;
@@ -76,7 +76,7 @@ public class WalLockerBenchmark {
     private int pathLen;
     private int segmentId;
     private int tableIndex;
-    private DirectUtf8Sink[] tableNames;
+    private TableToken[] tables;
     private java.nio.file.Path tempDir;
     private int walIndex;
 
@@ -108,10 +108,10 @@ public class WalLockerBenchmark {
     @Setup(Level.Trial)
     public void setupTrial() {
         locker = new QdbrWalLocker();
-        tableNames = new DirectUtf8Sink[NUM_TABLES];
+        tables = new TableToken[NUM_TABLES];
         for (int i = 0; i < NUM_TABLES; i++) {
-            tableNames[i] = new DirectUtf8Sink(32);
-            tableNames[i].putAscii("table").put(i);
+            String name = "table_" + i;
+            tables[i] = new TableToken(name, name, null, i, false, false, false);
         }
     }
 
@@ -129,15 +129,12 @@ public class WalLockerBenchmark {
     public void tearDownTrial() {
         locker.close();
         path.close();
-        for (int i = 0; i < NUM_TABLES; i++) {
-            tableNames[i].close();
-        }
     }
 
     @Benchmark
-    public void testWriterFileLockUnlock(Blackhole bh) throws InterruptedException {
-        DirectUtf8Sink tableName = tableNames[tableIndex];
-        path.trimTo(pathLen).concat(tableName);
+    public void testWriterFileLockUnlock(Blackhole bh) {
+        TableToken table = tables[tableIndex];
+        path.trimTo(pathLen).concat(table.getDirNameUtf8());
         final LPSZ lpsz = TableUtils.lockName(path);
         long fd = TableUtils.lock(filesFacade, lpsz);
         bh.consume(fd);
@@ -146,8 +143,8 @@ public class WalLockerBenchmark {
 
     @Benchmark
     public void testWriterLockUnlock() {
-        DirectUtf8Sink tableName = tableNames[tableIndex];
-        locker.lockWriter(tableName, walIndex, segmentId);
-        locker.unlockWriter(tableName, walIndex);
+        TableToken table = tables[tableIndex];
+        locker.lockWriter(table, walIndex, segmentId);
+        locker.unlockWriter(table, walIndex);
     }
 }

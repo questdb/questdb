@@ -24,13 +24,12 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.std.Os;
 import io.questdb.std.str.DirectUtf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.Closeable;
-
-public class QdbrWalLocker implements WalLocker, Closeable {
+public class QdbrWalLocker implements WalLocker {
     private long ptr;
 
     public QdbrWalLocker() {
@@ -43,7 +42,8 @@ public class QdbrWalLocker implements WalLocker, Closeable {
     }
 
     @Override
-    public void clearTable(@NotNull DirectUtf8Sequence tableDirName) {
+    public void clearTable(@NotNull TableToken token) {
+        final DirectUtf8Sequence tableDirName = token.getDirNameUtf8();
         clearTable0(ptr, tableDirName.ptr(), tableDirName.size());
     }
 
@@ -54,17 +54,19 @@ public class QdbrWalLocker implements WalLocker, Closeable {
     }
 
     @Override
-    public boolean isSegmentLocked(@NotNull DirectUtf8Sequence tableDirName, int walId, int segmentId) {
+    public boolean isSegmentLocked(@NotNull TableToken token, int walId, int segmentId) {
+        final DirectUtf8Sequence tableDirName = token.getDirNameUtf8();
         return isSegmentLocked0(ptr, tableDirName.ptr(), tableDirName.size(), walId, segmentId);
     }
 
     @Override
-    public boolean isWalLocked(@NotNull DirectUtf8Sequence tableDirName, int walId) {
+    public boolean isWalLocked(@NotNull TableToken token, int walId) {
+        final DirectUtf8Sequence tableDirName = token.getDirNameUtf8();
         return isWalLocked0(ptr, tableDirName.ptr(), tableDirName.size(), walId);
     }
 
     @Override
-    public int lockPurge(@NotNull DirectUtf8Sequence tableDirName, int walId) {
+    public int lockPurge(@NotNull TableToken token, int walId) {
         // Race safety: minSegmentId is only mutated in 2 cases:
         //  - when the purge lock is released: as we assume that no 2 purge jobs will run concurrently
         //  on the same WAL, this read is safe.
@@ -72,6 +74,7 @@ public class QdbrWalLocker implements WalLocker, Closeable {
         //  must ensure that the new minSegmentId is greater than or equal to the current minSegmentId.
         //  A stale read returns a conservative (lower) max-purgeable ID, which is safe - we may under-purge
         //  but never over-purge.
+        final DirectUtf8Sequence tableDirName = token.getDirNameUtf8();
         final int lockedMinSegmentId = lockPurge0(ptr, tableDirName.ptr(), tableDirName.size(), walId);
         if (lockedMinSegmentId == Integer.MAX_VALUE) {
             // We have exclusive lock, whole WAL can be purged
@@ -82,22 +85,26 @@ public class QdbrWalLocker implements WalLocker, Closeable {
     }
 
     @Override
-    public void lockWriter(@NotNull DirectUtf8Sequence tableDirName, int walId, int minSegmentId) {
+    public void lockWriter(@NotNull TableToken token, int walId, int minSegmentId) {
+        final DirectUtf8Sequence tableDirName = token.getDirNameUtf8();
         lockWriter0(ptr, tableDirName.ptr(), tableDirName.size(), walId, minSegmentId);
     }
 
     @Override
-    public void setWalSegmentMinId(@NotNull DirectUtf8Sequence tableDirName, int walId, int newMinSegmentId) {
+    public void setWalSegmentMinId(@NotNull TableToken token, int walId, int newMinSegmentId) {
+        final DirectUtf8Sequence tableDirName = token.getDirNameUtf8();
         setWalSegmentMinId0(ptr, tableDirName.ptr(), tableDirName.size(), walId, newMinSegmentId);
     }
 
     @Override
-    public void unlockPurge(@NotNull DirectUtf8Sequence tableDirName, int walId) {
+    public void unlockPurge(@NotNull TableToken token, int walId) {
+        final DirectUtf8Sequence tableDirName = token.getDirNameUtf8();
         unlockPurge0(ptr, tableDirName.ptr(), tableDirName.size(), walId);
     }
 
     @Override
-    public void unlockWriter(@NotNull DirectUtf8Sequence tableDirName, int walId) {
+    public void unlockWriter(@NotNull TableToken token, int walId) {
+        final DirectUtf8Sequence tableDirName = token.getDirNameUtf8();
         unlockWriter0(ptr, tableDirName.ptr(), tableDirName.size(), walId);
     }
 

@@ -65,7 +65,6 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -480,16 +479,16 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private int count = 1;
 
             @Override
-            public void setWalSegmentMinId(@NotNull DirectUtf8Sequence tableDirName, int walId, int segmentId) {
+            public void setWalSegmentMinId(@NotNull TableToken table, int walId, int segmentId) {
                 if (
-                        Utf8s.containsAscii(tableDirName, weather)
+                        Utf8s.containsAscii(table.getDirNameUtf8(), weather)
                                 && walId == 1
                                 && segmentId == 1
                                 && --count == 0
                 ) {
                     dropWeatherTable();
                 }
-                super.setWalSegmentMinId(tableDirName, walId, segmentId);
+                super.setWalSegmentMinId(table, walId, segmentId);
             }
         };
 
@@ -860,12 +859,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private final AtomicInteger count = new AtomicInteger(1);
 
             @Override
-            public void setWalSegmentMinId(@NotNull DirectUtf8Sequence tableDirName, int walId, int segmentId) {
+            public void setWalSegmentMinId(@NotNull TableToken table, int walId, int segmentId) {
                 if (walId == 1 && segmentId == 1 && count.decrementAndGet() == 0) {
                     mayDrainWalQueue();
                     renameTable(weather, meteorology);
                 }
-                super.setWalSegmentMinId(tableDirName, walId, segmentId);
+                super.setWalSegmentMinId(table, walId, segmentId);
             }
         };
 
@@ -918,11 +917,11 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private int count = 1;
 
             @Override
-            public void setWalSegmentMinId(@NotNull DirectUtf8Sequence tableDirName, int walId, int segmentId) {
-                if (Utf8s.containsAscii(tableDirName, weather) && walId == 1 && segmentId == 1 && --count == 0) {
+            public void setWalSegmentMinId(@NotNull TableToken table, int walId, int segmentId) {
+                if (Utf8s.containsAscii(table.getDirNameUtf8(), weather) && walId == 1 && segmentId == 1 && --count == 0) {
                     renameTable(weather, meteorology);
                 }
-                super.setWalSegmentMinId(tableDirName, walId, segmentId);
+                super.setWalSegmentMinId(table, walId, segmentId);
             }
         };
 

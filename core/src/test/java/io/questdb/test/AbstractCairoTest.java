@@ -129,7 +129,6 @@ import org.junit.rules.Timeout;
 import org.junit.runner.Description;
 
 import java.io.File;
-import java.io.IOException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -2113,7 +2112,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected void assertSegmentLocked(TableToken tableToken, int walId, int segmentId) {
         final WalLocker locker = engine.getWalLocker();
-        Assert.assertTrue(locker.isSegmentLocked(tableToken.getDirNameUtf8(), walId, segmentId));
+        Assert.assertTrue(locker.isSegmentLocked(tableToken, walId, segmentId));
     }
 
     protected void assertSegmentLocked(String tableName, @SuppressWarnings("SameParameterValue") int walId, int segmentId) {
@@ -2210,7 +2209,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected void assertWalLocked(TableToken tableToken, int walId) {
         final WalLocker locker = engine.getWalLocker();
-        Assert.assertTrue(locker.isWalLocked(tableToken.getDirNameUtf8(), walId));
+        Assert.assertTrue(locker.isWalLocked(tableToken, walId));
     }
 
     protected void assertWalNotLocked(String tableName, @SuppressWarnings("SameParameterValue") int walId) {
@@ -2220,7 +2219,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected void assertWalNotLocked(TableToken tableToken, int walId) {
         final WalLocker locker = engine.getWalLocker();
-        Assert.assertFalse(locker.isWalLocked(tableToken.getDirNameUtf8(), walId));
+        Assert.assertFalse(locker.isWalLocked(tableToken, walId));
     }
 
     protected void createPopulateTable(TableModel tableModel, int totalRows, String startDate, int partitionCount) throws NumericException, SqlException {

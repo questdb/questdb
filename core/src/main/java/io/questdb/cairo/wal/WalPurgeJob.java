@@ -242,7 +242,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         // wait for them to be closed before fully removing the token from name registry
                         // and marking table as fully deleted.
                         if (fullyDeleted) {
-                            walLocker.clearTable(tableToken.getDirNameUtf8());
+                            walLocker.clearTable(tableToken);
                             engine.removeTableToken(tableToken);
                             LOG.info().$("table is fully dropped [tableDir=").$(pathToDelete).I$();
                             TableUtils.lockName(pathToDelete);
@@ -324,7 +324,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         try {
                             final int walId = Numbers.parseInt(walName, 3, walName.size());
                             onDiskWalIDSet.add(walId);
-                            int maxSegmentLocked = walLocker.lockPurge(tableToken.getDirNameUtf8(), walId);
+                            int maxSegmentLocked = walLocker.lockPurge(tableToken, walId);
 
                             int trackerIdx = logic.trackDiscoveredWal(walId);
                             boolean walLocked = maxSegmentLocked == WalUtils.SEG_NONE_ID;
@@ -796,7 +796,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
         @Override
         public void unlock(int walId) {
-            walLocker.unlockPurge(tableToken.getDirNameUtf8(), walId);
+            walLocker.unlockPurge(tableToken, walId);
             LOG.debug().$("unlocked WAL [table=").$(tableToken)
                     .$(", walId=").$(walId)
                     .I$();
