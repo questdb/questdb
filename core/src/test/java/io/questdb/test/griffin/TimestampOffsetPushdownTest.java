@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.jit.JitUtil;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -190,19 +191,35 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     """;
 
             // Verify plan shows interval pushdown AND filter for price
-            assertPlanNoLeakCheck(
-                    query,
-                    """
-                            VirtualRecord
-                              functions: [dateadd('h',-1,timestamp),price]
-                                Async Filter workers: 1
-                                  filter: 120<price
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: trades
-                                          intervals: [("2022-01-01T01:00:00.000000Z","2023-01-01T00:59:59.999999Z")]
-                            """
-            );
+            if (JitUtil.isJitSupported()) {
+                assertPlanNoLeakCheck(
+                        query,
+                        """
+                                VirtualRecord
+                                  functions: [dateadd('h',-1,timestamp),price]
+                                    Async JIT Filter workers: 1
+                                      filter: 120<price
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: trades
+                                              intervals: [("2022-01-01T01:00:00.000000Z","2023-01-01T00:59:59.999999Z")]
+                                """
+                );
+            } else {
+                assertPlanNoLeakCheck(
+                        query,
+                        """
+                                VirtualRecord
+                                  functions: [dateadd('h',-1,timestamp),price]
+                                    Async Filter workers: 1
+                                      filter: 120<price
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: trades
+                                              intervals: [("2022-01-01T01:00:00.000000Z","2023-01-01T00:59:59.999999Z")]
+                                """
+                );
+            }
 
             assertQueryNoLeakCheck(
                     """
