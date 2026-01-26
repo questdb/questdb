@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
@@ -135,8 +136,8 @@ public class IntrinsicModel implements Mutable {
         runtimeIntervalBuilder.mergeWithAddMethod(model, addMethod, offset);
     }
 
-    public void of(int timestampType, int partitionBy) {
-        this.runtimeIntervalBuilder.of(timestampType, partitionBy);
+    public void of(int timestampType, int partitionBy, CairoConfiguration configuration) {
+        this.runtimeIntervalBuilder.of(timestampType, partitionBy, configuration);
     }
 
     public void setBetweenBoundary(long timestamp) {
@@ -194,6 +195,10 @@ public class IntrinsicModel implements Mutable {
 
     public void unionIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
         runtimeIntervalBuilder.unionIntervals(seq, lo, lim, position);
+    }
+
+    public void unionRuntimeTimestamp(Function function) {
+        runtimeIntervalBuilder.unionRuntimeTimestamp(function);
     }
 
     static {
