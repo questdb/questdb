@@ -172,8 +172,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             onDiskWalIDSet.clear();
 
             boolean tableDropped = false;
-            discoverWalSegments();
-            discoverSequencerParts();
+            boolean hasPendingTasks = discoverWalSegments();
+            hasPendingTasks |= discoverSequencerParts();
 
             if (logic.hasOnDiskSegments()) {
                 try {
@@ -191,7 +191,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             }
 
             if (tableDropped || (lastTxn < 0 && engine.isTableDropped(tableToken))) {
-                if (logic.hasPendingTasks()) {
+                if (hasPendingTasks) {
                     LOG.info().$("table is dropped, but has WALs containing segments with pending tasks [table=")
                             .$(tableToken).I$();
                 } else if (
@@ -256,8 +256,14 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    private void discoverSequencerParts() {
+    /**
+     * Discover all sequencer parts on disk for the current table.
+     *
+     * @return false if there aren't any pending tasks
+     */
+    private boolean discoverSequencerParts() {
         LPSZ path = setSeqPartPath(tableToken).$();
+        boolean hasPendingTasks = false;
         if (ff.exists(path)) {
             long p = ff.findFirst(path);
             if (p > 0) {
@@ -270,6 +276,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             try {
                                 final int partNo = Numbers.parseInt(walName);
                                 logic.trackSeqPart(partNo);
+                                hasPendingTasks = true;
                             } catch (NumericException ne) {
                                 // Non-Part file directory, ignore.
                             }
@@ -280,13 +287,19 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 }
             }
         }
+        return hasPendingTasks;
     }
 
-    private void discoverWalSegments() {
+    /**
+     * Discover all WAL directories and their segments on disk for the current table.
+     *
+     * @return false if there aren't any pending tasks
+     */
+    private boolean discoverWalSegments() {
         Path path = setTablePath(tableToken);
         long p = ff.findFirst(path.$());
         int rootPathLen = path.size();
-        logic.sequencerHasPendingTasks(sequencerHasPendingTasks());
+        boolean hasPendingTasks = sequencerHasPendingTasks();
         if (p > 0) {
             try {
                 do {
@@ -355,6 +368,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             }
 
                             logic.endWalTracking(trackerIdx, maxSegmentLocked, walLocked);
+                            hasPendingTasks |= !walLocked;
                         } catch (NumericException ne) {
                             // Non-WAL directory, ignore.
                         }
@@ -364,6 +378,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 ff.findClose(p);
             }
         }
+        return hasPendingTasks;
     }
 
     private boolean fetchSequencerPairs() {
@@ -544,7 +559,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         private final int waitBeforeDelete;
         private long currentSeqPart;
         private boolean logged;
-        private boolean sequencerPending;
         private TableToken tableToken;
 
         public Logic(Deleter deleter, int waitBeforeDelete) {
@@ -560,26 +574,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
         public boolean hasOnDiskSegments() {
             return discovered.size() != 0;
-        }
-
-        public boolean hasPendingTasks() {
-            if (sequencerPending) {
-                return true;
-            }
-            for (int i = 0, n = discovered.size(); i < n; ) {
-                final int walId = discovered.get(i);
-                if (walId == WalUtils.METADATA_WALID) {
-                    i += 2; // skip seq part
-                } else {
-                    final int maxSegmentLocked = discovered.get(i + 1);
-                    if (maxSegmentLocked != WalUtils.SEG_NONE_ID) {
-                        return true;
-                    }
-                    final int nSegments = discovered.get(i + 2);
-                    i += 3 + nSegments;
-                }
-            }
-            return false;
         }
 
         public void releaseLocks() {
@@ -598,7 +592,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             this.tableToken = tableToken;
             nextToApply.clear();
             discovered.clear();
-            sequencerPending = false;
             currentSeqPart = -1;
             logged = false;
         }
@@ -658,10 +651,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     }
                 }
             }
-        }
-
-        public void sequencerHasPendingTasks(boolean isPending) {
-            sequencerPending = isPending;
         }
 
         public void trackCurrentSeqPart(long partNo) {
