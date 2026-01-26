@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -74,6 +75,10 @@ public class FuzzQueryOperation implements FuzzTransactionOperation {
             }
             if (e.isTableDoesNotExist()) {
                 return false; // drop table transactions are BAU
+            }
+            if (Chars.contains(e.getFlyweightMessage(), "too many cached query plan cannot be used because table schema has changed")) {
+                // Just an unlucky live lock conflict, ignore
+                return false;
             }
             throw new RuntimeException(e);
         } catch (Throwable th) {

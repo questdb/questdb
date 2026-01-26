@@ -44,7 +44,6 @@ class SampleByFillValueRecordCursor extends AbstractSampleByFillRecordCursor imp
     private final Map map;
     private final RecordCursor mapCursor;
     private final Record mapRecord;
-    private boolean hasNextPending;
     private boolean isMapBuildPending;
     private boolean isMapInitialized;
     private boolean isOpen;
@@ -129,7 +128,6 @@ class SampleByFillValueRecordCursor extends AbstractSampleByFillRecordCursor imp
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
         super.of(baseCursor, executionContext);
         rowId = 0;
-        hasNextPending = false;
         isMapBuildPending = true;
         isMapInitialized = false;
     }
@@ -152,7 +150,6 @@ class SampleByFillValueRecordCursor extends AbstractSampleByFillRecordCursor imp
         super.toTop();
         map.clear();
         rowId = 0;
-        hasNextPending = false;
         isMapBuildPending = true;
         isMapInitialized = false;
     }
@@ -180,37 +177,23 @@ class SampleByFillValueRecordCursor extends AbstractSampleByFillRecordCursor imp
         }
 
         final long next = timestampSampler.nextTimestamp(localEpoch);
-        while (true) {
+        do {
             long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
 
-                if (!hasNextPending) {
-                    adjustDstInFlight(timestamp - tzOffset);
-                    final MapKey key = map.withKey();
-                    keyMapSink.copy(baseRecord, key);
-                    final MapValue value = key.findValue();
-                    assert value != null;
+                adjustDstInFlight(timestamp - tzOffset);
+                final MapKey key = map.withKey();
+                keyMapSink.copy(baseRecord, key);
+                final MapValue value = key.findValue();
+                assert value != null;
 
-                    if (value.getLong(0) != localEpoch) {
-                        value.putLong(0, localEpoch);
-                        groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
-                    } else {
-                        groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
-                    }
+                if (value.getLong(0) != localEpoch) {
+                    value.putLong(0, localEpoch);
+                    groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
+                } else {
+                    groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
                 }
-
-                hasNextPending = true;
-                boolean baseHasNext = baseCursor.hasNext();
-                hasNextPending = false;
-                // carry on with the loop if we still have data
-                if (baseHasNext) {
-                    continue;
-                }
-
-                // we ran out of data, make sure hasNext() returns false at the next
-                // opportunity, after we stream map that is
-                baseRecord = null;
             } else {
                 // timestamp changed, make sure we keep the value of 'lastTimestamp'
                 // unchanged. Timestamp column uses this variable.
@@ -220,10 +203,15 @@ class SampleByFillValueRecordCursor extends AbstractSampleByFillRecordCursor imp
                 if (timestamp != Long.MIN_VALUE) {
                     nextSamplePeriod(timestamp);
                 }
+                isMapBuildPending = true;
+                return;
             }
-            isMapBuildPending = true;
-            break;
-        }
+        } while (baseCursor.hasNext());
+
+        // we ran out of data, make sure hasNext() returns false at the next
+        // opportunity, after we stream map that is
+        baseRecord = null;
+        isMapBuildPending = true;
     }
 
     private void initMap() {

@@ -30,11 +30,11 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.ObjList;
 
 class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleByCursor {
-    private final SimpleMapValue simpleMapValue;
+    private final SimpleMapValue value;
 
     public SampleByFillNoneNotKeyedRecordCursor(
             CairoConfiguration configuration,
-            SimpleMapValue simpleMapValue,
+            SimpleMapValue value,
             ObjList<GroupByFunction> groupByFunctions,
             GroupByFunctionsUpdater groupByFunctionsUpdater,
             ObjList<Function> recordFunctions,
@@ -67,18 +67,13 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
                 sampleToFunc,
                 sampleToFuncPos
         );
-        this.simpleMapValue = simpleMapValue;
-        record.of(simpleMapValue);
-    }
-
-    @Override
-    public long preComputedStateSize() {
-        return super.preComputedStateSize();
+        this.value = value;
+        record.of(value);
     }
 
     @Override
     public boolean hasNext() {
         initTimestamps();
-        return baseRecord != null && notKeyedLoop(simpleMapValue);
+        return baseRecord != null && notKeyedLoop(value);
     }
 }

@@ -175,6 +175,7 @@ public class SqlOptimiser implements Mutable {
     private final IntSortedList orderingStack = new IntSortedList();
     private final Path path;
     private final LowerCaseCharSequenceHashSet pivotAliasMap = new LowerCaseCharSequenceHashSet();
+    private final LowerCaseCharSequenceIntHashMap pivotAliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
     private final IntHashSet postFilterRemoved = new IntHashSet();
     private final ObjList<IntHashSet> postFilterTableRefs = new ObjList<>();
     private final ObjectPool<QueryColumn> queryColumnPool;
@@ -191,8 +192,10 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<QueryColumn> tempColumns2 = new ObjList<>();
     private final IntList tempCrossIndexes = new IntList();
     private final IntList tempCrosses = new IntList();
+    private final LowerCaseCharSequenceIntHashMap tempCursorAliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> tempCursorAliases = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<ExpressionNode> tempExprs = new ObjList<>();
+    private final IntHashSet tempIntHashSet = new IntHashSet();
     private final IntList tempIntList = new IntList();
     private final StringSink tmpStringSink = new StringSink();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
@@ -315,17 +318,20 @@ public class SqlOptimiser implements Mutable {
         tablesSoFar.clear();
         clausesToSteal.clear();
         tempCursorAliases.clear();
+        tempCursorAliasSequenceMap.clear();
         tableFactoriesInFlight.clear();
         groupByAliases.clear();
         groupByNodes.clear();
         tempColumnAlias = null;
         tempQueryModel = null;
         tempIntList.clear();
+        tempIntHashSet.clear();
         tempBoolList.clear();
         tempColumns.clear();
         tempColumns2.clear();
         tempCharSequenceHashSet.clear();
         pivotAliasMap.clear();
+        pivotAliasSequenceMap.clear();
         tmpStringSink.clear();
         clearWindowFunctionHashMap();
     }
@@ -766,7 +772,7 @@ public class SqlOptimiser implements Mutable {
             }
 
             // add to temp aliases so that two cursors cannot use the same alias!
-            baseAlias = SqlUtil.createColumnAlias(characterStore, baseAlias, -1, tempCursorAliases);
+            baseAlias = SqlUtil.createColumnAlias(characterStore, baseAlias, -1, tempCursorAliases, tempCursorAliasSequenceMap, false);
 
             final QueryColumn crossColumn = queryColumnPool.next().of(baseAlias, node);
 
@@ -1946,7 +1952,7 @@ public class SqlOptimiser implements Mutable {
      */
     private void collectReferencedAliasesFromColumn(QueryColumn col, LowerCaseCharSequenceHashSet aliases) {
         collectReferencedAliases(col.getAst(), aliases);
-        if (col.isWindowColumn()) {
+        if (col.isWindowExpression()) {
             WindowExpression wc = (WindowExpression) col;
             // Traverse partitionBy expressions
             ObjList<ExpressionNode> partitionBy = wc.getPartitionBy();
@@ -2030,15 +2036,36 @@ public class SqlOptimiser implements Mutable {
     }
 
     private CharSequence createColumnAlias(CharSequence name, QueryModel model, boolean nonLiteral) {
-        return SqlUtil.createColumnAlias(characterStore, name, Chars.indexOfLastUnquoted(name, '.'), model.getAliasToColumnMap(), nonLiteral);
+        return SqlUtil.createColumnAlias(
+                characterStore,
+                name,
+                Chars.indexOfLastUnquoted(name, '.'),
+                model.getAliasToColumnMap(),
+                model.getAliasSequenceMap(),
+                nonLiteral
+        );
     }
 
     private CharSequence createColumnAlias(CharSequence name, QueryModel model) {
-        return SqlUtil.createColumnAlias(characterStore, name, Chars.indexOfLastUnquoted(name, '.'), model.getAliasToColumnMap());
+        return SqlUtil.createColumnAlias(
+                characterStore,
+                name,
+                Chars.indexOfLastUnquoted(name, '.'),
+                model.getAliasToColumnMap(),
+                model.getAliasSequenceMap(),
+                false
+        );
     }
 
     private CharSequence createColumnAlias(ExpressionNode node, QueryModel model) {
-        return SqlUtil.createColumnAlias(characterStore, node.token, Chars.indexOfLastUnquoted(node.token, '.'), model.getAliasToColumnMap());
+        return SqlUtil.createColumnAlias(
+                characterStore,
+                node.token,
+                Chars.indexOfLastUnquoted(node.token, '.'),
+                model.getAliasToColumnMap(),
+                model.getAliasSequenceMap(),
+                false
+        );
     }
 
     // use only if input is a column literal!
@@ -2355,6 +2382,59 @@ public class SqlOptimiser implements Mutable {
         return _model;
     }
 
+    /**
+     * Detects if there are any duplicate aggregate expressions in the column list.
+     * Uses hash-based detection for O(n) average complexity instead of O(n^2) pairwise comparison.
+     * tempIntList stores interleaved (hash, columnIndex) pairs for all aggregate expressions.
+     */
+    private boolean detectDuplicateAggregates(ObjList<QueryColumn> columns) {
+        final int n = columns.size();
+        if (n < 2) {
+            return false;
+        }
+
+        // First pass: collect hashes and column indices for non-window aggregate expressions
+        // Store as interleaved pairs: [hash0, colIdx0, hash1, colIdx1, ...]
+        tempIntList.clear();
+        for (int i = 0; i < n; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            if (qc.isWindowExpression()) {
+                continue;
+            }
+            ExpressionNode ast = qc.getAst();
+            if (ast.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(ast.token)) {
+                tempIntList.add(ExpressionNode.deepHashCode(ast));
+                tempIntList.add(i);
+            }
+        }
+
+        int count = tempIntList.size() / 2; // number of aggregates
+        if (count < 2) {
+            return false;
+        }
+
+        // Second pass: check for duplicate hashes
+        tempIntHashSet.clear();
+        for (int i = 0; i < count; i++) {
+            int hash = tempIntList.getQuick(i * 2);
+            if (tempIntHashSet.contains(hash)) {
+                // Hash collision - verify with exact comparison against previous aggregates with same hash
+                int colIdx = tempIntList.getQuick(i * 2 + 1);
+                ExpressionNode ast = columns.getQuick(colIdx).getAst();
+                for (int j = 0; j < i; j++) {
+                    if (tempIntList.getQuick(j * 2) == hash) {
+                        int prevColIdx = tempIntList.getQuick(j * 2 + 1);
+                        if (compareNodesExact(ast, columns.getQuick(prevColIdx).getAst())) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            tempIntHashSet.add(hash);
+        }
+        return false;
+    }
+
     private int doReorderTables(QueryModel parent, IntList ordered) {
         tempCrossIndexes.clear();
         ordered.clear();
@@ -2631,7 +2711,7 @@ public class SqlOptimiser implements Mutable {
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
             emitLiteralsTopDown(qc.getAst(), target);
-            if (qc.isWindowColumn()) {
+            if (qc.isWindowExpression()) {
                 final WindowExpression ac = (WindowExpression) qc;
                 emitLiteralsTopDown(ac.getPartitionBy(), target);
                 emitLiteralsTopDown(ac.getOrderBy(), target);
@@ -3700,6 +3780,7 @@ public class SqlOptimiser implements Mutable {
                                 node.token,
                                 Chars.indexOfLastUnquoted(node.token, '.'),
                                 model.getAliasToColumnMap(),
+                                model.getAliasSequenceMap(),
                                 true
                         );
                         qc = queryColumnPool.next().of(
@@ -4439,6 +4520,7 @@ public class SqlOptimiser implements Mutable {
                         int valueCount = 0;
                         tempCharSequenceHashSet.clear();
                         pivotAliasMap.clear();
+                        pivotAliasSequenceMap.clear();
 
                         try (RecordCursor cursor = inListFactory.getCursor(sqlExecutionContext)) {
                             while (cursor.hasNext()) {
@@ -4461,6 +4543,7 @@ public class SqlOptimiser implements Mutable {
                                         characterStore,
                                         unquote(token),
                                         pivotAliasMap,
+                                        pivotAliasSequenceMap,
                                         configuration.getColumnAliasGeneratedMaxSize(),
                                         true
                                 );
@@ -4959,6 +5042,7 @@ public class SqlOptimiser implements Mutable {
                     characterStore,
                     entry.toImmutable(),
                     pivotAliasMap,
+                    pivotAliasSequenceMap,
                     configuration.getColumnAliasGeneratedMaxSize(),
                     true
             );
@@ -5159,18 +5243,28 @@ public class SqlOptimiser implements Mutable {
                 // check if it's an already selected column, so that we don't need to add it as a key
                 if (node.type == LITERAL) {
                     final CharSequence translatingAlias = translatingModel.getColumnNameToAliasMap().get(node.token);
-                    final CharSequence existingAlias = translatingAlias != null ? groupByModel.getColumnNameToAliasMap().get(translatingAlias) : null;
-                    if (existingAlias != null) {
-                        // great! there is a matching key, so let's refer its alias and call it a day
-                        final ExpressionNode replaceNode = !Chars.equalsIgnoreCase(existingAlias, node.token)
-                                ? nextLiteral(existingAlias)
-                                : node;
-                        // don't forget to add the column to group by lists, if it's not there already
-                        if (findColumnByAst(groupByNodes, groupByAliases, replaceNode) == null) {
-                            groupByNodes.add(replaceNode);
-                            groupByAliases.add(existingAlias);
+                    if (translatingAlias != null) {
+                        // For window joins, the caller passes windowJoinModel as both translatingModel and
+                        // groupByModel (see emitAggregatesAndLiterals call in rewriteSelect0HandleOperation).
+                        // In this case, the column was already added to windowJoinModel, so we can use
+                        // the translating alias directly. The groupByNodes/groupByAliases lists are not
+                        // used for window joins since GROUP BY is disallowed with WINDOW JOIN.
+                        if (translatingModel == groupByModel) {
+                            return nextLiteral(translatingAlias);
                         }
-                        return replaceNode;
+                        final CharSequence existingAlias = groupByModel.getColumnNameToAliasMap().get(translatingAlias);
+                        if (existingAlias != null) {
+                            // great! there is a matching key, so let's refer its alias and call it a day
+                            final ExpressionNode replaceNode = !Chars.equalsIgnoreCase(existingAlias, node.token)
+                                    ? nextLiteral(existingAlias)
+                                    : node;
+                            // don't forget to add the column to group by lists, if it's not there already
+                            if (findColumnByAst(groupByNodes, groupByAliases, replaceNode) == null) {
+                                groupByNodes.add(replaceNode);
+                                groupByAliases.add(existingAlias);
+                            }
+                            return replaceNode;
+                        }
                     }
                 }
 
@@ -5551,7 +5645,7 @@ public class SqlOptimiser implements Mutable {
                 final QueryColumn qc = bottomUpColumns.getQuick(i);
                 final ExpressionNode ast = qc.getAst();
                 final CharSequence alias = qc.getAlias();
-                if (qc.isWindowColumn() || (ast.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(ast.token))) {
+                if (qc.isWindowExpression() || (ast.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(ast.token))) {
                     abandonRewrite = true;
                     break;
                 }
@@ -5917,7 +6011,7 @@ public class SqlOptimiser implements Mutable {
                                 CharSequence translatedColumnAlias = getTranslatedColumnAlias(limitModel, baseParent, orderBy.token);
                                 if (translatedColumnAlias == null) {
                                     // add column ref to the most-nested model that doesn't have it
-                                    alias = SqlUtil.createColumnAlias(characterStore, tempColumnAlias, Chars.indexOfLastUnquoted(tempColumnAlias, '.'), tempQueryModel.getAliasToColumnMap());
+                                    alias = SqlUtil.createColumnAlias(characterStore, tempColumnAlias, Chars.indexOfLastUnquoted(tempColumnAlias, '.'), tempQueryModel.getAliasToColumnMap(), tempQueryModel.getAliasSequenceMap(), false);
                                     tempQueryModel.addBottomUpColumn(nextColumn(alias, tempColumnAlias));
 
                                     // and then push to upper models
@@ -5990,7 +6084,7 @@ public class SqlOptimiser implements Mutable {
                                 }
 
                                 if (alias == null) {
-                                    alias = SqlUtil.createColumnAlias(characterStore, column, dot, baseParent.getAliasToColumnMap());
+                                    alias = SqlUtil.createColumnAlias(characterStore, column, dot, baseParent.getAliasToColumnMap(), baseParent.getAliasSequenceMap(), false);
                                     baseParent.addBottomUpColumn(nextColumn(alias, column));
                                 }
 
@@ -6249,6 +6343,7 @@ public class SqlOptimiser implements Mutable {
     private void rewritePivotGroupByColumns(QueryModel model, QueryModel innerModel, QueryModel outerModel) throws SqlException {
         ObjList<ExpressionNode> nestedGroupBy = model.getGroupBy();
         pivotAliasMap.clear();
+        pivotAliasSequenceMap.clear();
         for (int i = 0, n = nestedGroupBy.size(); i < n; i++) {
             ExpressionNode groupByExpr = nestedGroupBy.getQuick(i);
             if (groupByExpr.type == CONSTANT) {
@@ -6260,6 +6355,7 @@ public class SqlOptimiser implements Mutable {
                         characterStore,
                         entry.toImmutable(),
                         pivotAliasMap,
+                        pivotAliasSequenceMap,
                         configuration.getColumnAliasGeneratedMaxSize(),
                         true
                 );
@@ -6870,7 +6966,7 @@ public class SqlOptimiser implements Mutable {
         // when column is direct call to aggregation function, such as
         // select sum(x) ...
         // we can add it to group-by model right away
-        if (qc.isWindowColumn()) {
+        if (qc.isWindowExpression()) {
             ExpressionNode ast = qc.getAst();
 
             // Validate that PARTITION BY and ORDER BY don't contain window functions
@@ -6910,13 +7006,16 @@ public class SqlOptimiser implements Mutable {
             // Extract any nested window functions from arguments to inner window model
             extractAndRegisterNestedWindowFunctions(ast, translatingModel, innerVirtualModel, baseModel, 0);
 
-            CharSequence matchingCol = findColumnByAst(groupByNodes, groupByAliases, ast);
-            if (useOuterModel && matchingCol != null) {
-                QueryColumn ref = nextColumn(qc.getAlias(), matchingCol);
-                ref = ensureAliasUniqueness(outerVirtualModel, ref);
-                outerVirtualModel.addBottomUpColumn(ref);
-                distinctModel.addBottomUpColumn(ref);
-                return null;
+            // Only search for existing column if we'll actually use the result
+            if (useOuterModel) {
+                CharSequence matchingCol = findColumnByAst(groupByNodes, groupByAliases, ast);
+                if (matchingCol != null) {
+                    QueryColumn ref = nextColumn(qc.getAlias(), matchingCol);
+                    ref = ensureAliasUniqueness(outerVirtualModel, ref);
+                    outerVirtualModel.addBottomUpColumn(ref);
+                    distinctModel.addBottomUpColumn(ref);
+                    return null;
+                }
             }
             QueryModel aggModel = isWindowJoin ? windowJoinModel : groupByModel;
 
@@ -7081,7 +7180,7 @@ public class SqlOptimiser implements Mutable {
             emitAggregatesAndLiterals(
                     qc.getAst(),
                     aggModel,
-                    translatingModel,
+                    isWindowJoin ? windowJoinModel : translatingModel,
                     innerVirtualModel,
                     baseModel,
                     groupByNodes,
@@ -7298,16 +7397,23 @@ public class SqlOptimiser implements Mutable {
         // cursor model should have all columns that base model has to properly resolve duplicate names
         cursorModel.getAliasToColumnMap().putAll(baseModel.getAliasToColumnMap());
 
+        // pre-detect duplicate aggregates using hash-based detection;
+        // this is only needed when there's no sample by fill
+        boolean hasDuplicateAggregates = false;
+        if (groupByModel.getSampleByFill().size() == 0) {
+            hasDuplicateAggregates = detectDuplicateAggregates(columns);
+        }
+
         // take a look at the select list
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
-            final boolean window = qc.isWindowColumn();
+            final boolean isWindowExpr = qc.isWindowExpression();
 
             // fail-fast if this is an arithmetic expression where we expect window function
-            if (window && qc.getAst().type != FUNCTION) {
+            if (isWindowExpr && qc.getAst().type != FUNCTION) {
                 throw SqlException.$(qc.getAst().position, "Window function expected");
             }
-            if (window && isWindowJoin) {
+            if (isWindowExpr && isWindowJoin) {
                 throw SqlException.$(qc.getAst().position, "WINDOW functions are not allowed in WINDOW JOIN queries");
             }
 
@@ -7315,7 +7421,7 @@ public class SqlOptimiser implements Mutable {
                 rewriteStatus |= REWRITE_STATUS_USE_INNER_MODEL;
             } else if (qc.getAst().type != LITERAL) {
                 if (qc.getAst().type == FUNCTION) {
-                    if (window) {
+                    if (isWindowExpr) {
                         rewriteStatus |= REWRITE_STATUS_USE_WINDOW_MODEL;
                         continue;
                     } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
@@ -7331,13 +7437,9 @@ public class SqlOptimiser implements Mutable {
                         // the underlying table(s) or sub-queries
                         ExpressionNode repl = rewriteAggregate(qc.getAst(), baseModel);
                         if (repl == qc.getAst()) { // no rewrite
-                            if ((rewriteStatus & REWRITE_STATUS_USE_OUTER_MODEL) == 0) { // so try to push duplicate aggregates to nested model
-                                for (int j = i + 1; j < k; j++) {
-                                    if (compareNodesExact(qc.getAst(), columns.get(j).getAst())) {
-                                        rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
-                                        break;
-                                    }
-                                }
+                            // use pre-computed duplicate detection result
+                            if (hasDuplicateAggregates) {
+                                rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
                             }
                             continue;
                         }
@@ -7600,7 +7702,7 @@ public class SqlOptimiser implements Mutable {
                     );
                     if (qc == null) continue;
                     // fall through and do the same thing as for OPERATIONS (default)
-                default: {
+                default:
                     rewriteStatus = rewriteSelect0HandleOperation(
                             sqlExecutionContext,
                             sqlParserCallback,
@@ -7622,7 +7724,6 @@ public class SqlOptimiser implements Mutable {
                             isWindowJoin
                     );
                     break;
-                }
             }
         }
 
@@ -7643,7 +7744,7 @@ public class SqlOptimiser implements Mutable {
             // needs col_c to be emitted.
             for (int i = 0, k = columns.size(); i < k; i++) {
                 QueryColumn qc = columns.getQuick(i);
-                final boolean window = qc.isWindowColumn();
+                final boolean window = qc.isWindowExpression();
 
                 if (window & qc.getAst().type == FUNCTION) {
                     // Window model can be after either translation model directly
@@ -7849,7 +7950,7 @@ public class SqlOptimiser implements Mutable {
             ObjList<QueryColumn> windowCols = windowModel.getBottomUpColumns();
             for (int i = 0, n = windowCols.size(); i < n; i++) {
                 QueryColumn col = windowCols.getQuick(i);
-                if (!col.isWindowColumn()) {
+                if (!col.isWindowExpression()) {
                     // Add this non-window column to each inner window model as pass-through
                     for (int j = 0, m = innerWindowModels.size(); j < m; j++) {
                         QueryModel innerWm = innerWindowModels.getQuick(j);
@@ -7869,7 +7970,7 @@ public class SqlOptimiser implements Mutable {
                 referencedAliasesSet.clear();
                 for (int i = 0, n = windowCols.size(); i < n; i++) {
                     QueryColumn col = windowCols.getQuick(i);
-                    if (col.isWindowColumn()) {
+                    if (col.isWindowExpression()) {
                         collectReferencedAliasesFromColumn(col, referencedAliasesSet);
                     }
                 }
@@ -7997,6 +8098,7 @@ public class SqlOptimiser implements Mutable {
         if (
                 nested != null
                         && nested.getJoinModels().size() == 1
+                        && model.getSelectModelType() == SELECT_MODEL_GROUP_BY
                         && nested.getNestedModel() == null
                         && nested.getTableName() != null
                         && model.getSampleBy() == null
@@ -8037,12 +8139,13 @@ public class SqlOptimiser implements Mutable {
                 lowerLimitNode.token = "1";
                 lowerLimitNode.type = CONSTANT;
                 model.setLimit(lowerLimitNode, null);
-
                 model.setSelectModelType(SELECT_MODEL_CHOOSE);
 
+                final CharSequence oldToken = ast.token;
                 ast.token = rhs;
                 ast.paramCount = 0;
                 ast.type = LITERAL;
+                model.replaceColumnNameMap(column.getAlias(), oldToken, ast.token);
 
                 final ExpressionNode newTimestampNode = expressionNodePool.next();
                 newTimestampNode.token = timestampColumn;
@@ -8053,6 +8156,7 @@ public class SqlOptimiser implements Mutable {
                 newNested.setModelType(nested.getModelType());
                 newNested.setTimestamp(nested.getTimestamp());
                 newNested.setWhereClause(nested.getWhereClause());
+                newNested.setLimitAdvice(lowerLimitNode, null);
                 newNested.copyColumnsFrom(nested, queryColumnPool, expressionNodePool);
                 model.setNestedModel(newNested);
             }
@@ -8490,69 +8594,6 @@ public class SqlOptimiser implements Mutable {
         return index;
     }
 
-    /**
-     * Validates that a column reference in a window function argument can be resolved.
-     * <p>
-     * This catches invalid SQL like: {@code SELECT x as a, x as b, sum(sum(b) OVER ()) OVER () FROM t}
-     * <p>
-     * The problem: when the same column has multiple aliases ({@code x as a, x as b}), the second
-     * alias internally stores a reference to the first alias's token, not the original column.
-     * So {@code b}'s AST contains literal "a", not "x". When a window function references {@code b},
-     * we must verify this alias chain resolves to an actual table column.
-     * <p>
-     * Valid cases that should NOT throw:
-     * <ul>
-     *   <li>{@code f(x) as c, lag(c)} - alias references a function result</li>
-     *   <li>{@code x as a, sum(a)} - alias references a table column directly</li>
-     *   <li>Table has column matching the alias name - normal column renaming handles it</li>
-     * </ul>
-     *
-     * @param node              Original expression node (for error position)
-     * @param token             The resolved token to validate
-     * @param translatingModel  Model containing column-to-alias mappings
-     * @param innerVirtualModel Model containing projection aliases
-     * @param baseModel         Base model with actual table columns
-     */
-    private void validateWindowColumnReference(
-            ExpressionNode node,
-            CharSequence token,
-            QueryModel translatingModel,
-            QueryModel innerVirtualModel,
-            QueryModel baseModel
-    ) throws SqlException {
-        // If the table has a column with this name, normal flow handles renaming (e.g., b -> b1)
-        if (!baseModel.getAliasToColumnMap().excludes(token)) {
-            return;
-        }
-
-        // Check if token exists as a projection alias
-        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = innerVirtualModel.getAliasToColumnMap();
-        int aliasIndex = aliasMap.keyIndex(token);
-        if (aliasIndex >= 0) {
-            // Not an alias - will be handled by normal flow
-            return;
-        }
-
-        // Token is a projection alias. Check what it references.
-        QueryColumn aliasedColumn = aliasMap.valueAtQuick(aliasIndex);
-        ExpressionNode aliasAst = aliasedColumn.getAst();
-
-        // Only validate if alias references a column (LITERAL). Functions, constants, etc. are fine.
-        if (aliasAst.type != ExpressionNode.LITERAL) {
-            return;
-        }
-
-        // The alias references another literal. Verify that literal resolves to a table column.
-        CharSequence referencedToken = aliasAst.token;
-        boolean inTranslatingModel = translatingModel.getAliasToColumnMap().get(token) != null;
-        boolean isTableColumn = !baseModel.getAliasToColumnMap().excludes(referencedToken);
-
-        if (!inTranslatingModel && !isTableColumn) {
-            // The alias references another alias that doesn't resolve to a table column
-            throw SqlException.invalidColumn(node.position, node.token);
-        }
-    }
-
     private void validateConstOrRuntimeConstFunction(ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (expr != null) {
             final Function func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
@@ -8699,6 +8740,69 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * Validates that a column reference in a window function argument can be resolved.
+     * <p>
+     * This catches invalid SQL like: {@code SELECT x as a, x as b, sum(sum(b) OVER ()) OVER () FROM t}
+     * <p>
+     * The problem: when the same column has multiple aliases ({@code x as a, x as b}), the second
+     * alias internally stores a reference to the first alias's token, not the original column.
+     * So {@code b}'s AST contains literal "a", not "x". When a window function references {@code b},
+     * we must verify this alias chain resolves to an actual table column.
+     * <p>
+     * Valid cases that should NOT throw:
+     * <ul>
+     *   <li>{@code f(x) as c, lag(c)} - alias references a function result</li>
+     *   <li>{@code x as a, sum(a)} - alias references a table column directly</li>
+     *   <li>Table has column matching the alias name - normal column renaming handles it</li>
+     * </ul>
+     *
+     * @param node              Original expression node (for error position)
+     * @param token             The resolved token to validate
+     * @param translatingModel  Model containing column-to-alias mappings
+     * @param innerVirtualModel Model containing projection aliases
+     * @param baseModel         Base model with actual table columns
+     */
+    private void validateWindowColumnReference(
+            ExpressionNode node,
+            CharSequence token,
+            QueryModel translatingModel,
+            QueryModel innerVirtualModel,
+            QueryModel baseModel
+    ) throws SqlException {
+        // If the table has a column with this name, normal flow handles renaming (e.g., b -> b1)
+        if (!baseModel.getAliasToColumnMap().excludes(token)) {
+            return;
+        }
+
+        // Check if token exists as a projection alias
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = innerVirtualModel.getAliasToColumnMap();
+        int aliasIndex = aliasMap.keyIndex(token);
+        if (aliasIndex >= 0) {
+            // Not an alias - will be handled by normal flow
+            return;
+        }
+
+        // Token is a projection alias. Check what it references.
+        QueryColumn aliasedColumn = aliasMap.valueAtQuick(aliasIndex);
+        ExpressionNode aliasAst = aliasedColumn.getAst();
+
+        // Only validate if alias references a column (LITERAL). Functions, constants, etc. are fine.
+        if (aliasAst.type != ExpressionNode.LITERAL) {
+            return;
+        }
+
+        // The alias references another literal. Verify that literal resolves to a table column.
+        CharSequence referencedToken = aliasAst.token;
+        boolean inTranslatingModel = translatingModel.getAliasToColumnMap().get(token) != null;
+        boolean isTableColumn = !baseModel.getAliasToColumnMap().excludes(referencedToken);
+
+        if (!inTranslatingModel && !isTableColumn) {
+            // The alias references another alias that doesn't resolve to a table column
+            throw SqlException.invalidColumn(node.position, node.token);
+        }
+    }
+
     private void validateWindowFunctions(
             QueryModel model, SqlExecutionContext sqlExecutionContext, int recursionLevel
     ) throws SqlException {
@@ -8714,7 +8818,7 @@ public class SqlOptimiser implements Mutable {
             final ObjList<QueryColumn> queryColumns = model.getColumns();
             for (int i = 0, n = queryColumns.size(); i < n; i++) {
                 QueryColumn qc = queryColumns.getQuick(i);
-                if (qc.isWindowColumn()) {
+                if (qc.isWindowExpression()) {
                     final WindowExpression ac = (WindowExpression) qc;
                     // preceding and following accept non-negative values only
                     long rowsLo = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsLoExpr(), sqlExecutionContext);
@@ -9100,9 +9204,9 @@ public class SqlOptimiser implements Mutable {
             rewriteCount(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
-            rewriteSingleFirstLastGroupBy(rewrittenModel);
             validateNoWindowFunctionsInWhereClauses(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
+            rewriteSingleFirstLastGroupBy(rewrittenModel);
             rewriteTrivialGroupByExpressions(rewrittenModel);
             optimiseJoins(rewrittenModel);
             collapseStackedChooseModels(rewrittenModel);
@@ -9130,7 +9234,7 @@ public class SqlOptimiser implements Mutable {
             }
             return rewrittenModel;
         } catch (Throwable th) {
-            // at this point, models may have functions than need to be freed
+            // at this point, models may have functions that need to be freed
             Misc.freeObjListAndClear(tableFactoriesInFlight);
             throw th;
         }
