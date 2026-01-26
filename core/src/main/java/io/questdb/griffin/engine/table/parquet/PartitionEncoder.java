@@ -167,7 +167,7 @@ public class PartitionEncoder {
                     final MemoryR symbolOffsetsMem = symbolMapReader.getSymbolOffsetsColumn();
                     int encodeColumnType = columnType;
                     if (!symbolMapReader.containsNullValue()) {
-                        encodeColumnType |= 1 << 31;
+                        encodeColumnType |= Integer.MIN_VALUE;
                     }
                     descriptor.addColumn(
                             columnName,

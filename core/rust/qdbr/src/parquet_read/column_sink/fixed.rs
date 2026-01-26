@@ -86,6 +86,7 @@ impl<const N: usize, const R: usize, T: DataPageSlicer> Pushable for FixedColumn
             _ => {
                 let base = self.buffers.data_vec.len();
                 let total_bytes = count * N;
+                debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
 
                 unsafe {
                     let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
@@ -343,18 +344,26 @@ impl<'a, T: DataPageSlicer> NanoTimestampColumnSink<'a, T> {
 
     fn push_int96_as_epoch_nanos(data_vec: &mut AcVec<u8>, bytes: &[u8]) -> ParquetResult<()> {
         // INT96 layout:
-        // - bytes[0..8]: nanoseconds within the day (8 bytes, little-endian)
-        // - bytes[8..12]: Julian date (4 bytes, little-endian)
+        // - bytes[0..8]: nanoseconds within the day (8 bytes)
+        // - bytes[8..12]: Julian date (4 bytes)
         const NANOS_PER_DAY: i64 = 86400 * 1_000_000_000;
         const JULIAN_UNIX_EPOCH_OFFSET: i64 = 2440588;
 
-        let nanos = unsafe { ptr::read_unaligned(bytes.as_ptr() as *const u64) };
-        let julian_date = unsafe { ptr::read_unaligned(bytes.as_ptr().add(8) as *const u32) };
+        // Extract nanoseconds within the day (little-endian)
+        let nanos_bytes = &bytes[0..8];
+        let nanos = u64::from_le_bytes(nanos_bytes.try_into().unwrap());
 
-        let days_since_epoch = julian_date as i64 - JULIAN_UNIX_EPOCH_OFFSET;
+        // Extract Julian date (little-endian)
+        let julian_date_bytes = &bytes[8..12];
+        let julian_date = u32::from_le_bytes(julian_date_bytes.try_into().unwrap());
+
+        // Convert Julian date to days since Unix epoch
+        let days_since_epoch = julian_date as i64 - JULIAN_UNIX_EPOCH_OFFSET; // Julian date epoch to Unix epoch offset
+
+        // Calculate total nanoseconds since Unix epoch
         let nanos_since_epoch = days_since_epoch * NANOS_PER_DAY + nanos as i64;
 
-        data_vec.extend_from_slice(&nanos_since_epoch.to_le_bytes())?;
+        data_vec.extend_from_slice(nanos_since_epoch.to_le_bytes().as_ref())?;
         Ok(())
     }
 }

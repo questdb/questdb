@@ -77,8 +77,8 @@ impl<'a, T: Unpackable> Decoder<'a, T> {
             let mut to_skip = n - left_in_pack;
 
             let packs_to_skip = to_skip / T::Unpacked::LENGTH;
-            for _ in 0..packs_to_skip {
-                self.packed.next();
+            if packs_to_skip > 0 {
+                self.packed.nth(packs_to_skip - 1);
             }
             to_skip %= T::Unpacked::LENGTH;
 

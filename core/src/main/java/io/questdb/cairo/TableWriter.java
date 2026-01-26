@@ -1469,7 +1469,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final MapWriter symbolMapWriter = getSymbolMapWriter(columnIndex);
                             int encodeColumnType = columnType;
                             if (!symbolMapWriter.getNullFlag()) {
-                                encodeColumnType |= 1 << 31;
+                                encodeColumnType |= Integer.MIN_VALUE;
                             }
 
                             partitionDescriptor.addColumn(

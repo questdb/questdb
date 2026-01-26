@@ -396,6 +396,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 final int columnType = metadata.getColumnType(i);
 
                 if (ColumnType.isSymbol(columnType)) {
+                    assert pageFrameCursor != null;
                     StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(i);
                     int symbolColumnType = columnType;
                     if (!symbolTable.containsNullValue()) {
@@ -403,7 +404,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     }
                     columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | symbolColumnType);
                 } else {
-                    columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | metadata.getColumnType(i));
+                    columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | columnType);
                 }
             }
             streamWriter = createStreamingParquetWriter(

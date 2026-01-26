@@ -722,12 +722,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getPartitionEncoderParquetCompressionCodec() {
-        return ParquetCompression.COMPRESSION_ZSTD;
+        return ParquetCompression.COMPRESSION_LZ4_RAW;
     }
 
     @Override
     public int getPartitionEncoderParquetCompressionLevel() {
-        return 9;
+        return 0;
     }
 
     @Override

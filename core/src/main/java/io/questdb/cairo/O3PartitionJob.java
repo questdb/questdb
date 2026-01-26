@@ -1773,7 +1773,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                         int encodeColumnType = columnType;
                         if (!symbolMapWriter.getNullFlag()) {
-                            encodeColumnType |= 1 << 31;
+                            encodeColumnType |= Integer.MIN_VALUE;
                         }
                         partitionDescriptor.addColumn(
                                 columnName,

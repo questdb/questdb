@@ -1380,6 +1380,7 @@ fn append_array<T: DataPageSlicer>(
         // first, calculate and write shape
         let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
         calculate_array_shape(&mut shape, max_rep_level, rep_levels);
+        data_mem.reserve(value_size)?;
         let mut num_elements: usize = 1;
         for &dim in shape.iter().take(max_rep_level as usize) {
             num_elements *= dim as usize;
@@ -1399,7 +1400,6 @@ fn append_array<T: DataPageSlicer>(
         }
 
         // next, copy elements
-        data_mem.reserve(value_size)?;
         for &def_level in def_levels {
             if def_level == max_def_level {
                 slicer.next_into(data_mem)?;
