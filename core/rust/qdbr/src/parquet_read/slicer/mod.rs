@@ -2,6 +2,9 @@ pub mod dict_decoder;
 pub mod dict_slicer;
 pub mod rle;
 
+#[cfg(test)]
+mod tests;
+
 use crate::allocator::{AcVec, AcVecSetLen, AllocFailure};
 use crate::parquet::error::{fmt_err, ParquetResult};
 use parquet2::encoding::delta_bitpacked;
