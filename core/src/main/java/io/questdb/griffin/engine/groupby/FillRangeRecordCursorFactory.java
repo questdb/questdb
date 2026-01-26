@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -341,14 +340,10 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             toFunc.init(baseCursor, executionContext);
             initTimestamps(fromFunc, toFunc);
             if (presentTimestamps == null) {
-                long capacity = 8;
-                try {
-                    capacity = baseCursor.size();
-                    if (capacity < 0) {
-                        capacity = 8;
-                    }
-                } catch (DataUnavailableException ex) {
-                    // That's ok, we'll just use the default capacity
+                long capacity = baseCursor.size();
+                if (capacity < 0) {
+                    // use the default capacity
+                    capacity = 8;
                 }
                 presentTimestamps = new DirectLongList(capacity, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
             }

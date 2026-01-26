@@ -86,7 +86,7 @@ impl<'a> BitmapIter<'a> {
         let current_bit = self.mask.trailing_zeros() as usize;
         let bits_left_in_byte = 8 - current_bit;
 
-        if count <= bits_left_in_byte {
+        if count < bits_left_in_byte {
             self.mask = self.mask.rotate_left(count as u32);
         } else {
             let remaining_to_skip = count - bits_left_in_byte;

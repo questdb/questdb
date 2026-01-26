@@ -142,26 +142,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public DateFormat getBackupDirTimestampFormat() {
-        return null;
-    }
-
-    @Override
-    public int getBackupMkDirMode() {
-        return 509;
-    }
-
-    @Override
-    public CharSequence getBackupRoot() {
-        return null;
-    }
-
-    @Override
-    public @NotNull CharSequence getBackupTempDirName() {
-        return "tmp";
-    }
-
-    @Override
     public int getBinaryEncodingMaxLength() {
         return 32768;
     }
@@ -179,6 +159,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean getCairoSqlLegacyOperatorPrecedence() {
         return false;
+    }
+
+    @Override
+    public boolean getCheckpointRecoveryRebuildColumnIndexes() {
+        return false;
+    }
+
+    @Override
+    public int getCheckpointRecoveryThreadpoolMax() {
+        return 12;
+    }
+
+    @Override
+    public int getCheckpointRecoveryThreadpoolMin() {
+        return 4;
     }
 
     @Override
@@ -727,12 +722,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getPartitionEncoderParquetCompressionCodec() {
-        return ParquetCompression.COMPRESSION_ZSTD;
+        return ParquetCompression.COMPRESSION_LZ4_RAW;
     }
 
     @Override
     public int getPartitionEncoderParquetCompressionLevel() {
-        return 9;
+        return 0;
     }
 
     @Override
@@ -1434,6 +1429,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isMatViewParallelSqlEnabled() {
         return true;
+    }
+
+    @Override
+    public boolean isMatViewRefreshMissingWalFilesFatal() {
+        return false;
     }
 
     @Override

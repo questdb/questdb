@@ -96,7 +96,6 @@ import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.Micros;
-import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.datetime.millitime.Dates;
@@ -147,10 +146,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
     private final boolean allowTableRegistrySharedWrite;
     private final boolean asyncMunmapEnabled;
-    private final DateFormat backupDirTimestampFormat;
-    private final int backupMkdirMode;
-    private final String backupRoot;
-    private final CharSequence backupTempDirName;
     private final int binaryEncodingMaxLength;
     private final BuildInformation buildInformation;
     private final boolean cairoAttachPartitionCopy;
@@ -185,6 +180,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoTableRegistryCompactionThreshold;
     private final long cairoWriteBackOffTimeoutOnMemPressureMs;
     private final boolean checkpointRecoveryEnabled;
+    private final boolean checkpointRecoveryRebuildColumnIndexes;
+    private final int checkpointRecoveryThreadpoolMax;
+    private final int checkpointRecoveryThreadpoolMin;
     private final String checkpointRoot;
     private final PropSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new PropSqlExecutionCircuitBreakerConfiguration();
     private final int circuitBreakerThrottle;
@@ -195,7 +193,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double columnPurgeRetryDelayMultiplier;
     private final int columnPurgeTaskPoolCapacity;
     private final int commitMode;
-    private final MicrosFormatCompiler compiler = new MicrosFormatCompiler();
     private final String confRoot;
     private final boolean configReloadEnabled;
     private final boolean copierChunkedEnabled;
@@ -321,6 +318,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long matViewMaxRefreshStepUs;
     private final boolean matViewParallelExecutionEnabled;
     private final long matViewRefreshIntervalsUpdatePeriod;
+    private final boolean matViewRefreshMissingWalFilesFatal;
     private final long matViewRefreshOomRetryTimeout;
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewsRefreshPoolConfiguration();
     private final long matViewRefreshSleepTimeout;
@@ -825,6 +823,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walPurgeInterval = getMillis(properties, env, PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 30_000);
         this.matViewRefreshIntervalsUpdatePeriod = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, walPurgeInterval / 2);
         this.matViewMaxRefreshStepUs = getMicros(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_STEP, Micros.YEAR_MICROS_NONLEAP);
+        this.matViewRefreshMissingWalFilesFatal = getBoolean(properties, env, PropertyKey.DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL, false);
         this.walPurgeWaitBeforeDelete = getInt(properties, env, PropertyKey.DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE, 0);
         this.walTxnNotificationQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 4096);
         this.walRecreateDistressedSequencerAttempts = getInt(properties, env, PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, 3);
@@ -949,6 +948,20 @@ public class PropServerConfiguration implements ServerConfiguration {
                         true
                 )
         );
+        this.checkpointRecoveryRebuildColumnIndexes = getBoolean(properties, env, PropertyKey.CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES, false);
+        int checkpointRecoveryThreadpoolMinRaw = getInt(properties, env, PropertyKey.CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MIN, 4);
+        int checkpointRecoveryThreadpoolMaxRaw = getInt(properties, env, PropertyKey.CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MAX, 12);
+        if (checkpointRecoveryThreadpoolMinRaw < 2 || checkpointRecoveryThreadpoolMinRaw > 32) {
+            throw new ServerConfigurationException(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MIN.getPropertyPath() + " must be between 2 and 32");
+        }
+        if (checkpointRecoveryThreadpoolMaxRaw < 2 || checkpointRecoveryThreadpoolMaxRaw > 32) {
+            throw new ServerConfigurationException(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MAX.getPropertyPath() + " must be between 2 and 32");
+        }
+        if (checkpointRecoveryThreadpoolMinRaw > checkpointRecoveryThreadpoolMaxRaw) {
+            throw new ServerConfigurationException(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MIN.getPropertyPath() + " must be less than or equal to " + PropertyKey.CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MAX.getPropertyPath());
+        }
+        this.checkpointRecoveryThreadpoolMin = checkpointRecoveryThreadpoolMinRaw;
+        this.checkpointRecoveryThreadpoolMax = checkpointRecoveryThreadpoolMaxRaw;
         this.devModeEnabled = getBoolean(properties, env, PropertyKey.DEV_MODE_ENABLED, false);
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
@@ -1599,10 +1612,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoSqlCopyLogRetentionDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_LOG_RETENTION_DAYS, 3);
             this.o3MinLagUs = getMicros(properties, env, PropertyKey.CAIRO_O3_MIN_LAG, 1_000) * 1_000L;
 
-            this.backupRoot = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_ROOT, null);
-            this.backupDirTimestampFormat = getTimestampFormat(properties, env);
-            this.backupTempDirName = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_DIR_TMP_NAME, "tmp");
-            this.backupMkdirMode = getInt(properties, env, PropertyKey.CAIRO_SQL_BACKUP_MKDIR_MODE, 509);
             this.detachedMkdirMode = getInt(properties, env, PropertyKey.CAIRO_DETACHED_MKDIR_MODE, 509);
             this.columnIndexerQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_COLUMN_INDEXER_QUEUE_CAPACITY, 64);
             this.o3CallbackQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_CALLBACK_QUEUE_CAPACITY, 128);
@@ -2204,10 +2213,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         return SqlJitMode.JIT_MODE_ENABLED;
-    }
-
-    private DateFormat getTimestampFormat(Properties properties, @Nullable Map<String, String> env) {
-        return compiler.compile(getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_DIR_DATETIME_FORMAT, "yyyy-MM-dd"));
     }
 
     // The enterprise version needs to add tcps and https
@@ -3055,26 +3060,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public DateFormat getBackupDirTimestampFormat() {
-            return backupDirTimestampFormat;
-        }
-
-        @Override
-        public int getBackupMkDirMode() {
-            return backupMkdirMode;
-        }
-
-        @Override
-        public CharSequence getBackupRoot() {
-            return backupRoot;
-        }
-
-        @Override
-        public @NotNull CharSequence getBackupTempDirName() {
-            return backupTempDirName;
-        }
-
-        @Override
         public int getBinaryEncodingMaxLength() {
             return binaryEncodingMaxLength;
         }
@@ -3092,6 +3077,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getCairoSqlLegacyOperatorPrecedence() {
             return cairoSqlLegacyOperatorPrecedence;
+        }
+
+        @Override
+        public boolean getCheckpointRecoveryRebuildColumnIndexes() {
+            return checkpointRecoveryRebuildColumnIndexes;
+        }
+
+        @Override
+        public int getCheckpointRecoveryThreadpoolMax() {
+            return checkpointRecoveryThreadpoolMax;
+        }
+
+        @Override
+        public int getCheckpointRecoveryThreadpoolMin() {
+            return checkpointRecoveryThreadpoolMin;
         }
 
         @Override
@@ -4355,6 +4355,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isMatViewParallelSqlEnabled() {
             return matViewParallelExecutionEnabled;
+        }
+
+        @Override
+        public boolean isMatViewRefreshMissingWalFilesFatal() {
+            return matViewRefreshMissingWalFilesFatal;
         }
 
         @Override

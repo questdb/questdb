@@ -764,9 +764,10 @@ pub fn append_array_nulls(
 
             let mut null_entry = [0u8; ENTRY_SIZE];
             null_entry[..8].copy_from_slice(&data_mem.len().to_le_bytes());
-
             let base = aux_mem.len();
-            let total_bytes = count * ENTRY_SIZE;
+            let total_bytes = count
+                .checked_mul(ENTRY_SIZE)
+                .ok_or_else(|| fmt_err!(Layout, "append_array_nulls overflow"))?;
 
             aux_mem.reserve(total_bytes)?;
             unsafe {
@@ -778,7 +779,10 @@ pub fn append_array_nulls(
                         ENTRY_SIZE,
                     );
                 }
-                AcVecSetLen::set_len(aux_mem, base + total_bytes);
+                let new_len = base
+                    .checked_add(total_bytes)
+                    .ok_or_else(|| fmt_err!(Layout, "append_array_nulls overflow"))?;
+                AcVecSetLen::set_len(aux_mem, new_len);
             }
             Ok(())
         }

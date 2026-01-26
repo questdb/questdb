@@ -195,19 +195,26 @@ impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
                 self.push_null()
             }
             _ => {
-                const ELEM: usize = size_of::<i32>();
                 let base = self.buffers.data_vec.len();
+                self.buffers.data_vec.reserve(count * size_of::<i32>())?;
 
                 // Fill data_vec with 0xff bytes (-1i32 per null)
                 unsafe {
                     ptr::write_bytes(
                         self.buffers.data_vec.as_mut_ptr().add(base),
                         0xff,
-                        count * ELEM,
+                        count * size_of::<i32>(),
                     );
-                    self.buffers.data_vec.set_len(base + count * ELEM);
+                    self.buffers
+                        .data_vec
+                        .set_len(base + count * size_of::<i32>());
                 }
-                write_offset_sequence(&mut self.buffers.aux_vec, base + ELEM, ELEM, count)
+                write_offset_sequence(
+                    &mut self.buffers.aux_vec,
+                    base + size_of::<i32>(),
+                    size_of::<i32>(),
+                    count,
+                )
             }
         }
     }
@@ -306,19 +313,26 @@ impl<T: DataPageSlicer> Pushable for BinaryColumnSink<'_, T> {
                 self.push_null()
             }
             _ => {
-                const ELEM: usize = size_of::<i64>();
                 let base = self.buffers.data_vec.len();
+                self.buffers.data_vec.reserve(count * size_of::<i64>())?;
 
                 // Fill data_vec with 0xff bytes (-1i64 per null)
                 unsafe {
                     ptr::write_bytes(
                         self.buffers.data_vec.as_mut_ptr().add(base),
                         0xff,
-                        count * ELEM,
+                        count * size_of::<i64>(),
                     );
-                    self.buffers.data_vec.set_len(base + count * ELEM);
+                    self.buffers
+                        .data_vec
+                        .set_len(base + count * size_of::<i64>());
                 }
-                write_offset_sequence(&mut self.buffers.aux_vec, base + ELEM, ELEM, count)
+                write_offset_sequence(
+                    &mut self.buffers.aux_vec,
+                    base + size_of::<i64>(),
+                    size_of::<i64>(),
+                    count,
+                )
             }
         }
     }
