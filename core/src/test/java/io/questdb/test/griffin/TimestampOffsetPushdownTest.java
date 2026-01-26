@@ -594,6 +594,109 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonLiteralColumnWithTimestampPredicateAndNoPushdown() throws Exception {
+        // Test that when a predicate references BOTH the timestamp AND a non-literal column,
+        // the non-literal part should NOT be pushed down to the nested model.
+        // With AND, the predicates can be split so the timestamp part is pushed down.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, quantity INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, 10, '2022-01-01T01:30:00.000000Z');");
+            execute("INSERT INTO trades VALUES (150, 20, '2022-01-01T02:30:00.000000Z');");
+            execute("INSERT INTO trades VALUES (200, 5, '2022-01-01T03:30:00.000000Z');");
+
+            // Query with computed column (non-literal) and predicate referencing both timestamp AND computed column
+            String query = """
+                    SELECT * FROM (
+                        SELECT dateadd('h', -1, timestamp) as ts, price * quantity as total_value FROM trades
+                    ) WHERE ts IN '2022' AND total_value > 1500
+                    """;
+
+            // The timestamp predicate (ts IN '2022') should be pushed down with offset
+            // The non-literal predicate (total_value > 1500) should stay at the outer level as a Filter
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Filter filter: 1500<total_value
+                                VirtualRecord
+                                  functions: [dateadd('h',-1,timestamp),price*quantity]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: trades
+                                          intervals: [("2022-01-01T01:00:00.000000Z","2023-01-01T00:59:59.999999Z")]
+                            """
+            );
+
+            // Row 1: ts = 00:30, total_value = 1000 (NOT > 1500)
+            // Row 2: ts = 01:30, total_value = 3000 (> 1500) - INCLUDED
+            // Row 3: ts = 02:30, total_value = 1000 (NOT > 1500)
+            assertQueryNoLeakCheck(
+                    """
+                            ts\ttotal_value
+                            2022-01-01T01:30:00.000000Z\t3000.0
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testNonLiteralColumnWithTimestampPredicateOrNoPushdown() throws Exception {
+        // Test that when an OR predicate references BOTH the timestamp AND a non-literal column,
+        // the ENTIRE predicate should NOT be pushed down because OR cannot be split.
+        // This is a regression test for the case where isTimestampPredicate returns true
+        // but the predicate also references other non-literal aliases that can't be resolved.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, quantity INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, 10, '2022-01-01T01:30:00.000000Z');");
+            execute("INSERT INTO trades VALUES (150, 20, '2022-01-01T02:30:00.000000Z');");
+            execute("INSERT INTO trades VALUES (200, 5, '2022-01-02T03:30:00.000000Z');");
+
+            // Query with OR - this cannot be split, so it must stay at outer level
+            // ts < '2022-01-01T01:00:00' would return no rows (all ts values are >= 01:00)
+            // total_value > 1500 would return row 2 (3000)
+            // The OR means: either early timestamp OR high total_value
+            String query = """
+                    SELECT * FROM (
+                        SELECT dateadd('h', -1, timestamp) as ts, price * quantity as total_value FROM trades
+                    ) WHERE ts < '2022-01-01T01:00:00' OR total_value > 1500
+                    """;
+
+            // The OR predicate cannot be split, so it should stay at outer level as a Filter
+            // The timestamp offset pushdown should NOT happen because the predicate
+            // references non-literal columns (total_value) that can't be resolved in nested model
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Filter filter: (ts<2022-01-01T01:00:00.000000Z or 1500<total_value)
+                                VirtualRecord
+                                  functions: [dateadd('h',-1,timestamp),price*quantity]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """
+            );
+
+            // Row 1: ts = 00:30 (< 01:00? YES), total_value = 1000 - INCLUDED (ts condition true)
+            // Row 2: ts = 01:30 (< 01:00? NO), total_value = 3000 (> 1500? YES) - INCLUDED (total_value condition true)
+            // Row 3: ts = 02:30 next day (< 01:00? NO), total_value = 1000 (> 1500? NO) - NOT included
+            assertQueryNoLeakCheck(
+                    """
+                            ts\ttotal_value
+                            2022-01-01T00:30:00.000000Z\t1000.0
+                            2022-01-01T01:30:00.000000Z\t3000.0
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testPositiveOffsetPushdown() throws Exception {
         // Test positive offset (dateadd adds time, so pushdown subtracts)
         assertMemoryLeak(() -> {

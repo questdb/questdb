@@ -4065,7 +4065,10 @@ public class SqlOptimiser implements Mutable {
                         } catch (NonLiteralException ignore) {
                             // Check if this is a timestamp predicate on a model with timestamp offset.
                             // If so, we can still push it down by wrapping it in and_offset.
-                            if (parent.hasTimestampOffset() && isTimestampPredicate(node, parent)) {
+                            // But only if the predicate references ONLY the timestamp alias (no other non-literal columns).
+                            if (parent.hasTimestampOffset()
+                                    && isTimestampPredicate(node, parent)
+                                    && referencesOnlyTimestampAlias(node, parent)) {
                                 // Rewrite column references from virtual timestamp to source column
                                 rewriteTimestampColumnForOffset(node, parent);
                                 // Wrap in and_offset and push to nested model
@@ -4098,6 +4101,55 @@ public class SqlOptimiser implements Mutable {
         nested = model.getUnionModel();
         if (nested != null) {
             moveWhereInsideSubQueries(nested);
+        }
+    }
+
+    /**
+     * Checks if the given predicate references ONLY the timestamp column/alias and constants.
+     * This is used to determine if a predicate can safely be pushed down with timestamp offset.
+     * Returns false if the predicate references any other columns (non-literal aliases).
+     */
+    private boolean referencesOnlyTimestampAlias(ExpressionNode node, QueryModel model) {
+        if (node == null) {
+            return true;
+        }
+
+        // Get allowed timestamp tokens
+        CharSequence timestampToken = model.getTimestamp() != null ? model.getTimestamp().token : null;
+        CharSequence offsetAlias = model.getTimestampOffsetAlias();
+
+        return referencesOnlyTimestampAliasRecursive(node, timestampToken, offsetAlias);
+    }
+
+    private boolean referencesOnlyTimestampAliasRecursive(ExpressionNode node, CharSequence timestampToken, CharSequence offsetAlias) {
+        if (node == null) {
+            return true;
+        }
+
+        // If this is a literal (column reference), check if it's the timestamp
+        if (node.type == LITERAL) {
+            // Check if it matches the timestamp token or offset alias
+            return timestampToken != null && matchesColumnName(node.token, timestampToken) || offsetAlias != null && matchesColumnName(node.token, offsetAlias);
+            // It's a column reference but not the timestamp - not allowed
+        }
+
+        // Constants are allowed
+        if (node.type == CONSTANT) {
+            return true;
+        }
+
+        // For functions/operations, check all children
+        if (node.paramCount < 3) {
+            return referencesOnlyTimestampAliasRecursive(node.lhs, timestampToken, offsetAlias)
+                    && referencesOnlyTimestampAliasRecursive(node.rhs, timestampToken, offsetAlias);
+        } else {
+            ObjList<ExpressionNode> args = node.args;
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (!referencesOnlyTimestampAliasRecursive(args.getQuick(i), timestampToken, offsetAlias)) {
+                    return false;
+                }
+            }
+            return true;
         }
     }
 
