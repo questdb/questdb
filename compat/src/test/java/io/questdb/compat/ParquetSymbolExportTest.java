@@ -59,11 +59,52 @@ import java.util.List;
  * 1. Multiple row groups are created (partial final row group)
  * 2. Symbol columns use bitpacked dictionary indices
  * 3. Strict parquet readers fail with:
- *    - "Invalid number of indices: 0" on partial row groups (RLE encoding bug)
- *    - "Column cannot have more than one dictionary" across row groups
+ * - "Invalid number of indices: 0" on partial row groups (RLE encoding bug)
+ * - "Column cannot have more than one dictionary" across row groups
  */
 public class ParquetSymbolExportTest extends AbstractTest {
     private static final Log LOG = LogFactory.getLog(ParquetSymbolExportTest.class);
+
+    /**
+     * Tests symbol column with high cardinality (many unique values).
+     */
+    @Test
+    public void testSymbolColumnHighCardinality() throws Exception {
+        final int rowCount = 120001; // Creates 2 row groups
+
+        try (final ServerMain serverMain = ServerMain.create(root)) {
+            serverMain.start();
+
+            serverMain.getEngine().execute(
+                    "CREATE TABLE symbol_high_card_test (" +
+                            "sym SYMBOL, " +
+                            "ts TIMESTAMP" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY"
+            );
+
+            // Insert rows with high cardinality symbols (unique per row modulo 1000)
+            LOG.info().$("Inserting ").$(rowCount).$(" rows with high cardinality symbols...").$();
+            serverMain.getEngine().execute(
+                    "INSERT INTO symbol_high_card_test " +
+                            "SELECT " +
+                            "'SYM_' || (x % 1000) as sym, " +
+                            "timestamp_sequence('2024-01-01', 1000000) as ts " +
+                            "FROM long_sequence(" + rowCount + ")"
+            );
+
+            // Wait for WAL to be applied
+            serverMain.awaitTable("symbol_high_card_test");
+
+            assertSql(serverMain.getEngine(), "SELECT count() FROM symbol_high_card_test", "count()\n" + rowCount + "\n");
+
+            File parquetFile = new File(root, "symbol_high_card_test.parquet");
+            exportToParquet(serverMain, "SELECT * FROM symbol_high_card_test", parquetFile);
+
+            validateParquetFile(parquetFile, rowCount);
+
+            serverMain.getEngine().execute("DROP TABLE symbol_high_card_test");
+        }
+    }
 
     /**
      * Tests that symbol columns can be exported and read back with multiple row groups.
@@ -162,47 +203,6 @@ public class ParquetSymbolExportTest extends AbstractTest {
             validateParquetFile(parquetFile, rowCount);
 
             serverMain.getEngine().execute("DROP TABLE symbol_nulls_test");
-        }
-    }
-
-    /**
-     * Tests symbol column with high cardinality (many unique values).
-     */
-    @Test
-    public void testSymbolColumnHighCardinality() throws Exception {
-        final int rowCount = 120001; // Creates 2 row groups
-
-        try (final ServerMain serverMain = ServerMain.create(root)) {
-            serverMain.start();
-
-            serverMain.getEngine().execute(
-                    "CREATE TABLE symbol_high_card_test (" +
-                            "sym SYMBOL, " +
-                            "ts TIMESTAMP" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY"
-            );
-
-            // Insert rows with high cardinality symbols (unique per row modulo 1000)
-            LOG.info().$("Inserting ").$(rowCount).$(" rows with high cardinality symbols...").$();
-            serverMain.getEngine().execute(
-                    "INSERT INTO symbol_high_card_test " +
-                            "SELECT " +
-                            "'SYM_' || (x % 1000) as sym, " +
-                            "timestamp_sequence('2024-01-01', 1000000) as ts " +
-                            "FROM long_sequence(" + rowCount + ")"
-            );
-
-            // Wait for WAL to be applied
-            serverMain.awaitTable("symbol_high_card_test");
-
-            assertSql(serverMain.getEngine(), "SELECT count() FROM symbol_high_card_test", "count()\n" + rowCount + "\n");
-
-            File parquetFile = new File(root, "symbol_high_card_test.parquet");
-            exportToParquet(serverMain, "SELECT * FROM symbol_high_card_test", parquetFile);
-
-            validateParquetFile(parquetFile, rowCount);
-
-            serverMain.getEngine().execute("DROP TABLE symbol_high_card_test");
         }
     }
 
