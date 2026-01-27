@@ -542,4 +542,35 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             );
         });
     }
+
+    @Test
+    public void testPercentRankCombinedWithOtherRankingFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            // Test percent_rank() combined with rank() and dense_rank() in the same query
+            execute("create table tab (ts timestamp, v int) timestamp(ts)");
+            execute("insert into tab values (0, 1), (1, 1), (2, 2), (3, 3), (4, 3)");
+            // Values: 1, 1, 2, 3, 3 (5 rows)
+            // rank():        1, 1, 3, 4, 4
+            // dense_rank():  1, 1, 2, 3, 3
+            // percent_rank(): (1-1)/4=0.0, (1-1)/4=0.0, (3-1)/4=0.5, (4-1)/4=0.75, (4-1)/4=0.75
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tv\trank\tdense_rank\tpercent_rank
+                            1970-01-01T00:00:00.000000Z\t1\t1\t1\t0.0
+                            1970-01-01T00:00:00.000001Z\t1\t1\t1\t0.0
+                            1970-01-01T00:00:00.000002Z\t2\t3\t2\t0.5
+                            1970-01-01T00:00:00.000003Z\t3\t4\t3\t0.75
+                            1970-01-01T00:00:00.000004Z\t3\t4\t3\t0.75
+                            """,
+                    "select ts, v, " +
+                            "rank() over (order by v) as rank, " +
+                            "dense_rank() over (order by v) as dense_rank, " +
+                            "percent_rank() over (order by v) as percent_rank " +
+                            "from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
 }
