@@ -58,9 +58,10 @@ public class ViewWalWriter extends WalWriterBase {
             CairoConfiguration configuration,
             TableToken tableToken,
             TableSequencerAPI tableSequencerAPI,
-            WalDirectoryPolicy walDirectoryPolicy
+            WalDirectoryPolicy walDirectoryPolicy,
+            WalLocker walLocker
     ) {
-        super(configuration, tableToken, tableSequencerAPI, walDirectoryPolicy);
+        super(configuration, tableToken, tableSequencerAPI, walDirectoryPolicy, walLocker);
 
         LOG.info().$("open [table=").$(tableToken).I$();
 
@@ -142,7 +143,10 @@ public class ViewWalWriter extends WalWriterBase {
                 events.close(truncate, Vm.TRUNCATE_TO_POINTER);
             }
 
-            releaseSegmentLock(segmentId, segmentLockFd, lastSegmentTxn);
+            if (segmentLocked > -1) {
+                releaseSegmentLock(segmentLocked, lastSegmentTxn, -1);
+                segmentLocked = -1;
+            }
 
             try {
                 releaseWalLock();
@@ -167,11 +171,10 @@ public class ViewWalWriter extends WalWriterBase {
     }
 
     private void openNewSegment() {
-        final int oldSegmentId = segmentId;
+        final int oldSegmentLocked = segmentLocked;
         final int newSegmentId = segmentId + 1;
-        final long oldSegmentLockFd = segmentLockFd;
-        segmentLockFd = -1;
         final long oldLastSegmentTxn = lastSegmentTxn;
+        segmentLocked = -1;
         try {
             final int segmentPathLen = createSegmentDir(newSegmentId);
             segmentId = newSegmentId;
@@ -192,8 +195,8 @@ public class ViewWalWriter extends WalWriterBase {
             lastSegmentTxn = -1;
             LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path.parent()).I$();
         } finally {
-            if (oldSegmentLockFd > -1) {
-                releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldLastSegmentTxn);
+            if (oldSegmentLocked > -1) {
+                releaseSegmentLock(oldSegmentLocked, oldLastSegmentTxn, newSegmentId);
             }
             path.trimTo(pathSize);
         }

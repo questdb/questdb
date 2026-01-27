@@ -162,9 +162,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             TableSequencerAPI tableSequencerAPI,
             DdlListener ddlListener,
             WalDirectoryPolicy walDirectoryPolicy,
+            WalLocker walLocker,
             RecentWriteTracker recentWriteTracker
     ) {
-        super(configuration, tableToken, tableSequencerAPI, walDirectoryPolicy);
+        super(configuration, tableToken, tableSequencerAPI, walDirectoryPolicy, walLocker);
 
         LOG.info().$("open [table=").$(tableToken).I$();
         this.ddlListener = ddlListener;
@@ -1142,7 +1143,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             freeSymbolMapReaders();
             freeColumns(truncate);
 
-            releaseSegmentLock(segmentId, segmentLockFd, lastSegmentTxn);
+            if (segmentLocked > -1) {
+                releaseSegmentLock(segmentLocked, lastSegmentTxn, -1);
+                segmentLocked = -1;
+            }
 
             try {
                 releaseWalLock();
@@ -1300,11 +1304,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private void openNewSegment() {
-        final int oldSegmentId = segmentId;
+        final int oldSegmentLocked = segmentLocked;
         final int newSegmentId = segmentId + 1;
-        final long oldSegmentLockFd = segmentLockFd;
-        segmentLockFd = -1;
         final long oldLastSegmentTxn = lastSegmentTxn;
+        segmentLocked = -1;
         try {
             totalSegmentsRowCount += Math.max(0, segmentRowCount);
             currentTxnStartRowNum = 0;
@@ -1353,8 +1356,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             lastSegmentTxn = -1;
             LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path.parent()).I$();
         } finally {
-            if (oldSegmentLockFd > -1) {
-                releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldLastSegmentTxn);
+            if (oldSegmentLocked > -1) {
+                releaseSegmentLock(oldSegmentLocked, oldLastSegmentTxn, newSegmentId);
             }
             path.trimTo(pathSize);
         }
@@ -1492,6 +1495,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         if (uncommittedRows > 0) {
             final int oldSegmentId = segmentId;
+            final int oldSegmentLocked = segmentLocked;
             final int newSegmentId = segmentId + 1;
             if (newSegmentId > WalUtils.SEG_MAX_ID) {
                 throw CairoException.critical(0)
@@ -1499,8 +1503,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         .put(", walId=").put(walId)
                         .put(", segmentId=").put(newSegmentId).put(']');
             }
-            final long oldSegmentLockFd = segmentLockFd;
-            segmentLockFd = -1;
+            segmentLocked = -1;
             try {
                 createSegmentDir(newSegmentId);
                 path.trimTo(pathSize);
@@ -1590,7 +1593,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 segmentRowCount = uncommittedRows;
                 currentTxnStartRowNum = 0;
             } finally {
-                releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldLastSegmentTxn);
+                // oldSegmentLocked might be -1 if we previously failed to lock the new segment
+                if (oldSegmentLocked > -1) {
+                    releaseSegmentLock(oldSegmentLocked, oldLastSegmentTxn, newSegmentId);
+                }
             }
         } else if (segmentRowCount > 0 && uncommittedRows == 0) {
             rollSegmentOnNextRow = true;

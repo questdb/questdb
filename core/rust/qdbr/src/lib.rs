@@ -27,11 +27,11 @@ extern crate core;
 pub extern crate jni;
 
 mod allocator;
-mod cairo;
 mod files;
 mod parquet;
 mod parquet_read;
 mod parquet_write;
+mod wal_lock;
 
 use jni::sys::jlong;
 use jni::{objects::JClass, JNIEnv};
@@ -72,8 +72,7 @@ pub extern "system" fn Java_io_questdb_std_Os_smokeTest(
     a: i64,
     b: i64,
 ) -> i64 {
-    let result = a + b;
-    result
+    a + b
 }
 
 #[no_mangle]
