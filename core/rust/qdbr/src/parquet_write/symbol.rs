@@ -170,6 +170,7 @@ pub fn symbol_to_pages(
     let mut data_buffer = vec![];
 
     let definition_levels_byte_length = if required {
+        debug_assert!(column_top == 0);
         0
     } else {
         // TODO(amunra): Optimize if there's no column top.
