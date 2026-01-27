@@ -31,7 +31,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 
 /**
- * Evaluates date variable expressions like "$today + 3bd", "$yesterday", "$now - 5d".
+ * Evaluates date variable expressions like "$today + 3bd", "$yesterday", "$now - 5h".
  * <p>
  * Supported variables:
  * <ul>
@@ -41,11 +41,22 @@ import io.questdb.std.NumericException;
  *   <li>{@code $tomorrow} - start of tomorrow</li>
  * </ul>
  * <p>
- * Supported arithmetic:
+ * Supported arithmetic units:
  * <ul>
- *   <li>{@code + Nd} or {@code - Nd} - add/subtract N calendar days</li>
- *   <li>{@code + Nbd} or {@code - Nbd} - add/subtract N business days (skip Sat/Sun)</li>
+ *   <li>{@code y} - years (calendar-aware)</li>
+ *   <li>{@code M} - months (calendar-aware)</li>
+ *   <li>{@code w} - weeks</li>
+ *   <li>{@code d} - calendar days</li>
+ *   <li>{@code bd} - business days (skip Sat/Sun)</li>
+ *   <li>{@code h} - hours</li>
+ *   <li>{@code m} - minutes</li>
+ *   <li>{@code s} - seconds</li>
+ *   <li>{@code T} - milliseconds</li>
+ *   <li>{@code u} - microseconds</li>
+ *   <li>{@code n} - nanoseconds</li>
  * </ul>
+ * <p>
+ * Examples: {@code $now - 1h}, {@code $today + 30m}, {@code $now - 500T}
  */
 public class DateExpressionEvaluator {
     private static final int SATURDAY = 6;
@@ -133,43 +144,44 @@ public class DateExpressionEvaluator {
             offsetValue = -offsetValue;
         }
 
-        // Parse unit (d or bd)
+        // Parse unit
         int unitStart = numEnd;
         while (unitStart < hi && expression.charAt(unitStart) == ' ') {
             unitStart++;
         }
 
         if (unitStart >= hi) {
-            throw SqlException.$(errorPos, "Expected unit 'd' or 'bd' after number");
+            throw SqlException.$(errorPos, "Expected time unit after number");
         }
 
-        // Check for 'bd' (business days) or 'd' (calendar days)
+        // Check for 'bd' (business days) first, then single-character units
         int remaining = hi - unitStart;
-        int unitLen;
-        boolean isBusinessDays;
+        char unitChar = expression.charAt(unitStart);
 
-        if (remaining >= 2 && (expression.charAt(unitStart) | 32) == 'b' && (expression.charAt(unitStart + 1) | 32) == 'd') {
-            // Business days
-            unitLen = 2;
-            isBusinessDays = true;
-        } else if ((expression.charAt(unitStart) | 32) == 'd') {
-            // Calendar days
-            unitLen = 1;
-            isBusinessDays = false;
-        } else {
-            throw SqlException.$(errorPos, "Invalid unit, expected 'd' or 'bd'");
+        // Check for 'bd' (business days) - case insensitive
+        if (remaining >= 2 && (unitChar | 32) == 'b' && (expression.charAt(unitStart + 1) | 32) == 'd') {
+            // Check for unexpected trailing characters
+            if (unitStart + 2 != hi) {
+                throw SqlException.$(errorPos, "Unexpected characters after unit");
+            }
+            return addBusinessDays(timestampDriver, baseTimestamp, offsetValue);
         }
 
-        // Check for unexpected trailing characters after unit (caller trims whitespace)
-        if (unitStart + unitLen != hi) {
+        // Single-character units - check for trailing characters
+        if (unitStart + 1 != hi) {
             throw SqlException.$(errorPos, "Unexpected characters after unit");
         }
 
-        if (isBusinessDays) {
-            return addBusinessDays(timestampDriver, baseTimestamp, offsetValue);
-        } else {
-            return timestampDriver.addDays(baseTimestamp, offsetValue);
+        // Handle single-character units using timestampDriver.add()
+        // Supported: y (years), M (months), w (weeks), d (days), h (hours),
+        //            m (minutes), s (seconds), T (millis), u (micros), n (nanos)
+        // Note: 'd' is case-insensitive for backward compatibility
+        char normalizedUnit = (unitChar == 'D') ? 'd' : unitChar;
+        long result = timestampDriver.add(baseTimestamp, normalizedUnit, offsetValue);
+        if (result == Numbers.LONG_NULL) {
+            throw SqlException.$(errorPos, "Invalid time unit: ").put(unitChar);
         }
+        return result;
     }
 
     /**
