@@ -548,6 +548,182 @@ public class HorizonJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testHorizonJoinWithSymbolTableSources() throws Exception {
+        // Test that symbol tables from both left (master) and right (slave) tables
+        // are correctly resolved when used as keys and in aggregate functions
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (order_sym SYMBOL, category SYMBOL, ts TIMESTAMP, qty LONG) TIMESTAMP(ts)");
+            execute("CREATE TABLE prices (price_sym SYMBOL, exchange SYMBOL, ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)");
+
+            // Insert data with distinct symbol values
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('AAPL', 'TECH', '2000-01-01T00:00:01.000000Z', 100),
+                                ('AAPL', 'TECH', '2000-01-01T00:00:02.000000Z', 200),
+                                ('GOOG', 'TECH', '2000-01-01T00:00:03.000000Z', 150),
+                                ('MSFT', 'SOFT', '2000-01-01T00:00:04.000000Z', 300)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('AAPL', 'NYSE', '2000-01-01T00:00:00.500000Z', 100.0),
+                                ('AAPL', 'NYSE', '2000-01-01T00:00:01.500000Z', 110.0),
+                                ('AAPL', 'NASDAQ', '2000-01-01T00:00:02.500000Z', 120.0),
+                                ('GOOG', 'NASDAQ', '2000-01-01T00:00:02.500000Z', 200.0),
+                                ('MSFT', 'NYSE', '2000-01-01T00:00:03.500000Z', 300.0)
+                            """
+            );
+
+            // Test 1: Left-hand symbol (order_sym) used as a grouping key
+            // Right-hand symbol (exchange) used via first() aggregate
+            assertQueryNoLeakCheck(
+                    """
+                            order_sym\tfirst\tavg
+                            AAPL\tNYSE\t105.0
+                            GOOG\tNASDAQ\t200.0
+                            MSFT\tNYSE\t300.0
+                            """,
+                    """
+                            SELECT t.order_sym, first(p.exchange), avg(p.price)
+                            FROM orders AS t
+                            HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
+                            RANGE FROM 0s TO 0s STEP 1s AS h
+                            ORDER BY t.order_sym
+                            """,
+                    null,
+                    true,
+                    true
+            );
+
+            // Test 2: Both left and right symbols in SELECT
+            assertQueryNoLeakCheck(
+                    """
+                            order_sym\tcategory\tfirst\tavg
+                            AAPL\tTECH\tNYSE\t105.0
+                            GOOG\tTECH\tNASDAQ\t200.0
+                            MSFT\tSOFT\tNYSE\t300.0
+                            """,
+                    """
+                            SELECT t.order_sym, t.category, first(p.exchange), avg(p.price)
+                            FROM orders AS t
+                            HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
+                            RANGE FROM 0s TO 0s STEP 1s AS h
+                            ORDER BY t.order_sym
+                            """,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithSymbolTableSourcesFirstLast() throws Exception {
+        // Test first() and last() aggregates on slave symbols
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (order_sym SYMBOL, ts TIMESTAMP, qty LONG) TIMESTAMP(ts)");
+            execute("CREATE TABLE prices (price_sym SYMBOL, exchange SYMBOL, ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)");
+
+            // Insert orders - two orders for AAPL at different times
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('AAPL', '2000-01-01T00:00:01.000000Z', 100),
+                                ('AAPL', '2000-01-01T00:00:02.000000Z', 200)
+                            """
+            );
+
+            // Insert prices - AAPL has NYSE then NASDAQ
+            // Order at 1s will ASOF to price at 0.5s (NYSE)
+            // Order at 2s will ASOF to price at 1.5s (NASDAQ)
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('AAPL', 'NYSE', '2000-01-01T00:00:00.500000Z', 100.0),
+                                ('AAPL', 'NASDAQ', '2000-01-01T00:00:01.500000Z', 110.0)
+                            """
+            );
+
+            // first() should return NYSE (from order at 1s)
+            // last() should return NASDAQ (from order at 2s)
+            assertQueryNoLeakCheck(
+                    """
+                            order_sym\tfirst\tlast
+                            AAPL\tNYSE\tNASDAQ
+                            """,
+                    """
+                            SELECT t.order_sym, first(p.exchange), last(p.exchange)
+                            FROM orders AS t
+                            HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
+                            RANGE FROM 0s TO 0s STEP 1s AS h
+                            ORDER BY t.order_sym
+                            """,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithSlaveSymbolAsKey() throws Exception {
+        // Test using a slave symbol as a grouping key
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (order_sym SYMBOL, ts TIMESTAMP, qty LONG) TIMESTAMP(ts)");
+            execute("CREATE TABLE prices (price_sym SYMBOL, exchange SYMBOL, ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)");
+
+            // Insert orders for multiple symbols
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('AAPL', '2000-01-01T00:00:01.000000Z', 100),
+                                ('AAPL', '2000-01-01T00:00:02.000000Z', 200),
+                                ('GOOG', '2000-01-01T00:00:03.000000Z', 150),
+                                ('MSFT', '2000-01-01T00:00:04.000000Z', 300)
+                            """
+            );
+
+            // Insert prices - different symbols on different exchanges
+            // AAPL: NYSE at 0.5s, NASDAQ at 1.5s
+            // GOOG: NASDAQ at 2.5s
+            // MSFT: NYSE at 3.5s
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('AAPL', 'NYSE', '2000-01-01T00:00:00.500000Z', 100.0),
+                                ('AAPL', 'NASDAQ', '2000-01-01T00:00:01.500000Z', 110.0),
+                                ('GOOG', 'NASDAQ', '2000-01-01T00:00:02.500000Z', 200.0),
+                                ('MSFT', 'NYSE', '2000-01-01T00:00:03.500000Z', 300.0)
+                            """
+            );
+
+            // Group by slave symbol (p.exchange)
+            // NYSE: AAPL order at 1s (price 100) + MSFT order at 4s (price 300) -> avg = 200, sum(qty) = 400
+            // NASDAQ: AAPL order at 2s (price 110) + GOOG order at 3s (price 200) -> avg = 155, sum(qty) = 350
+            assertQueryNoLeakCheck(
+                    """
+                            exchange\tsum\tavg
+                            NASDAQ\t350\t155.0
+                            NYSE\t400\t200.0
+                            """,
+                    """
+                            SELECT p.exchange, sum(t.qty), avg(p.price)
+                            FROM orders AS t
+                            HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
+                            RANGE FROM 0s TO 0s STEP 1s AS h
+                            ORDER BY p.exchange
+                            """,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
     @Ignore("HORIZON JOIN without ON clause not yet supported")
     @Test
     public void testHorizonJoinWithoutOnClause() throws Exception {

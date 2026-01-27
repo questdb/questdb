@@ -80,6 +80,7 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledFilter;
     private final RecordSink groupByKeyCopier;
+    private final MarkoutSymbolTableSource markoutSymbolTableSource;
     private final RecordSink masterKeyCopier;
     private final int masterTimestampColumnIndex;
     private final GroupByAllocator ownerAllocator;
@@ -145,6 +146,7 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
             this.masterTimestampColumnIndex = masterTimestampColumnIndex;
             this.sequenceOffsetValues = offsets;
             this.sequenceRowCount = offsets.size();
+            this.markoutSymbolTableSource = new MarkoutSymbolTableSource(columnSources, columnIndexes);
 
             // Filter resources
             this.compiledFilter = compiledFilter;
@@ -158,7 +160,7 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
             this.slaveKeyCopier = slaveKeyCopier;
             this.slaveTimestampIndex = slaveTimestampIndex;
 
-            // GROUP BY key copier and column mappings for MarkoutRecord
+            // GROUP BY key copier for MarkoutRecord
             this.groupByKeyCopier = groupByKeyCopier;
 
             // Per-worker locks
@@ -394,6 +396,10 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
         return masterTimestampColumnIndex;
     }
 
+    public MarkoutSymbolTableSource getMarkoutSymbolTableSource() {
+        return markoutSymbolTableSource;
+    }
+
     public ObjList<GroupByFunction> getOwnerGroupByFunctions() {
         return ownerGroupByFunctions;
     }
@@ -474,24 +480,8 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
             prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
         }
 
-        // Initialize group by functions
-        for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {
-            ownerGroupByFunctions.getQuick(i).init(symbolTableSource, executionContext);
-        }
-        if (perWorkerGroupByFunctions != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                    ObjList<GroupByFunction> functions = perWorkerGroupByFunctions.getQuick(i);
-                    for (int j = 0, m = functions.size(); j < m; j++) {
-                        functions.getQuick(j).init(symbolTableSource, executionContext);
-                    }
-                }
-            } finally {
-                executionContext.setCloneSymbolTables(current);
-            }
-        }
+        // Note: group by functions are initialized in initTimeFrameCursors() where we have
+        // access to both master and slave symbol table sources
     }
 
     /**
@@ -499,6 +489,8 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
      * Must be called after the slave page frame cursor has been fully iterated.
      */
     public void initTimeFrameCursors(
+            SqlExecutionContext executionContext,
+            SymbolTableSource masterSymbolTableSource,
             TablePageFrameCursor slavePageFrameCursor,
             PageFrameAddressCache slaveFrameAddressCache,
             IntList slaveFramePartitionIndexes,
@@ -529,6 +521,26 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
                     frameCount
             );
             perWorkerSlaveTimeFrameHelpers.getQuick(i).of(workerCursor);
+        }
+
+        // Initialize group by functions with combined symbol table source
+        markoutSymbolTableSource.of(masterSymbolTableSource, slavePageFrameCursor);
+        for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {
+            ownerGroupByFunctions.getQuick(i).init(markoutSymbolTableSource, executionContext);
+        }
+        if (perWorkerGroupByFunctions != null) {
+            final boolean current = executionContext.getCloneSymbolTables();
+            executionContext.setCloneSymbolTables(true);
+            try {
+                for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                    ObjList<GroupByFunction> functions = perWorkerGroupByFunctions.getQuick(i);
+                    for (int j = 0, m = functions.size(); j < m; j++) {
+                        functions.getQuick(j).init(markoutSymbolTableSource, executionContext);
+                    }
+                }
+            } finally {
+                executionContext.setCloneSymbolTables(current);
+            }
         }
 
         // Reopen ASOF maps

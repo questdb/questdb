@@ -51,7 +51,6 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
-import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
@@ -70,7 +69,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
     private final PageFrameAddressCache slaveTimeFrameAddressCache;
     private final IntList slaveTimeFramePartitionIndexes = new IntList();
     private final LongList slaveTimeFrameRowCounts = new LongList();
-    private final MarkoutSymbolTableSource symbolTableSource;
+    private SqlExecutionContext executionContext;
     private int frameLimit;
     private PageFrameSequence<AsyncHorizonJoinAtom> frameSequence;
     private boolean isDataMapBuilt;
@@ -81,15 +80,12 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
 
     public AsyncHorizonJoinRecordCursor(
             ObjList<Function> recordFunctions,
-            RecordCursorFactory slaveFactory,
-            int @NotNull [] columnSources,
-            int @NotNull [] columnIndexes
+            RecordCursorFactory slaveFactory
     ) {
         this.recordFunctions = recordFunctions;
         this.slaveFactory = slaveFactory;
         this.recordA = new VirtualRecord(recordFunctions);
         this.recordB = new VirtualRecord(recordFunctions);
-        this.symbolTableSource = new MarkoutSymbolTableSource(columnSources, columnIndexes);
         this.slaveTimeFrameAddressCache = new PageFrameAddressCache();
         this.isOpen = true;
     }
@@ -275,6 +271,8 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
     private void initializeTimeFrameCursors(int frameCount) {
         try {
             frameSequence.getAtom().initTimeFrameCursors(
+                    executionContext,
+                    frameSequence.getSymbolTableSource(),
                     slavePageFrameCursor,
                     slaveTimeFrameAddressCache,
                     slaveTimeFramePartitionIndexes,
@@ -310,13 +308,15 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
             atom.reopen();
         }
         this.frameSequence = frameSequence;
+        this.executionContext = executionContext;
 
         // Get slave page frame cursor for time frame initialization
         this.slavePageFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, ORDER_ASC);
 
         // Initialize record functions with a symbol table source that routes lookups
         // to the correct source (master or slave) based on column mappings
-        symbolTableSource.of(frameSequence.getSymbolTableSource(), slavePageFrameCursor.getTableReader());
+        final MarkoutSymbolTableSource symbolTableSource = atom.getMarkoutSymbolTableSource();
+        symbolTableSource.of(frameSequence.getSymbolTableSource(), slavePageFrameCursor);
         Function.init(recordFunctions, symbolTableSource, executionContext, null);
 
         isDataMapBuilt = false;

@@ -166,9 +166,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
             this.cursor = new AsyncHorizonJoinRecordCursor(
                     recordFunctions,
-                    slaveFactory,
-                    columnSources,
-                    columnIndexes
+                    slaveFactory
             );
         } catch (Throwable th) {
             close();
