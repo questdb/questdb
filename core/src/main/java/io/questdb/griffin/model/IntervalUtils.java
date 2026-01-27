@@ -2171,6 +2171,18 @@ public final class IntervalUtils {
                 applyLastEncodedInterval(timestampDriver, out);
             }
 
+            // Apply day filter BEFORE timezone conversion (local-time semantics)
+            // Day filter should check the day in local time, not UTC
+            if (dayFilterMask != 0) {
+                if (applyEncoded) {
+                    // Static mode: filter intervals directly
+                    applyDayFilter(timestampDriver, out, outSizeBeforeInterval, dayFilterMask, false);
+                } else {
+                    // Dynamic mode: store mask for runtime evaluation
+                    setDayFilterMaskOnEncodedIntervals(out, outSizeBeforeInterval, dayFilterMask);
+                }
+            }
+
             // Resolve active timezone: element-level takes precedence over global
             // This mirrors the timezone resolution in the day-based path below
             int activeTzLo = -1;
@@ -2187,20 +2199,9 @@ public final class IntervalUtils {
                 activeTzHi = globalTzHi;
             }
 
-            // Apply timezone if any was found
+            // Apply timezone AFTER day filter (converts local to UTC)
             if (activeTzLo >= 0) {
                 applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeInterval, seq, activeTzLo, activeTzHi, errorPos, applyEncoded);
-            }
-
-            // Apply day filter if specified
-            if (dayFilterMask != 0) {
-                if (applyEncoded) {
-                    // Static mode: filter intervals directly
-                    applyDayFilter(timestampDriver, out, outSizeBeforeInterval, dayFilterMask, false);
-                } else {
-                    // Dynamic mode: store mask for runtime evaluation
-                    setDayFilterMaskOnEncodedIntervals(out, outSizeBeforeInterval, dayFilterMask);
-                }
             }
             return;
         }

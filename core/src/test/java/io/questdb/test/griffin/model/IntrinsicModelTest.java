@@ -34,6 +34,7 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -2151,6 +2152,79 @@ public class IntrinsicModelTest {
                 "[$now - 2h..$now]@America/New_York#Mon",
                 "2026-01-22T10:30:00.000000Z"
         );
+    }
+
+    @Test
+    public void testDayFilterLocalTimeSemanticsMonday() throws SqlException {
+        // Bug investigation: Day filter should use local-time semantics, not UTC
+        // The bug occurs when timezone conversion causes the date to cross midnight.
+        //
+        // nowTimestamp = 2026-01-26T23:30:00Z (treated as "23:30 local" by timezone logic)
+        // Expression: [$now - 1h..$now]@America/New_York#Mon
+        // Local time range: 22:30-23:30 on 2026-01-26 (Monday)
+        // After timezone conversion (+5h for EST): 03:30-04:30 UTC on 2026-01-27 (Tuesday)
+        //
+        // If day filter uses LOCAL semantics (correct): checks 2026-01-26 = Monday → matches #Mon
+        // If day filter uses UTC semantics (bug): checks 2026-01-27 = Tuesday → no match → empty
+        // Note: assertBracketIntervalWithNow transforms 00Z→00000Z for nano, so use micro format
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-27T03:30:00.000000Z, hi=2026-01-27T04:30:00.000000Z}]",
+                "[$now - 1h..$now]@America/New_York#Mon",
+                "2026-01-26T23:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDayFilterLocalTimeSemanticsNotTuesday() throws SqlException {
+        // Complementary test: Same scenario but with #Tue filter
+        // nowTimestamp = 2026-01-26T23:30:00Z (treated as "23:30 local Monday")
+        // Expression: [$now - 1h..$now]@America/New_York#Tue
+        // Local time: Monday evening → does NOT match #Tue → should be empty
+        //
+        // If day filter uses LOCAL semantics (correct): Monday doesn't match #Tue → empty
+        // If day filter uses UTC semantics (bug): checks UTC date Tuesday → matches #Tue → returns interval
+        assertBracketIntervalWithNow(
+                "[]",
+                "[$now - 1h..$now]@America/New_York#Tue",
+                "2026-01-26T23:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDayFilterWithTimezoneApplyEncodedFalse() throws SqlException {
+        // Time-precision range with day filter + timezone + applyEncoded=false
+        // Tests that day filter mask is correctly preserved in encoded format after timezone conversion
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "[$now - 1h..$now]@America/New_York#Mon";
+        long nowTimestamp = timestampDriver.parseFloor("2026-01-26T23:30:00.000000Z", 0, 27);
+        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false, nowTimestamp);
+        // Monday (local day) should match #Mon, so we get 1 interval * 4 longs = 4
+        Assert.assertEquals(4, out.size());
+        // Verify the dayFilterMask is preserved in the encoded format (high byte of periodCount)
+        long periodCountLong = out.getQuick(3);
+        int periodCount = Numbers.decodeHighInt(periodCountLong);
+        int dayFilterMask = (periodCount >> 24) & 0xFF;
+        Assert.assertEquals(1, dayFilterMask); // bit 0 = Monday
+    }
+
+    @Test
+    public void testDayFilterWithTimezoneApplyEncodedFalseNoMatch() throws SqlException {
+        // Time-precision range with day filter + timezone + applyEncoded=false, filter doesn't match
+        // Tests that non-matching day filter still stores mask (for runtime evaluation)
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "[$now - 1h..$now]@America/New_York#Tue";
+        long nowTimestamp = timestampDriver.parseFloor("2026-01-26T23:30:00.000000Z", 0, 27);
+        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false, nowTimestamp);
+        // With applyEncoded=false, day filter is stored but not applied - interval is kept
+        // The runtime will evaluate the mask later
+        Assert.assertEquals(4, out.size());
+        // Verify the dayFilterMask is preserved (bit 1 = Tuesday)
+        long periodCountLong = out.getQuick(3);
+        int periodCount = Numbers.decodeHighInt(periodCountLong);
+        int dayFilterMask = (periodCount >> 24) & 0xFF;
+        Assert.assertEquals(2, dayFilterMask); // bit 1 = Tuesday
     }
 
     @Test
