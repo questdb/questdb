@@ -362,50 +362,27 @@ public class IntrinsicModelTest {
      */
     @Test(timeout = 30000)
     public void testBracketExpansionLargeRangeWithIncrementalMerge() throws SqlException {
+        // Test 1: 31 consecutive days merge to 1 interval
+        assertBracketInterval(
+                "[{lo=2020-01-01T00:00:00.000000Z, hi=2020-01-31T23:59:59.999999Z}]",
+                "2020-01-[01..31]"
+        );
+
+        // Test 2: 201 non-adjacent year intervals (Jan 1 each year) don't merge
         final TimestampDriver timestampDriver = timestampType.getDriver();
         out.clear();
-
-        // Test 1: Large range of consecutive days (adjacent intervals merge to 1)
-        // 2020-01-[1..500] would create 500 day intervals, but they're adjacent so merge to 1
-        // Note: Days > 31 are invalid, so use month expansion instead:
-        // 2020-[01..12]-[01..28] = 12 months * 28 days = 336 consecutive-ish intervals
-        // But days within each month are adjacent and merge, and months don't merge (gap between months)
-        // So let's use a simpler test with consecutive days in January
-        String interval = "2020-01-[01..31]"; // 31 consecutive days -> should merge to 1
+        String interval = "[1970..2170]-01-01";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        Assert.assertEquals("31 consecutive days should merge to 1 interval", 1, out.size() / 2);
+        Assert.assertEquals("201 non-adjacent year intervals", 201, out.size() / 2);
 
-        // Test 2: Large year range (non-adjacent intervals don't merge)
-        // [1970..2170]-01-01 = 201 separate day intervals (Jan 1 each year, ~365 day gaps)
-        out.clear();
-        interval = "[1970..2170]-01-01";
-        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        // These don't merge because there's a ~365 day gap between Jan 1 of each year
-        Assert.assertEquals("201 non-adjacent year intervals should remain separate", 201, out.size() / 2);
+        // Test 3: Max interval limit (1024) enforced
+        assertBracketIntervalError("[1000..3000]-01-01", "too many intervals");
 
-        // Test 4: Verify max interval limit (1024) is enforced
-        // [1000..3000]-01-01 = 2001 non-adjacent intervals, exceeds limit of 1024
-        out.clear();
-        interval = "[1000..3000]-01-01";
-        try {
-            parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-            Assert.fail("Should fail with 'too many intervals' error");
-        } catch (SqlException e) {
-            Assert.assertTrue("Expected 'too many intervals' error, got: " + e.getMessage(),
-                    e.getMessage().contains("too many intervals"));
-        }
-
-        // Test 3: Verify incremental merge kicks in for large adjacent ranges
-        // Using format that matches existing tests: year-[months]-[days]
-        // 2020-[01,02,03,04,05,06,07,08,09,10,11,12]-[01..28] = 12 * 28 = 336 combinations
+        // Test 4: 12 months × 28 days merge to 12 intervals (one per month)
         out.clear();
         interval = "2020-[01,02,03,04,05,06,07,08,09,10,11,12]-[01..28]";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        // Days 1-28 within each month are adjacent and merge to 1.
-        // Dec 28 -> Jan 1 has gaps (Dec 29,30,31), so 12 separate month intervals.
-        // But wait - all months are in 2020, so Jan 28 -> Feb 1 only has Jan 29,30,31 gap
-        // So we expect 12 intervals (one per month, each spanning days 1-28)
-        Assert.assertEquals("12 months * 28 days should merge to 12 intervals", 12, out.size() / 2);
+        Assert.assertEquals("12 month intervals after merge", 12, out.size() / 2);
     }
 
     @Test
@@ -506,15 +483,12 @@ public class IntrinsicModelTest {
 
     @Test
     public void testBracketExpansionWithApplyEncodedFalse() throws SqlException {
-        // Test field expansion path with applyEncoded=false (exercises line 510 branch)
-        // When applyEncoded=false, intervals stay in 4-long encoded format and union is skipped
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        out.clear();
-        String interval = "2018-01-[10,15]";
-        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
-        // With applyEncoded=false, we get 4 longs per interval (encoded format)
-        // 2 intervals * 4 longs = 8
-        Assert.assertEquals(8, out.size());
+        // Field expansion with applyEncoded=false - two separate day intervals
+        assertEncodedInterval(
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}," +
+                        "{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}]",
+                "2018-01-[10,15]"
+        );
     }
 
     @Test
@@ -788,10 +762,10 @@ public class IntrinsicModelTest {
 
     @Test
     public void testDateListElementWithHighPrecisionTime() throws SqlException {
-        // Element with seconds/microseconds keeps its precise time
-        // For nano, microsecond precision fills remaining nanos with 9s for hi
-        final TimestampDriver timestampDriver = timestampType.getDriver();
+        // Element with microseconds keeps precise time, second element gets T10:00 suffix
+        // Note: nano mode fills remaining nanos with 9s for hi (.123456999Z)
         out.clear();
+        final TimestampDriver timestampDriver = timestampType.getDriver();
         String interval = "[2026-01-01T09:30:45.123456, 2026-01-02]T10:00";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         TestUtils.assertEquals(
@@ -2847,34 +2821,20 @@ public class IntrinsicModelTest {
 
     @Test
     public void testDayFilterDynamicModeEncodingWeekend() throws SqlException {
-        // Test weekend filter encoding in dynamic mode
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        out.clear();
-        String interval = "2024-01-01#weekend";
-        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
-
-        // 1 interval * 4 longs = 4
-        Assert.assertEquals(4, out.size());
-
-        // Weekend mask = Sat|Sun = bits 5-6 = 0x60 = 96
-        int dayFilterMask = IntervalUtils.decodeDayFilterMask(out, 0);
-        Assert.assertEquals("Weekend mask should be 96 (Sat-Sun)", 96, dayFilterMask);
+        // Weekend mask = Sat|Sun encoded in interval
+        assertEncodedInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z, dayFilter=Sat,Sun}]",
+                "2024-01-01#weekend"
+        );
     }
 
     @Test
     public void testDayFilterDynamicModeEncodingWorkday() throws SqlException {
-        // Test workday filter encoding in dynamic mode
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        out.clear();
-        String interval = "2024-01-01#workday";
-        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
-
-        // 1 interval * 4 longs = 4
-        Assert.assertEquals(4, out.size());
-
-        // Workday mask = Mon|Tue|Wed|Thu|Fri = bits 0-4 = 0x1F = 31
-        int dayFilterMask = IntervalUtils.decodeDayFilterMask(out, 0);
-        Assert.assertEquals("Workday mask should be 31 (Mon-Fri)", 31, dayFilterMask);
+        // Workday mask = Mon-Fri encoded in interval
+        assertEncodedInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z, dayFilter=Mon,Tue,Wed,Thu,Fri}]",
+                "2024-01-01#workday"
+        );
     }
 
     @Test
@@ -3506,13 +3466,11 @@ public class IntrinsicModelTest {
 
     @Test
     public void testNoBracketsWithApplyEncodedFalse() throws SqlException {
-        // Test no-brackets path with applyEncoded=false (exercises line 484 branch)
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        out.clear();
-        String interval = "2025-01-15";
-        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
-        // With applyEncoded=false, we get 4 longs per interval (encoded format)
-        Assert.assertEquals(4, out.size());
+        // No-brackets path with applyEncoded=false
+        assertEncodedInterval(
+                "[{lo=2025-01-15T00:00:00.000000Z, hi=2025-01-15T23:59:59.999999Z}]",
+                "2025-01-15"
+        );
     }
 
     @Test
@@ -4355,6 +4313,22 @@ public class IntrinsicModelTest {
                         ? expected.replaceAll("Z", "000Z").replaceAll("999999Z", "999999999Z")
                         : expected,
                 sink
+        );
+    }
+
+    /**
+     * Asserts encoded interval (4-long format, applyEncoded=false) for static intervals.
+     * Use this for testing dynamic mode where day filter is stored for runtime evaluation.
+     */
+    private void assertEncodedInterval(String expected, String interval) throws SqlException {
+        out.clear();
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
+        TestUtils.assertEquals(
+                ColumnType.isTimestampNano(timestampType.getTimestampType())
+                        ? expected.replaceAll("00Z", "00000Z").replaceAll("99Z", "99999Z")
+                        : expected,
+                encodedIntervalToString(timestampDriver, out)
         );
     }
 
