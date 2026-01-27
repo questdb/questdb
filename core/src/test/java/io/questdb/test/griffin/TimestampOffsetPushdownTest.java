@@ -1492,4 +1492,47 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             );
         });
     }
+
+    @Test
+    public void testViewPushdown() throws Exception {
+        // Test that predicates are pushed down through views with dateadd offset
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z');");
+            execute("INSERT INTO trades VALUES (150, '2022-01-02T12:00:00.000000Z');");
+            execute("INSERT INTO trades VALUES (200, '2022-01-03T12:00:00.000000Z');");
+            execute("INSERT INTO trades VALUES (250, '2022-01-04T12:00:00.000000Z');");
+
+            // Create a view that wraps dateadd on the timestamp
+            execute("CREATE VIEW trades_offset AS SELECT dateadd('d', -1, timestamp) as ts, price FROM trades;");
+
+            String query = "SELECT * FROM trades_offset WHERE ts IN '2022-01-01'";
+
+            // Verify plan shows interval pushdown with +1 day offset applied through the view
+            // ts IN '2022-01-01' means original timestamp must be in '2022-01-02'
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            VirtualRecord
+                              functions: [dateadd('d',-1,timestamp),price]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: trades
+                                      intervals: [("2022-01-02T00:00:00.000000Z","2022-01-02T23:59:59.999999Z")]
+                            """
+            );
+
+            // Verify correct data: only the row where ts = 2022-01-01 (original timestamp = 2022-01-02)
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tprice
+                            2022-01-01T12:00:00.000000Z\t150.0
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
 }

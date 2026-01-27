@@ -2088,7 +2088,7 @@ public final class WhereClauseParser implements Mutable {
                     }
                 } else if (isFunc(inArg)) {
                     // Function like now() - parse and handle as runtime timestamp
-                    if (notOrTimestampFunction(model, inArg, leftFirst, functionParser, metadata, executionContext)) {
+                    if (!tryAccumulateTimestampFunction(model, inArg, leftFirst, functionParser, metadata, executionContext)) {
                         return false;
                     }
                 } else {
@@ -2106,7 +2106,7 @@ public final class WhereClauseParser implements Mutable {
                     ExpressionNode inListItem = node.args.getQuick(i);
                     boolean isFirst = leftFirst && i == 0;
                     if (isFunc(inListItem)) {
-                        if (notOrTimestampFunction(model, inListItem, isFirst, functionParser, metadata, executionContext)) {
+                        if (!tryAccumulateTimestampFunction(model, inListItem, isFirst, functionParser, metadata, executionContext)) {
                             return false;
                         }
                     } else {
@@ -2132,7 +2132,7 @@ public final class WhereClauseParser implements Mutable {
                 valueNode = node.lhs;
             }
             if (isFunc(valueNode)) {
-                if (notOrTimestampFunction(model, valueNode, leftFirst, functionParser, metadata, executionContext)) {
+                if (!tryAccumulateTimestampFunction(model, valueNode, leftFirst, functionParser, metadata, executionContext)) {
                     return false;
                 }
             } else {
@@ -2376,10 +2376,11 @@ public final class WhereClauseParser implements Mutable {
     }
 
     /**
-     * Extracts a timestamp function (like now()) for OR interval extraction.
+     * Accumulates a timestamp function (like now()) into the OR interval model.
      * For constant functions, evaluates immediately. For runtime constants, defers to runtime.
+     * Returns true on success, false if the function cannot be accumulated.
      */
-    private boolean notOrTimestampFunction(
+    private boolean tryAccumulateTimestampFunction(
             IntrinsicModel model,
             ExpressionNode funcNode,
             boolean isFirst,
@@ -2391,7 +2392,7 @@ public final class WhereClauseParser implements Mutable {
         try {
             if (!ColumnType.isTimestamp(func.getType())) {
                 Misc.free(func);
-                return true;
+                return false;
             }
             if (func.isConstant()) {
                 long ts = func.getTimestamp(null);
@@ -2409,9 +2410,9 @@ public final class WhereClauseParser implements Mutable {
                 }
             } else {
                 Misc.free(func);
-                return true;
+                return false;
             }
-            return false;
+            return true;
         } catch (Throwable th) {
             Misc.free(func);
             throw th;

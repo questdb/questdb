@@ -9681,17 +9681,21 @@ public class SqlOptimiser implements Mutable {
         wrapper.paramCount = 3;
 
         // Unit as constant char (quoted to match dateadd format)
+        CharacterStoreEntry unitEntry = characterStore.newEntry();
+        unitEntry.put('\'').put(model.getTimestampOffsetUnit()).put('\'');
         ExpressionNode unitNode = expressionNodePool.next().of(
                 CONSTANT,
-                "'" + model.getTimestampOffsetUnit() + "'",
+                unitEntry.toImmutable(),
                 0,
                 0
         );
 
         // Offset value as constant (int, matching dateadd's signature)
+        CharacterStoreEntry offsetEntry = characterStore.newEntry();
+        offsetEntry.put(model.getTimestampOffsetValue());
         ExpressionNode offsetNode = expressionNodePool.next().of(
                 CONSTANT,
-                Integer.toString(model.getTimestampOffsetValue()),
+                offsetEntry.toImmutable(),
                 0,
                 0
         );
