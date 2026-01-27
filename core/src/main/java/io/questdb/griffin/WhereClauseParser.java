@@ -38,8 +38,6 @@ import io.questdb.griffin.model.AliasTranslator;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.IntrinsicModel;
-import io.questdb.griffin.model.RuntimeIntervalModel;
-import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
@@ -459,15 +457,12 @@ public final class WhereClauseParser implements Mutable {
         );
 
         if (extracted || tempModel.hasIntervalFilters()) {
-            RuntimeIntrinsicIntervalModel im = tempModel.buildIntervalModel();
-            if (im instanceof RuntimeIntervalModel runtimeIntervalModel) {
-                // Use the calendar-aware merge method that applies the offset
-                // to each interval boundary using the timestamp driver's add method.
-                // This correctly handles variable-length units like months and years.
-                model.mergeIntervalModelWithAddMethod(runtimeIntervalModel, addMethod, offsetValue);
-                node.intrinsicValue = IntrinsicModel.TRUE;
-                return true;
-            }
+            // Merge directly from the temp model without allocating an intermediate RuntimeIntervalModel.
+            // This applies the offset to each interval boundary using the timestamp driver's add method,
+            // which correctly handles variable-length units like months and years.
+            model.mergeIntervalModelWithAddMethod(tempModel, addMethod, offsetValue);
+            node.intrinsicValue = IntrinsicModel.TRUE;
+            return true;
         }
 
         return false;

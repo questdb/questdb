@@ -132,8 +132,12 @@ public class IntrinsicModel implements Mutable {
         runtimeIntervalBuilder.merge(model, loOffset, hiOffset);
     }
 
-    public void mergeIntervalModelWithAddMethod(RuntimeIntervalModel model, TimestampDriver.TimestampAddMethod addMethod, int offset) throws SqlException {
-        runtimeIntervalBuilder.mergeWithAddMethod(model, addMethod, offset);
+    /**
+     * Merges intervals from another IntrinsicModel with calendar-aware offset adjustment.
+     * This avoids allocating an intermediate RuntimeIntervalModel.
+     */
+    public void mergeIntervalModelWithAddMethod(IntrinsicModel other, TimestampDriver.TimestampAddMethod addMethod, int offset) throws SqlException {
+        runtimeIntervalBuilder.mergeWithAddMethod(other.runtimeIntervalBuilder, addMethod, offset);
     }
 
     public void of(int timestampType, int partitionBy, CairoConfiguration configuration) {
