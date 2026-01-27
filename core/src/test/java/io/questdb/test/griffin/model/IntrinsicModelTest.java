@@ -167,7 +167,7 @@ public class IntrinsicModelTest {
     @Test
     public void testBracketExpansionCartesianProductWithMerge() throws SqlException {
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
 
         // Test 1: Small cartesian product with non-adjacent values (no merging)
         String interval = "2018-[01,06]-[10,15]"; // 2 * 2 = 4 combinations
@@ -363,7 +363,7 @@ public class IntrinsicModelTest {
     @Test(timeout = 30000)
     public void testBracketExpansionLargeRangeWithIncrementalMerge() throws SqlException {
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
 
         // Test 1: Large range of consecutive days (adjacent intervals merge to 1)
         // 2020-01-[1..500] would create 500 day intervals, but they're adjacent so merge to 1
@@ -471,7 +471,7 @@ public class IntrinsicModelTest {
         // Raw long timestamp (exercises line 1219 - Numbers.parseLong fallback)
         // 1234567890000000 microseconds = 2009-02-13T23:31:30.000000Z
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
         String interval = "1234567890000000";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(2, out.size());
@@ -509,7 +509,7 @@ public class IntrinsicModelTest {
         // Test field expansion path with applyEncoded=false (exercises line 510 branch)
         // When applyEncoded=false, intervals stay in 4-long encoded format and union is skipped
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
         String interval = "2018-01-[10,15]";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
         // With applyEncoded=false, we get 4 longs per interval (encoded format)
@@ -586,7 +586,7 @@ public class IntrinsicModelTest {
         // The prefix "XXX" should be ignored, and padding should be calculated from the interval start
         String input = "XXX2018-01-[5,10]";
         int lo = 3; // skip "XXX"
-        LongList out = new LongList();
+        out.clear();
         final TimestampDriver timestampDriver = timestampType.getDriver();
         parseTickExpr(timestampDriver, input, lo, input.length(), 0, out, IntervalOperation.INTERSECT);
         // Day field should be zero-padded to 2 digits
@@ -622,7 +622,7 @@ public class IntrinsicModelTest {
     public void testBracketExpansionWithSubtractApplyEncodedFalse() throws SqlException {
         // Test SUBTRACT operation with applyEncoded=false (exercises line 1167)
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
         String interval = "2018-01-[10,15]";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.SUBTRACT, false);
         // With applyEncoded=false, we get 4 longs per interval (encoded format)
@@ -791,7 +791,7 @@ public class IntrinsicModelTest {
         // Element with seconds/microseconds keeps its precise time
         // For nano, microsecond precision fills remaining nanos with 9s for hi
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
         String interval = "[2026-01-01T09:30:45.123456, 2026-01-02]T10:00";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         TestUtils.assertEquals(
@@ -1056,7 +1056,7 @@ public class IntrinsicModelTest {
         // Test date list path with applyEncoded=false (exercises line 455 branch)
         // When applyEncoded=false, intervals stay in 4-long encoded format and union is skipped
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
         String interval = "[2025-01-01,2025-01-05]";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
         // With applyEncoded=false, we get 4 longs per interval (encoded format)
@@ -1112,7 +1112,7 @@ public class IntrinsicModelTest {
         // Test date list path with day filter and applyEncoded=false (exercises line 1617)
         // 2024-01-01 is Monday, 2024-01-02 is Tuesday, 2024-01-03 is Wednesday
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
         String interval = "[2024-01-01,2024-01-02,2024-01-03]#Mon";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
         // With applyEncoded=false, we get 4 longs per interval (encoded format)
@@ -1204,7 +1204,7 @@ public class IntrinsicModelTest {
         // 2026-01-22 is Thursday
         final TimestampDriver timestampDriver = timestampType.getDriver();
         long now = timestampDriver.parseFloorLiteral("2026-01-22T10:30:00.000000Z");
-        LongList out = new LongList();
+        out.clear();
 
         // [$today + 1bd] should be Friday 2026-01-23
         String interval = "[$today + 1bd]";
@@ -1254,7 +1254,7 @@ public class IntrinsicModelTest {
     public void testDateVariableArithmeticCalendarDays() throws SqlException {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         long now = timestampDriver.parseFloorLiteral("2026-01-22T10:30:00.000000Z");
-        LongList out = new LongList();
+        out.clear();
 
         // [$today + 5d] should be 2026-01-27
         String interval = "[$today + 5d]";
@@ -1434,16 +1434,12 @@ public class IntrinsicModelTest {
 
     @Test
     public void testDateVariableBareWithApplyEncodedFalse() throws SqlException {
-        // Test bare date variable path with applyEncoded=false (exercises line 731 branch)
-        // When applyEncoded=false, intervals stay in 4-long encoded format and mergeAndValidateIntervals is skipped
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "$today";
-        long nowTimestamp = timestampDriver.parseFloor("2026-01-22T10:30:00.000000Z", 0, 27);
-        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false, nowTimestamp);
-        // With applyEncoded=false, we get 4 longs per interval (encoded format)
-        // 1 interval * 4 longs = 4
-        Assert.assertEquals(4, out.size());
+        // Bare date variable with applyEncoded=false - full day interval
+        assertEncodedIntervalWithNow(
+                "[{lo=2026-03-15T00:00:00.000000Z, hi=2026-03-15T23:59:59.999999Z}]",
+                "$today",
+                "2026-03-15T14:30:00.000000Z"
+        );
     }
 
     @Test
@@ -1532,7 +1528,7 @@ public class IntrinsicModelTest {
         // 2026-01-24 is Saturday
         final TimestampDriver timestampDriver = timestampType.getDriver();
         long now = timestampDriver.parseFloorLiteral("2026-01-24T10:30:00.000000Z");
-        LongList out = new LongList();
+        out.clear();
 
         // From Saturday, +1bd should be Monday 2026-01-26
         String interval = "[$today + 1bd]";
@@ -1571,7 +1567,7 @@ public class IntrinsicModelTest {
     public void testDateVariableCaseInsensitive() throws SqlException {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         long now = timestampDriver.parseFloorLiteral("2026-01-22T10:30:00.000000Z");
-        LongList out = new LongList();
+        out.clear();
 
         // Test various case combinations
         String interval = "[$TODAY]";
@@ -2057,17 +2053,19 @@ public class IntrinsicModelTest {
 
     @Test
     public void testDateVariableRangeWithDayFilterAndApplyEncodedFalse() throws SqlException {
-        // Test day-based range with day filter and applyEncoded=false (exercises L2325)
-        // [$today..$today+6d]#Mon - 7 days filtered to Monday only, applyEncoded=false
-        // 2026-01-22 is Thursday, so Monday is 2026-01-26
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "[$today..$today+6d]#Mon";
-        long nowTimestamp = timestampDriver.parseFloor("2026-01-22T10:30:00.000000Z", 0, 27);
-        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false, nowTimestamp);
-        // With applyEncoded=false, we get 4 longs per interval (encoded format)
-        // Day filter is stored in encoded format, 7 intervals * 4 longs = 28
-        Assert.assertEquals(28, out.size());
+        // Day range with #Mon filter, applyEncoded=false - all 7 days stored with Mon mask
+        // 2026-02-09 is Monday, range covers Mon-Sun with #Fri filter stored on each
+        assertEncodedIntervalWithNow(
+                "[{lo=2026-02-09T00:00:00.000000Z, hi=2026-02-09T23:59:59.999999Z, dayFilter=Fri}," +
+                        "{lo=2026-02-10T00:00:00.000000Z, hi=2026-02-10T23:59:59.999999Z, dayFilter=Fri}," +
+                        "{lo=2026-02-11T00:00:00.000000Z, hi=2026-02-11T23:59:59.999999Z, dayFilter=Fri}," +
+                        "{lo=2026-02-12T00:00:00.000000Z, hi=2026-02-12T23:59:59.999999Z, dayFilter=Fri}," +
+                        "{lo=2026-02-13T00:00:00.000000Z, hi=2026-02-13T23:59:59.999999Z, dayFilter=Fri}," +
+                        "{lo=2026-02-14T00:00:00.000000Z, hi=2026-02-14T23:59:59.999999Z, dayFilter=Fri}," +
+                        "{lo=2026-02-15T00:00:00.000000Z, hi=2026-02-15T23:59:59.999999Z, dayFilter=Fri}]",
+                "[$today..$today+6d]#Fri",
+                "2026-02-09T10:30:00.000000Z"
+        );
     }
 
     @Test
@@ -2192,53 +2190,46 @@ public class IntrinsicModelTest {
 
     @Test
     public void testDayFilterWithTimezoneApplyEncodedFalse() throws SqlException {
-        // Time-precision range with day filter + timezone + applyEncoded=false
-        // Tests that day filter mask is correctly preserved in encoded format after timezone conversion
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "[$now - 1h..$now]@America/New_York#Mon";
-        long nowTimestamp = timestampDriver.parseFloor("2026-01-26T23:30:00.000000Z", 0, 27);
-        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false, nowTimestamp);
-        // Monday (local day) should match #Mon, so we get 1 interval * 4 longs = 4
-        Assert.assertEquals(4, out.size());
-        // Verify the dayFilterMask is preserved in the encoded format (high byte of periodCount)
-        long periodCountLong = out.getQuick(3);
-        int periodCount = Numbers.decodeHighInt(periodCountLong);
-        int dayFilterMask = (periodCount >> 24) & 0xFF;
-        Assert.assertEquals(1, dayFilterMask); // bit 0 = Monday
+        // Dynamic mode: day filter mask stored for runtime evaluation
+        // Friday 2026-01-30 14:00 local NY → 19:00 UTC, #Fri matches
+        assertEncodedIntervalWithNow(
+                "[{lo=2026-01-30T18:00:00.000000Z, hi=2026-01-30T19:00:00.000000Z, dayFilter=Fri}]",
+                "[$now - 1h..$now]@America/New_York#Fri",
+                "2026-01-30T14:00:00.000000Z"
+        );
     }
 
     @Test
     public void testDayFilterWithTimezoneApplyEncodedFalseNoMatch() throws SqlException {
-        // Time-precision range with day filter + timezone + applyEncoded=false, filter doesn't match
-        // Tests that non-matching day filter still stores mask (for runtime evaluation)
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "[$now - 1h..$now]@America/New_York#Tue";
-        long nowTimestamp = timestampDriver.parseFloor("2026-01-26T23:30:00.000000Z", 0, 27);
-        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false, nowTimestamp);
-        // With applyEncoded=false, day filter is stored but not applied - interval is kept
-        // The runtime will evaluate the mask later
-        Assert.assertEquals(4, out.size());
-        // Verify the dayFilterMask is preserved (bit 1 = Tuesday)
-        long periodCountLong = out.getQuick(3);
-        int periodCount = Numbers.decodeHighInt(periodCountLong);
-        int dayFilterMask = (periodCount >> 24) & 0xFF;
-        Assert.assertEquals(2, dayFilterMask); // bit 1 = Tuesday
+        // Dynamic mode: Wednesday 2026-01-28 09:15 local, #Thu doesn't match but mask stored
+        assertEncodedIntervalWithNow(
+                "[{lo=2026-01-28T12:15:00.000000Z, hi=2026-01-28T14:15:00.000000Z, dayFilter=Thu}]",
+                "[$now - 2h..$now]@America/New_York#Thu",
+                "2026-01-28T09:15:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDayFilterWithTimezoneApplyEncodedFalseMidnightCrossing() throws SqlException {
+        // Dynamic mode: late Saturday night local crosses to Sunday UTC
+        // Saturday 2026-01-31 23:30 local NY → Sunday 04:30 UTC
+        // Day filter checks LOCAL day (Saturday) → #Sat matches
+        assertEncodedIntervalWithNow(
+                "[{lo=2026-02-01T03:30:00.000000Z, hi=2026-02-01T04:30:00.000000Z, dayFilter=Sat}]",
+                "[$now - 1h..$now]@America/New_York#Sat",
+                "2026-01-31T23:30:00.000000Z"
+        );
     }
 
     @Test
     public void testDateVariableRangeWithHoursTimezoneAndApplyEncodedFalse() throws SqlException {
-        // PR review test: Time-precision range with timezone and applyEncoded=false
-        // Tests if hardcoded 'true' in applyTimezoneToIntervals corrupts metadata
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "[$now - 2h..$now@America/New_York]";
-        long nowTimestamp = timestampDriver.parseFloor("2026-01-22T10:30:00.000000Z", 0, 27);
-        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false, nowTimestamp);
-        // With applyEncoded=false, we should get 4 longs per interval (encoded format)
-        // If metadata is corrupted, size may be wrong
-        Assert.assertEquals(4, out.size());
+        // Time-precision with timezone and applyEncoded=false
+        // 16:45-18:45 local Tokyo (UTC+9) → 07:45-09:45 UTC
+        assertEncodedIntervalWithNow(
+                "[{lo=2026-04-10T07:45:00.000000Z, hi=2026-04-10T09:45:00.000000Z}]",
+                "[$now - 2h..$now]@Asia/Tokyo",
+                "2026-04-10T18:45:00.000000Z"
+        );
     }
 
     @Test
@@ -2321,16 +2312,12 @@ public class IntrinsicModelTest {
 
     @Test
     public void testDateVariableRangeWithTimePrecisionAndApplyEncodedFalse() throws SqlException {
-        // Test time precision range path with applyEncoded=false (exercises line 2169 branch)
-        // [$now - 2h..$now] - both endpoints have time precision, applyEncoded=false
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "[$now - 2h..$now]";
-        long nowTimestamp = timestampDriver.parseFloor("2026-01-22T10:30:00.000000Z", 0, 27);
-        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false, nowTimestamp);
-        // With applyEncoded=false, we get 4 longs per interval (encoded format)
-        // 1 interval * 4 longs = 4
-        Assert.assertEquals(4, out.size());
+        // Time-precision range with applyEncoded=false, no timezone
+        assertEncodedIntervalWithNow(
+                "[{lo=2026-07-04T19:00:00.000000Z, hi=2026-07-04T21:00:00.000000Z}]",
+                "[$now - 2h..$now]",
+                "2026-07-04T21:00:00.000000Z"
+        );
     }
 
     @Test
@@ -2629,7 +2616,7 @@ public class IntrinsicModelTest {
         // - 2024-01-01 23:59 +12:00 = 2024-01-01 11:59 UTC
 
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
         String interval = "2024-01-[01..02]@+12:00#Mon";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
 
@@ -2728,7 +2715,7 @@ public class IntrinsicModelTest {
         // Date list where no elements match day filter - should produce empty result
         // 2024-01-02 is Tuesday, 2024-01-03 is Wednesday
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
         String interval = "[2024-01-02,2024-01-03]#Mon";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(0, out.size());
@@ -2814,7 +2801,7 @@ public class IntrinsicModelTest {
         // 2024-01-01 23:59:59.999999 in +12:00 = 2024-01-01 11:59:59.999999 UTC
 
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
         String interval = "[2024-01-01@+12:00]#Mon";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
 
@@ -2841,7 +2828,7 @@ public class IntrinsicModelTest {
         // Test that day filter mask is properly encoded in dynamic (4-long) format
         // This verifies the encoding, not the runtime filtering
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
         String interval = "2024-01-[01..03]#Mon";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
 
@@ -2862,7 +2849,7 @@ public class IntrinsicModelTest {
     public void testDayFilterDynamicModeEncodingWeekend() throws SqlException {
         // Test weekend filter encoding in dynamic mode
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
         String interval = "2024-01-01#weekend";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
 
@@ -2878,7 +2865,7 @@ public class IntrinsicModelTest {
     public void testDayFilterDynamicModeEncodingWorkday() throws SqlException {
         // Test workday filter encoding in dynamic mode
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
         String interval = "2024-01-01#workday";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
 
@@ -2895,7 +2882,7 @@ public class IntrinsicModelTest {
         // Filter that removes all intervals (e.g., looking for Monday in a Tue-Thu range)
         // 2024-01-02 is Tuesday, 2024-01-04 is Thursday
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
         String interval = "2024-01-[02..04]#Mon";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(0, out.size());
@@ -3005,7 +2992,7 @@ public class IntrinsicModelTest {
         // remainderDays = 31 % 7 = 3, startDow + remainderDays = 6 + 3 = 9 > 7 → wrap-around case
         // #Mon should return all 5 Mondays: Dec 2, 9, 16, 23, 30
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
         String interval = "2024-12#Mon";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
 
@@ -3053,7 +3040,7 @@ public class IntrinsicModelTest {
         // Single date with day filter - should filter out if doesn't match
         // 2024-01-01 is Monday, asking for Tuesday
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
         String interval = "2024-01-01#Tue";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         Assert.assertEquals(0, out.size());
@@ -3168,7 +3155,7 @@ public class IntrinsicModelTest {
         // Year-only date with day filter expands to all matching days
         // 2022 has 52 Tuesdays, first is Jan 4, last is Dec 27
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
         String interval = "2022#Tue";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
 
@@ -3188,7 +3175,7 @@ public class IntrinsicModelTest {
         // Year-only date with day filter - all Saturdays in 2022
         // 2022 has 53 Saturdays: Jan 1 is Saturday, and since 365 = 52*7 + 1, Dec 31 is also Saturday
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
         String interval = "2022#Sat";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
 
@@ -3283,7 +3270,7 @@ public class IntrinsicModelTest {
     @Test
     public void testInvert() throws SqlException {
         final String intervalStr = "2018-01-10T10:30:00.000Z;30m;2d;2";
-        LongList out = new LongList();
+        out.clear();
         TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
         parseTickExpr(timestampDriver, intervalStr, 0, intervalStr.length(), 0, out, IntervalOperation.INTERSECT);
         IntervalUtils.invert(out);
@@ -3521,7 +3508,7 @@ public class IntrinsicModelTest {
     public void testNoBracketsWithApplyEncodedFalse() throws SqlException {
         // Test no-brackets path with applyEncoded=false (exercises line 484 branch)
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
         String interval = "2025-01-15";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
         // With applyEncoded=false, we get 4 longs per interval (encoded format)
@@ -3969,7 +3956,7 @@ public class IntrinsicModelTest {
         // The string "2024-01-[15@00,16]" has @ inside brackets - should fail as invalid bracket content
         // not as invalid timezone
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
         String interval = "2024-01-[15@00,16]";
         try {
             parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
@@ -4092,7 +4079,7 @@ public class IntrinsicModelTest {
         // lo = 01:59:00 EST = 06:59:00 UTC (not in gap, unchanged)
         // hi falls in gap and gets adjusted forward
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
         String interval = "2024-03-10T01:59@America/New_York;2m";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
@@ -4126,7 +4113,7 @@ public class IntrinsicModelTest {
         // This exercises the isStaticMode=false branch in applyTimezoneToIntervals
         // 08:00 in +03:00 = 05:00 UTC
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
         parseTickExpr(timestampDriver, "2024-01-15T08:00@+03:00", 0, 23, 0, out, IntervalOperation.INTERSECT, false);
         IntervalUtils.applyLastEncodedInterval(timestampDriver, out);
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
@@ -4170,7 +4157,7 @@ public class IntrinsicModelTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         String[] testCases = {"2024-01-15T08:00@+", "2024-01-15T08:00@-", "2024-01-15T08:00@+:", "2024-01-15T08:00@+00"};
         for (String interval : testCases) {
-            LongList out = new LongList();
+            out.clear();
             try {
                 parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
                 // If it succeeds without error, that's also fine
@@ -4282,7 +4269,7 @@ public class IntrinsicModelTest {
     public void testTimezoneZ() {
         // Test @Z - potential NPE if getZoneRules returns null
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
+        out.clear();
         String interval = "2024-01-15T08:00@Z";
         try {
             parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
@@ -4322,7 +4309,7 @@ public class IntrinsicModelTest {
     }
 
     private void assertBracketInterval(String expected, String interval) throws SqlException {
-        LongList out = new LongList();
+        out.clear();
         final TimestampDriver timestampDriver = timestampType.getDriver();
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         TestUtils.assertEquals(
@@ -4336,7 +4323,7 @@ public class IntrinsicModelTest {
     private void assertBracketIntervalError(String interval, String expectedError) {
         try {
             final TimestampDriver timestampDriver = timestampType.getDriver();
-            LongList out = new LongList();
+            out.clear();
             parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
             Assert.fail("Expected SqlException with message containing: " + expectedError);
         } catch (SqlException e) {
@@ -4346,7 +4333,7 @@ public class IntrinsicModelTest {
     }
 
     private void assertBracketIntervalWithNow(String expected, String interval, String nowTimestamp) throws SqlException {
-        LongList out = new LongList();
+        out.clear();
         final TimestampDriver timestampDriver = timestampType.getDriver();
         long now = timestampDriver.parseFloorLiteral(nowTimestamp);
         parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, now);
@@ -4372,6 +4359,62 @@ public class IntrinsicModelTest {
     }
 
     /**
+     * Asserts encoded interval (4-long format, applyEncoded=false) with a specific "now" timestamp.
+     * Use this for testing dynamic mode where day filter is stored for runtime evaluation.
+     */
+    private void assertEncodedIntervalWithNow(String expected, String interval, String nowTimestamp) throws SqlException {
+        out.clear();
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        long now = timestampDriver.parseFloorLiteral(nowTimestamp);
+        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false, now);
+        TestUtils.assertEquals(
+                ColumnType.isTimestampNano(timestampType.getTimestampType())
+                        ? expected.replaceAll("00Z", "00000Z").replaceAll("99Z", "99999Z")
+                        : expected,
+                encodedIntervalToString(timestampDriver, out)
+        );
+    }
+
+    /**
+     * Converts encoded intervals (4-long format) to a readable string for assertions.
+     * Format: [{lo=..., hi=..., dayFilter=Mon,Tue,...}]
+     */
+    private static CharSequence encodedIntervalToString(TimestampDriver driver, LongList intervals) {
+        sink.clear();
+        sink.put('[');
+        for (int i = 0, n = intervals.size(); i < n; i += 4) {
+            if (i > 0) {
+                sink.put(',');
+            }
+            sink.put('{');
+            sink.put("lo=");
+            driver.append(sink, intervals.getQuick(i));
+            sink.put(", hi=");
+            driver.append(sink, intervals.getQuick(i + 1));
+
+            // Extract dayFilterMask from periodCount (high byte of high int)
+            long periodCountLong = intervals.getQuick(i + 3);
+            int periodCount = Numbers.decodeHighInt(periodCountLong);
+            int dayFilterMask = (periodCount >> 24) & 0xFF;
+            if (dayFilterMask != 0) {
+                sink.put(", dayFilter=");
+                boolean first = true;
+                String[] days = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+                for (int d = 0; d < 7; d++) {
+                    if ((dayFilterMask & (1 << d)) != 0) {
+                        if (!first) sink.put(',');
+                        sink.put(days[d]);
+                        first = false;
+                    }
+                }
+            }
+            sink.put('}');
+        }
+        sink.put(']');
+        return sink;
+    }
+
+    /**
      * Asserts date variable interval with a randomized "now" timestamp.
      * The expectedBuilder function receives the random "now" and TimestampDriver to build the expected result.
      */
@@ -4394,7 +4437,7 @@ public class IntrinsicModelTest {
         randomNow += timestampDriver.fromHours(rnd.nextInt(24));
         randomNow += timestampDriver.fromMinutes(rnd.nextInt(60));
 
-        LongList out = new LongList();
+        out.clear();
         parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, randomNow);
 
         String expected = expectedBuilder.build(randomNow, timestampDriver, timestampType);
@@ -4428,7 +4471,7 @@ public class IntrinsicModelTest {
     }
 
     private void assertShortInterval(String expected, String interval) throws SqlException {
-        LongList out = new LongList();
+        out.clear();
         final TimestampDriver timestampDriver = timestampType.getDriver();
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         TestUtils.assertEquals(
