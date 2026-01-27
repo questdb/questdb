@@ -1016,6 +1016,139 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testDateVariableArithmeticHours() throws SqlException {
+        // $now - 2h should be 2 hours earlier (point-in-time with microsecond precision)
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T08:30:00.000000Z, hi=2026-01-22T08:30:00.000000Z}]",
+                "[$now - 2h]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableArithmeticMinutes() throws SqlException {
+        // $now + 30m should be 30 minutes later (point-in-time with microsecond precision)
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T11:00:00.000000Z, hi=2026-01-22T11:00:00.000000Z}]",
+                "[$now + 30m]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableArithmeticSeconds() throws SqlException {
+        // $now + 90s should be 90 seconds later (point-in-time with microsecond precision)
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T10:31:30.000000Z, hi=2026-01-22T10:31:30.000000Z}]",
+                "[$now + 90s]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableArithmeticSeconds3600() throws SqlException {
+        // $now + 3600s should be exactly 1 hour later (point-in-time with microsecond precision)
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T11:30:00.000000Z, hi=2026-01-22T11:30:00.000000Z}]",
+                "[$now + 3600s]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableArithmeticMilliseconds() throws SqlException {
+        // $now + 500T should be 500 milliseconds later (point-in-time with microsecond precision)
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T10:30:00.500000Z, hi=2026-01-22T10:30:00.500000Z}]",
+                "[$now + 500T]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableArithmeticMicroseconds() throws SqlException {
+        // $now + 100u should be 100 microseconds later (point-in-time with microsecond precision)
+        // Using 100u so the pattern replacement for nano works (ends in 00)
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T10:30:00.000100Z, hi=2026-01-22T10:30:00.000100Z}]",
+                "[$now + 100u]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableArithmeticWeeks() throws SqlException {
+        // $today + 2w should be 2 weeks (14 days) later
+        assertBracketIntervalWithNow(
+                "[{lo=2026-02-05T00:00:00.000000Z, hi=2026-02-05T23:59:59.999999Z}]",
+                "[$today + 2w]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableArithmeticMonths() throws SqlException {
+        // $today + 1M should be 1 month later (Feb 22)
+        assertBracketIntervalWithNow(
+                "[{lo=2026-02-22T00:00:00.000000Z, hi=2026-02-22T23:59:59.999999Z}]",
+                "[$today + 1M]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableArithmeticMonthsEndOfMonth() throws SqlException {
+        // $today + 1M from Jan 31 should clamp to Feb 28 (non-leap year)
+        assertBracketIntervalWithNow(
+                "[{lo=2026-02-28T00:00:00.000000Z, hi=2026-02-28T23:59:59.999999Z}]",
+                "[$today + 1M]",
+                "2026-01-31T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableArithmeticYears() throws SqlException {
+        // $today + 1y should be 1 year later
+        assertBracketIntervalWithNow(
+                "[{lo=2027-01-22T00:00:00.000000Z, hi=2027-01-22T23:59:59.999999Z}]",
+                "[$today + 1y]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableArithmeticYearsLeapYear() throws SqlException {
+        // $today + 1y from Feb 29 leap year wraps to March 1 (29th day doesn't exist in non-leap Feb)
+        assertBracketIntervalWithNow(
+                "[{lo=2025-03-01T00:00:00.000000Z, hi=2025-03-01T23:59:59.999999Z}]",
+                "[$today + 1y]",
+                "2024-02-29T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableArithmeticHoursWithTimeSuffix() throws SqlException {
+        // $now - 1h already has time, so T09:30 suffix is skipped (element time takes precedence)
+        // Result is point-in-time with microsecond precision
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T09:30:00.000000Z, hi=2026-01-22T09:30:00.000000Z}]",
+                "[$now - 1h]T09:30",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithHours() throws SqlException {
+        // Range with hour arithmetic: [$now-2h..$now] - both resolve to same day,
+        // so range produces a single full-day interval (range iteration is day-based)
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-22T23:59:59.999999Z}]",
+                "[$now - 2h..$now]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
     public void testDateVariableInvalidOperator() {
         // "$today * 5d" - multiplication is not a valid operator
         assertBracketIntervalError("[$today * 5d]", "Expected '+' or '-' operator");
@@ -1023,8 +1156,8 @@ public class IntrinsicModelTest {
 
     @Test
     public void testDateVariableInvalidUnitStartingWithB() {
-        // 'b' followed by non-'d' character
-        assertBracketIntervalError("[$today + 5bx]", "Invalid unit");
+        // 'b' followed by non-'d' character - detected as unexpected trailing chars
+        assertBracketIntervalError("[$today + 5bx]", "Unexpected characters after unit");
     }
 
     @Test
@@ -1220,7 +1353,7 @@ public class IntrinsicModelTest {
     @Test
     public void testDateVariableMissingUnit() {
         // Number without unit at end
-        assertBracketIntervalError("[$today + 5]", "Expected unit 'd' or 'bd' after number");
+        assertBracketIntervalError("[$today + 5]", "Expected time unit after number");
     }
 
     @Test
@@ -1236,9 +1369,9 @@ public class IntrinsicModelTest {
 
     @Test
     public void testDateVariableNow() throws SqlException {
-        // [$now] preserves time component from now (10:30) at minute precision
+        // [$now] preserves time component from now (10:30) at microsecond precision (point-in-time)
         assertBracketIntervalWithNow(
-                "[{lo=2026-01-22T10:30:00.000000Z, hi=2026-01-22T10:30:59.999999Z}]",
+                "[{lo=2026-01-22T10:30:00.000000Z, hi=2026-01-22T10:30:00.000000Z}]",
                 "[$now]",
                 "2026-01-22T10:30:00.000000Z"
         );
@@ -1247,9 +1380,9 @@ public class IntrinsicModelTest {
     @Test
     public void testDateVariableNowMixedWithGlobalTimezone() throws SqlException {
         // [$now, 2026-01-15]@America/New_York - both get timezone applied
-        // $now 10:30 in NY = 15:30 UTC; 2026-01-15 full day in NY = 05:00 UTC to 04:59:59 UTC next day
+        // $now 10:30 in NY = 15:30 UTC (point-in-time); 2026-01-15 full day in NY = 05:00 UTC to 04:59:59 UTC next day
         assertBracketIntervalWithNow(
-                "[{lo=2026-01-15T05:00:00.000000Z, hi=2026-01-16T04:59:59.999999Z},{lo=2026-01-22T15:30:00.000000Z, hi=2026-01-22T15:30:59.999999Z}]",
+                "[{lo=2026-01-15T05:00:00.000000Z, hi=2026-01-16T04:59:59.999999Z},{lo=2026-01-22T15:30:00.000000Z, hi=2026-01-22T15:30:00.000000Z}]",
                 "[$now, 2026-01-15]@America/New_York",
                 "2026-01-22T10:30:00.000000Z"
         );
@@ -1437,9 +1570,9 @@ public class IntrinsicModelTest {
 
     @Test
     public void testDateVariableNowMixedWithStaticDate() throws SqlException {
-        // [$now, 2026-01-15]T09:00 - $now keeps its time (10:30), static date gets T09:00
+        // [$now, 2026-01-15]T09:00 - $now keeps its time (10:30, point-in-time), static date gets T09:00
         assertBracketIntervalWithNow(
-                "[{lo=2026-01-15T09:00:00.000000Z, hi=2026-01-15T09:00:59.999999Z},{lo=2026-01-22T10:30:00.000000Z, hi=2026-01-22T10:30:59.999999Z}]",
+                "[{lo=2026-01-15T09:00:00.000000Z, hi=2026-01-15T09:00:59.999999Z},{lo=2026-01-22T10:30:00.000000Z, hi=2026-01-22T10:30:00.000000Z}]",
                 "[$now, 2026-01-15]T09:00",
                 "2026-01-22T10:30:00.000000Z"
         );
@@ -1536,14 +1669,14 @@ public class IntrinsicModelTest {
 
     @Test
     public void testDateVariableInvalidUnit() {
-        assertBracketIntervalError("[$today + 5x]", "Invalid unit");
+        assertBracketIntervalError("[$today + 5x]", "Invalid time unit");
     }
 
     @Test
     public void testDateVariableNowWithGlobalTimezone() throws SqlException {
-        // [$now]@America/New_York - 10:30 in NY = 15:30 UTC
+        // [$now]@America/New_York - 10:30 in NY = 15:30 UTC (point-in-time)
         assertBracketIntervalWithNow(
-                "[{lo=2026-01-22T15:30:00.000000Z, hi=2026-01-22T15:30:59.999999Z}]",
+                "[{lo=2026-01-22T15:30:00.000000Z, hi=2026-01-22T15:30:00.000000Z}]",
                 "[$now]@America/New_York",
                 "2026-01-22T10:30:00.000000Z"
         );
@@ -1552,9 +1685,9 @@ public class IntrinsicModelTest {
     @Test
     public void testDateVariableNowWithPerElementTimezone() throws SqlException {
         // [$now@Europe/London, 2026-01-15@America/New_York] - per-element timezones
-        // $now 10:30 in London = 10:30 UTC (no DST in Jan); 2026-01-15 in NY
+        // $now 10:30 in London = 10:30 UTC (no DST in Jan, point-in-time); 2026-01-15 in NY
         assertBracketIntervalWithNow(
-                "[{lo=2026-01-15T05:00:00.000000Z, hi=2026-01-16T04:59:59.999999Z},{lo=2026-01-22T10:30:00.000000Z, hi=2026-01-22T10:30:59.999999Z}]",
+                "[{lo=2026-01-15T05:00:00.000000Z, hi=2026-01-16T04:59:59.999999Z},{lo=2026-01-22T10:30:00.000000Z, hi=2026-01-22T10:30:00.000000Z}]",
                 "[$now@Europe/London, 2026-01-15@America/New_York]",
                 "2026-01-22T10:30:00.000000Z"
         );
@@ -1931,7 +2064,7 @@ public class IntrinsicModelTest {
     @Test
     public void testDateVariableRangeMissingUnitAfterNumber() {
         // Missing unit after number
-        assertBracketIntervalError("[$today+5..$today+10d]", "Expected unit");
+        assertBracketIntervalError("[$today+5..$today+10d]", "Expected time unit after number");
     }
 
     @Test

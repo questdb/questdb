@@ -94,18 +94,14 @@ public final class IntervalUtils {
     }
 
     /**
-     * Formats a timestamp as "YYYY-MM-DDTHH:MM" into the given sink.
-     * Used for $now which preserves time component at minute precision.
+     * Formats a timestamp with full precision (microseconds or nanoseconds depending on driver).
+     * Uses the driver's native append method to ensure correct precision is preserved.
+     * Used for $now which preserves time component with full sub-second precision.
      */
     public static void appendDateTime(TimestampDriver timestampDriver, long timestamp, CharSink<?> sink) {
-        appendDate(timestampDriver, timestamp, sink);
-        sink.putAscii('T');
-        int hour = timestampDriver.getHourOfDay(timestamp);
-        int minute = timestampDriver.getMinuteOfHour(timestamp);
-
-        MicrosFormatUtils.append0(sink, hour);
-        sink.putAscii(':');
-        MicrosFormatUtils.append0(sink, minute);
+        // Use the driver's append method which formats with correct precision
+        // (microseconds for TIMESTAMP_MICRO, nanoseconds for TIMESTAMP_NANO)
+        timestampDriver.append(sink, timestamp);
     }
 
     public static void applyLastEncodedInterval(TimestampDriver timestampDriver, LongList intervals) {
