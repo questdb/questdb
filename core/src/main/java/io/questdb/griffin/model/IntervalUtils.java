@@ -1070,7 +1070,7 @@ public final class IntervalUtils {
             try {
                 period = Numbers.parseInt(seq, numStart, i);
             } catch (NumericException e) {
-                throw SqlException.$(position, "Duration not a number");
+                throw SqlException.$(position, "Duration not a number: ").put(seq, numStart, i);
             }
             timestamp = timestampDriver.add(timestamp, c, period);
             if (timestamp == Numbers.LONG_NULL) {
@@ -2875,7 +2875,7 @@ public final class IntervalUtils {
         for (int i = lo; i < lim; i++) {
             if (seq.charAt(i) == ';') {
                 if (p > 1) {
-                    throw SqlException.$(position, "Invalid interval format");
+                    throw SqlException.$(position, "Invalid interval format (too many semicolons): ").put(seq, lo, lim);
                 }
                 switch (++p) {
                     case 0 -> pos0 = i;
@@ -2905,7 +2905,7 @@ public final class IntervalUtils {
                         encodeInterval(timestamp, timestamp, operation, out);
                         break;
                     } catch (NumericException e2) {
-                        throw SqlException.$(position, "Invalid date");
+                        throw SqlException.$(position, "Invalid date: ").put(seq, lo, lim);
                     }
                 }
             case 0:
@@ -2947,7 +2947,7 @@ public final class IntervalUtils {
                 }
                 break;
             default:
-                throw SqlException.$(position, "Invalid interval format");
+                throw SqlException.$(position, "Invalid interval format: ").put(seq, lo, lim);
         }
     }
 
@@ -2977,7 +2977,7 @@ public final class IntervalUtils {
             long hiMicros = addDuration(timestampDriver, loMicros, seq, p + 1, lim, position);
             encodeInterval(loMicros, hiMicros, operation, out);
         } catch (NumericException e) {
-            throw SqlException.invalidDate(position);
+            throw SqlException.$(position, "Invalid date: ").put(seq, lo, p);
         }
     }
 
