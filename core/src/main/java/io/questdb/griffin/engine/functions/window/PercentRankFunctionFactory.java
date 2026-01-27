@@ -89,6 +89,10 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
             throw SqlException.$(windowContext.getNullsDescPos(), "RESPECT/IGNORE NULLS is not supported for current window function");
         }
 
+        if (!windowContext.isDefaultFrame()) {
+            throw SqlException.$(position, "percent_rank() does not support framing; remove ROWS/RANGE clause");
+        }
+
         if (windowContext.isOrdered()) {
             // percent_rank() over (partition by xxx order by xxx)
             if (windowContext.getPartitionByRecord() != null) {
@@ -219,10 +223,8 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
                                          IntList orderIndices,
                                          ObjList<ExpressionNode> orderBy,
                                          IntList orderByDirection) throws SqlException {
-            this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(
-                    chainTypes,
-                    sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection)
-            );
+            IntList indices = orderIndices != null ? orderIndices : sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);
+            this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(chainTypes, indices);
         }
 
         @Override
