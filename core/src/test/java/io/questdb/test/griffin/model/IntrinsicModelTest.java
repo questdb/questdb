@@ -119,6 +119,23 @@ public class IntrinsicModelTest {
         IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, out, operation, new StringSink(), true, nowTimestamp);
     }
 
+    /**
+     * Overload that allows specifying both applyEncoded and nowTimestamp for testing date variables.
+     */
+    public static void parseTickExprWithNow(
+            TimestampDriver timestampDriver,
+            CharSequence seq,
+            int lo,
+            int lim,
+            int position,
+            LongList out,
+            short operation,
+            boolean applyEncoded,
+            long nowTimestamp
+    ) throws SqlException {
+        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, out, operation, new StringSink(), applyEncoded, nowTimestamp);
+    }
+
     @Before
     public void setUp() {
         a.clear();
@@ -1139,11 +1156,22 @@ public class IntrinsicModelTest {
 
     @Test
     public void testDateVariableRangeWithHours() throws SqlException {
-        // Range with hour arithmetic: [$now-2h..$now] - both resolve to same day,
-        // so range produces a single full-day interval (range iteration is day-based)
+        // Range with hour arithmetic: [$now-2h..$now] produces a 2-hour interval
         assertBracketIntervalWithNow(
-                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-22T23:59:59.999999Z}]",
+                "[{lo=2026-01-22T08:30:00.000000Z, hi=2026-01-22T10:30:00.000000Z}]",
                 "[$now - 2h..$now]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithHoursAndTimezone() throws SqlException {
+        // Time-precision range with timezone INSIDE element (exercises L2176 tzMarker >= 0)
+        // [$now - 2h..$now@America/New_York] - timestamps are in NY time, converted to UTC
+        // 08:30-10:30 in NY (EST, UTC-5) = 13:30-15:30 UTC
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T13:30:00.000000Z, hi=2026-01-22T15:30:00.000000Z}]",
+                "[$now - 2h..$now@America/New_York]",
                 "2026-01-22T10:30:00.000000Z"
         );
     }
@@ -1428,6 +1456,63 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testDateVariableBareWithUppercaseToday() throws SqlException {
+        // $TODAY in uppercase (should not stop at 'T')
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-22T23:59:59.999999Z}]",
+                "$TODAY",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableBareWithUppercaseTomorrow() throws SqlException {
+        // $TOMORROW in uppercase (should not stop at 'T')
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-23T00:00:00.000000Z, hi=2026-01-23T23:59:59.999999Z}]",
+                "$TOMORROW",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableBareWithDayFilter() throws SqlException {
+        // $today#Thu - bare date variable with day filter (2026-01-22 is Thursday)
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-22T23:59:59.999999Z}]",
+                "$today#Thu",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableBareWithDayFilterNoMatch() throws SqlException {
+        // $today#Mon - bare date variable with day filter that doesn't match (2026-01-22 is Thursday)
+        assertBracketIntervalWithNow(
+                "[]",
+                "$today#Mon",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableBareWithTimezone() throws SqlException {
+        // $today@America/New_York - bare date variable with timezone
+        // 2026-01-22 in NY = 05:00 UTC to 04:59:59 UTC next day (EST is UTC-5)
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T05:00:00.000000Z, hi=2026-01-23T04:59:59.999999Z}]",
+                "$today@America/New_York",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableBareInvalidVariable() {
+        // $invalid - unknown bare date variable triggers error and resets output
+        assertBracketIntervalError("$invalid", "Unknown date variable");
+    }
+
+    @Test
     public void testDateVariableNowMixedWithGlobalTimezone() throws SqlException {
         // [$now, 2026-01-15]@America/New_York - both get timezone applied
         // $now 10:30 in NY = 15:30 UTC (point-in-time); 2026-01-15 full day in NY = 05:00 UTC to 04:59:59 UTC next day
@@ -1477,6 +1562,61 @@ public class IntrinsicModelTest {
         // With applyEncoded=false, we get 4 longs per interval (encoded format)
         // 2 intervals * 4 longs = 8
         Assert.assertEquals(8, out.size());
+    }
+
+    @Test
+    public void testDateVariableBareWithApplyEncodedFalse() throws SqlException {
+        // Test bare date variable path with applyEncoded=false (exercises line 731 branch)
+        // When applyEncoded=false, intervals stay in 4-long encoded format and mergeAndValidateIntervals is skipped
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "$today";
+        long nowTimestamp = timestampDriver.parseFloor("2026-01-22T10:30:00.000000Z", 0, 27);
+        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false, nowTimestamp);
+        // With applyEncoded=false, we get 4 longs per interval (encoded format)
+        // 1 interval * 4 longs = 4
+        Assert.assertEquals(4, out.size());
+    }
+
+    @Test
+    public void testDateVariableRangeWithTimePrecisionAndApplyEncodedFalse() throws SqlException {
+        // Test time precision range path with applyEncoded=false (exercises line 2169 branch)
+        // [$now - 2h..$now] - both endpoints have time precision, applyEncoded=false
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "[$now - 2h..$now]";
+        long nowTimestamp = timestampDriver.parseFloor("2026-01-22T10:30:00.000000Z", 0, 27);
+        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false, nowTimestamp);
+        // With applyEncoded=false, we get 4 longs per interval (encoded format)
+        // 1 interval * 4 longs = 4
+        Assert.assertEquals(4, out.size());
+    }
+
+    @Test
+    public void testDateVariableRangeWithDayFilterAndApplyEncodedFalse() throws SqlException {
+        // Test day-based range with day filter and applyEncoded=false (exercises L2325)
+        // [$today..$today+6d]#Mon - 7 days filtered to Monday only, applyEncoded=false
+        // 2026-01-22 is Thursday, so Monday is 2026-01-26
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "[$today..$today+6d]#Mon";
+        long nowTimestamp = timestampDriver.parseFloor("2026-01-22T10:30:00.000000Z", 0, 27);
+        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false, nowTimestamp);
+        // With applyEncoded=false, we get 4 longs per interval (encoded format)
+        // Day filter is stored in encoded format, 7 intervals * 4 longs = 28
+        Assert.assertEquals(28, out.size());
+    }
+
+    @Test
+    public void testDateVariableRangeLargeRangeTriggersIncrementalMerge() throws SqlException {
+        // Test large day-based range that triggers incremental merge (exercises L2338)
+        // [$today..$today+300d] - 301 days exceeds threshold of 256
+        // Intervals are merged incrementally, result is a single merged interval
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-11-18T23:59:59.999999Z}]",
+                "[$today..$today+300d]",
+                "2026-01-22T10:30:00.000000Z"
+        );
     }
 
     @Test
@@ -2088,6 +2228,17 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testDateVariableRangeWithTrailingWhitespaceInStartExpr() throws SqlException {
+        // Trailing whitespace in start expression before .. (exercises L2126 whitespace trimming)
+        // [$today   ..$tomorrow] - spaces after $today are trimmed
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-23T23:59:59.999999Z}]",
+                "[$today   ..$tomorrow]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
     public void testDateVariableRangeInMixedList() throws SqlException {
         // Range as part of a larger date list
         // [$yesterday..$tomorrow, 2026-02-01] - range + static date
@@ -2254,6 +2405,31 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testDateVariableRangeWithPerElementTimezoneInside() throws SqlException {
+        // Per-element timezone INSIDE the range element (exercises ec == '@' at L2113)
+        // [$today..$today+2d@+05:00] - timezone is part of the range element
+        // Full day at +05:00 = 19:00 UTC previous day to 18:59:59 UTC
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-21T19:00:00.000000Z, hi=2026-01-24T18:59:59.999999Z}]",
+                "[$today..$today+2d@+05:00]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithTimezoneAndDuration() throws SqlException {
+        // Day-based range with global timezone AND duration suffix (exercises L2265)
+        // [$today..$today+2d]@America/New_York;1h - range from today to today+2d, 1h duration applied
+        // Full range: Jan 22 00:00 to Jan 24 23:59:59 NY, with 1h duration = Jan 22 00:00 to Jan 25 00:59:59 NY
+        // Converted to UTC (EST = UTC-5): Jan 22 05:00 to Jan 25 05:59:59 UTC
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T05:00:00.000000Z, hi=2026-01-25T05:59:59.999999Z}]",
+                "[$today..$today+2d]@America/New_York;1h",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
     public void testDateVariableRangeWithTimeList() throws SqlException {
         // [$today..$today+2d]T[09:00,14:00] should produce 6 intervals (3 days * 2 times)
         assertBracketIntervalWithNow(
@@ -2264,6 +2440,34 @@ public class IntrinsicModelTest {
                         "{lo=2026-01-24T09:00:00.000000Z, hi=2026-01-24T09:00:59.999999Z}," +
                         "{lo=2026-01-24T14:00:00.000000Z, hi=2026-01-24T14:00:59.999999Z}]",
                 "[$today..$today+2d]T[09:00,14:00]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithTimeListAndDuration() throws SqlException {
+        // [$today..$today+1d]T[09:00,14:00];30m - time list with duration (exercises L2287)
+        // 2 days * 2 times = 4 intervals, each with 30m duration
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T09:00:00.000000Z, hi=2026-01-22T09:30:59.999999Z}," +
+                        "{lo=2026-01-22T14:00:00.000000Z, hi=2026-01-22T14:30:59.999999Z}," +
+                        "{lo=2026-01-23T09:00:00.000000Z, hi=2026-01-23T09:30:59.999999Z}," +
+                        "{lo=2026-01-23T14:00:00.000000Z, hi=2026-01-23T14:30:59.999999Z}]",
+                "[$today..$today+1d]T[09:00,14:00];30m",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithNumericExpansionBrackets() throws SqlException {
+        // [$today..$today+1d]T09:[00,30] - numeric expansion brackets, not time list (exercises L2312 false)
+        // 2 days * 2 minute values = 4 intervals at 09:00 and 09:30
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T09:00:00.000000Z, hi=2026-01-22T09:00:59.999999Z}," +
+                        "{lo=2026-01-22T09:30:00.000000Z, hi=2026-01-22T09:30:59.999999Z}," +
+                        "{lo=2026-01-23T09:00:00.000000Z, hi=2026-01-23T09:00:59.999999Z}," +
+                        "{lo=2026-01-23T09:30:00.000000Z, hi=2026-01-23T09:30:59.999999Z}]",
+                "[$today..$today+1d]T09:[00,30]",
                 "2026-01-22T10:30:00.000000Z"
         );
     }

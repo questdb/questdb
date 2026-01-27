@@ -683,12 +683,19 @@ public final class IntervalUtils {
             StringSink dateSink = dayFilterMarkerPos >= 0 ? tlSink1.get() : sink;
             dateSink.clear();
 
-            // Find where the date variable expression ends (before suffix like T, @, ;, #)
+            // Find where the date variable expression ends (before suffix like T, @, ;)
+            // Note: '#' (day filter) is already stripped from effectiveSeq at this point
+            // Note: 'T' is only a time suffix if followed by a digit (e.g., T09:30)
+            // This allows variable names containing 'T' like $TOMORROW
             int exprEnd = effectiveSeqLo;
             while (exprEnd < effectiveSeqLim) {
                 char c = effectiveSeq.charAt(exprEnd);
                 // Stop at suffix markers (but allow '..' for ranges, and '+'/'-' for arithmetic)
-                if (c == 'T' || c == '@' || c == ';' || c == '#') {
+                if (c == '@' || c == ';') {
+                    break;
+                }
+                // 'T' is only a time suffix if followed by a digit
+                if (c == 'T' && exprEnd + 1 < effectiveSeqLim && Character.isDigit(effectiveSeq.charAt(exprEnd + 1))) {
                     break;
                 }
                 exprEnd++;
@@ -2099,11 +2106,12 @@ public final class IntervalUtils {
             boolean applyEncoded,
             int outSizeBeforeExpansion
     ) throws SqlException {
-        // Find where the range expression ends (at '@' or '#' or element end)
+        // Find where the range expression ends (at '@' timezone marker or element end)
+        // Note: '#' (day filter) is already stripped from seq at this point
         int rangeEnd = elementEnd;
         for (int j = rangeOpPos + 2; j < elementEnd; j++) {
             char ec = seq.charAt(j);
-            if (ec == '@' || ec == '#') {
+            if (ec == '@') {
                 rangeEnd = j;
                 break;
             }
@@ -2126,9 +2134,9 @@ public final class IntervalUtils {
             endExprHi--;
         }
 
-        if (elementStart >= startExprHi) {
-            throw SqlException.$(errorPos, "Empty start expression in date range");
-        }
+        // Start expression is never empty: we only enter this function if element starts with '$',
+        // and '$' is not whitespace, so whitespace trimming always preserves at least '$'.
+        assert elementStart < startExprHi : "Empty start expression in date range";
         if (endExprLo >= endExprHi) {
             throw SqlException.$(errorPos, "Empty end expression in date range");
         }
@@ -2141,14 +2149,41 @@ public final class IntervalUtils {
                 timestampDriver, seq, endExprLo, endExprHi, nowTimestamp, errorPos
         );
 
-        // Get start of day for both (range is always day-based)
-        startTimestamp = timestampDriver.startOfDay(startTimestamp, 0);
-        endTimestamp = timestampDriver.startOfDay(endTimestamp, 0);
-
         // Validate start <= end
         if (startTimestamp > endTimestamp) {
             throw SqlException.$(errorPos, "Invalid date range: start is after end");
         }
+
+        // Check if BOTH endpoints have time precision (not at start of day)
+        // If so, produce a single interval from start to end instead of iterating by days
+        // Note: we require BOTH to have time precision, so that expressions like
+        // "$now..$tomorrow" still iterate by days (since $tomorrow is at midnight)
+        long startDay = timestampDriver.startOfDay(startTimestamp, 0);
+        long endDay = timestampDriver.startOfDay(endTimestamp, 0);
+        boolean hasTimePrecision = (startTimestamp != startDay) && (endTimestamp != endDay);
+
+        if (hasTimePrecision) {
+            // Time-based range: produce single interval from start to end
+            int outSizeBeforeInterval = out.size();
+            encodeInterval(startTimestamp, endTimestamp, operation, out);
+            if (applyEncoded) {
+                // Static mode: convert from 4-long format to 2-long format
+                applyLastEncodedInterval(timestampDriver, out);
+            }
+
+            // Apply timezone if specified in suffix
+            int tzMarker = findTimezoneMarker(seq, rangeEnd, elementEnd);
+            if (tzMarker >= 0) {
+                int tzLo = tzMarker + 1;
+                // Note: '#' (day filter) is already stripped from seq, so timezone extends to elementEnd
+                applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeInterval, seq, tzLo, elementEnd, errorPos, true);
+            }
+            return;
+        }
+
+        // Day-based range: iterate from start to end by days
+        startTimestamp = startDay;
+        endTimestamp = endDay;
 
         // Determine if business day range (end expression ends with "bd")
         boolean isBusinessDayRange = isBusinessDayExpression(seq, endExprHi);
@@ -2167,10 +2202,8 @@ public final class IntervalUtils {
         long previousTimestamp = currentTimestamp - 1; // For infinite loop protection
 
         while (currentTimestamp <= endTimestamp) {
-            // Safety check: ensure we're making progress (protect against infinite loop)
-            if (currentTimestamp <= previousTimestamp) {
-                throw SqlException.$(errorPos, "Internal error: date range iteration not advancing");
-            }
+            // Safety check: addDays always advances the timestamp, so this should never trigger
+            assert currentTimestamp > previousTimestamp : "Date range iteration not advancing";
             previousTimestamp = currentTimestamp;
 
             int dow = timestampDriver.getDayOfWeek(currentTimestamp);
@@ -2195,25 +2228,12 @@ public final class IntervalUtils {
             int resolvedElementStart = 0;
             int resolvedElementEnd = dateVarSink.length();
 
-            // Check for per-element day filter
-            int elemDayFilterMarker = -1;
-            for (int j = resolvedElementStart; j < resolvedElementEnd; j++) {
-                if (dateVarSink.charAt(j) == '#') {
-                    elemDayFilterMarker = j;
-                    break;
-                }
-            }
-
-            int elemDayFilterMask = 0;
-            int effectiveElementEndForTz = resolvedElementEnd;
-            if (elemDayFilterMarker >= 0) {
-                elemDayFilterMask = parseDayFilter(dateVarSink, elemDayFilterMarker + 1, resolvedElementEnd, errorPos);
-                effectiveElementEndForTz = elemDayFilterMarker;
-            }
+            // Note: '#' (day filter) is already stripped from seq at the top level,
+            // so dateVarSink never contains '#'. Day filtering is applied via dayFilterMask parameter.
 
             // Check for per-element timezone
-            int elemTzMarker = findTimezoneMarker(dateVarSink, resolvedElementStart, effectiveElementEndForTz);
-            int effectiveElementEnd = effectiveElementEndForTz;
+            int elemTzMarker = findTimezoneMarker(dateVarSink, resolvedElementStart, resolvedElementEnd);
+            int effectiveElementEnd = resolvedElementEnd;
 
             int activeTzLo = -1;
             int activeTzHi = -1;
@@ -2221,7 +2241,7 @@ public final class IntervalUtils {
 
             if (elemTzMarker >= 0) {
                 activeTzLo = elemTzMarker + 1;
-                activeTzHi = effectiveElementEndForTz;
+                activeTzHi = resolvedElementEnd;
                 effectiveElementEnd = elemTzMarker;
                 activeTzSeq = dateVarSink;
             } else if (globalTzMarker >= 0) {
@@ -2229,7 +2249,7 @@ public final class IntervalUtils {
                 activeTzHi = globalTzHi;
             }
 
-            int activeDayFilterMask = elemDayFilterMask != 0 ? elemDayFilterMask : dayFilterMask;
+            // Note: per-element day filter would always be 0 since '#' is stripped at top level
             int outSizeBeforeElement = out.size();
 
             // Build the full interval string
@@ -2297,12 +2317,12 @@ public final class IntervalUtils {
             }
 
             // Apply day filter
-            if (activeDayFilterMask != 0) {
+            if (dayFilterMask != 0) {
                 if (applyEncoded) {
                     // expandMultiDay=false: appendDate always produces full "YYYY-MM-DD" dates
-                    applyDayFilter(timestampDriver, out, outSizeBeforeElement, activeDayFilterMask, false);
+                    applyDayFilter(timestampDriver, out, outSizeBeforeElement, dayFilterMask, false);
                 } else {
-                    setDayFilterMaskOnEncodedIntervals(out, outSizeBeforeElement, activeDayFilterMask);
+                    setDayFilterMaskOnEncodedIntervals(out, outSizeBeforeElement, dayFilterMask);
                 }
             }
 
