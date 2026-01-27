@@ -69,6 +69,19 @@ public class TimestampSamplerFactoryTest {
     }
 
     @Test
+    public void testLargeNanosecondInterval() throws SqlException {
+        final long largeNanos = 3_000_000_000L;
+        final TimestampDriver driver = timestampType.getDriver();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(driver, largeNanos + "n", 0);
+        Assert.assertNotNull(sampler);
+
+        long ts = driver.fromSeconds(10);
+        long rounded = sampler.round(ts);
+
+        Assert.assertEquals(driver.fromSeconds(9), rounded);
+    }
+
+    @Test
     public void testLongQualifier() {
         try {
             TimestampSamplerFactory.getInstance(timestampType.getDriver(), "1sa", 130);
@@ -164,21 +177,27 @@ public class TimestampSamplerFactoryTest {
 
     @Test
     public void testParseInterval() throws SqlException {
-        Assert.assertEquals(1, TimestampSamplerFactory.parseInterval("1m", 1, 0, "sample", Numbers.INT_NULL, ' '));
+        Assert.assertEquals(1, TimestampSamplerFactory.parseInterval("1m", 1, 0, "sample", Numbers.LONG_NULL, ' '));
 
         try {
-            TimestampSamplerFactory.parseInterval("0m", 1, 0, "sample", Numbers.INT_NULL, ' ');
+            TimestampSamplerFactory.parseInterval("0m", 1, 0, "sample", Numbers.LONG_NULL, ' ');
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
             TestUtils.assertContains(e.getFlyweightMessage(), "zero is not a valid sample value");
         }
 
         try {
-            TimestampSamplerFactory.parseInterval("fm", 1, 0, "sample", Numbers.INT_NULL, ' ');
+            TimestampSamplerFactory.parseInterval("fm", 1, 0, "sample", Numbers.LONG_NULL, ' ');
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
             TestUtils.assertContains(e.getFlyweightMessage(), "invalid sample value");
         }
+    }
+
+    @Test
+    public void testParseIntervalLargeValue() throws SqlException {
+        long result = TimestampSamplerFactory.parseInterval("3000000000n", 10, 0, "sample", Numbers.LONG_NULL, 'n');
+        Assert.assertEquals(3_000_000_000L, result);
     }
 
     @Test
