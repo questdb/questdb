@@ -1378,6 +1378,56 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testDateVariableNowBare() throws SqlException {
+        // $now without brackets - same result as [$now]
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T10:30:00.000000Z, hi=2026-01-22T10:30:00.000000Z}]",
+                "$now",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableBareWithArithmetic() throws SqlException {
+        // $now - 2h without brackets
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T08:30:00.000000Z, hi=2026-01-22T08:30:00.000000Z}]",
+                "$now - 2h",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableBareRange() throws SqlException {
+        // $today..$today+5d without brackets - range of 6 days
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-27T23:59:59.999999Z}]",
+                "$today..$today+5d",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableBareWithTimeSuffix() throws SqlException {
+        // $today with time suffix T09:30 without brackets
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T09:30:00.000000Z, hi=2026-01-22T09:30:59.999999Z}]",
+                "$todayT09:30",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableBareWithDuration() throws SqlException {
+        // $now - 1h with duration suffix ;30m without brackets
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T09:30:00.000000Z, hi=2026-01-22T10:00:00.000000Z}]",
+                "$now - 1h;30m",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
     public void testDateVariableNowMixedWithGlobalTimezone() throws SqlException {
         // [$now, 2026-01-15]@America/New_York - both get timezone applied
         // $now 10:30 in NY = 15:30 UTC (point-in-time); 2026-01-15 full day in NY = 05:00 UTC to 04:59:59 UTC next day

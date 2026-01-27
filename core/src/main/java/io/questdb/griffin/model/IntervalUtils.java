@@ -675,6 +675,62 @@ public final class IntervalUtils {
             return;
         }
 
+        // Check for bare date variable expression (starts with '$' without brackets)
+        // e.g., '$now - 2h..$now' or '$today + 5d'
+        // We wrap it in brackets and process as a date list
+        if (effectiveSeqLo < effectiveSeqLim && effectiveSeq.charAt(effectiveSeqLo) == '$') {
+            int outSize = out.size();
+            StringSink dateSink = dayFilterMarkerPos >= 0 ? tlSink1.get() : sink;
+            dateSink.clear();
+
+            // Find where the date variable expression ends (before suffix like T, @, ;, #)
+            int exprEnd = effectiveSeqLo;
+            while (exprEnd < effectiveSeqLim) {
+                char c = effectiveSeq.charAt(exprEnd);
+                // Stop at suffix markers (but allow '..' for ranges, and '+'/'-' for arithmetic)
+                if (c == 'T' || c == '@' || c == ';' || c == '#') {
+                    break;
+                }
+                exprEnd++;
+            }
+
+            // Wrap in brackets: "$now - 2h" -> "[$now - 2h]"
+            StringSink wrappedSink = tlSink2.get();
+            wrappedSink.clear();
+            wrappedSink.putAscii('[');
+            wrappedSink.put(effectiveSeq, effectiveSeqLo, exprEnd);
+            wrappedSink.putAscii(']');
+            // Append any suffix (T09:30, @timezone, ;duration, #dayfilter)
+            if (exprEnd < effectiveSeqLim) {
+                wrappedSink.put(effectiveSeq, exprEnd, effectiveSeqLim);
+            }
+
+            try {
+                expandDateList(
+                        timestampDriver,
+                        configuration,
+                        wrappedSink,
+                        0,
+                        wrappedSink.length(),
+                        position,
+                        out,
+                        operation,
+                        dateSink,
+                        applyEncoded,
+                        outSize,
+                        dayFilterMask,
+                        nowTimestamp
+                );
+                if (applyEncoded) {
+                    mergeAndValidateIntervals(configuration, out, outSize, position);
+                }
+            } catch (SqlException e) {
+                out.setPos(outSize);
+                throw e;
+            }
+            return;
+        }
+
         // Single scan: detect brackets, find semicolon and timezone marker positions
         int dateLim = effectiveSeqLim;
         int semicolonPos = -1;
