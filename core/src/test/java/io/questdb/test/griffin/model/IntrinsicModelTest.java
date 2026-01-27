@@ -1029,13 +1029,11 @@ public class IntrinsicModelTest {
     public void testDateListWithApplyEncodedFalse() throws SqlException {
         // Test date list path with applyEncoded=false (exercises line 455 branch)
         // When applyEncoded=false, intervals stay in 4-long encoded format and union is skipped
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        out.clear();
-        String interval = "[2025-01-01,2025-01-05]";
-        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
-        // With applyEncoded=false, we get 4 longs per interval (encoded format)
         // 2 intervals * 4 longs = 8
-        Assert.assertEquals(8, out.size());
+        assertEncodedInterval(
+                "[{lo=2025-01-01T00:00:00.000000Z, hi=2025-01-01T23:59:59.999999Z},{lo=2025-01-05T00:00:00.000000Z, hi=2025-01-05T23:59:59.999999Z}]",
+                "[2025-01-01,2025-01-05]"
+        );
     }
 
     @Test
@@ -1085,18 +1083,11 @@ public class IntrinsicModelTest {
     public void testDateListWithDayFilterApplyEncodedFalse() throws SqlException {
         // Test date list path with day filter and applyEncoded=false (exercises line 1617)
         // 2024-01-01 is Monday, 2024-01-02 is Tuesday, 2024-01-03 is Wednesday
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        out.clear();
-        String interval = "[2024-01-01,2024-01-02,2024-01-03]#Mon";
-        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
-        // With applyEncoded=false, we get 4 longs per interval (encoded format)
-        // 3 intervals * 4 longs = 12
-        Assert.assertEquals(12, out.size());
-
-        // Verify day filter mask is encoded on all intervals (Monday = bit 0 = 1)
-        Assert.assertEquals(1, IntervalUtils.decodeDayFilterMask(out, 0));
-        Assert.assertEquals(1, IntervalUtils.decodeDayFilterMask(out, 4));
-        Assert.assertEquals(1, IntervalUtils.decodeDayFilterMask(out, 8));
+        // Day filter mask (Monday = bit 0 = 1) is encoded on all intervals
+        assertEncodedInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z, dayFilter=Mon},{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T23:59:59.999999Z, dayFilter=Mon},{lo=2024-01-03T00:00:00.000000Z, hi=2024-01-03T23:59:59.999999Z, dayFilter=Mon}]",
+                "[2024-01-01,2024-01-02,2024-01-03]#Mon"
+        );
     }
 
     @Test
@@ -1388,6 +1379,13 @@ public class IntrinsicModelTest {
                 "[$today + 1y]",
                 "2024-02-29T10:30:00.000000Z"
         );
+    }
+
+    @Test
+    public void testDateVariableBareCommaListRejected() {
+        // Bare comma lists without brackets should be rejected
+        // $now,$tomorrow should fail - needs brackets: [$now,$tomorrow]
+        assertBracketIntervalError("$now,$tomorrow", "comma-separated date lists require brackets");
     }
 
     @Test
@@ -2127,75 +2125,6 @@ public class IntrinsicModelTest {
     }
 
     @Test
-    public void testDayFilterLocalTimeSemanticsMonday() throws SqlException {
-        // Bug investigation: Day filter should use local-time semantics, not UTC
-        // The bug occurs when timezone conversion causes the date to cross midnight.
-        //
-        // nowTimestamp = 2026-01-26T23:30:00Z (treated as "23:30 local" by timezone logic)
-        // Expression: [$now - 1h..$now]@America/New_York#Mon
-        // Local time range: 22:30-23:30 on 2026-01-26 (Monday)
-        // After timezone conversion (+5h for EST): 03:30-04:30 UTC on 2026-01-27 (Tuesday)
-        //
-        // If day filter uses LOCAL semantics (correct): checks 2026-01-26 = Monday → matches #Mon
-        // If day filter uses UTC semantics (bug): checks 2026-01-27 = Tuesday → no match → empty
-        // Note: assertBracketIntervalWithNow transforms 00Z→00000Z for nano, so use micro format
-        assertBracketIntervalWithNow(
-                "[{lo=2026-01-27T03:30:00.000000Z, hi=2026-01-27T04:30:00.000000Z}]",
-                "[$now - 1h..$now]@America/New_York#Mon",
-                "2026-01-26T23:30:00.000000Z"
-        );
-    }
-
-    @Test
-    public void testDayFilterLocalTimeSemanticsNotTuesday() throws SqlException {
-        // Complementary test: Same scenario but with #Tue filter
-        // nowTimestamp = 2026-01-26T23:30:00Z (treated as "23:30 local Monday")
-        // Expression: [$now - 1h..$now]@America/New_York#Tue
-        // Local time: Monday evening → does NOT match #Tue → should be empty
-        //
-        // If day filter uses LOCAL semantics (correct): Monday doesn't match #Tue → empty
-        // If day filter uses UTC semantics (bug): checks UTC date Tuesday → matches #Tue → returns interval
-        assertBracketIntervalWithNow(
-                "[]",
-                "[$now - 1h..$now]@America/New_York#Tue",
-                "2026-01-26T23:30:00.000000Z"
-        );
-    }
-
-    @Test
-    public void testDayFilterWithTimezoneApplyEncodedFalse() throws SqlException {
-        // Dynamic mode: day filter mask stored for runtime evaluation
-        // Friday 2026-01-30 14:00 local NY → 19:00 UTC, #Fri matches
-        assertEncodedIntervalWithNow(
-                "[{lo=2026-01-30T18:00:00.000000Z, hi=2026-01-30T19:00:00.000000Z, dayFilter=Fri}]",
-                "[$now - 1h..$now]@America/New_York#Fri",
-                "2026-01-30T14:00:00.000000Z"
-        );
-    }
-
-    @Test
-    public void testDayFilterWithTimezoneApplyEncodedFalseNoMatch() throws SqlException {
-        // Dynamic mode: Wednesday 2026-01-28 09:15 local, #Thu doesn't match but mask stored
-        assertEncodedIntervalWithNow(
-                "[{lo=2026-01-28T12:15:00.000000Z, hi=2026-01-28T14:15:00.000000Z, dayFilter=Thu}]",
-                "[$now - 2h..$now]@America/New_York#Thu",
-                "2026-01-28T09:15:00.000000Z"
-        );
-    }
-
-    @Test
-    public void testDayFilterWithTimezoneApplyEncodedFalseMidnightCrossing() throws SqlException {
-        // Dynamic mode: late Saturday night local crosses to Sunday UTC
-        // Saturday 2026-01-31 23:30 local NY → Sunday 04:30 UTC
-        // Day filter checks LOCAL day (Saturday) → #Sat matches
-        assertEncodedIntervalWithNow(
-                "[{lo=2026-02-01T03:30:00.000000Z, hi=2026-02-01T04:30:00.000000Z, dayFilter=Sat}]",
-                "[$now - 1h..$now]@America/New_York#Sat",
-                "2026-01-31T23:30:00.000000Z"
-        );
-    }
-
-    @Test
     public void testDateVariableRangeWithHoursTimezoneAndApplyEncodedFalse() throws SqlException {
         // Time-precision with timezone and applyEncoded=false
         // 16:45-18:45 local Tokyo (UTC+9) → 07:45-09:45 UTC
@@ -2661,8 +2590,6 @@ public class IntrinsicModelTest {
         );
     }
 
-    // ================= End Date Variable Tests =================
-
     @Test
     public void testDayFilterDateListMultipleMondays() throws SqlException {
         // Date list with multiple Mondays and a non-Monday
@@ -2718,6 +2645,8 @@ public class IntrinsicModelTest {
                 "[2024-01-01@+14:00]#Mon"
         );
     }
+
+    // ================= End Date Variable Tests =================
 
     @Test
     public void testDayFilterDateListWeekend() throws SqlException {
@@ -2947,6 +2876,42 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testDayFilterLocalTimeSemanticsMonday() throws SqlException {
+        // Bug investigation: Day filter should use local-time semantics, not UTC
+        // The bug occurs when timezone conversion causes the date to cross midnight.
+        //
+        // nowTimestamp = 2026-01-26T23:30:00Z (treated as "23:30 local" by timezone logic)
+        // Expression: [$now - 1h..$now]@America/New_York#Mon
+        // Local time range: 22:30-23:30 on 2026-01-26 (Monday)
+        // After timezone conversion (+5h for EST): 03:30-04:30 UTC on 2026-01-27 (Tuesday)
+        //
+        // If day filter uses LOCAL semantics (correct): checks 2026-01-26 = Monday → matches #Mon
+        // If day filter uses UTC semantics (bug): checks 2026-01-27 = Tuesday → no match → empty
+        // Note: assertBracketIntervalWithNow transforms 00Z→00000Z for nano, so use micro format
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-27T03:30:00.000000Z, hi=2026-01-27T04:30:00.000000Z}]",
+                "[$now - 1h..$now]@America/New_York#Mon",
+                "2026-01-26T23:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDayFilterLocalTimeSemanticsNotTuesday() throws SqlException {
+        // Complementary test: Same scenario but with #Tue filter
+        // nowTimestamp = 2026-01-26T23:30:00Z (treated as "23:30 local Monday")
+        // Expression: [$now - 1h..$now]@America/New_York#Tue
+        // Local time: Monday evening → does NOT match #Tue → should be empty
+        //
+        // If day filter uses LOCAL semantics (correct): Monday doesn't match #Tue → empty
+        // If day filter uses UTC semantics (bug): checks UTC date Tuesday → matches #Tue → returns interval
+        assertBracketIntervalWithNow(
+                "[]",
+                "[$now - 1h..$now]@America/New_York#Tue",
+                "2026-01-26T23:30:00.000000Z"
+        );
+    }
+
+    @Test
     public void testDayFilterMonthStartingSunday() throws SqlException {
         // December 2024 starts on Sunday (dow=6), has 31 days
         // remainderDays = 31 % 7 = 3, startDow + remainderDays = 6 + 3 = 9 > 7 → wrap-around case
@@ -3015,8 +2980,6 @@ public class IntrinsicModelTest {
         );
     }
 
-    // ==================== TIME LIST BRACKET TESTS ====================
-
     @Test
     public void testDayFilterWeekend() throws SqlException {
         // 2024-01-06 is Saturday, 2024-01-07 is Sunday
@@ -3045,6 +3008,8 @@ public class IntrinsicModelTest {
                 "2024-01-[01..07]T09:00#workday;1h"
         );
     }
+
+    // ==================== TIME LIST BRACKET TESTS ====================
 
     @Test
     public void testDayFilterWithMultiDayDuration() throws SqlException {
@@ -3088,6 +3053,39 @@ public class IntrinsicModelTest {
         assertBracketInterval(
                 "[{lo=2024-01-01T07:00:00.000000Z, hi=2024-01-01T08:00:59.999999Z},{lo=2024-01-02T07:00:00.000000Z, hi=2024-01-02T08:00:59.999999Z},{lo=2024-01-03T07:00:00.000000Z, hi=2024-01-03T08:00:59.999999Z},{lo=2024-01-04T07:00:00.000000Z, hi=2024-01-04T08:00:59.999999Z},{lo=2024-01-05T07:00:00.000000Z, hi=2024-01-05T08:00:59.999999Z}]",
                 "2024-01-[01..07]T09:00@+02:00#workday;1h"
+        );
+    }
+
+    @Test
+    public void testDayFilterWithTimezoneApplyEncodedFalse() throws SqlException {
+        // Dynamic mode: day filter mask stored for runtime evaluation
+        // Friday 2026-01-30 14:00 local NY → 19:00 UTC, #Fri matches
+        assertEncodedIntervalWithNow(
+                "[{lo=2026-01-30T18:00:00.000000Z, hi=2026-01-30T19:00:00.000000Z, dayFilter=Fri}]",
+                "[$now - 1h..$now]@America/New_York#Fri",
+                "2026-01-30T14:00:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDayFilterWithTimezoneApplyEncodedFalseMidnightCrossing() throws SqlException {
+        // Dynamic mode: late Saturday night local crosses to Sunday UTC
+        // Saturday 2026-01-31 23:30 local NY → Sunday 04:30 UTC
+        // Day filter checks LOCAL day (Saturday) → #Sat matches
+        assertEncodedIntervalWithNow(
+                "[{lo=2026-02-01T03:30:00.000000Z, hi=2026-02-01T04:30:00.000000Z, dayFilter=Sat}]",
+                "[$now - 1h..$now]@America/New_York#Sat",
+                "2026-01-31T23:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDayFilterWithTimezoneApplyEncodedFalseNoMatch() throws SqlException {
+        // Dynamic mode: Wednesday 2026-01-28 09:15 local, #Thu doesn't match but mask stored
+        assertEncodedIntervalWithNow(
+                "[{lo=2026-01-28T12:15:00.000000Z, hi=2026-01-28T14:15:00.000000Z, dayFilter=Thu}]",
+                "[$now - 2h..$now]@America/New_York#Thu",
+                "2026-01-28T09:15:00.000000Z"
         );
     }
 
@@ -4257,6 +4255,45 @@ public class IntrinsicModelTest {
     }
 
     /**
+     * Converts encoded intervals (4-long format) to a readable string for assertions.
+     * Format: [{lo=..., hi=..., dayFilter=Mon,Tue,...}]
+     */
+    private static CharSequence encodedIntervalToString(TimestampDriver driver, LongList intervals) {
+        sink.clear();
+        sink.put('[');
+        for (int i = 0, n = intervals.size(); i < n; i += 4) {
+            if (i > 0) {
+                sink.put(',');
+            }
+            sink.put('{');
+            sink.put("lo=");
+            driver.append(sink, intervals.getQuick(i));
+            sink.put(", hi=");
+            driver.append(sink, intervals.getQuick(i + 1));
+
+            // Extract dayFilterMask from periodCount (high byte of high int)
+            long periodCountLong = intervals.getQuick(i + 3);
+            int periodCount = Numbers.decodeHighInt(periodCountLong);
+            int dayFilterMask = (periodCount >> 24) & 0xFF;
+            if (dayFilterMask != 0) {
+                sink.put(", dayFilter=");
+                boolean first = true;
+                String[] days = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+                for (int d = 0; d < 7; d++) {
+                    if ((dayFilterMask & (1 << d)) != 0) {
+                        if (!first) sink.put(',');
+                        sink.put(days[d]);
+                        first = false;
+                    }
+                }
+            }
+            sink.put('}');
+        }
+        sink.put(']');
+        return sink;
+    }
+
+    /**
      * Formats a timestamp as YYYY-MM-DD for use in expected results.
      */
     private static String formatDate(long timestamp, TimestampDriver driver) {
@@ -4317,78 +4354,6 @@ public class IntrinsicModelTest {
     }
 
     /**
-     * Asserts encoded interval (4-long format, applyEncoded=false) for static intervals.
-     * Use this for testing dynamic mode where day filter is stored for runtime evaluation.
-     */
-    private void assertEncodedInterval(String expected, String interval) throws SqlException {
-        out.clear();
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
-        TestUtils.assertEquals(
-                ColumnType.isTimestampNano(timestampType.getTimestampType())
-                        ? expected.replaceAll("00Z", "00000Z").replaceAll("99Z", "99999Z")
-                        : expected,
-                encodedIntervalToString(timestampDriver, out)
-        );
-    }
-
-    /**
-     * Asserts encoded interval (4-long format, applyEncoded=false) with a specific "now" timestamp.
-     * Use this for testing dynamic mode where day filter is stored for runtime evaluation.
-     */
-    private void assertEncodedIntervalWithNow(String expected, String interval, String nowTimestamp) throws SqlException {
-        out.clear();
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        long now = timestampDriver.parseFloorLiteral(nowTimestamp);
-        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false, now);
-        TestUtils.assertEquals(
-                ColumnType.isTimestampNano(timestampType.getTimestampType())
-                        ? expected.replaceAll("00Z", "00000Z").replaceAll("99Z", "99999Z")
-                        : expected,
-                encodedIntervalToString(timestampDriver, out)
-        );
-    }
-
-    /**
-     * Converts encoded intervals (4-long format) to a readable string for assertions.
-     * Format: [{lo=..., hi=..., dayFilter=Mon,Tue,...}]
-     */
-    private static CharSequence encodedIntervalToString(TimestampDriver driver, LongList intervals) {
-        sink.clear();
-        sink.put('[');
-        for (int i = 0, n = intervals.size(); i < n; i += 4) {
-            if (i > 0) {
-                sink.put(',');
-            }
-            sink.put('{');
-            sink.put("lo=");
-            driver.append(sink, intervals.getQuick(i));
-            sink.put(", hi=");
-            driver.append(sink, intervals.getQuick(i + 1));
-
-            // Extract dayFilterMask from periodCount (high byte of high int)
-            long periodCountLong = intervals.getQuick(i + 3);
-            int periodCount = Numbers.decodeHighInt(periodCountLong);
-            int dayFilterMask = (periodCount >> 24) & 0xFF;
-            if (dayFilterMask != 0) {
-                sink.put(", dayFilter=");
-                boolean first = true;
-                String[] days = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
-                for (int d = 0; d < 7; d++) {
-                    if ((dayFilterMask & (1 << d)) != 0) {
-                        if (!first) sink.put(',');
-                        sink.put(days[d]);
-                        first = false;
-                    }
-                }
-            }
-            sink.put('}');
-        }
-        sink.put(']');
-        return sink;
-    }
-
-    /**
      * Asserts date variable interval with a randomized "now" timestamp.
      * The expectedBuilder function receives the random "now" and TimestampDriver to build the expected result.
      */
@@ -4420,6 +4385,39 @@ public class IntrinsicModelTest {
                         ? expected.replaceAll("00Z", "00000Z").replaceAll("99Z", "99999Z")
                         : expected,
                 intervalToString(timestampDriver, out)
+        );
+    }
+
+    /**
+     * Asserts encoded interval (4-long format, applyEncoded=false) for static intervals.
+     * Use this for testing dynamic mode where day filter is stored for runtime evaluation.
+     */
+    private void assertEncodedInterval(String expected, String interval) throws SqlException {
+        out.clear();
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
+        TestUtils.assertEquals(
+                ColumnType.isTimestampNano(timestampType.getTimestampType())
+                        ? expected.replaceAll("00Z", "00000Z").replaceAll("99Z", "99999Z")
+                        : expected,
+                encodedIntervalToString(timestampDriver, out)
+        );
+    }
+
+    /**
+     * Asserts encoded interval (4-long format, applyEncoded=false) with a specific "now" timestamp.
+     * Use this for testing dynamic mode where day filter is stored for runtime evaluation.
+     */
+    private void assertEncodedIntervalWithNow(String expected, String interval, String nowTimestamp) throws SqlException {
+        out.clear();
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        long now = timestampDriver.parseFloorLiteral(nowTimestamp);
+        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false, now);
+        TestUtils.assertEquals(
+                ColumnType.isTimestampNano(timestampType.getTimestampType())
+                        ? expected.replaceAll("00Z", "00000Z").replaceAll("99Z", "99999Z")
+                        : expected,
+                encodedIntervalToString(timestampDriver, out)
         );
     }
 

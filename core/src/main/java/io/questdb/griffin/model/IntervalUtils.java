@@ -687,11 +687,12 @@ public final class IntervalUtils {
             // Note: '#' (day filter) is already stripped from effectiveSeq at this point
             // Note: 'T' is only a time suffix if followed by a digit (e.g., T09:30)
             // This allows variable names containing 'T' like $TOMORROW
+            // Note: ',' is a stop character - comma lists require brackets
             int exprEnd = effectiveSeqLo;
             while (exprEnd < effectiveSeqLim) {
                 char c = effectiveSeq.charAt(exprEnd);
                 // Stop at suffix markers (but allow '..' for ranges, and '+'/'-' for arithmetic)
-                if (c == '@' || c == ';') {
+                if (c == '@' || c == ';' || c == ',') {
                     break;
                 }
                 // 'T' is only a time suffix if followed by a digit
@@ -699,6 +700,11 @@ public final class IntervalUtils {
                     break;
                 }
                 exprEnd++;
+            }
+
+            // Reject bare comma lists - they require brackets
+            if (exprEnd < effectiveSeqLim && effectiveSeq.charAt(exprEnd) == ',') {
+                throw SqlException.$(position, "comma-separated date lists require brackets, e.g., [$now,$tomorrow]");
             }
 
             // Wrap in brackets: "$now - 2h" -> "[$now - 2h]"
