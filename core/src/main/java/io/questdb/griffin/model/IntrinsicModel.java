@@ -132,7 +132,7 @@ public class IntrinsicModel implements Mutable {
         runtimeIntervalBuilder.merge(model, loOffset, hiOffset);
     }
 
-    public void mergeIntervalModelWithAddMethod(RuntimeIntervalModel model, TimestampDriver.TimestampAddMethod addMethod, int offset) {
+    public void mergeIntervalModelWithAddMethod(RuntimeIntervalModel model, TimestampDriver.TimestampAddMethod addMethod, int offset) throws SqlException {
         runtimeIntervalBuilder.mergeWithAddMethod(model, addMethod, offset);
     }
 

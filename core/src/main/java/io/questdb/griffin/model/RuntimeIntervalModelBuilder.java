@@ -461,20 +461,52 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     /**
-     * Merges intervals from another model with calendar-aware offset adjustment.
-     * Uses the provided addMethod to apply the offset to each interval boundary,
-     * which correctly handles variable-length units like months and years.
-     * <p>
-     * Note: This method only processes static intervals. Dynamic intervals (from
-     * functions like now()) are not adjusted with the offset. Queries using dynamic
-     * predicates like "ts > dateadd('d', -7, now())" will have the dynamic portion
-     * evaluated without offset adjustment.
-     *
-     * @param model     the model to merge
-     * @param addMethod the timestamp add method for applying the offset
-     * @param offset    the offset value to apply (positive shifts forward)
+     * Applies the add method with overflow checking.
+     * Throws SqlException if the addition would cause timestamp overflow.
      */
-    void mergeWithAddMethod(RuntimeIntervalModel model, TimestampDriver.TimestampAddMethod addMethod, int offset) {
+    private static long addWithOverflowCheck(TimestampDriver.TimestampAddMethod addMethod, long timestamp, int offset) throws SqlException {
+        // For zero offset, no change needed
+        if (offset == 0) {
+            return timestamp;
+        }
+
+        long result = addMethod.add(timestamp, offset);
+
+        // Detect overflow: if offset is positive but result is less than original,
+        // or if offset is negative but result is greater than original, overflow occurred.
+        if (offset > 0 && result < timestamp) {
+            throw SqlException.position(0)
+                    .put("timestamp overflow: applying offset ")
+                    .put(offset)
+                    .put(" to timestamp would exceed maximum value");
+        } else if (offset < 0 && result > timestamp) {
+            throw SqlException.position(0)
+                    .put("timestamp overflow: applying offset ")
+                    .put(offset)
+                    .put(" to timestamp would exceed minimum value");
+        }
+
+        return result;
+    }
+
+    /**
+     * Merges intervals from another model with calendar-aware offset adjustment.
+     * This is used for timestamp predicate pushdown through dateadd transformations.
+     *
+     * <p>The offset is applied to each interval boundary using the provided add method
+     * (e.g., Micros::addSeconds, Micros::addDays), which correctly handles variable-length
+     * units like months and years. Overflow detection is performed to prevent silent
+     * wraparound when timestamps are near Long.MIN_VALUE or Long.MAX_VALUE.</p>
+     *
+     * <p>Note: This method only processes static intervals. Dynamic intervals (from
+     * functions like now()) are not adjusted with the offset.</p>
+     *
+     * @param model     the interval model to merge from
+     * @param addMethod the timestamp add method (from TimestampDriver)
+     * @param offset    the offset value to apply (must be within int range, validated by SqlOptimiser)
+     * @throws SqlException if applying the offset would cause timestamp overflow
+     */
+    void mergeWithAddMethod(RuntimeIntervalModel model, TimestampDriver.TimestampAddMethod addMethod, int offset) throws SqlException {
         if (model == null || isEmptySet() || addMethod == null) {
             return;
         }
@@ -488,12 +520,12 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 long lo = modelIntervals.getQuick(i);
                 if (lo != Numbers.LONG_NULL && lo != Long.MAX_VALUE) {
                     lo = timestampDriver.from(lo, driver.getTimestampType());
-                    lo = addMethod.add(lo, offset);
+                    lo = addWithOverflowCheck(addMethod, lo, offset);
                 }
                 long hi = modelIntervals.getQuick(i + 1);
                 if (hi != Numbers.LONG_NULL && hi != Long.MAX_VALUE) {
                     hi = timestampDriver.from(hi, driver.getTimestampType());
-                    hi = addMethod.add(hi, offset);
+                    hi = addWithOverflowCheck(addMethod, hi, offset);
                 }
                 if (lo == Numbers.LONG_NULL && hi == Long.MAX_VALUE) {
                     return;

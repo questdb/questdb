@@ -139,9 +139,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // Test for int overflow when negating the stride value.
         // The optimizer stores the INVERSE of the stride for pushdown.
         // If stride = Integer.MIN_VALUE (-2147483648), then inverse = 2147483648 which overflows int.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
-        });
+        assertMemoryLeak(() -> execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;"));
 
         // Use Integer.MIN_VALUE as stride - negating it causes overflow
         // -(-2147483648) = 2147483648 which exceeds Integer.MAX_VALUE
@@ -163,9 +161,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // and the optimizer intrinsically understands this function for predicate pushdown.
         //
         // 3,000,000,000 seconds = ~95 years, which exceeds int range.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
-        });
+        assertMemoryLeak(() -> execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;"));
 
         // Use an offset of 3 billion seconds (exceeds Integer.MAX_VALUE of 2,147,483,647)
         // Error position 35 is at the stride argument "3000000000"
@@ -217,6 +213,29 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     false
             );
         });
+    }
+
+    @Test
+    public void testTimestampOverflowThrowsError() throws Exception {
+        // When applying the offset to a predicate timestamp would cause overflow,
+        // throw an actionable error instead of silently wrapping around.
+        //
+        // Long.MAX_VALUE microseconds from epoch is approximately year 294247.
+        // If we use dateadd('y', -300000, timestamp), the inverse offset is +300000 years.
+        // Applying +300000 years to '2022-01-01' would result in year 302022,
+        // which exceeds the maximum representable timestamp and causes overflow.
+        assertMemoryLeak(() -> execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;"));
+
+        // dateadd('y', -300000, timestamp) means the optimizer stores +300000 as the inverse offset.
+        // When pushing down ts > '2022-01-01', it needs to apply +300000 years to 2022-01-01,
+        // resulting in year 302022 which overflows the microsecond timestamp range (~year 294247).
+        assertException(
+                "SELECT * FROM (" +
+                        "SELECT dateadd('y', -300000, timestamp) as ts, price FROM trades" +
+                        ") WHERE ts > '2022-01-01'",
+                0,
+                "timestamp overflow"
+        );
     }
 
     @Test
