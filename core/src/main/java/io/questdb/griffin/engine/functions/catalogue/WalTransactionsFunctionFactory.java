@@ -236,26 +236,24 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
 
                 @Override
                 public long getTimestamp(int col) {
+                    // Sequencer stores the commit timestamp in microseconds => no conversion needed
                     if (col == timestampColumn) {
-                        return timestampDriver.toMicros(logCursor.getCommitTimestamp());
+                        return logCursor.getCommitTimestamp();
                     }
+                    // Check whether min/max txn timestamps are available
+                    if (logCursor.getVersion() != WAL_SEQUENCER_FORMAT_VERSION_V2 || logCursor.getTxnRowCount() <= 0) {
+                        return Numbers.LONG_NULL;
+                    }
+                    long txnTimestamp;
                     if (col == minTimestampColumn) {
-                        if (logCursor.getVersion() == WAL_SEQUENCER_FORMAT_VERSION_V2
-                                && logCursor.getTxnRowCount() > 0) {
-                            return timestampDriver.toMicros(logCursor.getTxnMinTimestamp());
-                        } else {
-                            return Numbers.LONG_NULL;
-                        }
+                        txnTimestamp = logCursor.getTxnMinTimestamp();
+                    } else if (col == maxTimestampColumn) {
+                        txnTimestamp = logCursor.getTxnMaxTimestamp();
+                    } else {
+                        return Numbers.LONG_NULL;
                     }
-                    if (col == maxTimestampColumn) {
-                        if (logCursor.getVersion() == WAL_SEQUENCER_FORMAT_VERSION_V2
-                                && logCursor.getTxnRowCount() > 0) {
-                            return timestampDriver.toMicros(logCursor.getTxnMaxTimestamp());
-                        } else {
-                            return Numbers.LONG_NULL;
-                        }
-                    }
-                    return Numbers.LONG_NULL;
+                    // Min/max timestamps are stored in the table's native format => ensure we return micros
+                    return timestampDriver.toMicros(txnTimestamp);
                 }
             }
         }
