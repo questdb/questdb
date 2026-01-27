@@ -1,7 +1,3 @@
-use std::cmp;
-use std::collections::VecDeque;
-use std::io::Write;
-use std::sync::Arc;
 use crate::parquet::error::fmt_err;
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::Encoding;
@@ -14,6 +10,10 @@ use parquet2::write::{
 };
 use parquet2::FallibleStreamingIterator;
 use qdb_core::error::CoreResult;
+use std::cmp;
+use std::collections::VecDeque;
+use std::io::Write;
+use std::sync::Arc;
 
 use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Column, Partition};
 use crate::parquet_write::symbol::SymbolDictInfo;
@@ -249,10 +249,7 @@ impl<W: Write> ChunkedWriter<W> {
             .enumerate()
             .map(|(col_idx, column)| {
                 if column.data_type.tag() == ColumnTypeTag::Symbol {
-                    let max_key = max_keys
-                        .get(col_idx)
-                        .and_then(|opt| *opt)
-                        .flatten();
+                    let max_key = max_keys.get(col_idx).and_then(|opt| *opt).flatten();
                     build_symbol_dict_for_max_key(
                         column.symbol_offsets,
                         column.secondary_data,
@@ -410,6 +407,7 @@ pub fn create_row_group(
 /// * `options` - Write options
 /// * `parallel` - Whether to process columns in parallel
 /// * `symbol_dicts` - Precomputed symbol dictionaries for each column from all the involved partitions
+#[allow(clippy::too_many_arguments)]
 pub fn create_row_group_from_partitions_with_dict_state(
     partitions: &[&Partition],
     first_partition_start: usize,
@@ -1154,10 +1152,16 @@ fn compute_max_symbol_keys(partitions: &[&Partition]) -> Vec<Option<Option<u32>>
                 let keys: &[i32] = unsafe { util::transmute_slice(col.primary_data) };
                 for i in 0..keys.len() {
                     let k = unsafe { *keys.get_unchecked(i) };
-                    if k > max_val { max_val = k; }
+                    if k > max_val {
+                        max_val = k;
+                    }
                 }
             }
-            let max_key = if max_val >= 0 { Some(max_val as u32) } else { None };
+            let max_key = if max_val >= 0 {
+                Some(max_val as u32)
+            } else {
+                None
+            };
 
             result[col_idx] = Some(max_key);
         }
@@ -1182,7 +1186,7 @@ fn compute_row_group_dicts_for_slice(
                 let col_top = column.column_top;
 
                 // Calculate the slice bounds accounting for column_top
-                let start = if offset < col_top { 0 } else { offset - col_top };
+                let start = offset.saturating_sub(col_top);
                 let end = if offset + length < col_top {
                     0
                 } else {
@@ -1192,18 +1196,19 @@ fn compute_row_group_dicts_for_slice(
                 // Find max key.
                 let slice = &keys[start..end];
                 let mut max_val = i32::MIN;
-                for i in 0..slice.len() {
-                    let k = slice[i];
-                    if k > max_val { max_val = k; }
+                for &k in slice {
+                    if k > max_val {
+                        max_val = k;
+                    }
                 }
-                let max_key = if max_val >= 0 { Some(max_val as u32) } else { None };
+                let max_key = if max_val >= 0 {
+                    Some(max_val as u32)
+                } else {
+                    None
+                };
 
-                build_symbol_dict_for_max_key(
-                    column.symbol_offsets,
-                    column.secondary_data,
-                    max_key,
-                )
-                .map(Some)
+                build_symbol_dict_for_max_key(column.symbol_offsets, column.secondary_data, max_key)
+                    .map(Some)
             } else {
                 Ok(None)
             }
@@ -1222,11 +1227,7 @@ fn build_symbol_dict_for_max_key(
         Some(k) => k,
         None => {
             // No keys used, return empty dictionary
-            return Ok(SymbolDictInfo {
-                dict_buffer: vec![],
-                num_values: 0,
-                max_key: 0,
-            });
+            return Ok(SymbolDictInfo { dict_buffer: vec![], num_values: 0, max_key: 0 });
         }
     };
 
@@ -1242,7 +1243,8 @@ fn build_symbol_dict_for_max_key(
             const UTF16_LEN_SIZE: usize = 4;
             if (qdb_global_offset + UTF16_LEN_SIZE) <= chars.len() {
                 let qdb_utf16_len_buf = &chars[qdb_global_offset..];
-                let (qdb_utf16_len_bytes, qdb_utf16_buf) = qdb_utf16_len_buf.split_at(UTF16_LEN_SIZE);
+                let (qdb_utf16_len_bytes, qdb_utf16_buf) =
+                    qdb_utf16_len_buf.split_at(UTF16_LEN_SIZE);
                 let qdb_utf16_len =
                     i32::from_le_bytes(qdb_utf16_len_bytes.try_into().expect("4 bytes sliced"))
                         as usize;
@@ -1255,12 +1257,11 @@ fn build_symbol_dict_for_max_key(
                     let key_index = dict_buffer.len();
                     dict_buffer.extend_from_slice(&(0u32).to_le_bytes());
 
-                    for c in char::decode_utf16(qdb_utf16_buf.iter().cloned()) {
-                        if let Ok(c) = c {
-                            match c.len_utf8() {
-                                1 => dict_buffer.push(c as u8),
-                                _ => dict_buffer
-                                    .extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
+                    for c in char::decode_utf16(qdb_utf16_buf.iter().cloned()).flatten() {
+                        match c.len_utf8() {
+                            1 => dict_buffer.push(c as u8),
+                            _ => {
+                                dict_buffer.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes())
                             }
                         }
                     }
@@ -1283,7 +1284,9 @@ fn build_symbol_dict_for_max_key(
                     ParquetErrorReason::InvalidLayout,
                     format!(
                         "Symbol key {} has offset {} outside chars buffer (len: {})",
-                        key, qdb_global_offset, chars.len()
+                        key,
+                        qdb_global_offset,
+                        chars.len()
                     ),
                 ));
             }
@@ -1292,21 +1295,19 @@ fn build_symbol_dict_for_max_key(
                 ParquetErrorReason::InvalidLayout,
                 format!(
                     "Symbol key {} is outside offsets buffer (len: {})",
-                    key, offsets.len()
+                    key,
+                    offsets.len()
                 ),
             ));
         }
     }
 
-    Ok(SymbolDictInfo {
-        dict_buffer,
-        num_values,
-        max_key,
-    })
+    Ok(SymbolDictInfo { dict_buffer, num_values, max_key })
 }
 
 /// Create a row group with dictionary state management.
 /// Symbol columns include dictionary pages based on the computed dictionaries.
+#[allow(clippy::too_many_arguments)]
 fn create_row_group_with_dict_state(
     partition: &Partition,
     offset: usize,
@@ -1391,6 +1392,7 @@ fn create_row_group_with_dict_state(
 /// For symbol columns:
 /// - If include_dict is true: includes dictionary page + data page
 /// - If include_dict is false: includes only data page (references existing dictionary)
+#[allow(clippy::too_many_arguments)]
 fn column_chunk_to_pages_with_dict_state(
     column: Column,
     parquet_type: ParquetType,
@@ -1401,7 +1403,10 @@ fn column_chunk_to_pages_with_dict_state(
     dict_info: Option<&SymbolDictInfo>,
     include_dict: bool,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
-    println!("column_chunk_to_pages_with_dict_state: column={}, chunk_offset={}, include_dict={}", column.name, chunk_offset, include_dict);
+    println!(
+        "column_chunk_to_pages_with_dict_state: column={}, chunk_offset={}, include_dict={}",
+        column.name, chunk_offset, include_dict
+    );
 
     match parquet_type {
         ParquetType::PrimitiveType(primitive_type) => {

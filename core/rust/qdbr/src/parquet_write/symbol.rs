@@ -287,9 +287,9 @@ pub fn symbol_column_to_pages(
                     let qdb_utf16_len_buf = &chars[qdb_global_offset..];
                     let (qdb_utf16_len_bytes, qdb_utf16_buf) =
                         qdb_utf16_len_buf.split_at(UTF16_LEN_SIZE);
-                    let qdb_utf16_len = i32::from_le_bytes(
-                        qdb_utf16_len_bytes.try_into().expect("4 bytes sliced"),
-                    ) as usize;
+                    let qdb_utf16_len =
+                        i32::from_le_bytes(qdb_utf16_len_bytes.try_into().expect("4 bytes sliced"))
+                            as usize;
                     if qdb_utf16_buf.len() >= (qdb_utf16_len * 2) {
                         let qdb_utf16_buf: &[u16] = unsafe { std::mem::transmute(qdb_utf16_buf) };
                         let qdb_utf16_buf = &qdb_utf16_buf[..qdb_utf16_len];
