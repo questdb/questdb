@@ -2171,12 +2171,36 @@ public final class IntervalUtils {
                 applyLastEncodedInterval(timestampDriver, out);
             }
 
-            // Apply timezone if specified in suffix
-            int tzMarker = findTimezoneMarker(seq, rangeEnd, elementEnd);
-            if (tzMarker >= 0) {
-                int tzLo = tzMarker + 1;
-                // Note: '#' (day filter) is already stripped from seq, so timezone extends to elementEnd
-                applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeInterval, seq, tzLo, elementEnd, errorPos, true);
+            // Resolve active timezone: element-level takes precedence over global
+            // This mirrors the timezone resolution in the day-based path below
+            int activeTzLo = -1;
+            int activeTzHi = -1;
+
+            int elemTzMarker = findTimezoneMarker(seq, rangeEnd, elementEnd);
+            if (elemTzMarker >= 0) {
+                // Element-level timezone (inside the range element)
+                activeTzLo = elemTzMarker + 1;
+                activeTzHi = elementEnd;
+            } else if (globalTzMarker >= 0) {
+                // Fall back to global timezone (outside brackets)
+                activeTzLo = globalTzLo;
+                activeTzHi = globalTzHi;
+            }
+
+            // Apply timezone if any was found
+            if (activeTzLo >= 0) {
+                applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeInterval, seq, activeTzLo, activeTzHi, errorPos, applyEncoded);
+            }
+
+            // Apply day filter if specified
+            if (dayFilterMask != 0) {
+                if (applyEncoded) {
+                    // Static mode: filter intervals directly
+                    applyDayFilter(timestampDriver, out, outSizeBeforeInterval, dayFilterMask, false);
+                } else {
+                    // Dynamic mode: store mask for runtime evaluation
+                    setDayFilterMaskOnEncodedIntervals(out, outSizeBeforeInterval, dayFilterMask);
+                }
             }
             return;
         }
