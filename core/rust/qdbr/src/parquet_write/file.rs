@@ -391,6 +391,51 @@ pub fn create_row_group_from_partitions(
             |col_idx: usize| -> ParquetResult<DynStreamingIterator<CompressedPage, ParquetError>> {
                 let column_type = &column_types[col_idx];
                 let col_encoding = encoding[col_idx];
+                let first_column = partitions[0].columns[col_idx];
+
+                if num_partitions > 1 && first_column.data_type.is_symbol() {
+                    let partition_ranges: Vec<(Column, usize, usize)> = partitions
+                        .iter()
+                        .enumerate()
+                        .map(|(part_idx, partition)| {
+                            let column = partition.columns[col_idx];
+                            let (offset, length) = partition_slice_range(
+                                part_idx,
+                                num_partitions,
+                                column.row_count,
+                                first_partition_start,
+                                last_partition_end,
+                            );
+                            (column, offset, length)
+                        })
+                        .collect();
+
+                    let primitive_type = match column_type {
+                        ParquetType::PrimitiveType(pt) => pt.clone(),
+                        _ => {
+                            return Err(fmt_err!(
+                                InvalidType,
+                                "Symbol column must have primitive parquet type"
+                            ))
+                        }
+                    };
+
+                    let pages = symbol_column_to_pages_multi_partition(
+                        &partition_ranges,
+                        primitive_type,
+                        options,
+                    )?;
+
+                    let mut all_compressed_pages = VecDeque::new();
+                    for page in pages.into_iter() {
+                        let compressed = compress(page, vec![], options.compression)?;
+                        all_compressed_pages.push_back(Ok(compressed));
+                    }
+
+                    return Ok(DynStreamingIterator::new(CompressedPages::new(
+                        all_compressed_pages,
+                    )));
+                }
 
                 let mut all_compressed_pages = VecDeque::new();
                 for (part_idx, partition) in partitions.iter().enumerate() {
@@ -435,6 +480,7 @@ pub fn create_row_group_from_partitions(
             |col_idx: usize| -> ParquetResult<DynStreamingIterator<CompressedPage, ParquetError>> {
                 let column_type = &column_types[col_idx];
                 let col_encoding = encoding[col_idx];
+                let first_column = partitions[0].columns[col_idx];
 
                 let partition_ranges: Vec<(Column, usize, usize)> = partitions
                     .iter()
@@ -451,6 +497,32 @@ pub fn create_row_group_from_partitions(
                         (column, offset, length)
                     })
                     .collect();
+
+                if num_partitions > 1 && first_column.data_type.is_symbol() {
+                    let primitive_type = match column_type {
+                        ParquetType::PrimitiveType(pt) => pt.clone(),
+                        _ => {
+                            return Err(fmt_err!(
+                                InvalidType,
+                                "Symbol column must have primitive parquet type"
+                            ))
+                        }
+                    };
+
+                    let pages = symbol_column_to_pages_multi_partition(
+                        &partition_ranges,
+                        primitive_type,
+                        options,
+                    )?;
+                    let compression_iter = Compressor::new(
+                        DynIter::new(pages.into_iter().map(Ok)),
+                        options.compression,
+                        vec![],
+                    );
+
+                    return Ok(DynStreamingIterator::new(compression_iter));
+                }
+
                 let pages_iter = MultiPartitionColumnIterator::new(
                     partition_ranges,
                     column_type.clone(),
@@ -577,6 +649,95 @@ impl Iterator for MultiPartitionColumnIterator {
             }
         }
     }
+}
+
+fn symbol_column_to_pages_multi_partition(
+    partition_ranges: &[(Column, usize, usize)], // (column, offset, length)
+    primitive_type: PrimitiveType,
+    options: WriteOptions,
+) -> ParquetResult<Vec<Page>> {
+    if partition_ranges.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // All partitions share the same symbol table
+    let first_column = partition_ranges[0].0;
+    let offsets = first_column.symbol_offsets;
+    let chars = first_column.secondary_data;
+
+    // Collect global info from all partitions
+    let partition_data: Vec<(&[i32], usize, usize)> = partition_ranges
+        .iter()
+        .map(|(col, offset, length)| {
+            let keys: &[i32] = unsafe { util::transmute_slice(col.primary_data) };
+            let orig_column_top = col.column_top;
+
+            let mut adjusted_column_top = 0;
+            let lower_bound = if *offset < orig_column_top {
+                adjusted_column_top = orig_column_top - offset;
+                0
+            } else {
+                offset - orig_column_top
+            };
+            let upper_bound = if *offset + *length < orig_column_top {
+                adjusted_column_top = *length;
+                0
+            } else {
+                (*offset + *length - orig_column_top).min(keys.len())
+            };
+
+            let keys_slice = &keys[lower_bound..upper_bound];
+            (keys_slice, adjusted_column_top, *length)
+        })
+        .collect();
+
+    let global_info = symbol::collect_symbol_global_info(&partition_data);
+    let (dict_page, _stats) = symbol::build_symbol_dict_page(
+        &global_info,
+        offsets,
+        chars,
+        &primitive_type,
+        options.write_statistics,
+    )?;
+
+    // Build data pages for each partition
+    let mut pages = Vec::with_capacity(partition_ranges.len() + 1);
+    pages.push(Page::Dict(dict_page));
+
+    for &(col, offset, length) in partition_ranges.iter() {
+        let keys: &[i32] = unsafe { util::transmute_slice(col.primary_data) };
+        let orig_column_top = col.column_top;
+
+        let mut adjusted_column_top = 0;
+        let lower_bound = if offset < orig_column_top {
+            adjusted_column_top = orig_column_top - offset;
+            0
+        } else {
+            offset - orig_column_top
+        };
+        let upper_bound = if offset + length < orig_column_top {
+            adjusted_column_top = length;
+            0
+        } else {
+            (offset + length - orig_column_top).min(keys.len())
+        };
+
+        let keys_slice = &keys[lower_bound..upper_bound];
+
+        let data_page = symbol::symbol_to_data_page_only(
+            keys_slice,
+            adjusted_column_top,
+            global_info.max_key,
+            options,
+            primitive_type.clone(),
+            offsets,
+            chars,
+        )?;
+
+        pages.push(data_page);
+    }
+
+    Ok(pages)
 }
 
 fn column_chunk_to_pages(
