@@ -262,7 +262,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
                     """
                             QUERY PLAN
                             CachedWindow
-                              unorderedFunctions: [percent_rank() over ()]
+                              unorderedFunctions: [percent_rank() over (order by [ts])]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
@@ -275,7 +275,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
                     """
                             QUERY PLAN
                             CachedWindow
-                              unorderedFunctions: [percent_rank() over (partition by [s])]
+                              unorderedFunctions: [percent_rank() over (partition by [s] order by [ts])]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab

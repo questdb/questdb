@@ -194,6 +194,7 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
         private int columnIndex;
         private long count = 1;
         private long lastRecordOffset;
+        private ObjList<ExpressionNode> orderBy;
         private long rank;
         private RecordComparator recordComparator;
         private long totalRows;
@@ -225,6 +226,7 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
                                          IntList orderByDirection) throws SqlException {
             IntList indices = orderIndices != null ? orderIndices : sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);
             this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(chainTypes, indices);
+            this.orderBy = orderBy;
         }
 
         @Override
@@ -281,7 +283,11 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(NAME);
-            sink.val("() over ()");
+            sink.val("()");
+            sink.val(" over (");
+            sink.val("order by ");
+            sink.val(orderBy);
+            sink.val(')');
         }
 
         @Override
@@ -301,6 +307,7 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
         private final RecordSink partitionBySink;
         private int columnIndex;
         private Map map;
+        private ObjList<ExpressionNode> orderBy;
         private RecordComparator recordComparator;
 
         public PercentRankOverPartitionFunction(
@@ -352,6 +359,7 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
                     PERCENT_RANK_COLUMN_TYPES
             );
             this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(chainTypes, indices);
+            this.orderBy = orderBy;
         }
 
         @Override
@@ -434,6 +442,8 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
             sink.val(" over (");
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
+            sink.val(" order by ");
+            sink.val(orderBy);
             sink.val(')');
         }
 
