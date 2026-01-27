@@ -249,6 +249,7 @@ public class SqlKeywordsTest {
         specialCases.put("isIncluding", "including");
         specialCases.put("isComma", ",");
         specialCases.put("isRightParen", ")");
+        specialCases.put("isCurrentTimestampKeyword", "current_timestamp");
 
         excludedCases.add("isPublicKeyword");
         excludedCases.add("isWindowKeyword");
