@@ -59,12 +59,18 @@ fn bitpacked_encode_u32<W: Write, I: Iterator<Item = u32>>(
     }
 
     if remainder != 0 {
-        let compressed_remainder_size = ceil8(remainder * num_bits);
+        // Must write complete 8-value groups to match the header's group count.
+        // Header claims ceil8(length) groups, so remainder must fill complete groups.
+        let groups_in_remainder = (remainder + 7) / 8; // ceil(remainder / 8)
+        let compressed_remainder_size = groups_in_remainder * num_bits;
+
         iterator
             .by_ref()
             .take(remainder)
             .zip(buffer.iter_mut())
             .for_each(|(item, buf)| *buf = item);
+        // Zero-pad unused slots in buffer (buffer is reused, may have old data)
+        buffer[remainder..groups_in_remainder * 8].fill(0);
 
         let mut packed = [0u8; 4 * U32_BLOCK_LEN];
         bitpacked::encode_pack(&buffer, num_bits, packed.as_mut());

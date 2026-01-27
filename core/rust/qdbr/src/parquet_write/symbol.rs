@@ -12,6 +12,16 @@ use std::char::DecodeUtf16Error;
 use std::cmp::max;
 use std::collections::HashSet;
 
+/// Cached dictionary information for a symbol column.
+pub struct SymbolDictInfo {
+    /// The encoded dictionary buffer (sequence of 4-byte-len-prefixed UTF-8 strings)
+    pub dict_buffer: Vec<u8>,
+    /// Number of entries in the dictionary
+    pub num_values: usize,
+    /// The maximum key value in the dictionary (num_values - 1, or 0 if empty)
+    pub max_key: u32,
+}
+
 /// Encode the QuestDB symbols to Parquet.
 ///
 /// The resulting tuple consists of:
@@ -226,4 +236,109 @@ pub fn symbol_to_pages(
             .into_iter()
             .map(Ok),
     ))
+}
+
+/// Create symbol column pages with optional dictionary page.
+///
+/// When `dict_info` is `Some`, includes the dictionary page before the data page.
+/// When `None`, only creates data pages (for subsequent partitions in the same row group).
+///
+/// The `max_key` parameter is used for bit width calculation when dict_info is None.
+#[allow(clippy::too_many_arguments)]
+pub fn symbol_column_to_pages(
+    column_values: &[i32],
+    offsets: &[u64],
+    chars: &[u8],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    dict_info: Option<&SymbolDictInfo>,
+    max_key: u32,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
+    let num_rows = column_top + column_values.len();
+    let mut null_count = 0;
+
+    let deflevels_iter = (0..num_rows).map(|i| {
+        if i < column_top {
+            false
+        } else {
+            let key = column_values[i - column_top];
+            if key > -1 {
+                true
+            } else {
+                null_count += 1;
+                false
+            }
+        }
+    });
+    let mut data_buffer = vec![];
+    encode_primitive_def_levels(&mut data_buffer, deflevels_iter, num_rows, options.version)?;
+    let definition_levels_byte_length = data_buffer.len();
+
+    // Collect statistics for this chunk
+    let mut stats = BinaryMaxMinStats::new(&primitive_type);
+    for &key in column_values.iter() {
+        if key >= 0 {
+            let key_usize = key as usize;
+            if key_usize < offsets.len() {
+                let qdb_global_offset = offsets[key_usize] as usize;
+                const UTF16_LEN_SIZE: usize = 4;
+                if (qdb_global_offset + UTF16_LEN_SIZE) <= chars.len() {
+                    let qdb_utf16_len_buf = &chars[qdb_global_offset..];
+                    let (qdb_utf16_len_bytes, qdb_utf16_buf) =
+                        qdb_utf16_len_buf.split_at(UTF16_LEN_SIZE);
+                    let qdb_utf16_len = i32::from_le_bytes(
+                        qdb_utf16_len_bytes.try_into().expect("4 bytes sliced"),
+                    ) as usize;
+                    if qdb_utf16_buf.len() >= (qdb_utf16_len * 2) {
+                        let qdb_utf16_buf: &[u16] = unsafe { std::mem::transmute(qdb_utf16_buf) };
+                        let qdb_utf16_buf = &qdb_utf16_buf[..qdb_utf16_len];
+                        let mut utf8_buf = Vec::new();
+                        if write_utf8_from_utf16(&mut utf8_buf, qdb_utf16_buf).is_ok() {
+                            stats.update(&utf8_buf);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let bits_per_key = util::bit_width(max_key as u64);
+
+    let non_null_len = column_values.len() - null_count;
+    let keys = column_values
+        .iter()
+        .filter_map(|&v| if v >= 0 { Some(v as u32) } else { None });
+    let keys = ExactSizedIter::new(keys, non_null_len);
+
+    data_buffer.push(bits_per_key);
+    encode_u32(&mut data_buffer, keys, non_null_len, bits_per_key as u32)?;
+
+    let data_page = build_plain_page(
+        data_buffer,
+        num_rows,
+        null_count,
+        definition_levels_byte_length,
+        if options.write_statistics {
+            Some(stats.into_parquet_stats(null_count))
+        } else {
+            None
+        },
+        primitive_type,
+        options,
+        Encoding::RleDictionary,
+    )?;
+
+    if let Some(info) = dict_info {
+        let dict_page = Page::Dict(DictPage::new(
+            info.dict_buffer.clone(),
+            info.num_values,
+            false,
+        ));
+        Ok(DynIter::new(
+            [dict_page, Page::Data(data_page)].into_iter().map(Ok),
+        ))
+    } else {
+        Ok(DynIter::new(std::iter::once(Ok(Page::Data(data_page)))))
+    }
 }

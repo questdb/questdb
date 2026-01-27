@@ -1,7 +1,7 @@
 use std::cmp;
 use std::collections::VecDeque;
 use std::io::Write;
-
+use std::sync::Arc;
 use crate::parquet::error::fmt_err;
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::Encoding;
@@ -16,13 +16,14 @@ use parquet2::FallibleStreamingIterator;
 use qdb_core::error::CoreResult;
 
 use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Column, Partition};
+use crate::parquet_write::symbol::SymbolDictInfo;
 use crate::parquet_write::{
     array, binary, boolean, fixed_len_bytes, primitive, string, symbol, varchar,
 };
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
 use super::{util, GeoByte, GeoInt, GeoLong, GeoShort, IPv4};
-use crate::parquet::error::{ParquetError, ParquetResult};
+use crate::parquet::error::{ParquetError, ParquetErrorReason, ParquetResult};
 use crate::POOL;
 use rayon::prelude::*;
 
@@ -211,7 +212,10 @@ impl<W: Write> ChunkedWriter<W> {
             });
         let schema = &self.parquet_schema;
         for (offset, length) in row_group_range {
-            let row_group = create_row_group(
+            // Compute per-row-group dictionaries based on symbols actually used in this slice.
+            let row_group_dicts = compute_row_group_dicts_for_slice(partition, offset, length)?;
+
+            let row_group = create_row_group_with_dict_state(
                 partition,
                 offset,
                 length,
@@ -219,6 +223,7 @@ impl<W: Write> ChunkedWriter<W> {
                 &self.encodings,
                 self.options,
                 self.parallel,
+                &row_group_dicts,
             );
             self.writer.write(row_group?)?;
         }
@@ -231,8 +236,38 @@ impl<W: Write> ChunkedWriter<W> {
         first_partition_start: usize,
         last_partition_end: usize,
     ) -> ParquetResult<()> {
+        if partitions.is_empty() {
+            return Ok(());
+        }
+
+        // Compute per-row-group dictionaries based on symbols actually used in this row group.
+        // This includes only symbols from 0 to max_used_key (with empty strings for gaps).
+        let max_keys = compute_max_symbol_keys(partitions);
+        let row_group_dicts: Vec<Option<Arc<SymbolDictInfo>>> = partitions[0]
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(col_idx, column)| {
+                if column.data_type.tag() == ColumnTypeTag::Symbol {
+                    let max_key = max_keys
+                        .get(col_idx)
+                        .and_then(|opt| *opt)
+                        .flatten();
+                    build_symbol_dict_for_max_key(
+                        column.symbol_offsets,
+                        column.secondary_data,
+                        max_key,
+                    )
+                    .ok()
+                    .map(Arc::new)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
         let schema = &self.parquet_schema;
-        let row_group = create_row_group_from_partitions(
+        let row_group = create_row_group_from_partitions_with_dict_state(
             partitions,
             first_partition_start,
             last_partition_end,
@@ -240,6 +275,7 @@ impl<W: Write> ChunkedWriter<W> {
             &self.encodings,
             self.options,
             self.parallel,
+            &row_group_dicts,
         );
         self.writer.write(row_group?)?;
         Ok(())
@@ -373,7 +409,8 @@ pub fn create_row_group(
 /// * `encoding` - Encoding for each column
 /// * `options` - Write options
 /// * `parallel` - Whether to process columns in parallel
-pub fn create_row_group_from_partitions(
+/// * `symbol_dicts` - Precomputed symbol dictionaries for each column from all the involved partitions
+pub fn create_row_group_from_partitions_with_dict_state(
     partitions: &[&Partition],
     first_partition_start: usize,
     last_partition_end: usize,
@@ -381,6 +418,7 @@ pub fn create_row_group_from_partitions(
     encoding: &[Encoding],
     options: WriteOptions,
     parallel: bool,
+    symbol_dicts: &[Option<Arc<SymbolDictInfo>>],
 ) -> ParquetResult<RowGroupIter<'static, ParquetError>> {
     assert!(!partitions.is_empty(), "partitions cannot be empty");
     let num_columns = partitions[0].columns.len();
@@ -403,13 +441,24 @@ pub fn create_row_group_from_partitions(
                         last_partition_end,
                     );
 
-                    let encoded_column = column_chunk_to_pages(
+                    // Only include dictionary on first partition of first row group
+                    // Only include dictionary page for the first partition
+                    let include_dict = part_idx == 0;
+                    let dict_info = if col_idx < symbol_dicts.len() {
+                        symbol_dicts[col_idx].clone()
+                    } else {
+                        None
+                    };
+
+                    let encoded_column = column_chunk_to_pages_with_dict_state(
                         column,
                         column_type.clone(),
                         offset,
                         length,
                         options,
                         col_encoding,
+                        dict_info.as_deref(),
+                        include_dict,
                     )?;
 
                     for page in encoded_column {
@@ -435,6 +484,11 @@ pub fn create_row_group_from_partitions(
             |col_idx: usize| -> ParquetResult<DynStreamingIterator<CompressedPage, ParquetError>> {
                 let column_type = &column_types[col_idx];
                 let col_encoding = encoding[col_idx];
+                let dict_info = if col_idx < symbol_dicts.len() {
+                    symbol_dicts[col_idx].clone()
+                } else {
+                    None
+                };
 
                 let partition_ranges: Vec<(Column, usize, usize)> = partitions
                     .iter()
@@ -451,11 +505,13 @@ pub fn create_row_group_from_partitions(
                         (column, offset, length)
                     })
                     .collect();
-                let pages_iter = MultiPartitionColumnIterator::new(
+
+                let pages_iter = MultiPartitionColumnIteratorWithDict::new(
                     partition_ranges,
                     column_type.clone(),
                     options,
                     col_encoding,
+                    dict_info,
                 );
 
                 let compression_iter =
@@ -496,22 +552,25 @@ fn partition_slice_range(
     }
 }
 
-struct MultiPartitionColumnIterator {
-    partitions: Vec<(Column, usize, usize)>, // (column, offset, length)
+/// Iterator for multi-partition columns with dictionary state management.
+struct MultiPartitionColumnIteratorWithDict {
+    partitions: Vec<(Column, usize, usize)>, // (column, offset, length, include_dict)
     current_partition_idx: usize,
     current_inner_iter: Option<DynIter<'static, ParquetResult<Page>>>,
     column_type: ParquetType,
     options: WriteOptions,
     encoding: Encoding,
+    dict_info: Option<Arc<SymbolDictInfo>>,
     pending_error: Option<ParquetError>,
 }
 
-impl MultiPartitionColumnIterator {
+impl MultiPartitionColumnIteratorWithDict {
     fn new(
         partitions: Vec<(Column, usize, usize)>,
         column_type: ParquetType,
         options: WriteOptions,
         encoding: Encoding,
+        dict_info: Option<Arc<SymbolDictInfo>>,
     ) -> Self {
         let mut iter = Self {
             partitions,
@@ -520,6 +579,7 @@ impl MultiPartitionColumnIterator {
             column_type,
             options,
             encoding,
+            dict_info,
             pending_error: None,
         };
         iter.advance_to_next_partition();
@@ -532,14 +592,18 @@ impl MultiPartitionColumnIterator {
         }
 
         let (column, offset, length) = self.partitions[self.current_partition_idx];
+        // Only include dictionary page for the first partition
+        let include_dict = self.current_partition_idx == 0;
 
-        match column_chunk_to_pages(
+        match column_chunk_to_pages_with_dict_state(
             column,
             self.column_type.clone(),
             offset,
             length,
             self.options,
             self.encoding,
+            self.dict_info.as_deref(),
+            include_dict,
         ) {
             Ok(iter) => {
                 self.current_inner_iter = Some(iter);
@@ -554,7 +618,7 @@ impl MultiPartitionColumnIterator {
     }
 }
 
-impl Iterator for MultiPartitionColumnIterator {
+impl Iterator for MultiPartitionColumnIteratorWithDict {
     type Item = ParquetResult<Page>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1065,5 +1129,347 @@ fn bytes_per_group_type(column_type: ColumnType) -> CoreResult<usize> {
             Ok((dim * 8) as usize)
         }
         _ => Ok(8),
+    }
+}
+
+/// Compute the maximum symbol key used across all partitions for each column.
+/// Returns a Vec where each element corresponds to a column:
+/// - Some(max_key) for symbol columns (max key used, or None if no keys used)
+/// - None for non-symbol columns
+fn compute_max_symbol_keys(partitions: &[&Partition]) -> Vec<Option<Option<u32>>> {
+    if partitions.is_empty() {
+        return vec![];
+    }
+
+    let num_columns = partitions[0].columns.len();
+    let mut result = vec![None; num_columns];
+
+    for (col_idx, column) in partitions[0].columns.iter().enumerate() {
+        if column.data_type.tag() == ColumnTypeTag::Symbol {
+            // Find max key across all partitions. Since negative values represent NULL
+            // and are always less than non-negative values, we can just find the overall max.
+            let mut max_val = i32::MIN;
+            for partition in partitions {
+                let col = &partition.columns[col_idx];
+                let keys: &[i32] = unsafe { util::transmute_slice(col.primary_data) };
+                for i in 0..keys.len() {
+                    let k = unsafe { *keys.get_unchecked(i) };
+                    if k > max_val { max_val = k; }
+                }
+            }
+            let max_key = if max_val >= 0 { Some(max_val as u32) } else { None };
+
+            result[col_idx] = Some(max_key);
+        }
+    }
+
+    result
+}
+
+/// Compute per-row-group dictionaries for a slice of a single partition.
+/// Dictionary includes entries from 0 to max_used_key
+fn compute_row_group_dicts_for_slice(
+    partition: &Partition,
+    offset: usize,
+    length: usize,
+) -> ParquetResult<Vec<Option<SymbolDictInfo>>> {
+    partition
+        .columns
+        .iter()
+        .map(|column| {
+            if column.data_type.tag() == ColumnTypeTag::Symbol {
+                let keys: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
+                let col_top = column.column_top;
+
+                // Calculate the slice bounds accounting for column_top
+                let start = if offset < col_top { 0 } else { offset - col_top };
+                let end = if offset + length < col_top {
+                    0
+                } else {
+                    (offset + length - col_top).min(keys.len())
+                };
+
+                // Find max key.
+                let slice = &keys[start..end];
+                let mut max_val = i32::MIN;
+                for i in 0..slice.len() {
+                    let k = slice[i];
+                    if k > max_val { max_val = k; }
+                }
+                let max_key = if max_val >= 0 { Some(max_val as u32) } else { None };
+
+                build_symbol_dict_for_max_key(
+                    column.symbol_offsets,
+                    column.secondary_data,
+                    max_key,
+                )
+                .map(Some)
+            } else {
+                Ok(None)
+            }
+        })
+        .collect()
+}
+
+/// Build symbol dictionary info for a column based on max_key.
+/// The dictionary includes symbols from 0 to max_key.
+fn build_symbol_dict_for_max_key(
+    offsets: &[u64],
+    chars: &[u8],
+    max_key: Option<u32>,
+) -> ParquetResult<SymbolDictInfo> {
+    let max_key = match max_key {
+        Some(k) => k,
+        None => {
+            // No keys used, return empty dictionary
+            return Ok(SymbolDictInfo {
+                dict_buffer: vec![],
+                num_values: 0,
+                max_key: 0,
+            });
+        }
+    };
+
+    let num_values = (max_key + 1) as usize;
+
+    // Estimate buffer size: ~10 bytes per symbol on average
+    let mut dict_buffer = Vec::with_capacity(num_values * 10);
+
+    for key in 0..=max_key {
+        let key_usize = key as usize;
+        if key_usize < offsets.len() {
+            let qdb_global_offset = offsets[key_usize] as usize;
+            const UTF16_LEN_SIZE: usize = 4;
+            if (qdb_global_offset + UTF16_LEN_SIZE) <= chars.len() {
+                let qdb_utf16_len_buf = &chars[qdb_global_offset..];
+                let (qdb_utf16_len_bytes, qdb_utf16_buf) = qdb_utf16_len_buf.split_at(UTF16_LEN_SIZE);
+                let qdb_utf16_len =
+                    i32::from_le_bytes(qdb_utf16_len_bytes.try_into().expect("4 bytes sliced"))
+                        as usize;
+
+                if qdb_utf16_buf.len() >= (qdb_utf16_len * 2) {
+                    let qdb_utf16_buf: &[u16] = unsafe { std::mem::transmute(qdb_utf16_buf) };
+                    let qdb_utf16_buf = &qdb_utf16_buf[..qdb_utf16_len];
+
+                    // Reserve space for length, then write UTF-8 encoded string
+                    let key_index = dict_buffer.len();
+                    dict_buffer.extend_from_slice(&(0u32).to_le_bytes());
+
+                    for c in char::decode_utf16(qdb_utf16_buf.iter().cloned()) {
+                        if let Ok(c) = c {
+                            match c.len_utf8() {
+                                1 => dict_buffer.push(c as u8),
+                                _ => dict_buffer
+                                    .extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
+                            }
+                        }
+                    }
+
+                    // Update length
+                    let utf8_len = dict_buffer.len() - key_index - 4;
+                    let utf8_len_bytes = (utf8_len as u32).to_le_bytes();
+                    dict_buffer[key_index..(key_index + 4)].copy_from_slice(&utf8_len_bytes);
+                } else {
+                    return Err(ParquetError::with_descr(
+                        ParquetErrorReason::InvalidLayout,
+                        format!(
+                            "Symbol key {} has invalid UTF-16 length {} (chars buffer remaining: {})",
+                            key, qdb_utf16_len, qdb_utf16_buf.len() / 2
+                        ),
+                    ));
+                }
+            } else {
+                return Err(ParquetError::with_descr(
+                    ParquetErrorReason::InvalidLayout,
+                    format!(
+                        "Symbol key {} has offset {} outside chars buffer (len: {})",
+                        key, qdb_global_offset, chars.len()
+                    ),
+                ));
+            }
+        } else {
+            return Err(ParquetError::with_descr(
+                ParquetErrorReason::InvalidLayout,
+                format!(
+                    "Symbol key {} is outside offsets buffer (len: {})",
+                    key, offsets.len()
+                ),
+            ));
+        }
+    }
+
+    Ok(SymbolDictInfo {
+        dict_buffer,
+        num_values,
+        max_key,
+    })
+}
+
+/// Create a row group with dictionary state management.
+/// Symbol columns include dictionary pages based on the computed dictionaries.
+fn create_row_group_with_dict_state(
+    partition: &Partition,
+    offset: usize,
+    length: usize,
+    column_types: &[ParquetType],
+    encoding: &[Encoding],
+    options: WriteOptions,
+    parallel: bool,
+    symbol_dicts: &[Option<SymbolDictInfo>],
+) -> ParquetResult<RowGroupIter<'static, ParquetError>> {
+    let columns = if parallel {
+        let col_to_iter =
+            |col_idx: usize| -> ParquetResult<DynStreamingIterator<CompressedPage, ParquetError>> {
+                let column = partition.columns[col_idx];
+                let column_type = &column_types[col_idx];
+                let col_encoding = encoding[col_idx];
+                let dict_info = &symbol_dicts[col_idx];
+
+                let encoded_column = column_chunk_to_pages_with_dict_state(
+                    column,
+                    column_type.clone(),
+                    offset,
+                    length,
+                    options,
+                    col_encoding,
+                    dict_info.as_ref(),
+                    true, // always include dictionary for single-partition row groups
+                )?;
+
+                let compressed_pages = encoded_column
+                    .into_iter()
+                    .map(|page| {
+                        let page = page?;
+                        let page = compress(page, vec![], options.compression)?;
+                        Ok(Ok(page))
+                    })
+                    .collect::<ParquetResult<VecDeque<_>>>()?;
+
+                Ok(DynStreamingIterator::new(CompressedPages::new(
+                    compressed_pages,
+                )))
+            };
+
+        POOL.install(|| {
+            (0..partition.columns.len())
+                .into_par_iter()
+                .flat_map(col_to_iter)
+                .collect::<Vec<_>>()
+        })
+    } else {
+        let col_to_iter =
+            |col_idx: usize| -> ParquetResult<DynStreamingIterator<CompressedPage, ParquetError>> {
+                let column = partition.columns[col_idx];
+                let column_type = &column_types[col_idx];
+                let col_encoding = encoding[col_idx];
+                let dict_info = symbol_dicts[col_idx].as_ref();
+
+                let encoded_column = column_chunk_to_pages_with_dict_state(
+                    column,
+                    column_type.clone(),
+                    offset,
+                    length,
+                    options,
+                    col_encoding,
+                    dict_info,
+                    true, // always include dictionary for single-partition row groups
+                )?;
+
+                let compression_iter = Compressor::new(encoded_column, options.compression, vec![]);
+                Ok(DynStreamingIterator::new(compression_iter))
+            };
+
+        (0..partition.columns.len())
+            .flat_map(col_to_iter)
+            .collect::<Vec<_>>()
+    };
+
+    Ok(DynIter::new(columns.into_iter().map(Ok)))
+}
+
+/// Generate pages for a column chunk with dictionary state management.
+/// For symbol columns:
+/// - If include_dict is true: includes dictionary page + data page
+/// - If include_dict is false: includes only data page (references existing dictionary)
+fn column_chunk_to_pages_with_dict_state(
+    column: Column,
+    parquet_type: ParquetType,
+    chunk_offset: usize,
+    chunk_length: usize,
+    options: WriteOptions,
+    encoding: Encoding,
+    dict_info: Option<&SymbolDictInfo>,
+    include_dict: bool,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
+    println!("column_chunk_to_pages_with_dict_state: column={}, chunk_offset={}, include_dict={}", column.name, chunk_offset, include_dict);
+
+    match parquet_type {
+        ParquetType::PrimitiveType(primitive_type) => {
+            if column.data_type.tag() == ColumnTypeTag::Symbol {
+                let keys: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
+                let offsets = column.symbol_offsets;
+                let data = column.secondary_data;
+                let orig_column_top = column.column_top;
+
+                let mut adjusted_column_top = 0;
+                let lower_bound = if chunk_offset < orig_column_top {
+                    adjusted_column_top = orig_column_top - chunk_offset;
+                    0
+                } else {
+                    chunk_offset - orig_column_top
+                };
+                let upper_bound = if chunk_offset + chunk_length < orig_column_top {
+                    adjusted_column_top = chunk_length;
+                    0
+                } else {
+                    chunk_offset + chunk_length - orig_column_top
+                };
+
+                return match dict_info {
+                    Some(dict) => {
+                        // Use merged function: include dict page only if include_dict is true
+                        symbol::symbol_column_to_pages(
+                            &keys[lower_bound..upper_bound],
+                            offsets,
+                            data,
+                            adjusted_column_top,
+                            options,
+                            primitive_type,
+                            if include_dict { Some(dict) } else { None },
+                            dict.max_key,
+                        )
+                    }
+                    None => {
+                        // No dictionary info (shouldn't happen for symbol columns)
+                        symbol::symbol_to_pages(
+                            &keys[lower_bound..upper_bound],
+                            offsets,
+                            data,
+                            adjusted_column_top,
+                            options,
+                            primitive_type,
+                        )
+                    }
+                };
+            }
+
+            // Non-symbol columns: use standard path
+            column_chunk_to_primitive_pages(
+                column,
+                primitive_type,
+                chunk_offset,
+                chunk_length,
+                options,
+                encoding,
+            )
+        }
+        ParquetType::GroupType { .. } => column_chunk_to_group_pages(
+            column,
+            parquet_type,
+            chunk_offset,
+            chunk_length,
+            options,
+            encoding,
+        ),
     }
 }
