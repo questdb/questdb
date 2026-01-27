@@ -1244,12 +1244,19 @@ public class SqlOptimiser implements Mutable {
     private void addTransitiveFilters(QueryModel model) {
         ObjList<QueryModel> joinModels = model.getJoinModels();
         for (int i = 0, n = joinModels.size(); i < n; i++) {
-            JoinContext jc = joinModels.getQuick(i).getJoinContext();
+            QueryModel joinModel = joinModels.getQuick(i);
+            // Do not push transitive filters for joins in joinBarriers (e.g., HORIZON JOIN)
+            // as this would change the semantics of the join.
+            if (joinBarriers.contains(joinModel.getJoinType())) {
+                continue;
+            }
+            JoinContext jc = joinModel.getJoinContext();
             if (jc != null) {
                 for (int k = 0, kn = jc.bNames.size(); k < kn; k++) {
                     CharSequence name = jc.bNames.getQuick(k);
                     if (constNameToIndex.get(name) == jc.bIndexes.getQuick(k)) {
-                        OperatorExpression op = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition(constNameToToken.get(name));
+                        OperatorExpression op = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence())
+                                .getOperatorDefinition(constNameToToken.get(name));
                         ExpressionNode node = expressionNodePool.next().of(OPERATION, op.operator.token, op.precedence, 0);
                         node.lhs = jc.aNodes.getQuick(k);
                         node.rhs = constNameToNode.get(name);

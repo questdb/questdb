@@ -3174,6 +3174,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         MemoryCARW bindVarMemory = null;
         ObjList<Function> bindVarFunctions = null;
         Function filter = null;
+        ExpressionNode filterExpr = null;
         boolean supportsParallelism = masterFactory.supportsPageFrameCursor();
 
         if (!supportsParallelism && masterFactory.supportsFilterStealing()) {
@@ -3184,6 +3185,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             bindVarMemory = filterFactory.getBindVarMemory();
             bindVarFunctions = filterFactory.getBindVarFunctions();
             filter = filterFactory.getFilter();
+            filterExpr = filterFactory.getStealFilterExpr();
             supportsParallelism = true;
             filterFactory.halfClose();
         }
@@ -3444,7 +3446,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         executionContext,
                         filter,
                         workerCount,
-                        null,
+                        filterExpr,
                         masterMetadata
                 ),
                 workerCount,

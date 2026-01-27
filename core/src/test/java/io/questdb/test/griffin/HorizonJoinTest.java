@@ -362,6 +362,102 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinWithMasterJavaFilter() throws Exception {
+        // Test filter with concat() on master table (Java implementation, symbol table matters)
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (order_sym SYMBOL, ts TIMESTAMP, qty LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (price_sym SYMBOL, ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('AAPL', '2000-01-01T00:00:01.000000Z', 100),
+                                ('AAPL', '2000-01-01T00:00:02.000000Z', 200),
+                                ('GOOG', '2000-01-01T00:00:03.000000Z', 150),
+                                ('MSFT', '2000-01-01T00:00:04.000000Z', 300)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('AAPL', '2000-01-01T00:00:00.500000Z', 100.0),
+                                ('AAPL', '2000-01-01T00:00:01.500000Z', 110.0),
+                                ('GOOG', '2000-01-01T00:00:02.500000Z', 200.0),
+                                ('MSFT', '2000-01-01T00:00:03.500000Z', 300.0)
+                            """
+            );
+
+            // Filter using concat() - uses Java filter implementation
+            assertQueryNoLeakCheck(
+                    """
+                            order_sym\tsum\tavg
+                            AAPL\t300\t105.0
+                            """,
+                    """
+                            SELECT t.order_sym, sum(t.qty), avg(p.price)
+                            FROM orders AS t
+                            HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
+                            RANGE FROM 0s TO 0s STEP 1s AS h
+                            WHERE concat(t.order_sym, '_0') = 'AAPL_0'
+                            ORDER BY t.order_sym
+                            """,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithMasterJitFilter() throws Exception {
+        // Test simple symbol filter on master table (JIT compiled)
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (order_sym SYMBOL, ts TIMESTAMP, qty LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (price_sym SYMBOL, ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('AAPL', '2000-01-01T00:00:01.000000Z', 100),
+                                ('AAPL', '2000-01-01T00:00:02.000000Z', 200),
+                                ('GOOG', '2000-01-01T00:00:03.000000Z', 150),
+                                ('MSFT', '2000-01-01T00:00:04.000000Z', 300)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('AAPL', '2000-01-01T00:00:00.500000Z', 100.0),
+                                ('AAPL', '2000-01-01T00:00:01.500000Z', 110.0),
+                                ('GOOG', '2000-01-01T00:00:02.500000Z', 200.0),
+                                ('MSFT', '2000-01-01T00:00:03.500000Z', 300.0)
+                            """
+            );
+
+            // Filter to only AAPL orders
+            assertQueryNoLeakCheck(
+                    """
+                            order_sym\tsum\tavg
+                            AAPL\t300\t105.0
+                            """,
+                    """
+                            SELECT t.order_sym, sum(t.qty), avg(p.price)
+                            FROM orders AS t
+                            HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
+                            RANGE FROM 0s TO 0s STEP 1s AS h
+                            WHERE t.order_sym = 'AAPL'
+                            ORDER BY t.order_sym
+                            """,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinWithRangeAndGroupByNotSupported() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
@@ -499,6 +595,61 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             2\t40.0
                             """,
                     sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithSlaveSymbolAsKey() throws Exception {
+        // Test using a slave symbol as a grouping key
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (order_sym SYMBOL, ts TIMESTAMP, qty LONG) TIMESTAMP(ts)");
+            execute("CREATE TABLE prices (price_sym SYMBOL, exchange SYMBOL, ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)");
+
+            // Insert orders for multiple symbols
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('AAPL', '2000-01-01T00:00:01.000000Z', 100),
+                                ('AAPL', '2000-01-01T00:00:02.000000Z', 200),
+                                ('GOOG', '2000-01-01T00:00:03.000000Z', 150),
+                                ('MSFT', '2000-01-01T00:00:04.000000Z', 300)
+                            """
+            );
+
+            // Insert prices - different symbols on different exchanges
+            // AAPL: NYSE at 0.5s, NASDAQ at 1.5s
+            // GOOG: NASDAQ at 2.5s
+            // MSFT: NYSE at 3.5s
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('AAPL', 'NYSE', '2000-01-01T00:00:00.500000Z', 100.0),
+                                ('AAPL', 'NASDAQ', '2000-01-01T00:00:01.500000Z', 110.0),
+                                ('GOOG', 'NASDAQ', '2000-01-01T00:00:02.500000Z', 200.0),
+                                ('MSFT', 'NYSE', '2000-01-01T00:00:03.500000Z', 300.0)
+                            """
+            );
+
+            // Group by slave symbol (p.exchange)
+            // NYSE: AAPL order at 1s (price 100) + MSFT order at 4s (price 300) -> avg = 200, sum(qty) = 400
+            // NASDAQ: AAPL order at 2s (price 110) + GOOG order at 3s (price 200) -> avg = 155, sum(qty) = 350
+            assertQueryNoLeakCheck(
+                    """
+                            exchange\tsum\tavg
+                            NASDAQ\t350\t155.0
+                            NYSE\t400\t200.0
+                            """,
+                    """
+                            SELECT p.exchange, sum(t.qty), avg(p.price)
+                            FROM orders AS t
+                            HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
+                            RANGE FROM 0s TO 0s STEP 1s AS h
+                            ORDER BY p.exchange
+                            """,
                     null,
                     true,
                     true
@@ -661,61 +812,6 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
                             RANGE FROM 0s TO 0s STEP 1s AS h
                             ORDER BY t.order_sym
-                            """,
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testHorizonJoinWithSlaveSymbolAsKey() throws Exception {
-        // Test using a slave symbol as a grouping key
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (order_sym SYMBOL, ts TIMESTAMP, qty LONG) TIMESTAMP(ts)");
-            execute("CREATE TABLE prices (price_sym SYMBOL, exchange SYMBOL, ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)");
-
-            // Insert orders for multiple symbols
-            execute(
-                    """
-                            INSERT INTO orders VALUES
-                                ('AAPL', '2000-01-01T00:00:01.000000Z', 100),
-                                ('AAPL', '2000-01-01T00:00:02.000000Z', 200),
-                                ('GOOG', '2000-01-01T00:00:03.000000Z', 150),
-                                ('MSFT', '2000-01-01T00:00:04.000000Z', 300)
-                            """
-            );
-
-            // Insert prices - different symbols on different exchanges
-            // AAPL: NYSE at 0.5s, NASDAQ at 1.5s
-            // GOOG: NASDAQ at 2.5s
-            // MSFT: NYSE at 3.5s
-            execute(
-                    """
-                            INSERT INTO prices VALUES
-                                ('AAPL', 'NYSE', '2000-01-01T00:00:00.500000Z', 100.0),
-                                ('AAPL', 'NASDAQ', '2000-01-01T00:00:01.500000Z', 110.0),
-                                ('GOOG', 'NASDAQ', '2000-01-01T00:00:02.500000Z', 200.0),
-                                ('MSFT', 'NYSE', '2000-01-01T00:00:03.500000Z', 300.0)
-                            """
-            );
-
-            // Group by slave symbol (p.exchange)
-            // NYSE: AAPL order at 1s (price 100) + MSFT order at 4s (price 300) -> avg = 200, sum(qty) = 400
-            // NASDAQ: AAPL order at 2s (price 110) + GOOG order at 3s (price 200) -> avg = 155, sum(qty) = 350
-            assertQueryNoLeakCheck(
-                    """
-                            exchange\tsum\tavg
-                            NASDAQ\t350\t155.0
-                            NYSE\t400\t200.0
-                            """,
-                    """
-                            SELECT p.exchange, sum(t.qty), avg(p.price)
-                            FROM orders AS t
-                            HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
-                            RANGE FROM 0s TO 0s STEP 1s AS h
-                            ORDER BY p.exchange
                             """,
                     null,
                     true,
