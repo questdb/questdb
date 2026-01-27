@@ -26,6 +26,7 @@ package io.questdb.griffin.model;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ExchangeCalendarService;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TimestampDriver;
@@ -608,13 +609,14 @@ public final class IntervalUtils {
 
         // Find day filter marker (#) - must be outside brackets and before ; (duration)
         // Timezone is optional: "2024-01-01#Mon" and "2024-01-01@+05:00#Mon" are both valid
-        // Day filter is applied based on LOCAL time (before timezone conversion)
+        // Day filter or exchange calendar is applied based on LOCAL time (before timezone conversion)
         int dayFilterMarkerPos = findDayFilterMarker(seq, firstNonSpace, lim);
         int dayFilterMask = 0;
         int dayFilterHi = -1;
+        LongList exchangeSchedule = null;
 
         if (dayFilterMarkerPos >= 0) {
-            // Find end of day filter (at ; or end of string)
+            // Find end of filter (at ; or end of string)
             dayFilterHi = lim;
             for (int i = dayFilterMarkerPos + 1; i < lim; i++) {
                 if (seq.charAt(i) == ';') {
@@ -622,7 +624,15 @@ public final class IntervalUtils {
                     break;
                 }
             }
-            dayFilterMask = parseDayFilter(seq, dayFilterMarkerPos + 1, dayFilterHi, position);
+            // First try to look up as exchange calendar
+            ExchangeCalendarService calendarService = configuration.getFactoryProvider()
+                    .getExchangeCalendarServiceFactory()
+                    .getInstance();
+            exchangeSchedule = calendarService.getSchedule(seq.subSequence(dayFilterMarkerPos + 1, dayFilterHi));
+            if (exchangeSchedule == null) {
+                // Not an exchange calendar, parse as day filter
+                dayFilterMask = parseDayFilter(seq, dayFilterMarkerPos + 1, dayFilterHi, position);
+            }
         }
 
         // Determine effective limits after removing day filter
@@ -668,6 +678,10 @@ public final class IntervalUtils {
                         dayFilterMask,
                         nowTimestamp
                 );
+                // Apply exchange calendar filter if specified
+                if (exchangeSchedule != null) {
+                    applyExchangeCalendarFilter(timestampDriver, exchangeSchedule, out, outSize);
+                }
                 // In static mode, union all bracket-expanded intervals and validate count
                 if (applyEncoded) {
                     mergeAndValidateIntervals(configuration, out, outSize, position);
@@ -742,12 +756,19 @@ public final class IntervalUtils {
             }
             if (applyEncoded) {
                 applyLastEncodedInterval(timestampDriver, out);
-                // Apply day filter BEFORE timezone conversion (based on local day-of-week)
-                if (dayFilterMask != 0) {
-                    // Only expand if date is imprecise (year/month only)
+                // Apply filter BEFORE timezone conversion (based on local time)
+                if (exchangeSchedule != null) {
+                    // Exchange calendar: intersect with trading schedule
+                    applyExchangeCalendarFilter(timestampDriver, exchangeSchedule, out, outSize);
+                } else if (dayFilterMask != 0) {
+                    // Day filter: expand to matching days of week
                     boolean expandMultiDay = !hasDatePrecision(effectiveSeq, effectiveSeqLo, effectiveDateLim);
                     applyDayFilter(timestampDriver, out, outSize, dayFilterMask, expandMultiDay);
                 }
+            } else if (exchangeSchedule != null) {
+                // Dynamic mode: exchange calendars not yet supported
+                // For now, apply statically (schedule is pre-computed)
+                applyExchangeCalendarFilter(timestampDriver, exchangeSchedule, out, outSize);
             } else if (dayFilterMask != 0) {
                 // Dynamic mode: store day filter mask for runtime evaluation
                 setDayFilterMaskOnEncodedIntervals(out, outSize, dayFilterMask);
@@ -799,10 +820,13 @@ public final class IntervalUtils {
                     tzLo,         // globalTzLo
                     tzHi          // globalTzHi
             );
-            // Apply day filter BEFORE timezone conversion (based on local day-of-week)
-            if (dayFilterMask != 0) {
+            // Apply filter BEFORE timezone conversion (based on local time)
+            if (exchangeSchedule != null) {
+                // Exchange calendar: intersect with trading schedule
+                applyExchangeCalendarFilter(timestampDriver, exchangeSchedule, out, outSize);
+            } else if (dayFilterMask != 0) {
                 if (applyEncoded) {
-                    // Only expand if date is imprecise (year/month only)
+                    // Day filter: expand to matching days of week
                     boolean expandMultiDay = !hasDatePrecision(parseSeq, parseLo, parseDateLim);
                     applyDayFilter(timestampDriver, out, outSize, dayFilterMask, expandMultiDay);
                 } else {
@@ -1227,6 +1251,60 @@ public final class IntervalUtils {
             out.setQuick(startIndex + i, out.getQuick(originalSize + i));
         }
         out.setPos(startIndex + totalIntervals * 2);
+    }
+
+    /**
+     * Applies exchange calendar filter by intersecting query intervals with trading schedule.
+     * The trading schedule is obtained from {@link ExchangeCalendarService} and contains
+     * [lo, hi] pairs representing trading sessions in microseconds.
+     *
+     * @param timestampDriver the timestamp driver for unit conversion
+     * @param schedule        the trading schedule as [lo, hi] pairs (in microseconds)
+     * @param out             the interval list to filter
+     * @param startIndex      index to start filtering from
+     */
+    private static void applyExchangeCalendarFilter(
+            TimestampDriver timestampDriver,
+            LongList schedule,
+            LongList out,
+            int startIndex
+    ) {
+        int queryIntervalCount = (out.size() - startIndex) / 2;
+        if (queryIntervalCount == 0 || schedule.size() == 0) {
+            return;
+        }
+
+        // Append trading schedule to out for intersection
+        // Convert microseconds to nanoseconds if needed
+        int dividerIndex = out.size();
+        boolean isNanos = timestampDriver == NanosTimestampDriver.INSTANCE;
+        for (int i = 0, n = schedule.size(); i < n; i++) {
+            long ts = schedule.getQuick(i);
+            out.add(isNanos ? ts * 1000L : ts);
+        }
+
+        // Intersect in place: query intervals [startIndex, dividerIndex) with schedule [dividerIndex, end)
+        // But intersectInPlace expects intervals from index 0, so we need to handle the offset
+        if (startIndex == 0) {
+            intersectInPlace(out, dividerIndex);
+        } else {
+            // Create a temporary list for the intersection
+            LongList temp = new LongList();
+            for (int i = startIndex; i < dividerIndex; i++) {
+                temp.add(out.getQuick(i));
+            }
+            int tempDivider = temp.size();
+            for (int i = dividerIndex, n = out.size(); i < n; i++) {
+                temp.add(out.getQuick(i));
+            }
+            intersectInPlace(temp, tempDivider);
+
+            // Copy result back
+            out.setPos(startIndex);
+            for (int i = 0; i < temp.size(); i++) {
+                out.add(temp.getQuick(i));
+            }
+        }
     }
 
     /**

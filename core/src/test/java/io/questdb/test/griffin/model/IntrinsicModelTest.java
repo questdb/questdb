@@ -2697,6 +2697,57 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testExchangeCalendarXnysSingleDay() throws SqlException {
+        // 2026-01-02 is a Friday (trading day)
+        // XNYS (NYSE) trading hours: 9:30 AM - 4:00 PM EST = 14:30 - 21:00 UTC
+        // Query for full day intersected with trading hours should return trading hours
+        assertBracketInterval(
+                "[{lo=2026-01-02T14:30:00.000000Z, hi=2026-01-02T21:00:00.000000Z}]",
+                "2026-01-02#XNYS"
+        );
+    }
+
+    @Test
+    public void testExchangeCalendarXnysHoliday() throws SqlException {
+        // 2026-01-01 is New Year's Day (holiday, non-trading day)
+        // Query for full day intersected with empty trading schedule should return empty
+        assertBracketInterval(
+                "[]",
+                "2026-01-01#XNYS"
+        );
+    }
+
+    @Test
+    public void testExchangeCalendarXnysMultipleDays() throws SqlException {
+        // 2026-01-02 (Fri) and 2026-01-05 (Mon) are both trading days
+        // Each should return its trading hours
+        assertBracketInterval(
+                "[{lo=2026-01-02T14:30:00.000000Z, hi=2026-01-02T21:00:00.000000Z}," +
+                "{lo=2026-01-05T14:30:00.000000Z, hi=2026-01-05T21:00:00.000000Z}]",
+                "[2026-01-02,2026-01-05]#XNYS"
+        );
+    }
+
+    @Test
+    public void testExchangeCalendarXnysWeekendExcluded() throws SqlException {
+        // 2026-01-03 (Sat) and 2026-01-04 (Sun) are weekends (non-trading)
+        // Query should return empty
+        assertBracketInterval(
+                "[]",
+                "[2026-01-03,2026-01-04]#XNYS"
+        );
+    }
+
+    @Test
+    public void testExchangeCalendarXnysCaseInsensitive() throws SqlException {
+        // Exchange identifier should be case-insensitive
+        assertBracketInterval(
+                "[{lo=2026-01-02T14:30:00.000000Z, hi=2026-01-02T21:00:00.000000Z}]",
+                "2026-01-02#xnys"
+        );
+    }
+
+    @Test
     public void testIntersectContain2() {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         a.add(timestampDriver.parseFloorLiteral("2016-03-10T10:00:00.000Z"));
