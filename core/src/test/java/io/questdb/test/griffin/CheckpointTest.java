@@ -288,20 +288,35 @@ public class CheckpointTest extends AbstractCairoTest {
             // Create a materialized view on a WAL table (should appear in callback)
             server.execute("CREATE MATERIALIZED VIEW mat_view AS SELECT ts, count() cnt FROM wal_table1 SAMPLE BY 1d");
 
-            // Drain queues after mat view creation to ensure deterministic seqTxn
-            // mat_view gets seqTxn=1 (creation) and seqTxn=2 (empty refresh) at this point
-            drainWalAndMatViewQueues(server.getEngine());
-
             // Insert data to generate transactions
             server.execute("INSERT INTO wal_table1 VALUES (1, '2024-01-01T00:00:00.000000Z')");
             server.execute("INSERT INTO wal_table2 VALUES (100, '2024-01-01T00:00:00.000000Z')");
             server.execute("INSERT INTO non_wal_table VALUES (999, '2024-01-01T00:00:00.000000Z')");
 
-            // Drain queues to ensure all WAL transactions are applied and mat view is refreshed
+            // Wait for WAL transactions to be fully sequenced before checkpointing.
+            // The checkpoint reads seqTxn from the sequencer (lastTxn), so we wait for the
+            // sequencer to have the expected transaction counts.
+            // Note: TestServerMain runs its own background workers, so we use assertEventually
+            // rather than drainWalAndMatViewQueues (which creates separate job instances).
+            TableToken walTable1Token = server.getEngine().getTableTokenIfExists("wal_table1");
+            TableToken walTable2Token = server.getEngine().getTableTokenIfExists("wal_table2");
+            TableToken matViewToken = server.getEngine().getTableTokenIfExists("mat_view");
+
             // wal_table1: seqTxn=1 (one insert)
             // wal_table2: seqTxn=1 (one insert)
             // mat_view: seqTxn=3 (creation + empty refresh + actual refresh with data)
-            drainWalAndMatViewQueues(server.getEngine());
+            TestUtils.assertEventually(() -> {
+                long seqTxn = server.getEngine().getTableSequencerAPI().getTxnTracker(walTable1Token).getSeqTxn();
+                Assert.assertEquals("wal_table1 seqTxn should be 1", 1L, seqTxn);
+            });
+            TestUtils.assertEventually(() -> {
+                long seqTxn = server.getEngine().getTableSequencerAPI().getTxnTracker(walTable2Token).getSeqTxn();
+                Assert.assertEquals("wal_table2 seqTxn should be 1", 1L, seqTxn);
+            });
+            TestUtils.assertEventually(() -> {
+                long seqTxn = server.getEngine().getTableSequencerAPI().getTxnTracker(matViewToken).getSeqTxn();
+                Assert.assertEquals("mat_view seqTxn should be 3", 3L, seqTxn);
+            });
 
             // Verify listener not called yet
             Assert.assertEquals("Listener should not be called before checkpoint", 0, events.size());
