@@ -215,11 +215,6 @@
                         <!-- Used by cargo when running a test with code coverage -->
                         <LLVM_PROFILE_FILE>questdbr-junit.profraw</LLVM_PROFILE_FILE>
                     </environmentVariables>
-                    <parallel>classes</parallel>
-                    <forkCount>8</forkCount>
-                    <threadCount>8</threadCount>
-                    <reuseForks>false</reuseForks>
-                    <argLine>-Xmx1024m</argLine>
                 </configuration>
             </plugin>
         </plugins>
