@@ -370,62 +370,6 @@ public final class WhereClauseParser implements Mutable {
         keyNodes.add(parentNode);
     }
 
-    private boolean analyzeBetween(
-            TimestampDriver timestampDriver,
-            AliasTranslator translator,
-            IntrinsicModel model,
-            ExpressionNode node,
-            RecordMetadata m,
-            FunctionParser functionParser,
-            RecordMetadata metadata,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        ExpressionNode col = node.args.getLast();
-        if (col.type != ExpressionNode.LITERAL) {
-            return false;
-        }
-        CharSequence column = translator.translateAlias(col.token);
-        if (m.getColumnIndexQuiet(column) == -1) {
-            throw SqlException.invalidColumn(col.position, col.token);
-        }
-        return analyzeBetween0(timestampDriver, model, col, node, false, functionParser, metadata, executionContext);
-    }
-
-    private boolean analyzeBetween0(
-            TimestampDriver timestampDriver,
-            IntrinsicModel model,
-            ExpressionNode col,
-            ExpressionNode between,
-            boolean isNegated,
-            FunctionParser functionParser,
-            RecordMetadata metadata,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        if (!isTimestamp(col)) {
-            return false;
-        }
-
-        ExpressionNode lo = between.args.getQuick(1);
-        ExpressionNode hi = between.args.getQuick(0);
-
-        try {
-            model.setBetweenNegated(isNegated);
-            boolean isBetweenTranslated = translateBetweenToTimestampModel(timestampDriver, model, functionParser, metadata, executionContext, lo);
-            if (isBetweenTranslated) {
-                isBetweenTranslated = translateBetweenToTimestampModel(timestampDriver, model, functionParser, metadata, executionContext, hi);
-            }
-
-            if (isBetweenTranslated) {
-                between.intrinsicValue = IntrinsicModel.TRUE;
-                return true;
-            }
-        } finally {
-            model.clearBetweenTempParsing();
-        }
-
-        return false;
-    }
-
     /**
      * Analyzes an and_offset node, which wraps a timestamp predicate that needs offset adjustment.
      * The and_offset function has the form: and_offset(predicate, unit, offset)
@@ -524,6 +468,62 @@ public final class WhereClauseParser implements Mutable {
                 node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
             }
+        }
+
+        return false;
+    }
+
+    private boolean analyzeBetween(
+            TimestampDriver timestampDriver,
+            AliasTranslator translator,
+            IntrinsicModel model,
+            ExpressionNode node,
+            RecordMetadata m,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        ExpressionNode col = node.args.getLast();
+        if (col.type != ExpressionNode.LITERAL) {
+            return false;
+        }
+        CharSequence column = translator.translateAlias(col.token);
+        if (m.getColumnIndexQuiet(column) == -1) {
+            throw SqlException.invalidColumn(col.position, col.token);
+        }
+        return analyzeBetween0(timestampDriver, model, col, node, false, functionParser, metadata, executionContext);
+    }
+
+    private boolean analyzeBetween0(
+            TimestampDriver timestampDriver,
+            IntrinsicModel model,
+            ExpressionNode col,
+            ExpressionNode between,
+            boolean isNegated,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (!isTimestamp(col)) {
+            return false;
+        }
+
+        ExpressionNode lo = between.args.getQuick(1);
+        ExpressionNode hi = between.args.getQuick(0);
+
+        try {
+            model.setBetweenNegated(isNegated);
+            boolean isBetweenTranslated = translateBetweenToTimestampModel(timestampDriver, model, functionParser, metadata, executionContext, lo);
+            if (isBetweenTranslated) {
+                isBetweenTranslated = translateBetweenToTimestampModel(timestampDriver, model, functionParser, metadata, executionContext, hi);
+            }
+
+            if (isBetweenTranslated) {
+                between.intrinsicValue = IntrinsicModel.TRUE;
+                return true;
+            }
+        } finally {
+            model.clearBetweenTempParsing();
         }
 
         return false;
@@ -2052,49 +2052,6 @@ public final class WhereClauseParser implements Mutable {
     }
 
     /**
-     * Extracts a timestamp function (like now()) for OR interval extraction.
-     * For constant functions, evaluates immediately. For runtime constants, defers to runtime.
-     */
-    private boolean extractOrTimestampFunction(
-            IntrinsicModel model,
-            ExpressionNode funcNode,
-            boolean isFirst,
-            FunctionParser functionParser,
-            RecordMetadata metadata,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        Function func = functionParser.parseFunction(funcNode, metadata, executionContext);
-        try {
-            if (!ColumnType.isTimestamp(func.getType())) {
-                Misc.free(func);
-                return false;
-            }
-            if (func.isConstant()) {
-                long ts = func.getTimestamp(null);
-                Misc.free(func);
-                if (isFirst) {
-                    model.intersectIntervals(ts, ts);
-                } else {
-                    model.unionIntervals(ts, ts);
-                }
-            } else if (func.isRuntimeConstant()) {
-                if (isFirst) {
-                    model.intersectRuntimeTimestamp(func);
-                } else {
-                    model.unionRuntimeTimestamp(func);
-                }
-            } else {
-                Misc.free(func);
-                return false;
-            }
-            return true;
-        } catch (Throwable th) {
-            Misc.free(func);
-            throw th;
-        }
-    }
-
-    /**
      * Extracts timestamp intervals from an OR tree and unions them into the model.
      * Assumes isOrOfTimestampIn() has already returned true for this node.
      * <p>
@@ -2136,7 +2093,7 @@ public final class WhereClauseParser implements Mutable {
                     }
                 } else if (isFunc(inArg)) {
                     // Function like now() - parse and handle as runtime timestamp
-                    if (!extractOrTimestampFunction(model, inArg, leftFirst, functionParser, metadata, executionContext)) {
+                    if (notOrTimestampFunction(model, inArg, leftFirst, functionParser, metadata, executionContext)) {
                         return false;
                     }
                 } else {
@@ -2154,7 +2111,7 @@ public final class WhereClauseParser implements Mutable {
                     ExpressionNode inListItem = node.args.getQuick(i);
                     boolean isFirst = leftFirst && i == 0;
                     if (isFunc(inListItem)) {
-                        if (!extractOrTimestampFunction(model, inListItem, isFirst, functionParser, metadata, executionContext)) {
+                        if (notOrTimestampFunction(model, inListItem, isFirst, functionParser, metadata, executionContext)) {
                             return false;
                         }
                     } else {
@@ -2180,7 +2137,7 @@ public final class WhereClauseParser implements Mutable {
                 valueNode = node.lhs;
             }
             if (isFunc(valueNode)) {
-                if (!extractOrTimestampFunction(model, valueNode, leftFirst, functionParser, metadata, executionContext)) {
+                if (notOrTimestampFunction(model, valueNode, leftFirst, functionParser, metadata, executionContext)) {
                     return false;
                 }
             } else {
@@ -2421,6 +2378,49 @@ public final class WhereClauseParser implements Mutable {
         }
 
         return true;
+    }
+
+    /**
+     * Extracts a timestamp function (like now()) for OR interval extraction.
+     * For constant functions, evaluates immediately. For runtime constants, defers to runtime.
+     */
+    private boolean notOrTimestampFunction(
+            IntrinsicModel model,
+            ExpressionNode funcNode,
+            boolean isFirst,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        Function func = functionParser.parseFunction(funcNode, metadata, executionContext);
+        try {
+            if (!ColumnType.isTimestamp(func.getType())) {
+                Misc.free(func);
+                return true;
+            }
+            if (func.isConstant()) {
+                long ts = func.getTimestamp(null);
+                Misc.free(func);
+                if (isFirst) {
+                    model.intersectIntervals(ts, ts);
+                } else {
+                    model.unionIntervals(ts, ts);
+                }
+            } else if (func.isRuntimeConstant()) {
+                if (isFirst) {
+                    model.intersectRuntimeTimestamp(func);
+                } else {
+                    model.unionRuntimeTimestamp(func);
+                }
+            } else {
+                Misc.free(func);
+                return true;
+            }
+            return false;
+        } catch (Throwable th) {
+            Misc.free(func);
+            throw th;
+        }
     }
 
     private long parseFullOrPartialDate(
