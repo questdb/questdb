@@ -135,6 +135,50 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLargeOffsetNegationOverflowThrowsError() throws Exception {
+        // Test for int overflow when negating the stride value.
+        // The optimizer stores the INVERSE of the stride for pushdown.
+        // If stride = Integer.MIN_VALUE (-2147483648), then inverse = 2147483648 which overflows int.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+        });
+
+        // Use Integer.MIN_VALUE as stride - negating it causes overflow
+        // -(-2147483648) = 2147483648 which exceeds Integer.MAX_VALUE
+        // Error position 35 is at the stride argument "-2147483648"
+        assertException(
+                "SELECT * FROM (" +
+                        "SELECT dateadd('s', -2147483648, timestamp) as ts, price FROM trades" +
+                        ") WHERE ts > '2022-01-01'",
+                35,
+                "timestamp offset value 2147483648 exceeds maximum allowed range for dateadd"
+        );
+    }
+
+    @Test
+    public void testLargeOffsetThrowsError() throws Exception {
+        // When dateadd offset exceeds Integer.MAX_VALUE (2,147,483,647), the optimizer
+        // should throw an actionable error message rather than silently failing.
+        // This is because dateadd has signature: dateadd(char, int, timestamp)
+        // and the optimizer intrinsically understands this function for predicate pushdown.
+        //
+        // 3,000,000,000 seconds = ~95 years, which exceeds int range.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+        });
+
+        // Use an offset of 3 billion seconds (exceeds Integer.MAX_VALUE of 2,147,483,647)
+        // Error position 35 is at the stride argument "3000000000"
+        assertException(
+                "SELECT * FROM (" +
+                        "SELECT dateadd('s', 3000000000, timestamp) as ts, price FROM trades" +
+                        ") WHERE ts > '2100-01-01'",
+                35,
+                "timestamp offset value -3000000000 exceeds maximum allowed range for dateadd"
+        );
+    }
+
+    @Test
     public void testMinuteOffsetPushdown() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
@@ -923,6 +967,241 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectPredicateAndWithNow() throws Exception {
+        // Predicate ts > '2022-01-01' AND ts < now()
+        // The constant part can be pushed down, but the now() part stays as filter
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z');");
+
+            String query = """
+                    SELECT * FROM (
+                        SELECT dateadd('d', -1, timestamp) as ts, price FROM trades
+                    ) WHERE ts > '2022-01-01' AND ts < now()
+                    """;
+
+            // The constant part is pushed down, now() part stays as filter
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Filter filter: ts<now()
+                                VirtualRecord
+                                  functions: [dateadd('d',-1,timestamp),price]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: trades
+                                          intervals: [("2022-01-02T00:00:00.000001Z","MAX")]
+                            """
+            );
+        });
+    }
+
+    // ==================== Window Function Timestamp Tests ====================
+    // Window functions don't support predicate pushdown (they need all rows first),
+    // but timestamp detection should still work correctly.
+
+    @Test
+    public void testRejectPredicateBetweenWithNow() throws Exception {
+        // Predicate ts BETWEEN ... AND now() should NOT be pushed down
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z');");
+
+            String query = """
+                    SELECT * FROM (
+                        SELECT dateadd('d', -1, timestamp) as ts, price FROM trades
+                    ) WHERE ts BETWEEN dateadd('d', -7, now()) AND now()
+                    """;
+
+            // Plan should show Filter (not Interval forward scan)
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Filter filter: ts between dateadd('d',-7,now()) and now()
+                                VirtualRecord
+                                  functions: [dateadd('d',-1,timestamp),price]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testRejectPredicateOrWithNow() throws Exception {
+        // Predicate ts > '2025-01-01' OR ts < now() should NOT be pushed down
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z');");
+
+            String query = """
+                    SELECT * FROM (
+                        SELECT dateadd('d', -1, timestamp) as ts, price FROM trades
+                    ) WHERE ts > '2025-01-01' OR ts < now()
+                    """;
+
+            // Plan should show Filter (not Interval forward scan)
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Filter filter: (2025-01-01T00:00:00.000000Z<ts or ts<now())
+                                VirtualRecord
+                                  functions: [dateadd('d',-1,timestamp),price]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testRejectPredicateWithDateaddNow() throws Exception {
+        // Predicate ts > dateadd('d', -7, now()) should NOT be pushed down
+        // because dateadd uses now() instead of timestamp
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z');");
+
+            String query = """
+                    SELECT * FROM (
+                        SELECT dateadd('d', -1, timestamp) as ts, price FROM trades
+                    ) WHERE ts > dateadd('d', -7, now())
+                    """;
+
+            // Plan should show Filter (not Interval forward scan) because dateadd doesn't use timestamp
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Filter filter: dateadd('d',-7,now())<ts
+                                VirtualRecord
+                                  functions: [dateadd('d',-1,timestamp),price]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testRejectPredicateWithDateaddSysdate() throws Exception {
+        // Predicate ts > dateadd('h', -1, sysdate()) should NOT be pushed down
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z');");
+
+            String query = """
+                    SELECT * FROM (
+                        SELECT dateadd('d', -1, timestamp) as ts, price FROM trades
+                    ) WHERE ts > dateadd('h', -1, sysdate())
+                    """;
+
+            // Plan should show Filter (not Interval forward scan)
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Filter filter: dateadd('h',-1,sysdate())<ts
+                                VirtualRecord
+                                  functions: [dateadd('d',-1,timestamp),price]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testRejectPredicateWithNow() throws Exception {
+        // Predicate ts > now() should NOT be pushed down
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z');");
+
+            String query = """
+                    SELECT * FROM (
+                        SELECT dateadd('d', -1, timestamp) as ts, price FROM trades
+                    ) WHERE ts > now()
+                    """;
+
+            // Plan should show Filter (not Interval forward scan) because now() is rejected
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Filter filter: now()<ts
+                                VirtualRecord
+                                  functions: [dateadd('d',-1,timestamp),price]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """
+            );
+        });
+    }
+
+    // ==================== Tests for rejected predicates ====================
+    // These predicates should NOT be pushed down because they contain
+    // disallowed functions (now, sysdate, etc.) or dateadd without timestamp reference.
+
+    @Test
+    public void testRejectPredicateWithSysdate() throws Exception {
+        // Predicate ts > sysdate() should NOT be pushed down
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z');");
+
+            String query = """
+                    SELECT * FROM (
+                        SELECT dateadd('d', -1, timestamp) as ts, price FROM trades
+                    ) WHERE ts > sysdate()
+                    """;
+
+            // Plan should show Filter (not Interval forward scan) because sysdate() is rejected
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Filter filter: sysdate()<ts
+                                VirtualRecord
+                                  functions: [dateadd('d',-1,timestamp),price]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testRejectPredicateWithSystimestamp() throws Exception {
+        // Predicate ts > systimestamp() should NOT be pushed down
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z');");
+
+            String query = """
+                    SELECT * FROM (
+                        SELECT dateadd('d', -1, timestamp) as ts, price FROM trades
+                    ) WHERE ts > systimestamp()
+                    """;
+
+            // Plan should show Filter (not Interval forward scan) because systimestamp() is rejected
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Filter filter: systimestamp()<ts
+                                VirtualRecord
+                                  functions: [dateadd('d',-1,timestamp),price]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testSecondOffsetPushdown() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
@@ -1003,10 +1282,6 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             );
         });
     }
-
-    // ==================== Window Function Timestamp Tests ====================
-    // Window functions don't support predicate pushdown (they need all rows first),
-    // but timestamp detection should still work correctly.
 
     @Test
     public void testWindowFunctionPreservesTimestamp() throws Exception {

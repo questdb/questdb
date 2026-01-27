@@ -4451,6 +4451,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDateaddSubqueryWherePredicateNotErased() throws SqlException {
+        // The WHERE predicate "ts > dateadd('d', -7, now())" should NOT be pushed down
+        // because 'ts' is an alias for dateadd('d', -1, timestamp), and the RHS dateadd
+        // uses now() instead of timestamp. The predicate should stay at the virtual model level.
+        assertQuery(
+                "select-choose ts, price from (select-virtual [dateadd('d', -(1), timestamp) ts, price] dateadd('d', -(1), timestamp) ts, price from (select [timestamp, price] from trades timestamp (timestamp)) ts_offset ('d', 1, 0) where ts > dateadd('d', -(7), now()))",
+                "SELECT * FROM (SELECT dateadd('d', -1, timestamp) as ts, price FROM trades) WHERE ts > dateadd('d', -7, now())",
+                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp("timestamp")
+        );
+    }
+
+    @Test
     public void testDisallowDotInColumnAlias() throws Exception {
         assertSyntaxError("select x x.y, y from tab order by x", 10, "',', 'from' or 'over' expected");
     }
@@ -9535,6 +9547,39 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testProjectionWithBothOriginalAndShiftedTimestamp() throws Exception {
+        // When projection has BOTH the original timestamp AND a shifted timestamp,
+        // the original timestamp should be the designated timestamp, not the shifted one.
+        // The ts_offset should NOT be set because the original timestamp is still available.
+        assertQuery(
+                "select-virtual dateadd('h', -(1), timestamp) ts, timestamp, price from (select [timestamp, price] from trades timestamp (timestamp))",
+                "SELECT dateadd('h', -1, timestamp) as ts, timestamp, price FROM trades",
+                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testProjectionWithBothOriginalAndShiftedTimestampReversedOrder() throws Exception {
+        // Same as above but with reversed column order - original timestamp should still win
+        assertQuery(
+                "select-virtual timestamp, dateadd('h', -(1), timestamp) ts, price from (select [timestamp, price] from trades timestamp (timestamp))",
+                "SELECT timestamp, dateadd('h', -1, timestamp) as ts, price FROM trades",
+                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testProjectionWithShiftedTimestampOnly() throws Exception {
+        // When projection has ONLY the shifted timestamp (original not selected),
+        // ts_offset SHOULD be set for the shifted column
+        assertQuery(
+                "select-virtual dateadd('h', -(1), timestamp) ts, price from (select [timestamp, price] from trades timestamp (timestamp)) ts_offset ('h', 1, 0)",
+                "SELECT dateadd('h', -1, timestamp) as ts, price FROM trades",
+                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
     public void testPublicSchemaRemovalCreateTable() throws SqlException {
         assertModel(
                 "create atomic table tab (a INT)",
@@ -12170,6 +12215,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testTimestampOffsetDetectedWithoutExplicitTimestampClause() throws Exception {
+        // Verify ts_offset is detected even without explicit timestamp(ts) clause
+        // The ts_offset ('h', 1, 0) indicates: unit='h', offset=1 (inverse of -1), column_index=0
+        assertQuery(
+                "select-choose ts, price, amount from (select-virtual [dateadd('h', -(1), timestamp) ts, price, amount] dateadd('h', -(1), timestamp) ts, price, amount from (select [timestamp, price, amount] from trades timestamp (timestamp)) ts_offset ('h', 1, 0))",
+                "SELECT * FROM (SELECT dateadd('h', -1, timestamp) as ts, price, amount FROM trades)",
+                modelOf("trades").col("price", ColumnType.DOUBLE).col("amount", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
     public void testTimestampOnSubQuery() throws Exception {
         assertQuery(
                 "select-choose x from (select-choose [x] x, y from (select [x, y] from a b where x > y) b) timestamp (x)",
@@ -12190,94 +12246,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testTimestampWithTimezoneCast() throws Exception {
-        assertQuery(
-                "select-virtual t::timestamp cast from (select [t] from x)",
-                "select cast(t as timestamp with time zone) from x",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
-        );
-    }
-
-    @Test
-    public void testTimestampWithTimezoneCastInSelect() throws Exception {
-        assertQuery(
-                "select-virtual '2005-04-02 12:00:00-07'::timestamp col from (x)",
-                "select cast('2005-04-02 12:00:00-07' as timestamp with time zone) col from x",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
-        );
-    }
-
-    @Test
-    public void testTimestampWithTimezoneConstPrefix() throws Exception {
-        assertQuery(
-                "select-choose t, tt from (select [t, tt] from x where t > '2005-04-02 12:00:00-07'::timestamp)",
-                "select * from x where t > timestamp with time zone '2005-04-02 12:00:00-07'",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
-        );
-    }
-
-    @Test
-    public void testTimestampWithTimezoneConstPrefixInInsert() throws Exception {
-        assertInsertQuery(
-                modelOf("test").col("test_timestamp", ColumnType.TIMESTAMP).col("test_value", ColumnType.STRING));
-    }
-
-    @Test
-    public void testTimestampWithTimezoneConstPrefixInSelect() throws Exception {
-        assertQuery(
-                "select-virtual '2005-04-02 12:00:00-07'::timestamp alias from (x)",
-                "select timestamp with time zone '2005-04-02 12:00:00-07' \"alias\" from x",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
-        );
-    }
-
-    @Test
-    public void testTimestampWithTimezoneConstPrefixInsideCast() throws Exception {
-        assertQuery(
-                "select-choose t, tt from (select [t, tt] from x where t > '2005-04-02 12:00:00-07'::timestamp::DATE)",
-                "select * from x where t > CAST(timestamp with time zone '2005-04-02 12:00:00-07' as DATE)",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
-        );
-    }
-
-    // Tests for and_offset rewrite when pushing timestamp predicates through virtual models with dateadd offset
-    // Predicates are wrapped in and_offset and reference the real 'timestamp' column (not the virtual 'ts' column)
-    // The and_offset wrapper allows WhereClauseParser to apply the inverse offset when extracting intervals
-
-    @Test
-    public void testTimestampPredicateNoPushdownNonConstantOffset() throws Exception {
-        // With non-constant offset in dateadd, predicate stays at select-virtual level
-        // (cannot use and_offset optimization)
-        assertQuery(
-                "select-choose ts, price from (select-choose [ts, price] ts, price from (select-virtual [dateadd('h', offset_val, timestamp) ts, price] dateadd('h', offset_val, timestamp) ts, price from (select [offset_val, timestamp, price] from trades timestamp (timestamp)) where ts in '2022') timestamp (ts))",
-                "SELECT * FROM ((SELECT dateadd('h', offset_val, timestamp) as ts, price FROM trades) timestamp (ts)) WHERE ts in '2022'",
-                modelOf("trades").col("price", ColumnType.DOUBLE).col("offset_val", ColumnType.INT).timestamp()
-        );
-    }
-
-    @Test
-    public void testTimestampPredicateNoPushdownWithoutDateadd() throws Exception {
-        // Without dateadd, no and_offset wrapper is needed - regular predicate pushdown works.
-        // The alias 'ts' is resolved to 'timestamp' and the predicate is pushed to the base table.
-        assertQuery(
-                "select-choose ts, price from (select-choose [ts, price] ts, price from (select-choose [timestamp ts, price] timestamp ts, price from (select [timestamp, price] from trades timestamp (timestamp) where timestamp in '2022')) timestamp (ts))",
-                "SELECT * FROM ((SELECT timestamp as ts, price FROM trades) timestamp (ts)) WHERE ts in '2022'",
-                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
-        );
-    }
-
-    @Test
-    public void testTimestampOffsetDetectedWithoutExplicitTimestampClause() throws Exception {
-        // Verify ts_offset is detected even without explicit timestamp(ts) clause
-        // The ts_offset ('h', 1, 0) indicates: unit='h', offset=1 (inverse of -1), column_index=0
-        assertQuery(
-                "select-choose ts, price, amount from (select-virtual [dateadd('h', -(1), timestamp) ts, price, amount] dateadd('h', -(1), timestamp) ts, price, amount from (select [timestamp, price, amount] from trades timestamp (timestamp)) ts_offset ('h', 1, 0))",
-                "SELECT * FROM (SELECT dateadd('h', -1, timestamp) as ts, price, amount FROM trades)",
-                modelOf("trades").col("price", ColumnType.DOUBLE).col("amount", ColumnType.DOUBLE).timestamp()
-        );
-    }
-
-    @Test
     public void testTimestampPredicateBetween() throws Exception {
         // BETWEEN predicate on transformed timestamp
         // Note: BETWEEN is represented as between(col, (lo, hi)) in the model
@@ -12287,6 +12255,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
         );
     }
+
+    // Tests for and_offset rewrite when pushing timestamp predicates through virtual models with dateadd offset
+    // Predicates are wrapped in and_offset and reference the real 'timestamp' column (not the virtual 'ts' column)
+    // The and_offset wrapper allows WhereClauseParser to apply the inverse offset when extracting intervals
 
     @Test
     public void testTimestampPredicateMergeInnerAndOuterWithOffset() throws Exception {
@@ -12372,6 +12344,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testTimestampPredicateNoPushdownNonConstantOffset() throws Exception {
+        // With non-constant offset in dateadd, predicate stays at select-virtual level
+        // (cannot use and_offset optimization)
+        assertQuery(
+                "select-choose ts, price from (select-choose [ts, price] ts, price from (select-virtual [dateadd('h', offset_val, timestamp) ts, price] dateadd('h', offset_val, timestamp) ts, price from (select [offset_val, timestamp, price] from trades timestamp (timestamp)) where ts in '2022') timestamp (ts))",
+                "SELECT * FROM ((SELECT dateadd('h', offset_val, timestamp) as ts, price FROM trades) timestamp (ts)) WHERE ts in '2022'",
+                modelOf("trades").col("price", ColumnType.DOUBLE).col("offset_val", ColumnType.INT).timestamp()
+        );
+    }
+
+    @Test
     public void testTimestampPredicateNoPushdownNonDesignatedTimestamp() throws Exception {
         // dateadd on a non-designated timestamp column should NOT trigger optimization
         // The predicate stays at select-virtual level, no ts_offset
@@ -12379,6 +12362,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose ts, price from (select-choose [ts, price] ts, price from (select-virtual [dateadd('h', -(1), other_ts) ts, price] dateadd('h', -(1), other_ts) ts, price from (select [other_ts, price] from trades timestamp (timestamp)) where ts in '2022') timestamp (ts))",
                 "SELECT * FROM ((SELECT dateadd('h', -1, other_ts) as ts, price FROM trades) timestamp (ts)) WHERE ts in '2022'",
                 modelOf("trades").col("price", ColumnType.DOUBLE).col("other_ts", ColumnType.TIMESTAMP).timestamp()
+        );
+    }
+
+    @Test
+    public void testTimestampPredicateNoPushdownWithoutDateadd() throws Exception {
+        // Without dateadd, no and_offset wrapper is needed - regular predicate pushdown works.
+        // The alias 'ts' is resolved to 'timestamp' and the predicate is pushed to the base table.
+        assertQuery(
+                "select-choose ts, price from (select-choose [ts, price] ts, price from (select-choose [timestamp ts, price] timestamp ts, price from (select [timestamp, price] from trades timestamp (timestamp) where timestamp in '2022')) timestamp (ts))",
+                "SELECT * FROM ((SELECT timestamp as ts, price FROM trades) timestamp (ts)) WHERE ts in '2022'",
+                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
         );
     }
 
@@ -12461,6 +12455,57 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose ts, price from (select-choose [ts, price] ts, price from (select-virtual [dateadd('h', 0, timestamp) ts, price] dateadd('h', 0, timestamp) ts, price from (select [timestamp, price] from trades timestamp (timestamp) where and_offset(timestamp in '2022', 'h', 0)) ts_offset ('h', 0, 0)) timestamp (ts))",
                 "SELECT * FROM ((SELECT dateadd('h', 0, timestamp) as ts, price FROM trades) timestamp (ts)) WHERE ts in '2022'",
                 modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testTimestampWithTimezoneCast() throws Exception {
+        assertQuery(
+                "select-virtual t::timestamp cast from (select [t] from x)",
+                "select cast(t as timestamp with time zone) from x",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testTimestampWithTimezoneCastInSelect() throws Exception {
+        assertQuery(
+                "select-virtual '2005-04-02 12:00:00-07'::timestamp col from (x)",
+                "select cast('2005-04-02 12:00:00-07' as timestamp with time zone) col from x",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testTimestampWithTimezoneConstPrefix() throws Exception {
+        assertQuery(
+                "select-choose t, tt from (select [t, tt] from x where t > '2005-04-02 12:00:00-07'::timestamp)",
+                "select * from x where t > timestamp with time zone '2005-04-02 12:00:00-07'",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testTimestampWithTimezoneConstPrefixInInsert() throws Exception {
+        assertInsertQuery(
+                modelOf("test").col("test_timestamp", ColumnType.TIMESTAMP).col("test_value", ColumnType.STRING));
+    }
+
+    @Test
+    public void testTimestampWithTimezoneConstPrefixInSelect() throws Exception {
+        assertQuery(
+                "select-virtual '2005-04-02 12:00:00-07'::timestamp alias from (x)",
+                "select timestamp with time zone '2005-04-02 12:00:00-07' \"alias\" from x",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testTimestampWithTimezoneConstPrefixInsideCast() throws Exception {
+        assertQuery(
+                "select-choose t, tt from (select [t, tt] from x where t > '2005-04-02 12:00:00-07'::timestamp::DATE)",
+                "select * from x where t > CAST(timestamp with time zone '2005-04-02 12:00:00-07' as DATE)",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
         );
     }
 
@@ -13358,6 +13403,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testWindowFunctionPreservesNestedTimestamp() throws Exception {
+        // Window function preserves the timestamp designation from nested model
+        // The base table's timestamp(ts) is accessible to the window function
+        assertQuery(
+                "select-window ts, price, row_number() row_number over (order by ts) from (select [ts, price] from trades timestamp (ts))",
+                "SELECT ts, price, row_number() OVER (ORDER BY ts) FROM trades",
+                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp("ts")
+        );
+    }
+
+    @Test
     public void testWindowFunctionReferencesSameColumnAsVirtual() throws Exception {
         assertQuery(
                 "select-window a, b1, f(c) f over (partition by b11 order by ts) from (select-virtual [a, concat(b, 'abc') b1, c, b1 b11, ts] a, concat(b, 'abc') b1, c, b1 b11, ts from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
@@ -13413,63 +13469,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testWindowFunctionWithOrderByAsArgument() throws Exception {
-        // Window function as argument to regular aggregate
-        // The inner window function is extracted to a separate select-window layer
-        assertQuery(
-                "select-group-by sum(row_number) sum from (select-window [row_number() row_number over (order by x)] row_number() row_number over (order by x) from (select [x] from x timestamp (ts)))",
-                "SELECT sum(row_number() OVER (order by x)) FROM x",
-                modelOf("x")
-                        .col("x", ColumnType.INT)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testProjectionWithBothOriginalAndShiftedTimestamp() throws Exception {
-        // When projection has BOTH the original timestamp AND a shifted timestamp,
-        // the original timestamp should be the designated timestamp, not the shifted one.
-        // The ts_offset should NOT be set because the original timestamp is still available.
-        assertQuery(
-                "select-virtual dateadd('h', -(1), timestamp) ts, timestamp, price from (select [timestamp, price] from trades timestamp (timestamp))",
-                "SELECT dateadd('h', -1, timestamp) as ts, timestamp, price FROM trades",
-                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
-        );
-    }
-
-    @Test
-    public void testProjectionWithBothOriginalAndShiftedTimestampReversedOrder() throws Exception {
-        // Same as above but with reversed column order - original timestamp should still win
-        assertQuery(
-                "select-virtual timestamp, dateadd('h', -(1), timestamp) ts, price from (select [timestamp, price] from trades timestamp (timestamp))",
-                "SELECT timestamp, dateadd('h', -1, timestamp) as ts, price FROM trades",
-                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
-        );
-    }
-
-    @Test
-    public void testProjectionWithShiftedTimestampOnly() throws Exception {
-        // When projection has ONLY the shifted timestamp (original not selected),
-        // ts_offset SHOULD be set for the shifted column
-        assertQuery(
-                "select-virtual dateadd('h', -(1), timestamp) ts, price from (select [timestamp, price] from trades timestamp (timestamp)) ts_offset ('h', 1, 0)",
-                "SELECT dateadd('h', -1, timestamp) as ts, price FROM trades",
-                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
-        );
-    }
-
-    @Test
-    public void testWindowFunctionPreservesNestedTimestamp() throws Exception {
-        // Window function preserves the timestamp designation from nested model
-        // The base table's timestamp(ts) is accessible to the window function
-        assertQuery(
-                "select-window ts, price, row_number() row_number over (order by ts) from (select [ts, price] from trades timestamp (ts))",
-                "SELECT ts, price, row_number() OVER (ORDER BY ts) FROM trades",
-                modelOf("trades").col("price", ColumnType.DOUBLE).timestamp("ts")
-        );
-    }
-
-    @Test
     public void testWindowFunctionWithDateadd() throws Exception {
         // Window function with dateadd on timestamp - dateadd IS detected (ts_offset)
         // but predicates are NOT pushed through window (window needs all rows first)
@@ -13489,6 +13488,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose ts, price, row_number from (select-window [ts, price, row_number() row_number over (order by ts)] ts, price, row_number() row_number over (order by ts) from (select-virtual [dateadd('h', -(1), timestamp) ts, price] dateadd('h', -(1), timestamp) ts, price from (select [timestamp, price] from trades timestamp (timestamp)) ts_offset ('h', 1, 0)) where ts in '2022')",
                 "SELECT * FROM (SELECT ts, price, row_number() OVER (ORDER BY ts) FROM (SELECT dateadd('h', -1, timestamp) as ts, price FROM trades)) WHERE ts IN '2022'",
                 modelOf("trades").col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testWindowFunctionWithOrderByAsArgument() throws Exception {
+        // Window function as argument to regular aggregate
+        // The inner window function is extracted to a separate select-window layer
+        assertQuery(
+                "select-group-by sum(row_number) sum from (select-window [row_number() row_number over (order by x)] row_number() row_number over (order by x) from (select [x] from x timestamp (ts)))",
+                "SELECT sum(row_number() OVER (order by x)) FROM x",
+                modelOf("x")
+                        .col("x", ColumnType.INT)
+                        .timestamp("ts")
         );
     }
 

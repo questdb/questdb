@@ -227,10 +227,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private RecordCursorFactory tableNameFunction;
     private ExpressionNode timestamp;
     private CharSequence timestampOffsetAlias;  // The alias name for the transformed timestamp (e.g., "ts")
-    // Timestamp offset information for virtual models where timestamp is computed via dateadd
-    // Used to enable timestamp predicate pushdown with appropriate offset adjustment
+    // Timestamp offset information for virtual models where timestamp is computed via dateadd.
+    // Used to enable timestamp predicate pushdown with appropriate offset adjustment.
+    // NOTE: The optimizer intrinsically understands dateadd(char, int, timestamp) and pushes
+    // predicates through it. The offset type must match dateadd's signature (int).
+    // See TimestampAddFunctionFactory for the function definition.
     private char timestampOffsetUnit;           // 'h', 'd', 'm', 's', etc. (0 means no offset)
-    private long timestampOffsetValue;          // The offset value (inverse, e.g., +1 for dateadd -1)
+    private int timestampOffsetValue;           // The offset value (inverse, e.g., +1 for dateadd -1)
     private CharSequence timestampSourceColumn; // The original column name before dateadd transformation
     private int timestampColumnIndex = -1;      // Index of the timestamp column in virtual models (-1 means not set)
     private QueryModel unionModel;
@@ -1005,7 +1008,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return timestampOffsetUnit;
     }
 
-    public long getTimestampOffsetValue() {
+    public int getTimestampOffsetValue() {
         return timestampOffsetValue;
     }
 
@@ -1557,7 +1560,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.timestampOffsetUnit = unit;
     }
 
-    public void setTimestampOffsetValue(long value) {
+    public void setTimestampOffsetValue(int value) {
         this.timestampOffsetValue = value;
     }
 
