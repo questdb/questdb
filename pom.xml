@@ -89,7 +89,6 @@
         <module>core</module>
         <module>benchmarks</module>
         <module>utils</module>
-        <module>examples</module>
         <module>compat</module>
     </modules>
 </project>
