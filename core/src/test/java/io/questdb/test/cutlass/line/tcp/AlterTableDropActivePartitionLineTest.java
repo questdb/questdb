@@ -29,8 +29,8 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cutlass.line.AbstractLineTcpSender;
-import io.questdb.cutlass.line.LineTcpSenderV2;
+import io.questdb.client.cutlass.line.AbstractLineTcpSender;
+import io.questdb.client.cutlass.line.LineTcpSenderV2;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -91,6 +91,10 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
     public static void setUpStatic() throws Exception {
         AbstractBootstrapTest.setUpStatic();
         TestUtils.unchecked(() -> createDummyConfiguration());
+    }
+
+    private static String rndOf(Rnd rnd, String[] array) {
+        return array[rnd.nextPositiveInt() % array.length];
     }
 
     @Test
@@ -225,10 +229,6 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                 }
             }
         });
-    }
-
-    private static String rndOf(Rnd rnd, String[] array) {
-        return array[rnd.nextPositiveInt() % array.length];
     }
 
     private AbstractLineTcpSender addLine(AbstractLineTcpSender sender, AtomicLong uniqueId, AtomicLong timestampNano, Rnd rnd) {

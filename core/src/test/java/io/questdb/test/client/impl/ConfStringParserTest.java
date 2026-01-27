@@ -25,13 +25,70 @@
 package io.questdb.test.client.impl;
 
 import io.questdb.client.impl.ConfStringParser;
-import io.questdb.std.str.StringSink;
+import io.questdb.client.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public final class ConfStringParserTest {
     private static final StringSink sink = new StringSink();
+
+    private static void assertHasNext(CharSequence input, int pos) {
+        Assert.assertTrue(ConfStringParser.hasNext(input, pos));
+    }
+
+    private static int assertNextKeyError(CharSequence input, int pos, String expectedError) {
+        Assert.assertTrue(ConfStringParser.hasNext(input, pos));
+        pos = ConfStringParser.nextKey(input, pos, sink);
+        Assert.assertTrue(pos < 0);
+        TestUtils.assertEquals(expectedError, sink);
+        return pos;
+    }
+
+    private static int assertNextKeyOk(CharSequence input, int pos, String expectedKey) {
+        Assert.assertTrue(ConfStringParser.hasNext(input, pos));
+        pos = ConfStringParser.nextKey(input, pos, sink);
+        Assert.assertTrue(pos >= 0);
+        TestUtils.assertEquals(expectedKey, sink);
+        return pos;
+    }
+
+    private static int assertNextKeyValueOk(CharSequence input, int pos, String expectedKey, String expectedValue) {
+        pos = assertNextKeyOk(input, pos, expectedKey);
+        pos = assertNextValueOk(input, pos, expectedValue);
+        return pos;
+    }
+
+    private static int assertNextValueError(CharSequence input, int pos, String expectedError) {
+        pos = ConfStringParser.value(input, pos, sink);
+        Assert.assertTrue(pos < 0);
+        TestUtils.assertEquals(expectedError, sink);
+        return pos;
+    }
+
+    private static int assertNextValueOk(CharSequence input, int pos, String expectedValue) {
+        pos = ConfStringParser.value(input, pos, sink);
+        Assert.assertTrue(pos >= 0);
+        TestUtils.assertEquals(expectedValue, sink);
+        return pos;
+    }
+
+    private static void assertNoNext(CharSequence input, int pos) {
+        Assert.assertFalse(ConfStringParser.hasNext(input, pos));
+    }
+
+    private static void assertSchemaError(String configString, String expectedMessage) {
+        int pos = ConfStringParser.of(configString, sink);
+        Assert.assertTrue(pos < 0);
+        TestUtils.assertEquals(expectedMessage, sink);
+    }
+
+    private static int assertSchemaOk(String configString, String expectedSchema) {
+        int pos = ConfStringParser.of(configString, sink);
+        Assert.assertTrue(pos >= 0);
+        TestUtils.assertEquals(expectedSchema, sink);
+        return pos;
+    }
 
     @Test
     public void testByteNotCharPosition() {
@@ -235,62 +292,5 @@ public final class ConfStringParserTest {
         pos = assertNextKeyValueOk(config, pos, "user", "JOE");
         pos = assertNextKeyValueOk(config, pos, "pass", "bLogGs");
         assertNoNext(config, pos);
-    }
-
-    private static void assertHasNext(CharSequence input, int pos) {
-        Assert.assertTrue(ConfStringParser.hasNext(input, pos));
-    }
-
-    private static int assertNextKeyError(CharSequence input, int pos, String expectedError) {
-        Assert.assertTrue(ConfStringParser.hasNext(input, pos));
-        pos = ConfStringParser.nextKey(input, pos, sink);
-        Assert.assertTrue(pos < 0);
-        TestUtils.assertEquals(expectedError, sink);
-        return pos;
-    }
-
-    private static int assertNextKeyOk(CharSequence input, int pos, String expectedKey) {
-        Assert.assertTrue(ConfStringParser.hasNext(input, pos));
-        pos = ConfStringParser.nextKey(input, pos, sink);
-        Assert.assertTrue(pos >= 0);
-        TestUtils.assertEquals(expectedKey, sink);
-        return pos;
-    }
-
-    private static int assertNextKeyValueOk(CharSequence input, int pos, String expectedKey, String expectedValue) {
-        pos = assertNextKeyOk(input, pos, expectedKey);
-        pos = assertNextValueOk(input, pos, expectedValue);
-        return pos;
-    }
-
-    private static int assertNextValueError(CharSequence input, int pos, String expectedError) {
-        pos = ConfStringParser.value(input, pos, sink);
-        Assert.assertTrue(pos < 0);
-        TestUtils.assertEquals(expectedError, sink);
-        return pos;
-    }
-
-    private static int assertNextValueOk(CharSequence input, int pos, String expectedValue) {
-        pos = ConfStringParser.value(input, pos, sink);
-        Assert.assertTrue(pos >= 0);
-        TestUtils.assertEquals(expectedValue, sink);
-        return pos;
-    }
-
-    private static void assertNoNext(CharSequence input, int pos) {
-        Assert.assertFalse(ConfStringParser.hasNext(input, pos));
-    }
-
-    private static void assertSchemaError(String configString, String expectedMessage) {
-        int pos = ConfStringParser.of(configString, sink);
-        Assert.assertTrue(pos < 0);
-        TestUtils.assertEquals(expectedMessage, sink);
-    }
-
-    private static int assertSchemaOk(String configString, String expectedSchema) {
-        int pos = ConfStringParser.of(configString, sink);
-        Assert.assertTrue(pos >= 0);
-        TestUtils.assertEquals(expectedSchema, sink);
-        return pos;
     }
 }

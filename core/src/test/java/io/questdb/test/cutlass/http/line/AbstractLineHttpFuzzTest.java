@@ -25,26 +25,18 @@
 package io.questdb.test.cutlass.http.line;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.cairo.TableToken;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.client.Sender;
-import io.questdb.cutlass.line.http.AbstractLineHttpSender;
+import io.questdb.client.cutlass.line.http.AbstractLineHttpSender;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.NetworkError;
-import io.questdb.std.Chars;
-import io.questdb.std.LowerCaseCharSequenceObjHashMap;
-import io.questdb.std.Numbers;
-import io.questdb.std.Os;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
@@ -143,6 +135,12 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     @AfterClass
     public static void tearDownStatic() {
         AbstractBootstrapTest.tearDownStatic();
+    }
+
+    protected static void assertCursorTwoPass(CharSequence expected, RecordCursor cursor, RecordMetadata metadata) {
+        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
+        cursor.toTop();
+        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
     }
 
     public void ingest(CairoEngine engine, int port, Rnd rnd) {
@@ -492,12 +490,6 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
         });
         thread.start();
         return thread;
-    }
-
-    protected static void assertCursorTwoPass(CharSequence expected, RecordCursor cursor, RecordMetadata metadata) {
-        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
-        cursor.toTop();
-        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
     }
 
     protected LineData generateLine(CharSequence tableName, AbstractLineHttpSender httpSender) {

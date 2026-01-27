@@ -30,7 +30,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.client.Sender;
-import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
@@ -53,6 +53,29 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
     public static final String TRUSTSTORE_PATH = "/keystore/server.keystore";
     @Rule
     public TlsProxyRule tlsProxy = TlsProxyRule.toHostAndPort("localhost", HTTP_PORT);
+
+    private static void assertTableExists(CairoEngine engine, CharSequence tableName) {
+        try (Path path = new Path()) {
+            assertEquals(TableUtils.TABLE_EXISTS, engine.getTableStatus(path, engine.getTableTokenIfExists(tableName)));
+        }
+    }
+
+    private static void assertTableSizeEventually(CairoEngine engine, CharSequence tableName, long expectedSize) throws Exception {
+        TestUtils.assertEventually(() -> {
+            assertTableExists(engine, tableName);
+
+            try (
+                    TableReader reader = engine.getReader(tableName);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
+                long size = cursor.size();
+                assertEquals(expectedSize, size);
+            } catch (EntryLockedException e) {
+                // if table is busy we want to fail this round and have the assertEventually() to retry later
+                fail("table +" + tableName + " is locked");
+            }
+        });
+    }
 
     @Override
     @Before
@@ -301,29 +324,6 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                 } catch (LineSenderException ex) {
                     TestUtils.assertContains(ex.getMessage(), "Failed to detect server line protocol version");
                 }
-            }
-        });
-    }
-
-    private static void assertTableExists(CairoEngine engine, CharSequence tableName) {
-        try (Path path = new Path()) {
-            assertEquals(TableUtils.TABLE_EXISTS, engine.getTableStatus(path, engine.getTableTokenIfExists(tableName)));
-        }
-    }
-
-    private static void assertTableSizeEventually(CairoEngine engine, CharSequence tableName, long expectedSize) throws Exception {
-        TestUtils.assertEventually(() -> {
-            assertTableExists(engine, tableName);
-
-            try (
-                    TableReader reader = engine.getReader(tableName);
-                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
-            ) {
-                long size = cursor.size();
-                assertEquals(expectedSize, size);
-            } catch (EntryLockedException e) {
-                // if table is busy we want to fail this round and have the assertEventually() to retry later
-                fail("table +" + tableName + " is locked");
             }
         });
     }

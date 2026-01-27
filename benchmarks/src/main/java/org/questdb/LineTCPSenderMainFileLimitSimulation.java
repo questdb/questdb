@@ -25,8 +25,6 @@
 package org.questdb;
 
 import io.questdb.cairo.MicrosTimestampDriver;
-import io.questdb.cutlass.line.AbstractLineTcpSender;
-import io.questdb.cutlass.line.LineTcpSenderV2;
 import io.questdb.network.Net;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;

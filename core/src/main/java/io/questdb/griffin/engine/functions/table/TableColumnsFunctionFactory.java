@@ -47,7 +47,7 @@ public class TableColumnsFunctionFactory implements FunctionFactory {
         final CharSequence tableName = args.getQuick(0).getStrA(null);
         final TableToken token = sqlExecutionContext.getCairoEngine().getTableTokenIfExists(tableName);
         if (token == null) {
-            throw SqlException.$(argPositions.getQuick(0), "table does not exist [table=").put(tableName);
+            throw SqlException.$(argPositions.getQuick(0), "table does not exist [table=").put(tableName).put(']');
         }
         return new CursorFunction(new ShowColumnsRecordCursorFactory(token, argPositions.get(0)));
     }

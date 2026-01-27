@@ -25,9 +25,9 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.client.Sender;
+import io.questdb.client.std.Decimal256;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Decimal256;
 import io.questdb.test.tools.LogCapture;
 import org.junit.After;
 import org.junit.Before;

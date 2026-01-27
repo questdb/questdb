@@ -36,11 +36,7 @@ import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
-import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
-import io.questdb.cutlass.line.tcp.LineTcpReceiver;
-import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
-import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
-import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
+import io.questdb.cutlass.line.tcp.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -49,12 +45,7 @@ import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
@@ -65,8 +56,8 @@ import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.After;
-import org.junit.Assert;
 
+import java.lang.ThreadLocal;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
@@ -232,6 +223,14 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         assertEventually(() -> assertTableExists(engine, tableName));
     }
 
+    public static LineTcpReceiver createLineTcpReceiver(
+            LineTcpReceiverConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool
+    ) {
+        return new LineTcpReceiver(configuration, cairoEngine, workerPool, workerPool);
+    }
+
     public static void assertTableSizeEventually(CairoEngine engine, CharSequence tableName, long expectedSize) throws Exception {
         TestUtils.assertEventually(() -> {
             assertTableExists(engine, tableName);
@@ -247,14 +246,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                 fail("table +" + tableName + " is locked");
             }
         });
-    }
-
-    public static LineTcpReceiver createLineTcpReceiver(
-            LineTcpReceiverConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool workerPool
-    ) {
-        return new LineTcpReceiver(configuration, cairoEngine, workerPool, workerPool);
     }
 
     @After
@@ -408,7 +399,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         try (Socket socket = getSocket()) {
             sendToSocket(socket, lineData);
         } catch (Exception e) {
-            Assert.fail("Data sending failed [e=" + e + "]");
+            fail("Data sending failed [e=" + e + "]");
         }
     }
 

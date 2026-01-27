@@ -27,26 +27,20 @@ package io.questdb.test.cairo.mv;
 import io.questdb.Bootstrap;
 import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.MicrosTimestampDriver;
-import io.questdb.cairo.NanosTimestampDriver;
-import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.*;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.client.Sender;
+import io.questdb.client.cutlass.line.LineSenderException;
+import io.questdb.client.cutlass.line.LineUdpSender;
+import io.questdb.client.network.NetworkFacadeImpl;
 import io.questdb.cutlass.http.processors.LineHttpProcessorState;
-import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
-import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.LongList;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.NanosecondClock;
@@ -91,6 +85,109 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         return Arrays.asList(new Object[][]{
                 {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
+    }
+
+    private static void assertSql(TestServerMain serverMain, final String expected, final String sql) {
+        serverMain.assertSql(sql, expected);
+    }
+
+    private static void createMatView(TestServerMain serverMain) {
+        execute(serverMain, "create materialized view price_1h as (select sym, last(price) as price, ts from base_price sample by 1h) partition by DAY");
+    }
+
+    private static void execute(TestServerMain serverMain, final String sql) {
+        serverMain.execute(sql);
+    }
+
+    private static Bootstrap newBootstrapWithClock(MicrosecondClock microsecondClock, Map<String, String> envs) {
+        Map<String, String> env = new HashMap<>(System.getenv());
+        env.putAll(envs);
+        return new Bootstrap(
+                new PropBootstrapConfiguration() {
+                    @Override
+                    public Map<String, String> getEnv() {
+                        return env;
+                    }
+                },
+                getServerMainArgs()
+        ) {
+            @Override
+            public MicrosecondClock getMicrosecondClock() {
+                return microsecondClock != null ? microsecondClock : super.getMicrosecondClock();
+            }
+        };
+    }
+
+    @NotNull
+    private static TestServerMain startMainPortsDisabled() {
+        return startWithEnvVariables0(
+                PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
+                PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
+                PropertyKey.LINE_UDP_ENABLED.getEnvVarName(), "false",
+                PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
+                PropertyKey.HTTP_ENABLED.getEnvVarName(), "false",
+                PropertyKey.PG_ENABLED.getEnvVarName(), "false"
+        );
+    }
+
+    @NotNull
+    private static TestServerMain startMainPortsDisabled(MicrosecondClock microsecondClock, String... extraEnvs) {
+        assert extraEnvs.length % 2 == 0;
+        ((MicrosTimestampDriver) (MicrosTimestampDriver.INSTANCE)).setTicker(microsecondClock);
+        ((NanosTimestampDriver) (NanosTimestampDriver.INSTANCE)).setTicker((NanosecondClock) () -> NanosTimestampDriver.INSTANCE.fromMicros(microsecondClock.getTicks()));
+
+        final String[] disablePortsEnvs = new String[]{
+                PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
+                PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
+                PropertyKey.LINE_UDP_ENABLED.getEnvVarName(), "false",
+                PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
+                PropertyKey.HTTP_ENABLED.getEnvVarName(), "false",
+                PropertyKey.PG_ENABLED.getEnvVarName(), "false"
+        };
+
+        final String[] envs = new String[disablePortsEnvs.length + extraEnvs.length];
+        for (int i = 0; i < extraEnvs.length; i += 2) {
+            envs[i] = extraEnvs[i];
+            envs[i + 1] = extraEnvs[i + 1];
+        }
+        for (int i = disablePortsEnvs.length; i < envs.length; i += 2) {
+            envs[i] = disablePortsEnvs[i - disablePortsEnvs.length];
+            envs[i + 1] = disablePortsEnvs[i + 1 - disablePortsEnvs.length];
+        }
+
+        return startWithEnvVariables0(microsecondClock, envs);
+    }
+
+    private static TestServerMain startWithEnvVariables0(String... envs) {
+        return startWithEnvVariables0(null, envs);
+    }
+
+    private static TestServerMain startWithEnvVariables0(MicrosecondClock microsecondClock, String... envs) {
+        assert envs.length % 2 == 0;
+
+        Map<String, String> envMap = new HashMap<>();
+        for (int i = 0; i < envs.length; i += 2) {
+            envMap.put(envs[i], envs[i + 1]);
+        }
+        TestServerMain serverMain = new TestServerMain(newBootstrapWithClock(microsecondClock, envMap)) {
+            @Override
+            protected void setupMatViewJobs(
+                    WorkerPool mvWorkerPool,
+                    CairoEngine engine,
+                    int sharedQueryWorkerCount
+            ) {
+            }
+
+            @Override
+            protected void setupWalApplyJob(
+                    WorkerPool workerPool,
+                    CairoEngine engine,
+                    int sharedQueryWorkerCount
+            ) {
+            }
+        };
+        serverMain.start();
+        return serverMain;
     }
 
     @Before
@@ -967,109 +1064,6 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 assertSql(main2, replaceExpectedTimestamp(secondExpected), "price_1h order by ts, sym");
             }
         });
-    }
-
-    private static void assertSql(TestServerMain serverMain, final String expected, final String sql) {
-        serverMain.assertSql(sql, expected);
-    }
-
-    private static void createMatView(TestServerMain serverMain) {
-        execute(serverMain, "create materialized view price_1h as (select sym, last(price) as price, ts from base_price sample by 1h) partition by DAY");
-    }
-
-    private static void execute(TestServerMain serverMain, final String sql) {
-        serverMain.execute(sql);
-    }
-
-    private static Bootstrap newBootstrapWithClock(MicrosecondClock microsecondClock, Map<String, String> envs) {
-        Map<String, String> env = new HashMap<>(System.getenv());
-        env.putAll(envs);
-        return new Bootstrap(
-                new PropBootstrapConfiguration() {
-                    @Override
-                    public Map<String, String> getEnv() {
-                        return env;
-                    }
-                },
-                getServerMainArgs()
-        ) {
-            @Override
-            public MicrosecondClock getMicrosecondClock() {
-                return microsecondClock != null ? microsecondClock : super.getMicrosecondClock();
-            }
-        };
-    }
-
-    @NotNull
-    private static TestServerMain startMainPortsDisabled() {
-        return startWithEnvVariables0(
-                PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
-                PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
-                PropertyKey.LINE_UDP_ENABLED.getEnvVarName(), "false",
-                PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
-                PropertyKey.HTTP_ENABLED.getEnvVarName(), "false",
-                PropertyKey.PG_ENABLED.getEnvVarName(), "false"
-        );
-    }
-
-    @NotNull
-    private static TestServerMain startMainPortsDisabled(MicrosecondClock microsecondClock, String... extraEnvs) {
-        assert extraEnvs.length % 2 == 0;
-        ((MicrosTimestampDriver) (MicrosTimestampDriver.INSTANCE)).setTicker(microsecondClock);
-        ((NanosTimestampDriver) (NanosTimestampDriver.INSTANCE)).setTicker((NanosecondClock) () -> NanosTimestampDriver.INSTANCE.fromMicros(microsecondClock.getTicks()));
-
-        final String[] disablePortsEnvs = new String[]{
-                PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
-                PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
-                PropertyKey.LINE_UDP_ENABLED.getEnvVarName(), "false",
-                PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
-                PropertyKey.HTTP_ENABLED.getEnvVarName(), "false",
-                PropertyKey.PG_ENABLED.getEnvVarName(), "false"
-        };
-
-        final String[] envs = new String[disablePortsEnvs.length + extraEnvs.length];
-        for (int i = 0; i < extraEnvs.length; i += 2) {
-            envs[i] = extraEnvs[i];
-            envs[i + 1] = extraEnvs[i + 1];
-        }
-        for (int i = disablePortsEnvs.length; i < envs.length; i += 2) {
-            envs[i] = disablePortsEnvs[i - disablePortsEnvs.length];
-            envs[i + 1] = disablePortsEnvs[i + 1 - disablePortsEnvs.length];
-        }
-
-        return startWithEnvVariables0(microsecondClock, envs);
-    }
-
-    private static TestServerMain startWithEnvVariables0(String... envs) {
-        return startWithEnvVariables0(null, envs);
-    }
-
-    private static TestServerMain startWithEnvVariables0(MicrosecondClock microsecondClock, String... envs) {
-        assert envs.length % 2 == 0;
-
-        Map<String, String> envMap = new HashMap<>();
-        for (int i = 0; i < envs.length; i += 2) {
-            envMap.put(envs[i], envs[i + 1]);
-        }
-        TestServerMain serverMain = new TestServerMain(newBootstrapWithClock(microsecondClock, envMap)) {
-            @Override
-            protected void setupMatViewJobs(
-                    WorkerPool mvWorkerPool,
-                    CairoEngine engine,
-                    int sharedQueryWorkerCount
-            ) {
-            }
-
-            @Override
-            protected void setupWalApplyJob(
-                    WorkerPool workerPool,
-                    CairoEngine engine,
-                    int sharedQueryWorkerCount
-            ) {
-            }
-        };
-        serverMain.start();
-        return serverMain;
     }
 
     private void assertLineError(Transport transport, TestServerMain main, MatViewRefreshJob refreshJob, String expected) {
