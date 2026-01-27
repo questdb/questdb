@@ -480,15 +480,13 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         return safeToPurgeTxn;
     }
 
-    private boolean recursiveDelete(Path path) {
+    private void recursiveDelete(Path path) {
         if (!ff.rmdir(path, false) && !Files.isErrnoFileDoesNotExist(ff.errno())) {
             LOG.debug()
                     .$("could not delete directory [path=").$(path)
                     .$(", errno=").$(ff.errno())
                     .I$();
-            return false;
         }
-        return true;
     }
 
     /**

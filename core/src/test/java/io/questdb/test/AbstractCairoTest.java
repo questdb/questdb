@@ -1553,15 +1553,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         overrides.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, 1);
     }
 
-    protected static boolean couldObtainLock(Path path) {
-        final long lockFd = TableUtils.lock(TestFilesFacadeImpl.INSTANCE, path.$(), false);
-        if (lockFd != -1L) {
-            TestFilesFacadeImpl.INSTANCE.close(lockFd);
-            return true;  // Could lock/unlock.
-        }
-        return false;  // Could not obtain lock.
-    }
-
     protected static MatViewRefreshJob createMatViewRefreshJob() {
         return createMatViewRefreshJob(engine);
     }
