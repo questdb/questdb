@@ -421,7 +421,7 @@ public class CheckpointTest extends AbstractCairoTest {
         Assert.assertEquals("Listener should not be called before restore", 0, restoreCompleteCallCount[0]);
 
         // Server 2: Start with trigger file and custom listener - should trigger restore
-        try (TestServerMain server2 = startServerMainWithListener(dir2.getAbsolutePath(), listener)) {
+        try (TestServerMain _server2 = startServerMainWithListener(dir2.getAbsolutePath(), listener)) {
             // Restore happens during startup, so listener should have been called exactly once
             Assert.assertEquals("Listener onCheckpointRestoreComplete should be called exactly once", 1, restoreCompleteCallCount[0]);
         }
@@ -2552,8 +2552,6 @@ public class CheckpointTest extends AbstractCairoTest {
 
         TestServerMain serverMain = new TestServerMain(new Bootstrap(
                 new PropBootstrapConfiguration() {
-                    private CairoConfiguration wrappedCairoConfig;
-
                     @Override
                     public Map<String, String> getEnv() {
                         return env;
@@ -2563,7 +2561,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
                         ServerConfiguration baseConfig = super.getServerConfiguration(bootstrap);
                         // Wrap the CairoConfiguration to inject our listener
-                        wrappedCairoConfig = new CairoConfigurationWrapper(baseConfig.getCairoConfiguration()) {
+                        CairoConfiguration wrappedCairoConfig = new CairoConfigurationWrapper(baseConfig.getCairoConfiguration()) {
                             @Override
                             public @NotNull CheckpointListener getCheckpointListener() {
                                 return listener;
