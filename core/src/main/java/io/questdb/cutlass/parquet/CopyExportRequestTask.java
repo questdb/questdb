@@ -401,11 +401,11 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     assert symbolTable != null;
                     int symbolColumnType = columnType;
                     if (!symbolTable.containsNullValue()) {
-                        symbolColumnType |= Integer.MIN_VALUE;
+                        symbolColumnType |= 1 << 31;
                     }
-                    columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | (symbolColumnType & 0xFFFFFFFFL));
+                    columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | symbolColumnType);
                 } else {
-                    columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | (columnType & 0xFFFFFFFFL));
+                    columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | columnType);
                 }
             }
             streamWriter = createStreamingParquetWriter(

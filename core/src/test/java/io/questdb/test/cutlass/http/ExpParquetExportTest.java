@@ -813,6 +813,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     );
 
                     params.put("compression_codec", "brotli");
+                    params.put("compression_level", "9");
                     testHttpClient.assertGet(
                             "/exp",
                             "PAR1\u0015\u0000\u0015\\\u00150,\u0015\n" +
@@ -903,6 +904,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.clear();
                     params.put("fmt", "parquet");
                     params.put("compression_codec", "zstd");
+                    params.put("compression_level", "9");
                     testHttpClient.assertGetParquet("/exp", 380, params, "SELECT * FROM codec_zstd_test");
                 });
     }

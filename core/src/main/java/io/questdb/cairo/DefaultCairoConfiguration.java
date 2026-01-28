@@ -690,9 +690,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         return ParquetCompression.COMPRESSION_LZ4_RAW;
     }
 
+    // Compression level for GZIP (0-9), BROTLI (0-11), or ZSTD (1-22) codecs when exporting data to parquet.
+    // By default, getParquetExportCompressionCodec() returns ParquetCompression.COMPRESSION_LZ4_RAW,
+    // for which compression level has no effect, so we return 0.
     @Override
     public int getParquetExportCompressionLevel() {
-        return 9;
+        return 0;
     }
 
     @Override
@@ -955,6 +958,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlHashJoinValuePageSize() {
         return Numbers.SIZE_1MB * 16;
+    }
+
+    @Override
+    public int getSqlIntervalIncrementalMergeThreshold() {
+        return 256;
+    }
+
+    @Override
+    public int getSqlIntervalMaxBracketDepth() {
+        return 8;
+    }
+
+    @Override
+    public int getSqlIntervalMaxIntervalsAfterMerge() {
+        return 1024;
     }
 
     @Override

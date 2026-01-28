@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
@@ -33,6 +34,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 
 /**
  * Collects the interval during query parsing
@@ -50,6 +52,7 @@ import io.questdb.std.ObjList;
  */
 public class RuntimeIntervalModelBuilder implements Mutable {
     private final ObjList<Function> dynamicRangeList = new ObjList<>();
+    private final StringSink sink = new StringSink();
     // All data needed to re-evaluate intervals
     // is stored in 2 lists - ListLong and List of functions
     // ListLongs has STATIC_LONGS_PER_DYNAMIC_INTERVAL entries per 1 dynamic interval
@@ -59,6 +62,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     private Function betweenBoundaryFunc;
     private boolean betweenBoundarySet;
     private boolean betweenNegated;
+    private CairoConfiguration configuration;
     private boolean intervalApplied = false;
     private int partitionBy;
     private TimestampDriver timestampDriver;
@@ -133,15 +137,18 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         int size = staticIntervals.size();
-        IntervalUtils.parseInterval(timestampDriver, seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);
-        if (dynamicRangeList.size() == 0) {
-            IntervalUtils.applyLastEncodedInterval(timestampDriver, staticIntervals);
+        boolean noDynamicIntervals = dynamicRangeList.size() == 0;
+        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT, sink, noDynamicIntervals);
+        if (noDynamicIntervals) {
             if (intervalApplied) {
                 IntervalUtils.intersectInPlace(staticIntervals, size);
             }
         } else {
-            // else - nothing to do, interval already encoded in staticPeriods as 4 longs
-            dynamicRangeList.add(null);
+            // Dynamic mode: each interval is encoded as 4 longs, add one null per interval
+            int intervalsAdded = (staticIntervals.size() - size) / IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
+            for (int i = 0; i < intervalsAdded; i++) {
+                dynamicRangeList.add(null);
+            }
         }
         intervalApplied = true;
     }
@@ -249,9 +256,10 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
     }
 
-    public void of(int timestampType, int partitionBy) {
+    public void of(int timestampType, int partitionBy, CairoConfiguration configuration) {
         this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
         this.partitionBy = partitionBy;
+        this.configuration = configuration;
     }
 
     public void setBetweenBoundary(long timestamp) {
@@ -339,16 +347,19 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         int size = staticIntervals.size();
-        IntervalUtils.parseInterval(timestampDriver, seq, lo, lim, position, staticIntervals, IntervalOperation.SUBTRACT);
-        if (dynamicRangeList.size() == 0) {
-            IntervalUtils.applyLastEncodedInterval(timestampDriver, staticIntervals);
+        boolean noDynamicIntervals = dynamicRangeList.size() == 0;
+        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, staticIntervals, IntervalOperation.SUBTRACT, sink, noDynamicIntervals);
+        if (noDynamicIntervals) {
             IntervalUtils.invert(staticIntervals, size);
             if (intervalApplied) {
                 IntervalUtils.intersectInPlace(staticIntervals, size);
             }
         } else {
-            // else - nothing to do, interval already encoded in staticPeriods as 4 longs
-            dynamicRangeList.add(null);
+            // Dynamic mode: each interval is encoded as 4 longs, add one null per interval
+            int intervalsAdded = (staticIntervals.size() - size) / IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
+            for (int i = 0; i < intervalsAdded; i++) {
+                dynamicRangeList.add(null);
+            }
         }
         intervalApplied = true;
     }
@@ -374,7 +385,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 IntervalUtils.unionInPlace(staticIntervals, staticIntervals.size() - 2);
             }
         } else {
-            throw new UnsupportedOperationException();
+            IntervalUtils.encodeInterval(lo, hi, IntervalOperation.UNION, staticIntervals);
+            dynamicRangeList.add(null);
         }
         intervalApplied = true;
     }
@@ -384,20 +396,61 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        if (dynamicRangeList.size() > 0) {
-            throw new UnsupportedOperationException();
-        }
-
         // Parse and expand the interval string (may produce multiple pairs for periodic intervals)
         int size = staticIntervals.size();
-        IntervalUtils.parseInterval(timestampDriver, seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);
-        IntervalUtils.applyLastEncodedInterval(timestampDriver, staticIntervals);
-
-        // Union all newly added pairs with existing intervals
-        if (intervalApplied) {
-            IntervalUtils.unionInPlace(staticIntervals, size);
+        boolean noDynamicIntervals = dynamicRangeList.size() == 0;
+        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, staticIntervals, IntervalOperation.UNION, sink, noDynamicIntervals);
+        if (noDynamicIntervals) {
+            if (intervalApplied) {
+                IntervalUtils.unionInPlace(staticIntervals, size);
+            }
+        } else {
+            // Dynamic mode: each interval is encoded as 4 longs, add one null per interval
+            int intervalsAdded = (staticIntervals.size() - size) / IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
+            for (int i = 0; i < intervalsAdded; i++) {
+                dynamicRangeList.add(null);
+            }
         }
         intervalApplied = true;
+    }
+
+    public void unionRuntimeTimestamp(Function function) {
+        if (isEmptySet()) {
+            return;
+        }
+
+        IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.UNION, staticIntervals);
+        dynamicRangeList.add(function);
+        intervalApplied = true;
+    }
+
+    /**
+     * Applies the add method with overflow checking.
+     * Throws SqlException if the addition would cause timestamp overflow.
+     */
+    private static long addWithOverflowCheck(TimestampDriver.TimestampAddMethod addMethod, long timestamp, int offset) throws SqlException {
+        // For zero offset, no change needed
+        if (offset == 0) {
+            return timestamp;
+        }
+
+        long result = addMethod.add(timestamp, offset);
+
+        // Detect overflow: if offset is positive but result is less than original,
+        // or if offset is negative but result is greater than original, overflow occurred.
+        if (offset > 0 && result < timestamp) {
+            throw SqlException.position(0)
+                    .put("timestamp overflow: applying offset ")
+                    .put(offset)
+                    .put(" to timestamp would exceed maximum value");
+        } else if (offset < 0 && result > timestamp) {
+            throw SqlException.position(0)
+                    .put("timestamp overflow: applying offset ")
+                    .put(offset)
+                    .put(" to timestamp would exceed minimum value");
+        }
+
+        return result;
     }
 
     private void intersectBetweenDynamic(Function funcValue1, Function funcValue2) {
@@ -434,5 +487,43 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         IntervalUtils.encodeInterval(constValue, 0, (short) 0, IntervalDynamicIndicator.IS_HI_DYNAMIC, operation, staticIntervals);
         dynamicRangeList.add(funcValue);
         intervalApplied = true;
+    }
+
+    /**
+     * Merges intervals from another builder with calendar-aware offset adjustment.
+     * This avoids allocating an intermediate RuntimeIntervalModel.
+     *
+     * @param other     the builder to merge from
+     * @param addMethod the timestamp add method (from TimestampDriver)
+     * @param offset    the offset value to apply
+     * @throws SqlException if applying the offset would cause timestamp overflow
+     */
+    void mergeWithAddMethod(RuntimeIntervalModelBuilder other, TimestampDriver.TimestampAddMethod addMethod, int offset) throws SqlException {
+        if (other == null || isEmptySet() || addMethod == null || !other.intervalApplied) {
+            return;
+        }
+        LongList otherIntervals = other.staticIntervals;
+        if (otherIntervals.size() > 0) {
+            int dynamicStart = otherIntervals.size() - other.dynamicRangeList.size() * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
+            TimestampDriver otherDriver = other.timestampDriver;
+
+            for (int i = 0; i < dynamicStart; i += 2) {
+                long lo = otherIntervals.getQuick(i);
+                if (lo != Numbers.LONG_NULL && lo != Long.MAX_VALUE) {
+                    lo = timestampDriver.from(lo, otherDriver.getTimestampType());
+                    lo = addWithOverflowCheck(addMethod, lo, offset);
+                }
+                long hi = otherIntervals.getQuick(i + 1);
+                if (hi != Numbers.LONG_NULL && hi != Long.MAX_VALUE) {
+                    hi = timestampDriver.from(hi, otherDriver.getTimestampType());
+                    hi = addWithOverflowCheck(addMethod, hi, offset);
+                }
+                if (lo == Numbers.LONG_NULL && hi == Long.MAX_VALUE) {
+                    return;
+                } else {
+                    intersect(lo, hi);
+                }
+            }
+        }
     }
 }

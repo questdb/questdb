@@ -767,6 +767,11 @@ fn test_boolean_bitmap_slicer_advance_exact_byte_boundary() {
     }
 
     for i in 8..16 {
-        assert_eq!(slicer_advance.next(), slicer_next.next(), "mismatch at bit {}", i);
+        assert_eq!(
+            slicer_advance.next(),
+            slicer_next.next(),
+            "mismatch at bit {}",
+            i
+        );
     }
 }

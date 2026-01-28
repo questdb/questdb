@@ -45,7 +45,7 @@ impl Converter<8> for DaysToMillisConverter {
     fn convert<S: ByteSink>(input: &[u8], output: &mut S) -> ParquetResult<()> {
         let days_since_epoch = unsafe { ptr::read_unaligned(input.as_ptr() as *const i32) };
         let date = days_since_epoch as i64 * 24 * 60 * 60 * 1000;
-         output.extend_from_slice(&date.to_le_bytes())
+        output.extend_from_slice(&date.to_le_bytes())
     }
 }
 
@@ -617,7 +617,7 @@ impl<const N: usize, T: DataPageSlicer, C: Converter<N>> DataPageSlicer
     #[inline]
     fn next(&mut self) -> &[u8] {
         let slice = self.inner_slicer.next();
-        _ = C::convert(slice, &mut SliceSink(&mut self.buffer));
+        let _ = C::convert(slice, &mut SliceSink(&mut self.buffer));
         &self.buffer
     }
 
