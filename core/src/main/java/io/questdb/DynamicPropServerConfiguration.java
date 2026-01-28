@@ -235,6 +235,18 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             if (oldVal == null || !oldVal.equals(entry.getValue())) {
                 final ConfigPropertyKey propKey = keyResolver.apply(key);
                 if (propKey == null) {
+                    // Check if this is a .file property for a sensitive reloadable property
+                    if (key.endsWith(PropServerConfiguration.SECRET_FILE_PROPERTY_SUFFIX)) {
+                        String baseKey = key.substring(0, key.length() - PropServerConfiguration.SECRET_FILE_PROPERTY_SUFFIX.length());
+                        ConfigPropertyKey basePropKey = keyResolver.apply(baseKey);
+                        if (basePropKey != null && basePropKey.isSensitive() && reloadableProps.contains(basePropKey)) {
+                            log.info().$("reloaded config option [update, key=").$(key).I$();
+                            oldProperties.setProperty(key, (String) entry.getValue());
+                            changed = true;
+                            changedKeys.add(basePropKey.getPropertyPath());
+                            continue;
+                        }
+                    }
                     log.error().$("unknown property, ignoring [update, key=").$(key).I$();
                     continue;
                 }
@@ -264,6 +276,19 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             if (!newProperties.containsKey(key)) {
                 final ConfigPropertyKey propKey = keyResolver.apply((String) key);
                 if (propKey == null) {
+                    // Check if this is a .file property for a sensitive reloadable property
+                    String keyStr = (String) key;
+                    if (keyStr.endsWith(PropServerConfiguration.SECRET_FILE_PROPERTY_SUFFIX)) {
+                        String baseKey = keyStr.substring(0, keyStr.length() - PropServerConfiguration.SECRET_FILE_PROPERTY_SUFFIX.length());
+                        ConfigPropertyKey basePropKey = keyResolver.apply(baseKey);
+                        if (basePropKey != null && basePropKey.isSensitive() && reloadableProps.contains(basePropKey)) {
+                            log.info().$("reloaded config option [remove, key=").$(key).I$();
+                            oldPropsIter.remove();
+                            changed = true;
+                            changedKeys.add(basePropKey.getPropertyPath());
+                            continue;
+                        }
+                    }
                     log.error().$("unknown property, ignoring [remove, key=").$(key).I$();
                     continue;
                 }

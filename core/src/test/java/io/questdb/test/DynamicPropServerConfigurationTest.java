@@ -924,6 +924,58 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
         });
     }
 
+    @Test
+    public void testPgWirePasswordSwitchFromConfToFile() throws Exception {
+        assertMemoryLeak(() -> {
+            // Start with password in server.conf (not from file)
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.password=direct_password\n");
+            }
+
+            // Create a secret file (but don't use it yet)
+            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "pg_password.txt");
+            Files.createDirectories(secretFilePath.getParent());
+            Files.writeString(secretFilePath, "file_based_password");
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                // Verify initial password from conf
+                Assert.assertEquals(
+                        "direct_password",
+                        serverMain.getConfiguration().getPGWireConfiguration().getDefaultPassword()
+                );
+
+                // Verify we can connect with the direct password
+                try (Connection conn = getConnection("admin", "direct_password")) {
+                    assertFalse(conn.isClosed());
+                }
+
+                // Switch to file-based password by adding pg.password.file
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("pg.password.file=" + secretFilePath.toString().replace("\\", "\\\\") + "\n");
+                }
+
+                // Reload config
+                serverMain.getEngine().getConfigReloader().reload();
+
+                // Verify password was switched to file-based
+                Assert.assertEquals(
+                        "file_based_password",
+                        serverMain.getConfiguration().getPGWireConfiguration().getDefaultPassword()
+                );
+
+                // Verify we can connect with the new file-based password
+                try (Connection conn = getConnection("admin", "file_based_password")) {
+                    assertFalse(conn.isClosed());
+                }
+
+                // Old direct password should no longer work
+                Assert.assertThrows(PSQLException.class, () -> getConnection("admin", "direct_password"));
+            }
+        });
+    }
+
     private static Connection getConnection(String user, String pass) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", user);
