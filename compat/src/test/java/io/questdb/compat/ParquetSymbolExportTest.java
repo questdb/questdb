@@ -490,6 +490,7 @@ public class ParquetSymbolExportTest extends AbstractTest {
             int colTopRows = 3 * rowsPerInsert; // 75k rows with NULL symbols
 
             // Step 2: Add symbol column - creates column top for all 75k existing rows
+            //noinspection SuspiciousNameCombination
             LOG.info().$("Step 2: Adding symbol column (creates column top for ").$(colTopRows).$(" rows)...").$();
             serverMain.getEngine().execute(
                     "ALTER TABLE symbol_coltop_multi_rg ADD COLUMN sym SYMBOL"
