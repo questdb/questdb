@@ -873,6 +873,57 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
         });
     }
 
+    @Test
+    public void testPgWirePasswordFromFileReload() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a secret file with initial password
+            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "pg_password.txt");
+            Files.createDirectories(secretFilePath.getParent());
+            Files.writeString(secretFilePath, "initial_secret_password");
+
+            // Configure pg.password.file to point to the secret file
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.password.file=" + secretFilePath.toString().replace("\\", "\\\\") + "\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                // Verify initial password was read from file
+                Assert.assertEquals(
+                        "initial_secret_password",
+                        serverMain.getConfiguration().getPGWireConfiguration().getDefaultPassword()
+                );
+
+                // Verify we can connect with the initial password
+                try (Connection conn = getConnection("admin", "initial_secret_password")) {
+                    assertFalse(conn.isClosed());
+                }
+
+                // Update the secret file with a new password
+                Files.writeString(secretFilePath, "updated_secret_password");
+
+                // Call the reload method directly instead of using the reload_config() SQL function
+                // to avoid needing to know the current password
+                serverMain.getEngine().getConfigReloader().reload();
+
+                // Verify password was updated from the file
+                Assert.assertEquals(
+                        "updated_secret_password",
+                        serverMain.getConfiguration().getPGWireConfiguration().getDefaultPassword()
+                );
+
+                // Verify we can connect with the new password
+                try (Connection conn = getConnection("admin", "updated_secret_password")) {
+                    assertFalse(conn.isClosed());
+                }
+
+                // Old password should no longer work
+                Assert.assertThrows(PSQLException.class, () -> getConnection("admin", "initial_secret_password"));
+            }
+        });
+    }
+
     private static Connection getConnection(String user, String pass) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", user);

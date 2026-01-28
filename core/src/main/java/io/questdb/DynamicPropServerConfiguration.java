@@ -44,10 +44,13 @@ import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -67,6 +70,9 @@ import java.util.function.Function;
 
 public class DynamicPropServerConfiguration implements ServerConfiguration, ConfigReloader {
     private static final Log LOG = LogFactory.getLog(DynamicPropServerConfiguration.class);
+    private static final String SECRET_FILE_PROPERTY_SUFFIX = ".file";
+    private static final String SECRET_FILE_ENV_VAR_SUFFIX = "_FILE";
+    private static final int SECRET_FILE_MAX_SIZE = 65536; // 64KB max for secret files
     private static final Set<? extends ConfigPropertyKey> dynamicProps = new HashSet<>(Arrays.asList(
             PropertyKey.PG_USER,
             PropertyKey.PG_PASSWORD,
@@ -225,9 +231,9 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             ObjHashSet<String> changedKeys,
             Log log
     ) {
-        if (newProperties.equals(oldProperties)) {
-            return false;
-        }
+//        if (newProperties.equals(oldProperties)) {
+//            return false;
+//        }
 
         changedKeys.clear();
         boolean changed = false;
@@ -417,7 +423,10 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
                     return false;
                 }
 
-                if (updateSupportedProperties(properties, newProperties, dynamicProps, keyResolver, changedKeys, LOG)) {
+                boolean propsChanged = updateSupportedProperties(properties, newProperties, dynamicProps, keyResolver, changedKeys, LOG);
+                boolean secretFilesChanged = checkSecretFileChanges(newProperties, changedKeys);
+
+                if (propsChanged || secretFilesChanged) {
                     reload0();
                     LOG.info().$("reloaded, [file=").$(confPath).I$();
                     watchRegistry.notifyWatchers(changedKeys);
@@ -428,6 +437,121 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             }
         }
         return false;
+    }
+
+    /**
+     * Checks if any secret file contents have changed since the last reload.
+     * For sensitive properties that use .file suffix, reads the current file content
+     * and compares it against the previously loaded value.
+     *
+     * @param currentProperties the current properties (to find .file paths)
+     * @param changedKeys set to record which keys changed
+     * @return true if any secret file content has changed
+     */
+    private boolean checkSecretFileChanges(Properties currentProperties, ObjHashSet<String> changedKeys) {
+        boolean changed = false;
+        PropServerConfiguration currentConfig = serverConfig.get();
+        var allPairs = currentConfig.getCairoConfiguration().getAllPairs();
+        if (allPairs == null) {
+            return false;
+        }
+
+        for (ConfigPropertyKey key : dynamicProps) {
+            if (!key.isSensitive()) {
+                continue;
+            }
+
+            // Check for secret file path (env var or property)
+            String secretFilePath = getSecretFilePath(currentProperties, key);
+            if (secretFilePath == null || secretFilePath.isEmpty()) {
+                continue;
+            }
+
+            // Read current file content
+            String currentFileContent;
+            try {
+                currentFileContent = readSecretFromFile(secretFilePath);
+            } catch (Exception e) {
+                LOG.error().$("failed to read secret file for reload check [key=").$(key.getPropertyPath())
+                        .$(", file=").$(secretFilePath).$(", error=").$(e).I$();
+                continue;
+            }
+
+            // Get previously loaded value
+            ConfigPropertyValue previousValue = allPairs.get(key);
+            if (previousValue == null) {
+                continue;
+            }
+
+            String previousContent = previousValue.getValue();
+
+            // Compare content
+            if (!currentFileContent.equals(previousContent)) {
+                LOG.info().$("secret file content changed [key=").$(key.getPropertyPath())
+                        .$(", file=").$(secretFilePath).I$();
+                changed = true;
+                changedKeys.add(key.getPropertyPath());
+            }
+        }
+
+        return changed;
+    }
+
+    /**
+     * Gets the file path for a secret property by checking the _FILE env var or .file property.
+     */
+    private String getSecretFilePath(Properties properties, ConfigPropertyKey key) {
+        // Check env var: QDB_KEY_FILE
+        if (env != null) {
+            String envFileKey = key.getEnvVarName() + SECRET_FILE_ENV_VAR_SUFFIX;
+            String filePath = env.get(envFileKey);
+            if (filePath != null) {
+                return filePath.trim();
+            }
+        }
+        // Check property: key.file
+        String propFileKey = key.getPropertyPath() + SECRET_FILE_PROPERTY_SUFFIX;
+        String filePath = properties.getProperty(propFileKey);
+        return filePath != null ? filePath.trim() : null;
+    }
+
+    /**
+     * Reads a secret value from a file. The file content is read as UTF-8 and trimmed.
+     */
+    private String readSecretFromFile(String filePath) {
+        long fd = -1;
+        long address = 0;
+        long size = 0;
+        try (Path path = new Path()) {
+            path.of(filePath);
+            fd = filesFacade.openRO(path.$());
+            if (fd < 0) {
+                throw new RuntimeException("cannot open secret file [path=" + filePath + ", errno=" + filesFacade.errno() + "]");
+            }
+            size = filesFacade.length(fd);
+            if (size < 0) {
+                throw new RuntimeException("cannot get size of secret file [path=" + filePath + ", errno=" + filesFacade.errno() + "]");
+            }
+            if (size > SECRET_FILE_MAX_SIZE) {
+                throw new RuntimeException("secret file is too large [path=" + filePath + ", size=" + size + ", maxSize=" + SECRET_FILE_MAX_SIZE + "]");
+            }
+            if (size == 0) {
+                return "";
+            }
+            address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+            long bytesRead = filesFacade.read(fd, address, size, 0);
+            if (bytesRead != size) {
+                throw new RuntimeException("cannot read secret file [path=" + filePath + ", errno=" + filesFacade.errno() + "]");
+            }
+            return Utf8s.stringFromUtf8Bytes(address, address + size).trim();
+        } finally {
+            if (address != 0) {
+                Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+            }
+            if (fd >= 0) {
+                filesFacade.close(fd);
+            }
+        }
     }
 
     @Override
