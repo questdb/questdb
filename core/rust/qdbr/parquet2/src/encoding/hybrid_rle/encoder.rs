@@ -37,10 +37,16 @@ fn bitpacked_encode_u32<W: Write, I: Iterator<Item = u32>>(
     length: usize,
     num_bits: usize,
 ) -> std::io::Result<()> {
+    // The RLE header declares ceil8(length) groups of 8 values.
+    // We must write exactly ceil8(ceil8(length) * 8 * num_bits) bytes
+    // to match what the header declares, per Parquet spec.
+    let num_groups = ceil8(length);
+    let total_values_declared = num_groups * 8;
+    let total_bytes_needed = ceil8(total_values_declared * num_bits);
+
     let chunks = length / U32_BLOCK_LEN;
     let remainder = length - chunks * U32_BLOCK_LEN;
     let mut buffer = [0u32; U32_BLOCK_LEN];
-
     let compressed_chunk_size = ceil8(U32_BLOCK_LEN * num_bits);
 
     for _ in 0..chunks {
@@ -56,17 +62,18 @@ fn bitpacked_encode_u32<W: Write, I: Iterator<Item = u32>>(
     }
 
     if remainder != 0 {
-        let compressed_remainder_size = ceil8(remainder * num_bits);
         iterator
             .by_ref()
             .take(remainder)
             .zip(buffer.iter_mut())
             .for_each(|(item, buf)| *buf = item);
 
+        buffer[remainder..].fill(0);
         let mut packed = [0u8; 4 * U32_BLOCK_LEN];
         bitpacked::encode_pack(&buffer, num_bits, packed.as_mut());
-        writer.write_all(&packed[..compressed_remainder_size])?;
-    };
+        let remaining_bytes = total_bytes_needed - chunks * compressed_chunk_size;
+        writer.write_all(&packed[..remaining_bytes])?;
+    }
     Ok(())
 }
 
@@ -123,7 +130,7 @@ mod tests {
 
         assert_eq!(
             vec,
-            vec![(2 << 1 | 1), 0b01_10_01_00, 0b00_01_01_10, 0b_00_00_00_11]
+            vec![(2 << 1 | 1), 0b01_10_01_00, 0b00_01_01_10, 0b_00_00_00_11, 0b00_00_00_00]
         );
         Ok(())
     }
