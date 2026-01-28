@@ -48,6 +48,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.preferences.SettingsStore;
+import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
@@ -76,6 +77,7 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietCloseable {
 
     private final static Log LOG = LogFactory.getLog(DatabaseCheckpointAgent.class);
+    private final CharSequenceLongHashMap checkpointSeqTxns = new CharSequenceLongHashMap(); // protected with #lock
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final FilesFacade ff;
@@ -90,6 +92,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final AtomicLong startedAtTimestamp = new AtomicLong(Numbers.LONG_NULL); // Numbers.LONG_NULL means no ongoing checkpoint
     private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
     private final TxReader txReader;
+    private boolean isBackupCheckpoint; // protected with #lock
     private volatile boolean ownsWalPurgeJobRunLock = false;
     private SimpleWaitingLock walPurgeJobRunLock = null;
 
@@ -200,6 +203,11 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             }
 
             try {
+                isBackupCheckpoint = isIncrementalBackup;
+
+                // Clear checkpoint seqTxns map at the start of each checkpoint
+                checkpointSeqTxns.clear();
+
                 path.of(checkpointRoot).concat(configuration.getDbDirectory());
                 final int checkpointDbLen = path.size();
                 // delete contents of the checkpoint's "db" dir.
@@ -396,6 +404,9 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         mem.putLong(lastTxn);
                                         mem.close(true, Vm.TRUNCATE_TO_POINTER);
 
+                                        // Record view seqTxn for checkpoint listener
+                                        checkpointSeqTxns.put(tableToken.getDirName(), lastTxn);
+
                                         LOG.info().$("view included in the checkpoint [view=").$(tableToken).I$();
                                     } else {
                                         LOG.info().$("skipping, view is concurrently dropped [view=").$(tableToken).I$();
@@ -484,6 +495,9 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         // the sequencer txn of the snapshot sequencer metadata
                                         mem.putLong(lastTxn);
                                         mem.close(true, Vm.TRUNCATE_TO_POINTER);
+
+                                        // Record WAL table seqTxn for checkpoint listener
+                                        checkpointSeqTxns.put(tableToken.getDirName(), lastTxn);
                                     }
 
                                     LogRecord logRecord = LOG.info().$("table included in the checkpoint [table=").$(tableToken)
@@ -732,6 +746,12 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         try {
             releaseScoreboardTxns(true);
 
+            // Notify checkpoint listener with checkpoint timestamp and collected seqTxns
+            // Skip for backup checkpoints - backups use manifest-based cleanup, not checkpoint history
+            if (!isBackupCheckpoint) {
+                engine.getCheckpointListener().onCheckpointReleased(startedAtTimestamp.get(), checkpointSeqTxns);
+            }
+
             // Delete checkpoint's "db" directory.
             path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).$();
             ff.rmdir(path); // it's fine to ignore errors here
@@ -905,6 +925,9 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     .$(", walFilesCount=").$(recoveredWalFiles.get())
                     .$(", symbolFilesCount=").$(symbolFilesCount.get())
                     .I$();
+
+            // Notify checkpoint listener that restore is complete
+            engine.getCheckpointListener().onCheckpointRestoreComplete();
 
             // Delete checkpoint directory to avoid recovery on next restart.
             srcPath.trimTo(checkpointRootLen).$();
