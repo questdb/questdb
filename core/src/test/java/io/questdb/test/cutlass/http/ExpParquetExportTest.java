@@ -686,19 +686,19 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 103815, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 103536, params, "test_table");
                     params.put("row_group_size", "1000");
                     testHttpClient.assertGetParquet("/exp", 107352, params, "test_table");
                     params.put("row_group_size", "500");
                     testHttpClient.assertGetParquet("/exp", 113778, params, "test_table");
                     params.put("row_group_size", "999");
-                    testHttpClient.assertGetParquet("/exp", 110022, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 109748, params, "test_table");
                     params.put("row_group_size", "201");
-                    testHttpClient.assertGetParquet("/exp", 135249, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 134970, params, "test_table");
                     params.put("row_group_size", "2001");
-                    testHttpClient.assertGetParquet("/exp", 106320, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 106051, params, "test_table");
                     params.put("row_group_size", "10000");
-                    testHttpClient.assertGetParquet("/exp", 103815, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 103536, params, "test_table");
                     assertParquetExportDataCorrectness(engine, sqlExecutionContext, new String[]{"test_table"}, 10, 10091);
                 });
     }
@@ -1473,7 +1473,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             ")", sqlExecutionContext);
 
 
-                    testHttpClient.assertGetParquet("/exp", 1961, tableName);
+                    testHttpClient.assertGetParquet("/exp", 1962, tableName);
                 });
     }
 

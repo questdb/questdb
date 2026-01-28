@@ -64,6 +64,7 @@ exclude:
   - name: SameParameterValue
     paths:
       - core/src/test
+      - compat/src/test
   - name: SameReturnValue
     paths:
       - core/src/test
