@@ -70,7 +70,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public static final TimestampDriver INSTANCE = new MicrosTimestampDriver();
     private static final DateFormat DEFAULT_FORMAT = new DateFormat() {
         @Override
-        public void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
+        public void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName,
+                @NotNull CharSink<?> sink) {
             sink.putAscii(DEFAULT_PARTITION_NAME);
         }
 
@@ -90,11 +91,15 @@ public class MicrosTimestampDriver implements TimestampDriver {
         }
     };
 
-    private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(MicrosTimestampDriver::partitionFloorDD, DAY_FORMAT);
-    private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(MicrosTimestampDriver::partitionFloorHH, HOUR_FORMAT);
-    private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(MicrosTimestampDriver::partitionFloorMM, MONTH_FORMAT);
+    private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(
+            MicrosTimestampDriver::partitionFloorDD, DAY_FORMAT);
+    private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(
+            MicrosTimestampDriver::partitionFloorHH, HOUR_FORMAT);
+    private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(
+            MicrosTimestampDriver::partitionFloorMM, MONTH_FORMAT);
     private static final DateFormat PARTITION_WEEK_FORMAT = new IsoWeekPartitionFormat();
-    private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(MicrosTimestampDriver::partitionFloorYYYY, YEAR_FORMAT);
+    private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(
+            MicrosTimestampDriver::partitionFloorYYYY, YEAR_FORMAT);
 
     private final ColumnTypeConverter.Var2FixedConverter<CharSequence> converterStr2Timestamp = this::appendToMem;
     private final ColumnTypeConverter.Fixed2VarConverter converterTimestamp2Str = this::append;
@@ -107,7 +112,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
         return INSTANCE.parseFloorLiteral(value);
     }
 
-    public static long parseDayTime(CharSequence seq, int lim, int pos, long ts, int dayRange, int dayDigits) throws NumericException {
+    public static long parseDayTime(CharSequence seq, int lim, int pos, long ts, int dayRange, int dayDigits)
+            throws NumericException {
         CommonUtils.checkChar(seq, pos++, lim, '-');
         int day = Numbers.parseInt(seq, pos, pos += dayDigits);
         CommonUtils.checkRange(day, 1, dayRange);
@@ -287,7 +293,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long from(Instant instant) {
-        return Math.addExact(Math.multiplyExact(instant.getEpochSecond(), Micros.SECOND_MICROS), instant.getNano() / Micros.MICRO_NANOS);
+        return Math.addExact(Math.multiplyExact(instant.getEpochSecond(), Micros.SECOND_MICROS),
+                instant.getNano() / Micros.MICRO_NANOS);
     }
 
     @Override
@@ -369,7 +376,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
             case 's' -> Micros::addSeconds;
             case 'm' -> Micros::addMinutes;
             case 'H', 'h' -> // compatibility with sample by syntax
-                    Micros::addHours;
+                Micros::addHours;
             case 'd' -> Micros::addDays;
             case 'w' -> Micros::addWeeks;
             case 'M' -> Micros::addMonths;
@@ -584,7 +591,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
             case WEEK -> PARTITION_WEEK_FORMAT;
             case NONE, NOT_APPLICABLE -> DEFAULT_FORMAT;
             default ->
-                    throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
+                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
         };
     }
 
@@ -740,34 +747,34 @@ public class MicrosTimestampDriver implements TimestampDriver {
         return switch (timeUnit) {
             case 'n' ->
                 // nanos
-                    new SimpleTimestampSampler(Math.max(interval / Micros.MICRO_NANOS, 1), ColumnType.TIMESTAMP_MICRO);
+                new SimpleTimestampSampler(Math.max(interval / Micros.MICRO_NANOS, 1), ColumnType.TIMESTAMP_MICRO);
             case 'U' ->
                 // micros
-                    new SimpleTimestampSampler(interval, ColumnType.TIMESTAMP_MICRO);
+                new SimpleTimestampSampler(interval, ColumnType.TIMESTAMP_MICRO);
             case 'T' ->
                 // millis
-                    new SimpleTimestampSampler(Micros.MILLI_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
+                new SimpleTimestampSampler(Micros.MILLI_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 's' ->
                 // seconds
-                    new SimpleTimestampSampler(Micros.SECOND_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
+                new SimpleTimestampSampler(Micros.SECOND_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 'm' ->
                 // minutes
-                    new SimpleTimestampSampler(Micros.MINUTE_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
+                new SimpleTimestampSampler(Micros.MINUTE_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 'h' ->
                 // hours
-                    new SimpleTimestampSampler(Micros.HOUR_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
+                new SimpleTimestampSampler(Micros.HOUR_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 'd' ->
                 // days
-                    new SimpleTimestampSampler(Micros.DAY_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
+                new SimpleTimestampSampler(Micros.DAY_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 'w' ->
                 // weeks
-                    new WeekTimestampMicrosSampler((int) interval);
+                new WeekTimestampMicrosSampler((int) interval);
             case 'M' ->
                 // months
-                    new MonthTimestampMicrosSampler((int) interval);
+                new MonthTimestampMicrosSampler((int) interval);
             case 'y' ->
                 // years
-                    new YearTimestampMicrosSampler((int) interval);
+                new YearTimestampMicrosSampler((int) interval);
             default -> throw SqlException.$(position, "unsupported interval qualifier");
         };
     }
@@ -812,7 +819,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public boolean inInterval(long value, int intervalType, Interval interval) {
-        assert intervalType == ColumnType.INTERVAL_TIMESTAMP_NANO || intervalType == ColumnType.INTERVAL_TIMESTAMP_MICRO;
+        assert intervalType == ColumnType.INTERVAL_TIMESTAMP_NANO
+                || intervalType == ColumnType.INTERVAL_TIMESTAMP_MICRO;
         if (intervalType == ColumnType.INTERVAL_TIMESTAMP_NANO) {
             value = CommonUtils.microsToNanos(value);
         }
@@ -1054,7 +1062,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
         return ts;
     }
 
-    public void parseInterval(CharSequence input, int pos, int lim, short operation, LongList out) throws NumericException {
+    public void parseInterval(CharSequence input, int pos, int lim, short operation, LongList out)
+            throws NumericException {
         if (lim - pos < 4) {
             throw NumericException.instance();
         }
@@ -1128,11 +1137,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
                             } else if (p == lim) {
                                 // seconds
                                 IntervalUtils.encodeInterval(Micros.yearMicros(year, l)
-                                                + Micros.monthOfYearMicros(month, l)
-                                                + (day - 1) * Micros.DAY_MICROS
-                                                + hour * Micros.HOUR_MICROS
-                                                + min * Micros.MINUTE_MICROS
-                                                + sec * Micros.SECOND_MICROS,
+                                        + Micros.monthOfYearMicros(month, l)
+                                        + (day - 1) * Micros.DAY_MICROS
+                                        + hour * Micros.HOUR_MICROS
+                                        + min * Micros.MINUTE_MICROS
+                                        + sec * Micros.SECOND_MICROS,
                                         Micros.yearMicros(year, l)
                                                 + Micros.monthOfYearMicros(month, l)
                                                 + (day - 1) * Micros.DAY_MICROS
@@ -1161,8 +1170,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
                                             + 59 * Micros.SECOND_MICROS
                                             + 999999,
                                     operation,
-                                    out
-                            );
+                                    out);
                         }
                     } else {
                         // year + month + day + hour
@@ -1179,8 +1187,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
                                         + 59 * Micros.SECOND_MICROS
                                         + 999999,
                                 operation,
-                                out
-                        );
+                                out);
                     }
                 } else {
                     // year + month + day
@@ -1196,8 +1203,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
                                     + 59 * Micros.SECOND_MICROS
                                     + 999999,
                             operation,
-                            out
-                    );
+                            out);
                 }
             } else {
                 // year + month
@@ -1211,8 +1217,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
                                 + 59 * Micros.SECOND_MICROS
                                 + 999999,
                         operation,
-                        out
-                );
+                        out);
             }
         } else {
             // year
@@ -1226,8 +1231,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
                             + 59 * Micros.SECOND_MICROS
                             + 999999,
                     operation,
-                    out
-            );
+                    out);
         }
     }
 
@@ -1558,7 +1562,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
                     yield partitionName;
                 }
                 default ->
-                        throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
+                    throw new UnsupportedOperationException(
+                            "partition by " + partitionBy + " does not have date format");
             };
             int limit = fmtStr.length();
             if (hi < 0) {
@@ -1578,7 +1583,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
                     // convert timestamp to first day of the week
                     return Micros.floorDOW(DAY_FORMAT.parse(partitionName, 0, localLimit, EN_LOCALE));
                 } catch (NumericException ignore) {
-                    throw TimestampDriver.expectedPartitionDirNameFormatCairoException(partitionName, 0, Math.min(partitionName.length(), localLimit), partitionBy);
+                    throw TimestampDriver.expectedPartitionDirNameFormatCairoException(partitionName, 0,
+                            Math.min(partitionName.length(), localLimit), partitionBy);
                 }
             }
             throw TimestampDriver.expectedPartitionDirNameFormatCairoException(partitionName, lo, hi, partitionBy);
@@ -1720,62 +1726,50 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     private static long partitionCeilDD(long micros) {
-        // Designated timestamp can't be negative.
-        return Micros.ceilDD(Math.max(micros, 0));
+        return Micros.ceilDD(micros);
     }
 
     private static long partitionCeilHH(long micros) {
-        // Designated timestamp can't be negative.
-        return Micros.ceilHH(Math.max(micros, 0));
+        return Micros.ceilHH(micros);
     }
 
     private static long partitionCeilMM(long micros) {
-        // Designated timestamp can't be negative.
-        return Micros.ceilMM(Math.max(micros, 0));
+        return Micros.ceilMM(micros);
     }
 
     private static long partitionCeilWW(long micros) {
-        // Designated timestamp can't be negative.
-        return Micros.ceilWW(Math.max(micros, 0));
+        return Micros.ceilWW(micros);
     }
 
     private static long partitionCeilYYYY(long micros) {
-        // Designated timestamp can't be negative.
-        return Micros.ceilYYYY(Math.max(micros, 0));
+        return Micros.ceilYYYY(micros);
     }
 
     private static long partitionFloorDD(long micros) {
-        // Designated timestamp can't be negative.
-        return Micros.floorDD(Math.max(micros, 0));
+        return Micros.floorDD(micros);
     }
 
     private static long partitionFloorHH(long micros) {
-        // Designated timestamp can't be negative.
-        return Micros.floorHH(Math.max(micros, 0));
+        return Micros.floorHH(micros);
     }
 
     private static long partitionFloorMM(long micros) {
-        // Designated timestamp can't be negative.
-        return Micros.floorMM(Math.max(micros, 0));
+        return Micros.floorMM(micros);
     }
 
     private static long partitionFloorWW(long micros) {
-        // Designated timestamp can't be negative.
-        return Micros.floorWW(Math.max(micros, 0));
+        return Micros.floorWW(micros);
     }
 
     private static long partitionFloorYYYY(long micros) {
-        // Designated timestamp can't be negative.
-        return Micros.floorYYYY(Math.max(micros, 0));
+        return Micros.floorYYYY(micros);
     }
 
     private static void validateBounds0(long timestamp) {
         if (timestamp == Long.MIN_VALUE) {
             throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
         }
-        if (timestamp < TableWriter.TIMESTAMP_EPOCH) {
-            throw CairoException.nonCritical().put("designated timestamp before 1970-01-01 is not allowed");
-        }
+
         if (timestamp >= Micros.YEAR_10000) {
             throw CairoException.nonCritical().put("designated timestamp beyond 9999-12-31 is not allowed");
         }
@@ -1791,7 +1785,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
         }
 
         @Override
-        public void format(long timestamp, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
+        public void format(long timestamp, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName,
+                @NotNull CharSink<?> sink) {
             long overspill = timestamp - floorMethod.floor(timestamp);
 
             if (overspill > 0) {
@@ -1833,7 +1828,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
         }
 
         @Override
-        public long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale) throws NumericException {
+        public long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale)
+                throws NumericException {
             long ts;
             if (hi - lo < 4 || hi - lo > 25) {
                 throw NumericException.instance();
@@ -1864,7 +1860,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public static class IsoWeekPartitionFormat implements DateFormat {
 
         @Override
-        public void format(long timestamp, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
+        public void format(long timestamp, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName,
+                @NotNull CharSink<?> sink) {
             long weekTime = timestamp - MicrosTimestampDriver.partitionFloorWW(timestamp);
             WEEK_FORMAT.format(timestamp, locale, timeZoneName, sink);
 
@@ -1906,7 +1903,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
         }
 
         @Override
-        public long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale) throws NumericException {
+        public long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale)
+                throws NumericException {
             long baseTs = WEEK_FORMAT.parse(in, lo, lo + 8, locale);
             lo += 8;
             if (lo < hi) {
