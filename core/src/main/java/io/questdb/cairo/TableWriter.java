@@ -2261,6 +2261,53 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.distressed = true;
     }
 
+    public long markPartitionForParquetConversion(long partitionTimestamp) {
+        assert metadata.getTimestampIndex() > -1;
+        assert PartitionBy.isPartitioned(partitionBy);
+
+        if (inTransaction()) {
+            assert !tableToken.isWal();
+            LOG.info()
+                    .$("committing open transaction before producing parquet for native partition [table=")
+                    .$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .I$();
+            commit();
+        }
+
+        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        if (partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
+            // The partition is active; conversion is currently unsupported.
+            LOG.info()
+                    .$("skipping active partition as it cannot be converted to parquet format [table=")
+                    .$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .I$();
+            return -1L;
+        }
+
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        if (partitionIndex < 0) {
+            formatPartitionForTimestamp(partitionTimestamp, -1);
+            throw CairoException.nonCritical().put("cannot convert partition to parquet, partition does not exist [table=").put(tableToken.getTableName())
+                    .put(", partition=").put(utf8Sink).put(']');
+        }
+
+        if (txWriter.isPartitionParquet(partitionIndex)) {
+            return -1L;
+        }
+
+        // todo: mark partition to be converted to parquet,
+        //  keep track of these flags, and check against them
+        //  if already flagged, just return -1L;
+        //  remove the mark when the partition has been converted
+        //  also remove if conversion failed for any reason
+
+        squashPartitionForce(partitionIndex);
+
+        return partitionTimestamp;
+    }
+
     public void markSeqTxnCommitted(long seqTxn) {
         setSeqTxn(seqTxn);
         txWriter.commit(denseSymbolMapWriters);
@@ -2368,53 +2415,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .I$();
             commandSubSeq.done(cursor);
         }
-    }
-
-    public long produceParquetFromNative(long partitionTimestamp) {
-        assert metadata.getTimestampIndex() > -1;
-        assert PartitionBy.isPartitioned(partitionBy);
-
-        if (inTransaction()) {
-            assert !tableToken.isWal();
-            LOG.info()
-                    .$("committing open transaction before producing parquet for native partition [table=")
-                    .$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                    .I$();
-            commit();
-        }
-
-        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
-        if (partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
-            // The partition is active; conversion is currently unsupported.
-            LOG.info()
-                    .$("skipping active partition as it cannot be converted to parquet format [table=")
-                    .$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                    .I$();
-            return -1L;
-        }
-
-        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
-        if (partitionIndex < 0) {
-            formatPartitionForTimestamp(partitionTimestamp, -1);
-            throw CairoException.nonCritical().put("cannot convert partition to parquet, partition does not exist [table=").put(tableToken.getTableName())
-                    .put(", partition=").put(utf8Sink).put(']');
-        }
-
-        if (txWriter.isPartitionParquet(partitionIndex)) {
-            return -1L;
-        }
-
-        // todo: mark partition to be converted to parquet,
-        //  keep track of these flags, and check against them
-        //  if already flagged, just return -1L;
-        //  remove the mark when the partition has been converted
-        //  also remove if conversion failed for any reason
-
-        squashPartitionForce(partitionIndex);
-
-        return partitionTimestamp;
     }
 
     public void publishAsyncWriterCommand(AsyncWriterCommand asyncWriterCommand) {
