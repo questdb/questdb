@@ -27,6 +27,7 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpMinServerConfigurationWrapper;
 import io.questdb.cutlass.http.HttpServerConfiguration;
@@ -44,13 +45,10 @@ import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjHashSet;
-import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -72,7 +70,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     private static final Log LOG = LogFactory.getLog(DynamicPropServerConfiguration.class);
     private static final String SECRET_FILE_PROPERTY_SUFFIX = ".file";
     private static final String SECRET_FILE_ENV_VAR_SUFFIX = "_FILE";
-    private static final int SECRET_FILE_MAX_SIZE = 65536; // 64KB max for secret files
     private static final Set<? extends ConfigPropertyKey> dynamicProps = new HashSet<>(Arrays.asList(
             PropertyKey.PG_USER,
             PropertyKey.PG_PASSWORD,
@@ -470,10 +467,10 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             // Read current file content
             String currentFileContent;
             try {
-                currentFileContent = readSecretFromFile(secretFilePath);
-            } catch (Exception e) {
-                LOG.error().$("failed to read secret file for reload check [key=").$(key.getPropertyPath())
-                        .$(", file=").$(secretFilePath).$(", error=").$(e).I$();
+                currentFileContent = currentConfig.readSecretFromFile(secretFilePath);
+            } catch (CairoException e) {
+                LOG.error().$("could not read secret file for reload check [key=").$(key.getPropertyPath())
+                        .$(", file=").$(secretFilePath).$(", error=").$((Throwable) e).I$();
                 continue;
             }
 
@@ -513,45 +510,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         String propFileKey = key.getPropertyPath() + SECRET_FILE_PROPERTY_SUFFIX;
         String filePath = properties.getProperty(propFileKey);
         return filePath != null ? filePath.trim() : null;
-    }
-
-    /**
-     * Reads a secret value from a file. The file content is read as UTF-8 and trimmed.
-     */
-    private String readSecretFromFile(String filePath) {
-        long fd = -1;
-        long address = 0;
-        long size = 0;
-        try (Path path = new Path()) {
-            path.of(filePath);
-            fd = filesFacade.openRO(path.$());
-            if (fd < 0) {
-                throw new RuntimeException("cannot open secret file [path=" + filePath + ", errno=" + filesFacade.errno() + "]");
-            }
-            size = filesFacade.length(fd);
-            if (size < 0) {
-                throw new RuntimeException("cannot get size of secret file [path=" + filePath + ", errno=" + filesFacade.errno() + "]");
-            }
-            if (size > SECRET_FILE_MAX_SIZE) {
-                throw new RuntimeException("secret file is too large [path=" + filePath + ", size=" + size + ", maxSize=" + SECRET_FILE_MAX_SIZE + "]");
-            }
-            if (size == 0) {
-                return "";
-            }
-            address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
-            long bytesRead = filesFacade.read(fd, address, size, 0);
-            if (bytesRead != size) {
-                throw new RuntimeException("cannot read secret file [path=" + filePath + ", errno=" + filesFacade.errno() + "]");
-            }
-            return Utf8s.stringFromUtf8Bytes(address, address + size).trim();
-        } finally {
-            if (address != 0) {
-                Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
-            }
-            if (fd >= 0) {
-                filesFacade.close(fd);
-            }
-        }
     }
 
     @Override
