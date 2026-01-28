@@ -374,6 +374,10 @@ class TestSymbolWithNulls(ParquetCompatTest):
     def expected_min_row_groups(self) -> int:
         return 2
 
+    @property
+    def expected_null_count(self) -> int:
+        return 15000
+
     def setup(self):
         execute_sql(self.host, self.port, f"DROP TABLE IF EXISTS {self.table_name}")
         execute_sql(self.host, self.port, f"""
@@ -389,6 +393,170 @@ class TestSymbolWithNulls(ParquetCompatTest):
                 timestamp_sequence('2024-01-01', 1000000) as ts
             FROM long_sequence({self.expected_row_count})
         """)
+
+    def run(self) -> bool:
+        """Override run to verify symbol column null count statistics."""
+        test_name = self.__class__.__name__
+
+        try:
+            self.setup()
+
+            result = execute_sql(self.host, self.port, f"SELECT count() FROM {self.table_name}")
+            actual_count = result['dataset'][0][0]
+            assert actual_count == self.expected_row_count, \
+                f"Row count mismatch: expected {self.expected_row_count}, got {actual_count}"
+
+            parquet_path = os.path.join(self.temp_dir, f"{self.table_name}.parquet")
+            export_parquet(self.host, self.port, f"SELECT * FROM {self.table_name}", parquet_path)
+
+            total_rows, num_row_groups = read_parquet(parquet_path)
+
+            assert total_rows == self.expected_row_count, \
+                f"Parquet row count mismatch: expected {self.expected_row_count}, got {total_rows}"
+            if num_row_groups is not None:
+                assert num_row_groups >= self.expected_min_row_groups, \
+                    f"Expected at least {self.expected_min_row_groups} row groups, got {num_row_groups}"
+
+            if READER == "pyarrow":
+                parquet_file = pq.ParquetFile(parquet_path)
+                metadata = parquet_file.metadata
+                schema = parquet_file.schema_arrow
+
+                sym_idx = None
+                for i, name in enumerate(schema.names):
+                    if name == "sym":
+                        sym_idx = i
+                        break
+
+                assert sym_idx is not None, "sym column not found in schema"
+
+                total_null_count = 0
+                for rg_idx in range(metadata.num_row_groups):
+                    col_meta = metadata.row_group(rg_idx).column(sym_idx)
+                    if col_meta.statistics and col_meta.statistics.null_count is not None:
+                        total_null_count += col_meta.statistics.null_count
+
+                assert total_null_count == self.expected_null_count, \
+                    f"Symbol null count mismatch: expected {self.expected_null_count}, got {total_null_count}"
+
+            print(f"Test '{test_name}' passed.")
+            return True
+
+        except Exception as e:
+            print(f"Test '{test_name}' failed: {e}")
+            return False
+
+        finally:
+            try:
+                self.teardown()
+            except Exception:
+                pass
+
+    def teardown(self):
+        execute_sql(self.host, self.port, f"DROP TABLE IF EXISTS {self.table_name}")
+
+
+class TestSymbolColumnTop(ParquetCompatTest):
+    @property
+    def table_name(self) -> str:
+        return "parquet_symbol_coltop_test"
+
+    @property
+    def expected_row_count(self) -> int:
+        return 200000
+
+    @property
+    def expected_min_row_groups(self) -> int:
+        return 2
+
+    @property
+    def expected_null_count(self) -> int:
+        return 100000
+
+    def setup(self):
+        execute_sql(self.host, self.port, f"DROP TABLE IF EXISTS {self.table_name}")
+        execute_sql(self.host, self.port, f"""
+            CREATE TABLE {self.table_name} (
+                id LONG,
+                value DOUBLE,
+                ts TIMESTAMP
+            ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+        """)
+        execute_sql(self.host, self.port, f"""
+            INSERT INTO {self.table_name}
+            SELECT
+                x as id,
+                rnd_double() as value,
+                timestamp_sequence('2024-01-01', 1000000) as ts
+            FROM long_sequence(100000)
+        """)
+        execute_sql(self.host, self.port,
+            f"ALTER TABLE {self.table_name} ADD COLUMN sym SYMBOL")
+        execute_sql(self.host, self.port, f"""
+            INSERT INTO {self.table_name}
+            SELECT
+                100000 + x as id,
+                rnd_double() as value,
+                timestamp_sequence('2024-01-01T00:01:40', 1000000) as ts,
+                rnd_symbol('A','B','C','D','E') as sym
+            FROM long_sequence(100000)
+        """)
+
+    def run(self) -> bool:
+        """Override run to verify symbol column null count statistics."""
+        test_name = self.__class__.__name__
+
+        try:
+            self.setup()
+
+            result = execute_sql(self.host, self.port, f"SELECT count() FROM {self.table_name}")
+            actual_count = result['dataset'][0][0]
+            assert actual_count == self.expected_row_count, \
+                f"Row count mismatch: expected {self.expected_row_count}, got {actual_count}"
+
+            parquet_path = os.path.join(self.temp_dir, f"{self.table_name}.parquet")
+            export_parquet(self.host, self.port, f"SELECT * FROM {self.table_name}", parquet_path)
+
+            total_rows, num_row_groups = read_parquet(parquet_path)
+
+            assert total_rows == self.expected_row_count, \
+                f"Parquet row count mismatch: expected {self.expected_row_count}, got {total_rows}"
+
+            # Verify symbol column null count in statistics (pyarrow only)
+            if READER == "pyarrow":
+                parquet_file = pq.ParquetFile(parquet_path)
+                metadata = parquet_file.metadata
+                schema = parquet_file.schema_arrow
+
+                sym_idx = None
+                for i, name in enumerate(schema.names):
+                    if name == "sym":
+                        sym_idx = i
+                        break
+
+                assert sym_idx is not None, "sym column not found in schema"
+
+                total_null_count = 0
+                for rg_idx in range(metadata.num_row_groups):
+                    col_meta = metadata.row_group(rg_idx).column(sym_idx)
+                    if col_meta.statistics and col_meta.statistics.null_count is not None:
+                        total_null_count += col_meta.statistics.null_count
+
+                assert total_null_count == self.expected_null_count, \
+                    f"Symbol null count mismatch: expected {self.expected_null_count}, got {total_null_count}"
+
+            print(f"Test '{test_name}' passed.")
+            return True
+
+        except Exception as e:
+            print(f"Test '{test_name}' failed: {e}")
+            return False
+
+        finally:
+            try:
+                self.teardown()
+            except Exception:
+                pass
 
     def teardown(self):
         execute_sql(self.host, self.port, f"DROP TABLE IF EXISTS {self.table_name}")
@@ -406,6 +574,7 @@ def main():
         TestSymbolMultipleRowGroups,
         TestSymbolHighCardinality,
         TestSymbolWithNulls,
+        TestSymbolColumnTop,
     ]
 
     failed = False
