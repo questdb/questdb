@@ -53,7 +53,7 @@ import java.util.List;
 /**
  * Tests for Parquet export of SYMBOL columns.
  * <p>
- * Reproduces the scenario from https://github.com/questdb/questdb/issues/6692
+ * Reproduces the scenario from <a href="https://github.com/questdb/questdb/issues/6692">...</a>
  * <p>
  * The bug manifests when:
  * 1. Multiple row groups are created (partial final row group)
