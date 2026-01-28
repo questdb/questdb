@@ -98,6 +98,8 @@ unpack!(unpack64, u64, 8, 64);
 
 #[cfg(test)]
 mod tests {
+    use crate::encoding::bitpacked::unpack::{unpack16, unpack32, unpack64, unpack8};
+
     #[test]
     fn test_basic() {
         let input = [0xFF; 4096];

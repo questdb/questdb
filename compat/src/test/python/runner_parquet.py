@@ -26,6 +26,9 @@ Parquet compatibility tests for QuestDB.
 Tests that Parquet files exported from QuestDB can be read by:
 - PyArrow (versions 22 and 23)
 - DuckDB
+- Pandas
+- Polars
+- PySpark
 
 This addresses the bug reported in https://github.com/questdb/questdb/issues/6692
 where SYMBOL columns with multiple row groups caused:
@@ -35,20 +38,38 @@ where SYMBOL columns with multiple row groups caused:
 
 import argparse
 import os
+import requests
 import sys
 import tempfile
 
-import requests
-
-# Detect which library to use
+# Detect which library to use (priority order)
 READER = None
+READER_VERSION = None
+
 try:
-    import pyarrow.parquet as pq
-    import pyarrow
-    READER = "pyarrow"
-    READER_VERSION = pyarrow.__version__
+    import polars as pl
+    READER = "polars"
+    READER_VERSION = pl.__version__
 except ImportError:
     pass
+
+if READER is None:
+    try:
+        import pandas as pd
+        import fastparquet
+        READER = "pandas"
+        READER_VERSION = pd.__version__
+    except ImportError:
+        pass
+
+if READER is None:
+    try:
+        import pyarrow.parquet as pq
+        import pyarrow
+        READER = "pyarrow"
+        READER_VERSION = pyarrow.__version__
+    except ImportError:
+        pass
 
 if READER is None:
     try:
@@ -59,7 +80,16 @@ if READER is None:
         pass
 
 if READER is None:
-    print("ERROR: Neither pyarrow nor duckdb is installed")
+    try:
+        from pyspark.sql import SparkSession
+        import pyspark
+        READER = "pyspark"
+        READER_VERSION = pyspark.__version__
+    except ImportError:
+        pass
+
+if READER is None:
+    print("ERROR: No parquet reader installed (pyarrow, duckdb, pandas, polars, or pyspark)")
     sys.exit(1)
 
 
@@ -136,12 +166,52 @@ def read_parquet_duckdb(file_path: str) -> tuple:
     return total_rows, num_row_groups
 
 
+def read_parquet_pandas(file_path: str) -> tuple:
+    """Read Parquet file using Pandas and return (row_count, num_row_groups)."""
+    df = pd.read_parquet(file_path, engine='fastparquet')
+    total_rows = len(df)
+    return total_rows, None
+
+
+def read_parquet_polars(file_path: str) -> tuple:
+    """Read Parquet file using Polars and return (row_count, num_row_groups)."""
+    df = pl.read_parquet(file_path)
+    total_rows = len(df)
+    return total_rows, None
+
+
+def read_parquet_pyspark(file_path: str) -> tuple:
+    """Read Parquet file using PySpark and return (row_count, num_row_groups)."""
+    from pyspark.sql import SparkSession
+
+    spark = SparkSession.builder \
+        .appName("ParquetCompatTest") \
+        .master("local[1]") \
+        .config("spark.ui.enabled", "false") \
+        .config("spark.driver.memory", "1g") \
+        .getOrCreate()
+    spark.sparkContext.setLogLevel("ERROR")
+
+    df = spark.read.parquet(file_path)
+    total_rows = df.count()
+
+    spark.stop()
+    return total_rows, None
+
+
 def read_parquet(file_path: str) -> tuple:
-    """Read Parquet file using available library."""
     if READER == "pyarrow":
         return read_parquet_pyarrow(file_path)
-    else:
+    elif READER == "duckdb":
         return read_parquet_duckdb(file_path)
+    elif READER == "pandas":
+        return read_parquet_pandas(file_path)
+    elif READER == "polars":
+        return read_parquet_polars(file_path)
+    elif READER == "pyspark":
+        return read_parquet_pyspark(file_path)
+    else:
+        raise RuntimeError(f"Unknown reader: {READER}")
 
 
 class ParquetCompatTest:
@@ -191,8 +261,9 @@ class ParquetCompatTest:
 
             assert total_rows == self.expected_row_count, \
                 f"Parquet row count mismatch: expected {self.expected_row_count}, got {total_rows}"
-            assert num_row_groups >= self.expected_min_row_groups, \
-                f"Expected at least {self.expected_min_row_groups} row groups, got {num_row_groups}"
+            if num_row_groups is not None:
+                assert num_row_groups >= self.expected_min_row_groups, \
+                    f"Expected at least {self.expected_min_row_groups} row groups, got {num_row_groups}"
 
             print(f"Test '{test_name}' passed.")
             return True
@@ -209,12 +280,6 @@ class ParquetCompatTest:
 
 
 class TestSymbolMultipleRowGroups(ParquetCompatTest):
-    """
-    Tests symbol columns with multiple row groups.
-    Uses 250001 rows which creates 3 row groups (100k + 100k + 50001).
-    Tests different symbol cardinalities (8, 3, 2 values) which use different bit widths.
-    """
-
     @property
     def table_name(self) -> str:
         return "parquet_symbol_test"

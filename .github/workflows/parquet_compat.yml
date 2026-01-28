@@ -47,6 +47,27 @@ jobs:
           pip install -r compat/src/test/python/requirements_parquet_duckdb.txt
           python compat/src/test/python/runner_parquet.py
           deactivate
+      - name: Run parquet pandas tests
+        run: |
+          python3 -m venv venv/parquet_pandas
+          source venv/parquet_pandas/bin/activate
+          pip install -r compat/src/test/python/requirements_parquet_pandas.txt
+          python compat/src/test/python/runner_parquet.py
+          deactivate
+      - name: Run parquet polars tests
+        run: |
+          python3 -m venv venv/parquet_polars
+          source venv/parquet_polars/bin/activate
+          pip install -r compat/src/test/python/requirements_parquet_polars.txt
+          python compat/src/test/python/runner_parquet.py
+          deactivate
+      - name: Run parquet pyspark tests
+        run: |
+          python3 -m venv venv/parquet_pyspark
+          source venv/parquet_pyspark/bin/activate
+          pip install -r compat/src/test/python/requirements_parquet_pyspark.txt
+          python compat/src/test/python/runner_parquet.py
+          deactivate
       - name: Stop QuestDB
         run: ./questdb-*bin/questdb.sh stop
       - name: Upload logs

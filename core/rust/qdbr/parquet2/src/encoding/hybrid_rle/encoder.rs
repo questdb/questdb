@@ -48,7 +48,6 @@ fn bitpacked_encode_u32<W: Write, I: Iterator<Item = u32>>(
     let remainder = length - chunks * U32_BLOCK_LEN;
     let mut buffer = [0u32; U32_BLOCK_LEN];
     let compressed_chunk_size = ceil8(U32_BLOCK_LEN * num_bits);
-    let mut bytes_written = 0usize;
 
     for _ in 0..chunks {
         iterator
@@ -60,26 +59,20 @@ fn bitpacked_encode_u32<W: Write, I: Iterator<Item = u32>>(
         let mut packed = [0u8; 4 * U32_BLOCK_LEN];
         bitpacked::encode_pack::<u32>(&buffer, num_bits, packed.as_mut());
         writer.write_all(&packed[..compressed_chunk_size])?;
-        bytes_written += compressed_chunk_size;
     }
 
     if remainder != 0 {
-        buffer.iter_mut().for_each(|x| *x = 0);
         iterator
             .by_ref()
             .take(remainder)
             .zip(buffer.iter_mut())
             .for_each(|(item, buf)| *buf = item);
 
+        buffer[remainder..].fill(0);
         let mut packed = [0u8; 4 * U32_BLOCK_LEN];
         bitpacked::encode_pack(&buffer, num_bits, packed.as_mut());
-
-        let remaining_bytes = total_bytes_needed - bytes_written;
+        let remaining_bytes = total_bytes_needed - chunks * compressed_chunk_size;
         writer.write_all(&packed[..remaining_bytes])?;
-    } else if bytes_written < total_bytes_needed {
-        let padding = total_bytes_needed - bytes_written;
-        let zeros = vec![0u8; padding];
-        writer.write_all(&zeros)?;
     }
     Ok(())
 }
