@@ -3314,7 +3314,7 @@ public class SqlParser {
                 tok = tok(lexer, "'to'");
                 expectTok(lexer, tok, "to");
                 ExpressionNode toExpr = expectIntervalLiteral(lexer);
-                context.setRangeTo(toExpr, toExpr.position);
+                context.setRangeTo(toExpr);
 
                 tok = tok(lexer, "'step'");
                 expectTok(lexer, tok, "step");

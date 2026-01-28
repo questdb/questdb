@@ -75,7 +75,7 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMem
  * 2. Per-worker aggregation maps and group by functions
  * 3. Per-worker ASOF join maps for symbol -> rowId mappings
  */
-public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
+class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledFilter;
@@ -111,7 +111,6 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
     private final ObjList<MarkoutTimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
     private final long sequenceRowCount;
     private final RecordSink slaveKeyCopier;
-    private final int slaveTimestampIndex;
     private final long slaveTsScale;
     private long ownerPrevFirstOffsetAsOfRowId = Long.MIN_VALUE;
 
@@ -126,7 +125,6 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
             @Nullable ColumnTypes asOfJoinKeyTypes,
             @Nullable RecordSink masterKeyCopier,
             @Nullable RecordSink slaveKeyCopier,
-            int slaveTimestampIndex,
             @NotNull RecordSink groupByKeyCopier,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
@@ -162,7 +160,6 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
             // ASOF join lookup resources
             this.masterKeyCopier = masterKeyCopier;
             this.slaveKeyCopier = slaveKeyCopier;
-            this.slaveTimestampIndex = slaveTimestampIndex;
 
             // Timestamp scale factors for cross-resolution support (1 if same type, otherwise scale to nanos)
             this.masterTsScale = masterTsScale;
@@ -463,14 +460,6 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
             return ownerSlaveTimeFrameHelper;
         }
         return perWorkerSlaveTimeFrameHelpers.getQuick(slotId);
-    }
-
-    public int getSlaveTimestampIndex() {
-        return slaveTimestampIndex;
-    }
-
-    public long getSlaveTsScale() {
-        return slaveTsScale;
     }
 
     @Override

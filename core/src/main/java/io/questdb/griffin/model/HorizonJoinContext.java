@@ -56,7 +56,6 @@ public class HorizonJoinContext implements Mutable {
     private ExpressionNode rangeStep;
     private int rangeStepPosition;
     private ExpressionNode rangeTo;
-    private int rangeToPosition;
 
     public void addListOffset(ExpressionNode offset) {
         listOffsets.add(offset);
@@ -68,7 +67,6 @@ public class HorizonJoinContext implements Mutable {
         rangeFrom = null;
         rangeFromPosition = 0;
         rangeTo = null;
-        rangeToPosition = 0;
         rangeStep = null;
         rangeStepPosition = 0;
         listOffsets.clear();
@@ -82,7 +80,6 @@ public class HorizonJoinContext implements Mutable {
         this.rangeFrom = other.rangeFrom;
         this.rangeFromPosition = other.rangeFromPosition;
         this.rangeTo = other.rangeTo;
-        this.rangeToPosition = other.rangeToPosition;
         this.rangeStep = other.rangeStep;
         this.rangeStepPosition = other.rangeStepPosition;
         this.listOffsets.clear();
@@ -131,10 +128,6 @@ public class HorizonJoinContext implements Mutable {
         return rangeTo;
     }
 
-    public int getRangeToPosition() {
-        return rangeToPosition;
-    }
-
     public void setAlias(ExpressionNode alias, int position) {
         this.alias = alias;
         this.aliasPosition = position;
@@ -158,8 +151,7 @@ public class HorizonJoinContext implements Mutable {
         this.rangeStepPosition = position;
     }
 
-    public void setRangeTo(ExpressionNode rangeTo, int position) {
+    public void setRangeTo(ExpressionNode rangeTo) {
         this.rangeTo = rangeTo;
-        this.rangeToPosition = position;
     }
 }

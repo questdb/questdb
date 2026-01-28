@@ -155,7 +155,7 @@ public class MutableModelsTest {
         HorizonJoinContext freshContext = new HorizonJoinContext();
         context.setMode(HorizonJoinContext.MODE_RANGE);
         context.setRangeFrom(newExpressionNode(), 10);
-        context.setRangeTo(newExpressionNode(), 20);
+        context.setRangeTo(newExpressionNode());
         context.setRangeStep(newExpressionNode(), 30);
         context.setAlias(newExpressionNode(), 40);
         context.setParentModel(QueryModel.FACTORY.newInstance());
@@ -299,7 +299,7 @@ public class MutableModelsTest {
         HorizonJoinContext hjc = model.getHorizonJoinContext();
         hjc.setMode(HorizonJoinContext.MODE_RANGE);
         hjc.setRangeFrom(newExpressionNode(), 10);
-        hjc.setRangeTo(newExpressionNode(), 20);
+        hjc.setRangeTo(newExpressionNode());
         hjc.setRangeStep(newExpressionNode(), 30);
         hjc.setAlias(newExpressionNode(), 40);
         assertDifferentFromFresh(model, QueryModel.FACTORY.newInstance());

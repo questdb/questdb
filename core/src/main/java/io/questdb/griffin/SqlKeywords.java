@@ -2068,14 +2068,6 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 't';
     }
 
-    public static boolean isStepKeyword(CharSequence tok) {
-        return tok.length() == 4
-                && (tok.charAt(0) | 32) == 's'
-                && (tok.charAt(1) | 32) == 't'
-                && (tok.charAt(2) | 32) == 'e'
-                && (tok.charAt(3) | 32) == 'p';
-    }
-
     public static boolean isSumKeyword(CharSequence tok) {
         return tok.length() == 3
                 && (tok.charAt(0) | 32) == 's'

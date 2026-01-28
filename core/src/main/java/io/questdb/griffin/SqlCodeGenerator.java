@@ -3157,7 +3157,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * Generates the AsyncMarkoutGroupByRecordCursorFactory for HORIZON JOIN.
      */
     private RecordCursorFactory generateHorizonJoinFactory(
-            QueryModel joinModel,
             QueryModel parentModel,
             HorizonJoinContext horizonContext,
             RecordCursorFactory masterFactory,
@@ -3205,7 +3204,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         final int workerCount = executionContext.getSharedQueryWorkerCount();
         final int masterTimestampColumnIndex = masterMetadata.getTimestampIndex();
-        final int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
 
         if (masterTimestampColumnIndex == -1) {
             throw SqlException.position(slaveModel.getJoinKeywordPosition())
@@ -3436,7 +3434,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 asofJoinKeyTypes,
                 masterKeyCopier,
                 slaveKeyCopier,
-                slaveTimestampIndex,
                 groupByKeyCopier,
                 columnSources,
                 columnIndices,
@@ -4547,7 +4544,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // Create the AsyncMarkoutGroupByRecordCursorFactory
                                 // This returns the complete factory with GROUP BY aggregation
                                 return generateHorizonJoinFactory(
-                                        model,
                                         parentModel,
                                         horizonContext,
                                         master,
@@ -4645,6 +4641,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         );
                     }
                 }
+            }
+
+            if (master == null) {
+                throw SqlException.position(model.getModelPosition()).put("no tables to join");
             }
 
             // unfortunately we had to go all out to create join metadata

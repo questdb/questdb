@@ -274,26 +274,8 @@ public class MarkoutTimeFrameHelper {
         }
     }
 
-    /**
-     * Get the current row ID (after findAsOfRow or backwardScanForKeyMatch).
-     */
-    public long getCurrentRowId() {
-        if (currentFrameIndex < 0 || currentRowIndex < 0) {
-            return Long.MIN_VALUE;
-        }
-        return Rows.toRowID(currentFrameIndex, currentRowIndex);
-    }
-
     public Record getRecord() {
         return record;
-    }
-
-    public SymbolTableSource getSymbolTableSource() {
-        return timeFrameCursor;
-    }
-
-    public int getTimestampIndex() {
-        return timestampIndex;
     }
 
     public void of(TimeFrameCursor timeFrameCursor) {
