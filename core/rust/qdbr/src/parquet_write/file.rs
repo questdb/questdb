@@ -411,7 +411,7 @@ pub fn create_row_group_from_partitions(
                         .collect();
 
                     let primitive_type = match column_type {
-                        ParquetType::PrimitiveType(pt) => pt.clone(),
+                        ParquetType::PrimitiveType(pt) => pt,
                         _ => {
                             return Err(fmt_err!(
                                 InvalidType,
@@ -500,7 +500,7 @@ pub fn create_row_group_from_partitions(
 
                 if num_partitions > 1 && first_column.data_type.is_symbol() {
                     let primitive_type = match column_type {
-                        ParquetType::PrimitiveType(pt) => pt.clone(),
+                        ParquetType::PrimitiveType(pt) => pt,
                         _ => {
                             return Err(fmt_err!(
                                 InvalidType,
@@ -653,7 +653,7 @@ impl Iterator for MultiPartitionColumnIterator {
 
 fn symbol_column_to_pages_multi_partition(
     partition_ranges: &[(Column, usize, usize)], // (column, offset, length)
-    primitive_type: PrimitiveType,
+    primitive_type: &PrimitiveType,
     options: WriteOptions,
 ) -> ParquetResult<Vec<Page>> {
     if partition_ranges.is_empty() {
@@ -665,65 +665,27 @@ fn symbol_column_to_pages_multi_partition(
     let offsets = first_column.symbol_offsets;
     let chars = first_column.secondary_data;
 
-    // Collect global info from all partitions
-    let partition_data: Vec<(&[i32], usize, usize)> = partition_ranges
+    // Collect partition slice info (keys_slice, adjusted_column_top, required)
+    let partition_slices: Vec<(&[i32], usize, bool)> = partition_ranges
         .iter()
         .map(|(col, offset, length)| {
             let keys: &[i32] = unsafe { util::transmute_slice(col.primary_data) };
-            let orig_column_top = col.column_top;
-
-            let mut adjusted_column_top = 0;
-            let lower_bound = if *offset < orig_column_top {
-                adjusted_column_top = orig_column_top - offset;
-                0
-            } else {
-                offset - orig_column_top
-            };
-            let upper_bound = if *offset + *length < orig_column_top {
-                adjusted_column_top = *length;
-                0
-            } else {
-                (*offset + *length - orig_column_top).min(keys.len())
-            };
-
-            let keys_slice = &keys[lower_bound..upper_bound];
-            (keys_slice, adjusted_column_top, *length)
+            let (keys_slice, adjusted_column_top) =
+                compute_symbol_slice(keys, col.column_top, *offset, *length);
+            (keys_slice, adjusted_column_top, col.required)
         })
         .collect();
 
-    let global_info = symbol::collect_symbol_global_info(&partition_data);
-    let (dict_page, _stats) = symbol::build_symbol_dict_page(
-        &global_info,
-        offsets,
-        chars,
-        &primitive_type,
-        options.write_statistics,
-    )?;
+    // Build global info for dictionary
+    let global_info =
+        symbol::collect_symbol_global_info(partition_slices.iter().map(|(keys, _, _)| *keys));
+    let dict_page = symbol::build_symbol_dict_page(&global_info, offsets, chars)?;
 
     // Build data pages for each partition
     let mut pages = Vec::with_capacity(partition_ranges.len() + 1);
     pages.push(Page::Dict(dict_page));
 
-    for &(col, offset, length) in partition_ranges.iter() {
-        let keys: &[i32] = unsafe { util::transmute_slice(col.primary_data) };
-        let orig_column_top = col.column_top;
-
-        let mut adjusted_column_top = 0;
-        let lower_bound = if offset < orig_column_top {
-            adjusted_column_top = orig_column_top - offset;
-            0
-        } else {
-            offset - orig_column_top
-        };
-        let upper_bound = if offset + length < orig_column_top {
-            adjusted_column_top = length;
-            0
-        } else {
-            (offset + length - orig_column_top).min(keys.len())
-        };
-
-        let keys_slice = &keys[lower_bound..upper_bound];
-
+    for &(keys_slice, adjusted_column_top, required) in &partition_slices {
         let data_page = symbol::symbol_to_data_page_only(
             keys_slice,
             adjusted_column_top,
@@ -732,13 +694,37 @@ fn symbol_column_to_pages_multi_partition(
             primitive_type.clone(),
             offsets,
             chars,
-            col.required,
+            required,
         )?;
 
         pages.push(data_page);
     }
 
     Ok(pages)
+}
+
+#[inline]
+fn compute_symbol_slice(
+    keys: &[i32],
+    column_top: usize,
+    offset: usize,
+    length: usize,
+) -> (&[i32], usize) {
+    let mut adjusted_column_top = 0;
+    let lower_bound = if offset < column_top {
+        adjusted_column_top = column_top - offset;
+        0
+    } else {
+        (offset - column_top).min(keys.len())
+    };
+    let upper_bound = if offset + length < column_top {
+        adjusted_column_top = length;
+        0
+    } else {
+        (offset + length - column_top).min(keys.len())
+    };
+
+    (&keys[lower_bound..upper_bound], adjusted_column_top)
 }
 
 fn column_chunk_to_pages(
