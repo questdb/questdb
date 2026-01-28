@@ -68,6 +68,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -105,6 +106,7 @@ public class SqlParser {
     private final IntList accumulatedColumnPositions = new IntList();
     private final ObjList<QueryColumn> accumulatedColumns = new ObjList<>();
     private final LowerCaseCharSequenceHashSet aliasMap = new LowerCaseCharSequenceHashSet();
+    private final LowerCaseCharSequenceIntHashMap aliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
     private final CairoEngine cairoEngine;
     private final CharacterStore characterStore;
     private final CharSequence column;
@@ -570,6 +572,7 @@ public class SqlParser {
                 unquote(token),
                 Chars.indexOfLastUnquoted(token, '.'),
                 aliasToColumnMap,
+                aliasSequenceMap,
                 type != ExpressionNode.LITERAL
         );
     }
@@ -776,6 +779,7 @@ public class SqlParser {
                     characterStore,
                     entry.toImmutable(),
                     aliasMap,
+                    aliasSequenceMap,
                     configuration.getColumnAliasGeneratedMaxSize(),
                     qc.getAst().type != ExpressionNode.LITERAL
             );
@@ -784,7 +788,7 @@ public class SqlParser {
                 alias = createConstColumnAlias(aliasMap);
             } else {
                 CharSequence tokenAlias = qc.getAst().token;
-                if (qc.isWindowColumn() && ((WindowExpression) qc).isIgnoreNulls()) {
+                if (qc.isWindowExpression() && ((WindowExpression) qc).isIgnoreNulls()) {
                     tokenAlias += "_ignore_nulls";
                 }
                 alias = createColumnAlias(tokenAlias, qc.getAst().type, aliasMap);
@@ -3382,6 +3386,7 @@ public class SqlParser {
                         characterStore,
                         entry.toImmutable(),
                         pivotAliasMap,
+                        aliasSequenceMap,
                         configuration.getColumnAliasGeneratedMaxSize(),
                         true
                 );
@@ -3432,6 +3437,7 @@ public class SqlParser {
             } else {
                 tempCharSequenceSet.clear();
                 pivotAliasMap.clear();
+                aliasSequenceMap.clear();
                 do {
                     ExpressionNode expr = expr(lexer, model, sqlParserCallback);
                     if (expr == null) {
@@ -3470,6 +3476,7 @@ public class SqlParser {
                                 characterStore,
                                 unquote(exprName),
                                 pivotAliasMap,
+                                aliasSequenceMap,
                                 configuration.getColumnAliasGeneratedMaxSize(),
                                 true
                         );
@@ -3783,6 +3790,7 @@ public class SqlParser {
             accumulatedColumns.clear();
             accumulatedColumnPositions.clear();
             aliasMap.clear();
+            aliasSequenceMap.clear();
         }
     }
 
@@ -3792,7 +3800,7 @@ public class SqlParser {
             LowerCaseCharSequenceObjHashMap<WithClauseModel> masterModel,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        ExpressionNode expr = expr(lexer, model, sqlParserCallback);
+        ExpressionNode expr = expr(lexer, model, sqlParserCallback, model.getDecls());
         if (expr == null) {
             throw SqlException.position(lexer.lastTokenPosition()).put("table name expected");
         }
@@ -4582,7 +4590,7 @@ public class SqlParser {
                 QueryColumn windowFuncColumn = null;
                 for (int i = 0, n = columns.size(); i < n; i++) {
                     QueryColumn column = columns.getQuick(i);
-                    if (column.isWindowColumn()) {
+                    if (column.isWindowExpression()) {
                         windowFuncColumn = column;
                     }
 
@@ -4654,6 +4662,8 @@ public class SqlParser {
         digit = 1;
         traversalAlgo.clear();
         tempCharSequenceSet.clear();
+        aliasMap.clear();
+        aliasSequenceMap.clear();
         pivotAliasMap.clear();
         clearRecordedViews();
     }

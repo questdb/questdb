@@ -97,6 +97,7 @@ public final class TableUtils {
     public static final String CHECKPOINT_LEGACY_META_FILE_NAME = "_snapshot";
     public static final String CHECKPOINT_LEGACY_META_FILE_NAME_TXT = "_snapshot.txt";
     public static final String CHECKPOINT_META_FILE_NAME = "_checkpoint_meta.d";
+    public static final String CHECKPOINT_SEQ_TXN_FILE_NAME = "_txn";
     public static final long COLUMN_NAME_TXN_NONE = -1L;
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
     public static final String DEFAULT_PARTITION_NAME = "default";
@@ -132,6 +133,7 @@ public final class TableUtils {
     // in case we decide to support ALTER MAT VIEW, and modify mat view metadata
     public static final int NULL_LEN = -1;
     public static final String PARQUET_PARTITION_NAME = "data.parquet";
+    public static final String PARTITION_LAST_SQUASH_TIMESTAMP_FILE = ".squash_ts";
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
     public static final String SP_TABLE_WRITE_REASON = "Storage Policy";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
@@ -1555,9 +1557,15 @@ public final class TableUtils {
 
                     if (columnRowCount > 0) {
                         if (ColumnType.isSymbol(columnType)) {
+                            final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndex);
+                            int encodeColumnType = columnType;
+                            if (!symbolMapReader.containsNullValue()) {
+                                encodeColumnType |= Integer.MIN_VALUE;
+                            }
+
                             partitionDescriptor.addColumn(
                                     columnName,
-                                    columnType,
+                                    encodeColumnType,
                                     columnId,
                                     columnTop
                             );
@@ -1581,7 +1589,7 @@ public final class TableUtils {
                                 throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
                             }
 
-                            final int symbolCount = reader.getSymbolMapReader(columnIndex).getSymbolCount();
+                            final int symbolCount = symbolMapReader.getSymbolCount();
                             final long offsetsMemSize = SymbolMapWriter.keyToOffset(symbolCount + 1);
                             final long symbolOffsetsAddr = mapRO(ff, path.$(), LOG, offsetsMemSize, memoryTag);
                             partitionDescriptor.setSymbolOffsetsAddr(symbolOffsetsAddr + SymbolMapWriter.HEADER_SIZE, symbolCount);

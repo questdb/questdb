@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
@@ -191,7 +190,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
-    public boolean hasNext() throws DataUnavailableException {
+    public boolean hasNext() {
         if (++currentRowInRowGroup < rowGroupRowCount) {
             return true;
         }
@@ -204,28 +203,24 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     public void of(LPSZ path) {
-        try {
-            // Reopen the file, it could have changed
-            this.fd = TableUtils.openRO(ff, path, LOG);
-            this.fileSize = ff.length(fd);
-            this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-            rowGroupBuffers.reopen();
-            columns.reopen();
-            columns.clear();
-            int n = metadata.getColumnCount();
-            if (n > 0) {
-                columns.setCapacity(2L * n);
-                if (!canProjectMetadata(metadata, decoder, columns, null)) {
-                    // We need to recompile the factory as the Parquet metadata has changed.
-                    throw TableReferenceOutOfDateException.of(path);
-                }
+        // Reopen the file, it could have changed
+        this.fd = TableUtils.openRO(ff, path, LOG);
+        this.fileSize = ff.length(fd);
+        this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+        decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+        rowGroupBuffers.reopen();
+        columns.reopen();
+        columns.clear();
+        int n = metadata.getColumnCount();
+        if (n > 0) {
+            columns.setCapacity(2L * n);
+            if (!canProjectMetadata(metadata, decoder, columns, null)) {
+                // We need to recompile the factory as the Parquet metadata has changed.
+                throw TableReferenceOutOfDateException.of(path);
             }
-
-            toTop();
-        } catch (DataUnavailableException e) {
-            throw new RuntimeException(e);
         }
+
+        toTop();
     }
 
     @Override
@@ -234,12 +229,12 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
-    public long size() throws DataUnavailableException {
+    public long size() {
         return decoder.metadata().getRowCount();
     }
 
     @Override
-    public void skipRows(Counter rowCount) throws DataUnavailableException {
+    public void skipRows(Counter rowCount) {
         long toSkip = rowCount.get();
 
         while (toSkip > 0) {

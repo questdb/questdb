@@ -63,6 +63,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -127,6 +128,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Transient;
 import io.questdb.std.str.MutableCharSink;
@@ -194,7 +196,22 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
     private volatile boolean closing;
-    private @NotNull ConfigReloader configReloader = () -> false; // no-op
+    private @NotNull ConfigReloader configReloader = new ConfigReloader() {
+        @Override
+        public boolean reload() {
+            return false;
+        }
+
+        @Override
+        public void unwatch(long watchId) {
+
+        }
+
+        @Override
+        public long watch(Listener listener) {
+            return WatchRegistry.UNREGISTERED;
+        }
+    }; // no-op
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
@@ -231,22 +248,30 @@ public class CairoEngine implements Closeable, WriterSource {
             this.queryRegistry = new QueryRegistry(configuration);
             this.rootExecutionContext = createRootExecutionContext();
             this.matViewTimerQueue = createMatViewTimerQueue();
-            this.matViewGraph = new MatViewGraph();
-            this.viewGraph = new ViewGraph();
+            this.matViewGraph = createMatViewGraph();
+            this.viewGraph = createViewGraph();
             this.frameFactory = new FrameFactory(configuration);
             this.dataID = DataID.open(configuration);
 
+            // IMPORTANT: Do not reorder statements!
+            // The backup recovery process needs the `dataID` (since it will set it),
+            // but it's important that's not initialized yet.
+            // The `recoverBackup()` logic also needs to run before any table registry loading.
+            restoreBackup();
+
+            initDataID();
+
             settingsStore = new SettingsStore(configuration);
-            settingsStore.init();
 
             tableIdGenerator.open();
             checkpointRecover();
 
+            // Initialize settings store after checkpoint recovery so it reads the restored file
+            settingsStore.init();
+
             // Migrate database files.
             EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
-            tableNameRegistry = configuration.isReadOnlyInstance()
-                    ? new TableNameRegistryRO(this, tableFlagResolver)
-                    : new TableNameRegistryRW(this, tableFlagResolver);
+            tableNameRegistry = createTableNameRegistry(configuration, tableFlagResolver);
             tableNameRegistry.reload();
 
             this.sqlCompilerPool = new SqlCompilerPool(this);
@@ -300,6 +325,9 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void applyTableRename(TableToken token, TableToken updatedTableToken) {
+        if (updatedTableToken.isMatView() && matViewGraph.getViewDefinition(updatedTableToken) == null) {
+            throw CairoException.nonCritical().put("materialized view has not been registered yet [name=").put(updatedTableToken.getTableName()).put(']');
+        }
         tableNameRegistry.rename(token.getTableName(), updatedTableToken.getTableName(), token);
         if (token.isWal()) {
             tableSequencerAPI.applyRename(updatedTableToken);
@@ -488,8 +516,8 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public void checkpointCreate(SqlExecutionContext executionContext) throws SqlException {
-        checkpointAgent.checkpointCreate(executionContext, false);
+    public void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, boolean isIncrementalBackup) throws SqlException {
+        checkpointAgent.checkpointCreate(circuitBreaker, false, isIncrementalBackup);
     }
 
     /**
@@ -603,7 +631,6 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         return createTable(securityContext, mem, path, ifNotExists, struct, keepLock, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
     }
-
 
     public @NotNull TableToken createTable(
             SecurityContext securityContext,
@@ -736,22 +763,6 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public TableWriter getBackupWriter(TableToken tableToken, CharSequence backupDirName) {
-        verifyTableToken(tableToken);
-        // There is no point in pooling/caching these writers since they are only used once, backups are not incremental
-        return new TableWriter(
-                configuration,
-                tableToken,
-                messageBus,
-                null,
-                true,
-                DefaultLifecycleManager.INSTANCE,
-                backupDirName,
-                getDdlListener(tableToken),
-                this
-        );
-    }
-
     @TestOnly
     public int getBusyReaderCount() {
         return readerPool.getBusyCount();
@@ -786,7 +797,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return copyImportContext;
     }
 
-    public DataID getDataID() {
+    public @NotNull DataID getDataID() {
         return dataID;
     }
 
@@ -1065,7 +1076,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return getTableStatus(Path.getThreadLocal(configuration.getDbRoot()), tableName);
     }
 
-    public TableToken getTableTokenByDirName(CharSequence dirName) {
+    public @Nullable TableToken getTableTokenByDirName(CharSequence dirName) {
         return tableNameRegistry.getTableTokenByDirName(dirName);
     }
 
@@ -1755,8 +1766,8 @@ public class CairoEngine implements Closeable, WriterSource {
         closing = true;
     }
 
-    public void snapshotCreate(SqlExecutionContext executionContext) throws SqlException {
-        checkpointAgent.checkpointCreate(executionContext, true);
+    public void snapshotCreate(SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
+        checkpointAgent.checkpointCreate(circuitBreaker, true, false);
     }
 
     public void unlock(
@@ -2171,6 +2182,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return token;
     }
 
+    protected @NotNull MatViewGraph createMatViewGraph() {
+        return new MatViewGraph();
+    }
+
     // used in ent
     protected MatViewStateStore createMatViewStateStore() {
         return configuration.isMatViewEnabled() ? new MatViewStateStoreImpl(this) : NoOpMatViewStateStore.INSTANCE;
@@ -2185,6 +2200,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return new SqlExecutionContextImpl(this, 0).with(AllowAllSecurityContext.INSTANCE);
     }
 
+    protected @NotNull TableNameRegistry createTableNameRegistry(CairoConfiguration configuration, TableFlagResolver tableFlagResolver) {
+        return configuration.isReadOnlyInstance()
+                ? new TableNameRegistryRO(this, tableFlagResolver)
+                : new TableNameRegistryRW(this, tableFlagResolver);
+    }
+
     protected @NotNull <T extends AbstractTelemetryTask> Telemetry<T> createTelemetry(
             Telemetry.TelemetryTypeBuilder<T> builder,
             CairoConfiguration configuration
@@ -2192,11 +2213,26 @@ public class CairoEngine implements Closeable, WriterSource {
         return new Telemetry<>(builder, configuration);
     }
 
+    protected @NotNull ViewGraph createViewGraph() {
+        return new ViewGraph();
+    }
+
     protected Iterable<FunctionFactory> getFunctionFactories() {
         return new FunctionFactoryCacheBuilder().scan(LOG).build();
     }
 
+    protected void initDataID() {
+        if (!getConfiguration().isReadOnlyInstance() && !this.dataID.isInitialized()) {
+            final Rnd rnd = configuration.getRandom();
+            this.dataID.initialize(rnd.nextLong(), rnd.nextLong());
+        }
+    }
+
     protected TableFlagResolver newTableFlagResolver(CairoConfiguration configuration) {
         return new TableFlagResolverImpl(configuration.getSystemTableNamePrefix().toString());
+    }
+
+    protected void restoreBackup() {
+        // Hook for backup functionality. See enterprise subclass.
     }
 }

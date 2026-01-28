@@ -39,7 +39,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
     private final SampleByFillNoneNotKeyedRecordCursor cursor;
-    private final SimpleMapValue simpleMapValue;
+    private final SimpleMapValue value;
 
     public SampleByFillNoneNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -64,10 +64,10 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
         super(base, groupByMetadata, recordFunctions);
         try {
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-            this.simpleMapValue = new SimpleMapValue(valueCount);
+            this.value = new SimpleMapValue(valueCount);
             this.cursor = new SampleByFillNoneNotKeyedRecordCursor(
                     configuration,
-                    simpleMapValue,
+                    value,
                     groupByFunctions,
                     updater,
                     recordFunctions,
@@ -103,7 +103,7 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
     @Override
     protected void _close() {
         super._close();
-        Misc.free(simpleMapValue);
+        Misc.free(value);
         Misc.free(cursor);
     }
 

@@ -1,3 +1,4 @@
+use crate::allocator::{AcVec, AcVecSetLen};
 use crate::parquet::error::{ParquetErrorReason, ParquetResult};
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::DataPageSlicer;
@@ -5,10 +6,37 @@ use crate::parquet_read::ColumnChunkBuffers;
 use crate::parquet_write::array::{append_array_null, append_array_nulls, append_raw_array};
 use crate::parquet_write::varchar::{append_varchar, append_varchar_null, append_varchar_nulls};
 use std::mem::size_of;
+use std::ptr;
 
 const VARCHAR_AUX_SIZE: usize = 2 * size_of::<u64>();
 const STRING_AUX_SIZE: usize = size_of::<u64>();
 pub const ARRAY_AUX_SIZE: usize = 2 * size_of::<u64>();
+
+#[inline]
+fn write_offset_sequence(
+    aux_vec: &mut AcVec<u8>,
+    start: usize,
+    step: usize,
+    count: usize,
+) -> ParquetResult<()> {
+    const BATCH: usize = 128;
+    let mut buf = [0u64; BATCH];
+    let mut offset = start;
+    let mut remaining = count;
+
+    while remaining > 0 {
+        let n = remaining.min(BATCH);
+        for slot in buf.iter_mut().take(n) {
+            *slot = offset as u64;
+            offset += step;
+        }
+        aux_vec.extend_from_slice(unsafe {
+            std::slice::from_raw_parts(buf.as_ptr().cast(), n * size_of::<u64>())
+        })?;
+        remaining -= n;
+    }
+    Ok(())
+}
 
 pub struct VarcharColumnSink<'a, T: DataPageSlicer> {
     slicer: &'a mut T,
@@ -150,11 +178,47 @@ impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
 
     #[inline]
     fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        // TODO: optimise
-        for _ in 0..count {
-            self.push_null()?;
+        match count {
+            0 => Ok(()),
+            1 => self.push_null(),
+            2 => {
+                self.push_null()?;
+                self.push_null()
+            }
+            3 => {
+                self.push_null()?;
+                self.push_null()?;
+                self.push_null()
+            }
+            4 => {
+                self.push_null()?;
+                self.push_null()?;
+                self.push_null()?;
+                self.push_null()
+            }
+            _ => {
+                let base = self.buffers.data_vec.len();
+                self.buffers.data_vec.reserve(count * size_of::<i32>())?;
+
+                // Fill data_vec with 0xff bytes (-1i32 per null)
+                unsafe {
+                    ptr::write_bytes(
+                        self.buffers.data_vec.as_mut_ptr().add(base),
+                        0xff,
+                        count * size_of::<i32>(),
+                    );
+                    self.buffers
+                        .data_vec
+                        .set_len(base + count * size_of::<i32>());
+                }
+                write_offset_sequence(
+                    &mut self.buffers.aux_vec,
+                    base + size_of::<i32>(),
+                    size_of::<i32>(),
+                    count,
+                )
+            }
         }
-        Ok(())
     }
 
     fn skip(&mut self, count: usize) {
@@ -233,11 +297,47 @@ impl<T: DataPageSlicer> Pushable for BinaryColumnSink<'_, T> {
 
     #[inline]
     fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        // TODO: optimise
-        for _ in 0..count {
-            self.push_null()?;
+        match count {
+            0 => Ok(()),
+            1 => self.push_null(),
+            2 => {
+                self.push_null()?;
+                self.push_null()
+            }
+            3 => {
+                self.push_null()?;
+                self.push_null()?;
+                self.push_null()
+            }
+            4 => {
+                self.push_null()?;
+                self.push_null()?;
+                self.push_null()?;
+                self.push_null()
+            }
+            _ => {
+                let base = self.buffers.data_vec.len();
+                self.buffers.data_vec.reserve(count * size_of::<i64>())?;
+
+                // Fill data_vec with 0xff bytes (-1i64 per null)
+                unsafe {
+                    ptr::write_bytes(
+                        self.buffers.data_vec.as_mut_ptr().add(base),
+                        0xff,
+                        count * size_of::<i64>(),
+                    );
+                    self.buffers
+                        .data_vec
+                        .set_len(base + count * size_of::<i64>());
+                }
+                write_offset_sequence(
+                    &mut self.buffers.aux_vec,
+                    base + size_of::<i64>(),
+                    size_of::<i64>(),
+                    count,
+                )
+            }
         }
-        Ok(())
     }
 
     fn skip(&mut self, count: usize) {

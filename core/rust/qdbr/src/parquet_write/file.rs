@@ -762,6 +762,7 @@ fn column_chunk_to_primitive_pages(
             adjusted_column_top,
             options,
             primitive_type,
+            column.required,
         );
     }
 

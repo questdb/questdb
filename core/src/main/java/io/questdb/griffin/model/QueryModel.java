@@ -114,6 +114,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SHOW_TRANSACTION_ISOLATION_LEVEL = 5;
     public static final String SUB_QUERY_ALIAS_PREFIX = "_xQdbA";
     private static final ObjList<String> modelTypeName = new ObjList<>();
+    // Tracks next sequence number for alias generation to achieve O(1) amortized complexity
+    private final LowerCaseCharSequenceIntHashMap aliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> aliasToColumnNameMap = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
@@ -224,6 +226,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode tableNameExpr;
     private RecordCursorFactory tableNameFunction;
     private ExpressionNode timestamp;
+    private CharSequence timestampOffsetAlias;  // The alias name for the transformed timestamp (e.g., "ts")
+    // Timestamp offset information for virtual models where timestamp is computed via dateadd.
+    // Used to enable timestamp predicate pushdown with appropriate offset adjustment.
+    // NOTE: The optimizer intrinsically understands dateadd(char, int, timestamp) and pushes
+    // predicates through it. The offset type must match dateadd's signature (int).
+    // See TimestampAddFunctionFactory for the function definition.
+    private char timestampOffsetUnit;           // 'h', 'd', 'm', 's', etc. (0 means no offset)
+    private int timestampOffsetValue;           // The offset value (inverse, e.g., +1 for dateadd -1)
+    private CharSequence timestampSourceColumn; // The original column name before dateadd transformation
+    private int timestampColumnIndex = -1;      // Index of the timestamp column in virtual models (-1 means not set)
     private QueryModel unionModel;
     private QueryModel updateTableModel;
     private TableToken updateTableToken;
@@ -474,6 +486,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         limitAdviceLo = null;
         limitPosition = 0;
         timestamp = null;
+        timestampOffsetUnit = 0;
+        timestampOffsetValue = 0;
+        timestampSourceColumn = null;
+        timestampOffsetAlias = null;
+        timestampColumnIndex = -1;
         sqlNodeStack.clear();
         joinColumns.clear();
         withClauseModel.clear();
@@ -492,6 +509,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         topDownColumns.clear();
         topDownNameSet.clear();
         aliasToColumnMap.clear();
+        aliasSequenceMap.clear();
         // TODO: replace booleans with an enum-like type: UPDATE/MAT_VIEW/INSERT_AS_SELECT/SELECT
         //  default is SELECT
         isUpdateModel = false;
@@ -670,6 +688,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ExpressionNode getAlias() {
         return alias;
+    }
+
+    public LowerCaseCharSequenceIntHashMap getAliasSequenceMap() {
+        return aliasSequenceMap;
     }
 
     public LowerCaseCharSequenceObjHashMap<QueryColumn> getAliasToColumnMap() {
@@ -978,6 +1000,30 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return timestamp;
     }
 
+    public CharSequence getTimestampOffsetAlias() {
+        return timestampOffsetAlias;
+    }
+
+    public char getTimestampOffsetUnit() {
+        return timestampOffsetUnit;
+    }
+
+    public int getTimestampOffsetValue() {
+        return timestampOffsetValue;
+    }
+
+    public CharSequence getTimestampSourceColumn() {
+        return timestampSourceColumn;
+    }
+
+    public boolean hasTimestampOffset() {
+        return timestampOffsetUnit != 0;
+    }
+
+    public int getTimestampColumnIndex() {
+        return timestampColumnIndex;
+    }
+
     public ObjList<QueryColumn> getTopDownColumns() {
         return topDownColumns;
     }
@@ -1284,6 +1330,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
+    public void replaceColumnNameMap(CharSequence alias, CharSequence oldToken, CharSequence newToken) {
+        aliasToColumnNameMap.put(alias, newToken);
+        columnNameToAliasMap.remove(oldToken);
+        columnNameToAliasMap.put(newToken, alias);
+    }
+
     public void replaceJoinModel(int pos, QueryModel model) {
         joinModels.setQuick(pos, model);
     }
@@ -1500,6 +1552,26 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.timestamp = timestamp;
     }
 
+    public void setTimestampOffsetAlias(CharSequence alias) {
+        this.timestampOffsetAlias = alias;
+    }
+
+    public void setTimestampOffsetUnit(char unit) {
+        this.timestampOffsetUnit = unit;
+    }
+
+    public void setTimestampOffsetValue(int value) {
+        this.timestampOffsetValue = value;
+    }
+
+    public void setTimestampSourceColumn(CharSequence col) {
+        this.timestampSourceColumn = col;
+    }
+
+    public void setTimestampColumnIndex(int index) {
+        this.timestampColumnIndex = index;
+    }
+
     public void setUnionModel(QueryModel unionModel) {
         this.unionModel = unionModel;
         if (unionModel != null && viewNameExpr != null) {
@@ -1566,7 +1638,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
         for (int i = 0, size = getColumns().size(); i < size; i++) {
             QueryColumn column = getColumns().getQuick(i);
-            if (column.isWindowColumn() && ((WindowExpression) column).stopOrderByPropagate(getOrderBy(), getOrderByDirection())) {
+            if (column.isWindowExpression() && ((WindowExpression) column).stopOrderByPropagate(getOrderBy(), getOrderByDirection())) {
                 return true;
             }
         }
@@ -1628,7 +1700,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             CharSequence alias = column.getAlias();
             ExpressionNode ast = column.getAst();
             ast.toSink(sink);
-            if (column.isWindowColumn() || name == null) {
+            if (column.isWindowExpression() || name == null) {
 
                 if (alias != null) {
                     aliasToSink(alias, sink);
@@ -1808,6 +1880,17 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             if (getLatestByType() != LATEST_BY_NEW && timestamp != null) {
                 sink.putAscii(" timestamp (");
                 timestamp.toSink(sink);
+                sink.putAscii(')');
+            }
+
+            // Output timestamp offset info if present (for dateadd-transformed timestamps)
+            if (hasTimestampOffset()) {
+                sink.putAscii(" ts_offset ('");
+                sink.putAscii(timestampOffsetUnit);
+                sink.putAscii("', ");
+                sink.put(timestampOffsetValue);
+                sink.putAscii(", ");
+                sink.put(timestampColumnIndex);
                 sink.putAscii(')');
             }
 

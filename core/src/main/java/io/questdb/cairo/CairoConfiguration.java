@@ -131,15 +131,6 @@ public interface CairoConfiguration {
     @NotNull
     String getAttachPartitionSuffix();
 
-    DateFormat getBackupDirTimestampFormat();
-
-    int getBackupMkDirMode();
-
-    // null disables backups
-    CharSequence getBackupRoot();
-
-    CharSequence getBackupTempDirName();
-
     int getBinaryEncodingMaxLength();
 
     int getBindVariablePoolSize();
@@ -154,6 +145,23 @@ public interface CairoConfiguration {
     }
 
     boolean getCairoSqlLegacyOperatorPrecedence();
+
+    /**
+     * Enable/disable full rebuild of bitmap indexes for symbol columns in partitions
+     */
+    boolean getCheckpointRecoveryRebuildColumnIndexes();
+
+    /**
+     * Maximum thread pool size for checkpoint recovery operations.
+     * The actual size is determined by clamping the available processor count between min and max.
+     */
+    int getCheckpointRecoveryThreadpoolMax();
+
+    /**
+     * Minimum thread pool size for checkpoint recovery operations.
+     * The actual size is determined by clamping the available processor count between min and max.
+     */
+    int getCheckpointRecoveryThreadpoolMin();
 
     @NotNull
     CharSequence getCheckpointRoot(); // same as root/../.checkpoint
@@ -654,6 +662,23 @@ public interface CairoConfiguration {
 
     int getSqlWindowTreeKeyPageSize();
 
+    /**
+     * When the number of intervals exceeds this threshold during bracket expansion,
+     * intervals are merged to prevent unbounded memory growth.
+     */
+    int getSqlIntervalIncrementalMergeThreshold();
+
+    /**
+     * Maximum recursion depth for bracket expansion in interval parsing (one level per bracket group).
+     */
+    int getSqlIntervalMaxBracketDepth();
+
+    /**
+     * Maximum number of intervals allowed after bracket expansion and merging.
+     * This limit prevents memory exhaustion from large non-adjacent interval sets.
+     */
+    int getSqlIntervalMaxIntervalsAfterMerge();
+
     int getStrFunctionMaxBufferLength();
 
     long getSymbolTableMaxAllocationPageSize();
@@ -785,6 +810,8 @@ public interface CairoConfiguration {
     boolean isMatViewEnabled();
 
     boolean isMatViewParallelSqlEnabled();
+
+    boolean isMatViewRefreshMissingWalFilesFatal();
 
     boolean isMultiKeyDedupEnabled();
 

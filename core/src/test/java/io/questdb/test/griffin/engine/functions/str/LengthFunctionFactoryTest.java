@@ -32,17 +32,19 @@ public class LengthFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBinSimple() throws Exception {
         assertQuery(
-                "bin\tlength\n" +
-                        "00000000 41 1d\t2\n" +
-                        "00000000 8a 17 fa d8\t4\n" +
-                        "00000000 ce f1\t2\n" +
-                        "\t-1\n" +
-                        "00000000 91\t1\n" +
-                        "00000000 db f3 04 1b\t4\n" +
-                        "00000000 de a0\t2\n" +
-                        "\t-1\n" +
-                        "00000000 15 68\t2\n" +
-                        "00000000 af 19 c4 95\t4\n",
+                """
+                        bin\tlength
+                        00000000 41 1d\t2
+                        00000000 8a 17 fa d8\t4
+                        00000000 ce f1\t2
+                        \t-1
+                        00000000 91\t1
+                        00000000 db f3 04 1b\t4
+                        00000000 de a0\t2
+                        \t-1
+                        00000000 15 68\t2
+                        00000000 af 19 c4 95\t4
+                        """,
                 "select bin,length(bin) from x",
                 "create table x as (" +
                         "select rnd_bin(1,5,5) as bin\n" +
@@ -57,12 +59,14 @@ public class LengthFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testStrSimple() throws Exception {
         assertQuery(
-                "str\tlength\n" +
-                        "abc\t3\n" +
-                        "\t0\n" +
-                        "x\t1\n" +
-                        "\t-1\n" +
-                        "x\t1\n",
+                """
+                        str\tlength
+                        abc\t3
+                        \t0
+                        x\t1
+                        \t-1
+                        x\t1
+                        """,
                 "select str,length(str) from x",
                 "create table x as (" +
                         "select rnd_str('abc','x','',NULL) as str\n" +
@@ -77,17 +81,19 @@ public class LengthFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSymbolSimple() throws Exception {
         assertQuery(
-                "sym\tlength\n" +
-                        "WC\t2\n" +
-                        "\t-1\n" +
-                        "EH\t2\n" +
-                        "\t-1\n" +
-                        "EH\t2\n" +
-                        "SWH\t3\n" +
-                        "T\t1\n" +
-                        "T\t1\n" +
-                        "T\t1\n" +
-                        "\t-1\n",
+                """
+                        sym\tlength
+                        WC\t2
+                        \t-1
+                        EH\t2
+                        \t-1
+                        EH\t2
+                        SWH\t3
+                        T\t1
+                        T\t1
+                        T\t1
+                        \t-1
+                        """,
                 "select sym,length(sym) from x",
                 "create table x as (" +
                         "select rnd_symbol(5,1,3,5) as sym\n" +
@@ -100,14 +106,38 @@ public class LengthFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVarcharLengthBytesSimple() throws Exception {
+        assertQuery(
+                """
+                        v\tlength_bytes
+                        abc\t3
+                        тест\t8
+                        тест\t8
+                        x\t1
+                        x\t1
+                        """,
+                "select v, length_bytes(v) from x",
+                "create table x as (" +
+                        "select rnd_varchar('abc','x','','тест',NULL) as v\n" +
+                        "from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testVarcharSimple() throws Exception {
         assertQuery(
-                "v\tlength\n" +
-                        "abc\t3\n" +
-                        "едно-две-три\t12\n" +
-                        "едно-две-три\t12\n" +
-                        "x\t1\n" +
-                        "x\t1\n",
+                """
+                        v\tlength
+                        abc\t3
+                        едно-две-три\t12
+                        едно-две-три\t12
+                        x\t1
+                        x\t1
+                        """,
                 "select v,length(v) from x",
                 "create table x as (" +
                         "select rnd_varchar('abc','x','','едно-две-три',NULL) as v\n" +
