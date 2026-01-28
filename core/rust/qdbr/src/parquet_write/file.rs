@@ -128,7 +128,7 @@ impl<W: Write> ParquetWriter<W> {
 
     /// Serialize columns in parallel
     #[allow(dead_code)]
-    pub fn set_parallel(mut self, parallel: bool) -> Self {
+    pub fn with_parallel(mut self, parallel: bool) -> Self {
         self.parallel = parallel;
         self
     }
