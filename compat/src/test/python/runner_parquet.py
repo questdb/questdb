@@ -521,6 +521,9 @@ class TestSymbolColumnTop(ParquetCompatTest):
 
             assert total_rows == self.expected_row_count, \
                 f"Parquet row count mismatch: expected {self.expected_row_count}, got {total_rows}"
+            if num_row_groups is not None:
+                assert num_row_groups >= self.expected_min_row_groups, \
+                    f"Expected at least {self.expected_min_row_groups} row groups, got {num_row_groups}"
 
             # Verify symbol column null count in statistics (pyarrow only)
             if READER == "pyarrow":

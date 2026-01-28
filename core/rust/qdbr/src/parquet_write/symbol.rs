@@ -165,6 +165,14 @@ pub fn symbol_to_data_page_only(
     let data_null_count = column_values.iter().filter(|&&k| k < 0).count();
     let total_null_count = column_top + data_null_count;
 
+    debug_assert!(
+        column_values
+            .iter()
+            .filter(|&&k| k >= 0)
+            .all(|&k| (k as u32) <= global_max_key),
+        "local key exceeds global_max_key, encoding would be invalid"
+    );
+
     let definition_levels_byte_length = if required {
         debug_assert!(column_top == 0);
         debug_assert!(
