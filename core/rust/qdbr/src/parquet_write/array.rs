@@ -40,7 +40,7 @@ use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 
 use super::util::ArrayStats;
-use crate::allocator::AcVec;
+use crate::allocator::{AcVec, AcVecSetLen};
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
@@ -477,6 +477,7 @@ pub fn array_to_raw_page(
         primitive_type,
         options,
         encoding,
+        false,
     )
     .map(Page::Data)
 }
@@ -741,10 +742,52 @@ pub fn append_array_nulls(
     data_mem: &[u8],
     count: usize,
 ) -> ParquetResult<()> {
-    for _ in 0..count {
-        append_array_null(aux_mem, data_mem)?;
+    match count {
+        0 => Ok(()),
+        1 => append_array_null(aux_mem, data_mem),
+        2 => {
+            append_array_null(aux_mem, data_mem)?;
+            append_array_null(aux_mem, data_mem)
+        }
+        3 => {
+            append_array_null(aux_mem, data_mem)?;
+            append_array_null(aux_mem, data_mem)?;
+            append_array_null(aux_mem, data_mem)
+        }
+        4 => {
+            append_array_null(aux_mem, data_mem)?;
+            append_array_null(aux_mem, data_mem)?;
+            append_array_null(aux_mem, data_mem)?;
+            append_array_null(aux_mem, data_mem)
+        }
+        _ => {
+            const ENTRY_SIZE: usize = 16; // 8 bytes offset + 8 bytes header
+
+            let mut null_entry = [0u8; ENTRY_SIZE];
+            null_entry[..8].copy_from_slice(&data_mem.len().to_le_bytes());
+            let base = aux_mem.len();
+            let total_bytes = count
+                .checked_mul(ENTRY_SIZE)
+                .ok_or_else(|| fmt_err!(Layout, "append_array_nulls overflow"))?;
+
+            aux_mem.reserve(total_bytes)?;
+            unsafe {
+                let ptr = aux_mem.as_mut_ptr().add(base);
+                for i in 0..count {
+                    std::ptr::copy_nonoverlapping(
+                        null_entry.as_ptr(),
+                        ptr.add(i * ENTRY_SIZE),
+                        ENTRY_SIZE,
+                    );
+                }
+                let new_len = base
+                    .checked_add(total_bytes)
+                    .ok_or_else(|| fmt_err!(Layout, "append_array_nulls overflow"))?;
+                AcVecSetLen::set_len(aux_mem, new_len);
+            }
+            Ok(())
+        }
     }
-    Ok(())
 }
 
 #[cfg(test)]
