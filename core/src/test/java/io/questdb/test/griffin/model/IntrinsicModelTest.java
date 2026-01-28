@@ -601,31 +601,6 @@ public class IntrinsicModelTest {
     }
 
     @Test
-    public void testDateListAllElementsHaveTime() throws SqlException {
-        // All elements have time - global time suffix is completely ignored
-        assertBracketInterval(
-                "[{lo=2026-01-01T09:30:00.000000Z, hi=2026-01-01T09:30:59.999999Z},{lo=2026-01-02T14:00:00.000000Z, hi=2026-01-02T14:00:59.999999Z}]",
-                "[2026-01-01T09:30, 2026-01-02T14:00]T10:00"
-        );
-    }
-
-    @Test
-    public void testDateListElementWithHighPrecisionTime() throws SqlException {
-        // Element with seconds/microseconds keeps its precise time
-        // For nano, microsecond precision fills remaining nanos with 9s for hi
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "[2026-01-01T09:30:45.123456, 2026-01-02]T10:00";
-        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        TestUtils.assertEquals(
-                ColumnType.isTimestampNano(timestampType.getTimestampType())
-                        ? "[{lo=2026-01-01T09:30:45.123456000Z, hi=2026-01-01T09:30:45.123456999Z},{lo=2026-01-02T10:00:00.000000000Z, hi=2026-01-02T10:00:59.999999999Z}]"
-                        : "[{lo=2026-01-01T09:30:45.123456Z, hi=2026-01-01T09:30:45.123456Z},{lo=2026-01-02T10:00:00.000000Z, hi=2026-01-02T10:00:59.999999Z}]",
-                intervalToString(timestampDriver, out)
-        );
-    }
-
-    @Test
     public void testBracketExpansionWithSubtractApplyEncodedFalse() throws SqlException {
         // Test SUBTRACT operation with applyEncoded=false (exercises line 1167)
         final TimestampDriver timestampDriver = timestampType.getDriver();
@@ -695,8 +670,6 @@ public class IntrinsicModelTest {
         assertDateFloor("", "2015-01-01T00:00:00.000000-1");
     }
 
-    // ================= End ISO Week Date Tests =================
-
     @Test(expected = NumericException.class)
     public void testDateFloorFailsOnTzSign() throws NumericException {
         assertDateFloor("", "2015-01-01T00:00:00.000000≠10");
@@ -707,6 +680,8 @@ public class IntrinsicModelTest {
         assertDateFloor("2015-02-28T09:22:44.556011Z", "2015-02-28T08:22:44.556011-01");
         assertDateFloor("2015-02-28T09:22:44.556011Z", "2015-02-28 08:22:44.556011-01");
     }
+
+    // ================= End ISO Week Date Tests =================
 
     @Test
     public void testDateFloorMicroWithTzHrsMins() throws NumericException {
@@ -774,6 +749,15 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testDateListAllElementsHaveTime() throws SqlException {
+        // All elements have time - global time suffix is completely ignored
+        assertBracketInterval(
+                "[{lo=2026-01-01T09:30:00.000000Z, hi=2026-01-01T09:30:59.999999Z},{lo=2026-01-02T14:00:00.000000Z, hi=2026-01-02T14:00:59.999999Z}]",
+                "[2026-01-01T09:30, 2026-01-02T14:00]T10:00"
+        );
+    }
+
+    @Test
     public void testDateListBracketExpansionWithPerElementDayFilter() throws SqlException {
         // Bracket expansion inside element WITH per-element day filter
         // [2024-01-[01..07]#Mon,2024-01-15] - the #Mon applies to all expanded dates from 01..07
@@ -785,63 +769,19 @@ public class IntrinsicModelTest {
     }
 
     @Test
-    public void testDateListErrorDescendingRangeInNested() {
-        // '[2025-01-[10..05]]' produces range error
-        assertBracketIntervalError("[2025-01-[10..05]]", "Range must be ascending");
-    }
-
-    @Test
-    public void testDateListErrorDoubleBrackets() {
-        // '[[2025-01-01]]' - inner bracket is not valid field expansion (parsed as element "[2025-01-01]")
-        assertBracketIntervalError("[[2025-01-01]]", "Expected ',' or end of bracket");
-    }
-
-    @Test
-    public void testDateListErrorDoubleComma() {
-        // '[2025-01-01,,2025-01-02]' produces error
-        assertBracketIntervalError("[2025-01-01,,2025-01-02]", "Empty element in date list");
-    }
-
-    @Test
-    public void testDateListErrorEmpty() {
-        // '[]' produces error
-        assertBracketIntervalError("[]", "Empty date list");
-    }
-
-    @Test
-    public void testDateListErrorInvalidDayInNestedExpansion() {
-        // '[2025-01-[32..35]]' produces invalid day error
-        assertBracketIntervalError("[2025-01-[32..35]]", "Invalid date");
-    }
-
-    @Test
-    public void testDateListErrorLeadingComma() {
-        // '[,2025-01-01]' produces error
-        assertBracketIntervalError("[,2025-01-01]", "Empty element in date list");
-    }
-
-    @Test
-    public void testDateListErrorNegativeDuration() {
-        // '[2025-01-01]T09:30;-5m' - negative duration not supported
-        assertBracketIntervalError("[2025-01-01]T09:30;-5m", "Expected number before unit");
-    }
-
-    @Test
-    public void testDateListErrorTrailingComma() {
-        // '[2025-01-01,]' produces error
-        assertBracketIntervalError("[2025-01-01,]", "Empty element in date list");
-    }
-
-    @Test
-    public void testDateListErrorUnclosed() {
-        // '[2025-01-01' produces error
-        assertBracketIntervalError("[2025-01-01", "Unclosed '[' in date list");
-    }
-
-    @Test
-    public void testDateListErrorWhitespaceOnlyElements() {
-        // '[   ,   ]' - whitespace-only elements should error
-        assertBracketIntervalError("[   ,   ]", "Empty element in date list");
+    public void testDateListElementWithHighPrecisionTime() throws SqlException {
+        // Element with seconds/microseconds keeps its precise time
+        // For nano, microsecond precision fills remaining nanos with 9s for hi
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "[2026-01-01T09:30:45.123456, 2026-01-02]T10:00";
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        TestUtils.assertEquals(
+                ColumnType.isTimestampNano(timestampType.getTimestampType())
+                        ? "[{lo=2026-01-01T09:30:45.123456000Z, hi=2026-01-01T09:30:45.123456999Z},{lo=2026-01-02T10:00:00.000000000Z, hi=2026-01-02T10:00:59.999999999Z}]"
+                        : "[{lo=2026-01-01T09:30:45.123456Z, hi=2026-01-01T09:30:45.123456Z},{lo=2026-01-02T10:00:00.000000Z, hi=2026-01-02T10:00:59.999999Z}]",
+                intervalToString(timestampDriver, out)
+        );
     }
 
     @Test
@@ -906,9 +846,69 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testDateListErrorDescendingRangeInNested() {
+        // '[2025-01-[10..05]]' produces range error
+        assertBracketIntervalError("[2025-01-[10..05]]", "Range must be ascending");
+    }
+
+    @Test
+    public void testDateListErrorDoubleBrackets() {
+        // '[[2025-01-01]]' - inner bracket is not valid field expansion (parsed as element "[2025-01-01]")
+        assertBracketIntervalError("[[2025-01-01]]", "Expected ',' or end of bracket");
+    }
+
+    @Test
+    public void testDateListErrorDoubleComma() {
+        // '[2025-01-01,,2025-01-02]' produces error
+        assertBracketIntervalError("[2025-01-01,,2025-01-02]", "Empty element in date list");
+    }
+
+    @Test
+    public void testDateListErrorEmpty() {
+        // '[]' produces error
+        assertBracketIntervalError("[]", "Empty date list");
+    }
+
+    @Test
+    public void testDateListErrorInvalidDayInNestedExpansion() {
+        // '[2025-01-[32..35]]' produces invalid day error
+        assertBracketIntervalError("[2025-01-[32..35]]", "Invalid date");
+    }
+
+    @Test
+    public void testDateListErrorLeadingComma() {
+        // '[,2025-01-01]' produces error
+        assertBracketIntervalError("[,2025-01-01]", "Empty element in date list");
+    }
+
+    @Test
     public void testDateListErrorLowercaseT() {
         // Lowercase 't' is not supported as time separator
         assertBracketIntervalError("[2026-01-01t09:30]", "Invalid date");
+    }
+
+    @Test
+    public void testDateListErrorNegativeDuration() {
+        // '[2025-01-01]T09:30;-5m' - negative duration not supported
+        assertBracketIntervalError("[2025-01-01]T09:30;-5m", "Expected number before unit");
+    }
+
+    @Test
+    public void testDateListErrorTrailingComma() {
+        // '[2025-01-01,]' produces error
+        assertBracketIntervalError("[2025-01-01,]", "Empty element in date list");
+    }
+
+    @Test
+    public void testDateListErrorUnclosed() {
+        // '[2025-01-01' produces error
+        assertBracketIntervalError("[2025-01-01", "Unclosed '[' in date list");
+    }
+
+    @Test
+    public void testDateListErrorWhitespaceOnlyElements() {
+        // '[   ,   ]' - whitespace-only elements should error
+        assertBracketIntervalError("[   ,   ]", "Empty element in date list");
     }
 
     @Test
@@ -919,221 +919,6 @@ public class IntrinsicModelTest {
         assertBracketInterval(
                 "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z},{lo=2024-01-06T00:00:00.000000Z, hi=2024-01-06T23:59:59.999999Z}]",
                 "[2024-01-01#Mon,2024-01-06]#Sat"
-        );
-    }
-
-    @Test
-    public void testDateVariableArithmeticWithTimeSuffix() throws SqlException {
-        // Date variable arithmetic + time suffix
-        // $today + 3d at 09:30
-        assertDateVariableInterval(
-                (now, driver, tsType) -> {
-                    // $today + 3d at 09:30
-                    long todayStart = driver.startOfDay(now, 0);
-                    long targetDay = driver.addDays(todayStart, 3);
-                    String date = formatDate(targetDay, driver);
-                    return "[{lo=" + date + "T09:30:00.000000Z, hi=" + date + "T09:30:59.999999Z}]";
-                },
-                "[$today + 3d]T09:30"
-        );
-    }
-
-    @Test
-    public void testDateVariableBusinessDaysWithTimeSuffix() throws SqlException {
-        // Date variable business day arithmetic + time suffix
-        // $today (Wednesday 2025-04-09) + 2bd = Friday 2025-04-11
-        assertBracketIntervalWithNow(
-                "[{lo=2025-04-11T09:30:00.000000Z, hi=2025-04-11T10:30:59.999999Z}]",
-                "[$today + 2bd]T09:30;1h",
-                "2025-04-09T14:45:00.000000Z"
-        );
-    }
-
-    @Test
-    public void testDateVariableInvalidAddition() {
-        // Adding two date variables is not supported - expects number after operator
-        assertBracketIntervalError("[$today + $today]", "Expected number after operator");
-    }
-
-    @Test
-    public void testDateListSingleDate() throws SqlException {
-        // '[2025-12-31]' produces 1 full-day interval
-        assertBracketInterval(
-                "[{lo=2025-12-31T00:00:00.000000Z, hi=2025-12-31T23:59:59.999999Z}]",
-                "[2025-12-31]"
-        );
-    }
-
-    @Test
-    public void testDateVariableArithmeticBusinessDays() throws SqlException {
-        // 2026-01-22 is Thursday
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        long now = timestampDriver.parseFloorLiteral("2026-01-22T10:30:00.000000Z");
-        LongList out = new LongList();
-
-        // [$today + 1bd] should be Friday 2026-01-23
-        String interval = "[$today + 1bd]";
-        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, now);
-        TestUtils.assertEquals(
-                ColumnType.isTimestampNano(timestampType.getTimestampType())
-                        ? "[{lo=2026-01-23T00:00:00.000000000Z, hi=2026-01-23T23:59:59.999999999Z}]"
-                        : "[{lo=2026-01-23T00:00:00.000000Z, hi=2026-01-23T23:59:59.999999Z}]",
-                intervalToString(timestampDriver, out)
-        );
-
-        out.clear();
-        // [$today + 2bd] should be Monday 2026-01-26 (skip weekend)
-        interval = "[$today + 2bd]";
-        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, now);
-        TestUtils.assertEquals(
-                ColumnType.isTimestampNano(timestampType.getTimestampType())
-                        ? "[{lo=2026-01-26T00:00:00.000000000Z, hi=2026-01-26T23:59:59.999999999Z}]"
-                        : "[{lo=2026-01-26T00:00:00.000000Z, hi=2026-01-26T23:59:59.999999Z}]",
-                intervalToString(timestampDriver, out)
-        );
-
-        out.clear();
-        // [$today - 1bd] should be Wednesday 2026-01-21
-        interval = "[$today - 1bd]";
-        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, now);
-        TestUtils.assertEquals(
-                ColumnType.isTimestampNano(timestampType.getTimestampType())
-                        ? "[{lo=2026-01-21T00:00:00.000000000Z, hi=2026-01-21T23:59:59.999999999Z}]"
-                        : "[{lo=2026-01-21T00:00:00.000000Z, hi=2026-01-21T23:59:59.999999Z}]",
-                intervalToString(timestampDriver, out)
-        );
-
-        out.clear();
-        // [$today + 0bd] should be today 2026-01-22
-        interval = "[$today + 0bd]";
-        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, now);
-        TestUtils.assertEquals(
-                ColumnType.isTimestampNano(timestampType.getTimestampType())
-                        ? "[{lo=2026-01-22T00:00:00.000000000Z, hi=2026-01-22T23:59:59.999999999Z}]"
-                        : "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-22T23:59:59.999999Z}]",
-                intervalToString(timestampDriver, out)
-        );
-    }
-
-    @Test
-    public void testDateVariableInvalidOperator() {
-        // "$today * 5d" - multiplication is not a valid operator
-        assertBracketIntervalError("[$today * 5d]", "Expected '+' or '-' operator");
-    }
-
-    @Test
-    public void testDateVariableInvalidUnitStartingWithB() {
-        // 'b' followed by non-'d' character
-        assertBracketIntervalError("[$today + 5bx]", "Invalid unit");
-    }
-
-    @Test
-    public void testDateVariableMixedListWithDifferentTimes() throws SqlException {
-        // Mixed list: some date vars, some static dates with times, some without
-        // $yesterday gets T14:00, 2025-03-05T09:30 keeps 09:30, 2025-03-10 gets T14:00
-        assertBracketIntervalWithNow(
-                "[{lo=2025-03-05T09:30:00.000000Z, hi=2025-03-05T09:30:59.999999Z},{lo=2025-03-10T14:00:00.000000Z, hi=2025-03-10T14:00:59.999999Z},{lo=2025-03-19T14:00:00.000000Z, hi=2025-03-19T14:00:59.999999Z}]",
-                "[$yesterday, 2025-03-05T09:30, 2025-03-10]T14:00",
-                "2025-03-20T16:45:00.000000Z"
-        );
-    }
-
-    @Test
-    public void testDateVariableMixedWithStaticDateWithTime() throws SqlException {
-        // Date variable gets time suffix, static date with time keeps its time
-        // $today (2025-08-12) gets T10:00, 2025-08-01T09:30 keeps 09:30
-        assertBracketIntervalWithNow(
-                "[{lo=2025-08-01T09:30:00.000000Z, hi=2025-08-01T09:30:59.999999Z},{lo=2025-08-12T10:00:00.000000Z, hi=2025-08-12T10:00:59.999999Z}]",
-                "[$today, 2025-08-01T09:30]T10:00",
-                "2025-08-12T11:20:00.000000Z"
-        );
-    }
-
-    @Test
-    public void testDateVariableWithPerElementDayFilter() throws SqlException {
-        // Date variable with per-element day filter: $today#Thu
-        // 2025-07-17 is Thursday, so it passes the filter
-        assertBracketIntervalWithNow(
-                "[{lo=2025-07-17T00:00:00.000000Z, hi=2025-07-17T23:59:59.999999Z}]",
-                "[$today#Thu]",
-                "2025-07-17T09:15:00.000000Z"
-        );
-    }
-
-    @Test
-    public void testDateVariableWithPerElementDayFilterNoMatch() throws SqlException {
-        // Date variable with per-element day filter that doesn't match
-        // 2025-09-10 is Wednesday, but we filter for Monday - empty result
-        assertBracketIntervalWithNow(
-                "[]",
-                "[$today#Mon]",
-                "2025-09-10T17:30:00.000000Z"
-        );
-    }
-
-    @Test
-    public void testDateVariableWithPerElementTimezone() throws SqlException {
-        // Date variable with per-element timezone: $today@+02:00
-        // Start of day in UTC+2 = previous day at 22:00 UTC
-        assertDateVariableInterval(
-                (now, driver, tsType) -> {
-                    long todayStart = driver.startOfDay(now, 0);
-                    String prevDate = formatDate(driver.addDays(todayStart, -1), driver);
-                    String todayDate = formatDate(todayStart, driver);
-                    // Full day in +02:00 = 22:00 UTC previous day to 21:59:59 UTC today
-                    return "[{lo=" + prevDate + "T22:00:00.000000Z, hi=" + todayDate + "T21:59:59.999999Z}]";
-                },
-                "[$today@+02:00]"
-        );
-    }
-
-    @Test
-    public void testDateVariableWithPerElementTimezoneAndGlobalTimeSuffix() throws SqlException {
-        // Date variable with per-element timezone + global time suffix
-        // $today@+02:00 at T09:00 = today at 09:00 in UTC+2 = 07:00 UTC
-        assertDateVariableInterval(
-                (now, driver, tsType) -> {
-                    String date = formatDate(driver.startOfDay(now, 0), driver);
-                    return "[{lo=" + date + "T07:00:00.000000Z, hi=" + date + "T07:00:59.999999Z}]";
-                },
-                "[$today@+02:00]T09:00"
-        );
-    }
-
-    @Test
-    public void testDateVariableWithTimeListSuffix() throws SqlException {
-        // Date variable gets expanded with time list
-        assertDateVariableInterval(
-                (now, driver, tsType) -> {
-                    String date = formatDate(driver.startOfDay(now, 0), driver);
-                    return "[{lo=" + date + "T09:00:00.000000Z, hi=" + date + "T09:00:59.999999Z},{lo=" + date + "T14:30:00.000000Z, hi=" + date + "T14:30:59.999999Z}]";
-                },
-                "[$today]T[09:00,14:30]"
-        );
-    }
-
-    @Test
-    public void testDateVariableWithTimeSuffixAndDuration() throws SqlException {
-        // Date variable gets time and duration from suffix
-        assertDateVariableInterval(
-                (now, driver, tsType) -> {
-                    String date = formatDate(driver.startOfDay(now, 0), driver);
-                    return "[{lo=" + date + "T09:30:00.000000Z, hi=" + date + "T10:30:59.999999Z}]";
-                },
-                "[$today]T09:30;1h"
-        );
-    }
-
-    @Test
-    public void testDateVariableWithTimeSuffixAndTimezone() throws SqlException {
-        // Date variable gets time and timezone from suffix
-        // $today at 09:30 in UTC+2 = 07:30 UTC
-        assertDateVariableInterval(
-                (now, driver, tsType) -> {
-                    String date = formatDate(driver.startOfDay(now, 0), driver);
-                    return "[{lo=" + date + "T07:30:00.000000Z, hi=" + date + "T07:30:59.999999Z}]";
-                },
-                "[$today]T09:30@+02:00"
         );
     }
 
@@ -1212,46 +997,11 @@ public class IntrinsicModelTest {
     }
 
     @Test
-    public void testDateVariableMissingOffsetAfterOperator() {
-        // Operator at end with nothing after
-        assertBracketIntervalError("[$today +]", "Expected number after operator");
-    }
-
-    @Test
-    public void testDateVariableMissingUnit() {
-        // Number without unit at end
-        assertBracketIntervalError("[$today + 5]", "Expected unit 'd' or 'bd' after number");
-    }
-
-    @Test
-    public void testDateVariableMixedList() throws SqlException {
-        // [$today, $yesterday, 2025-06-10]T18:30 - mixed list with date variables and static date
-        // Intervals should be sorted: Jun 10, Jun 17 (yesterday), Jun 18 (today)
-        assertBracketIntervalWithNow(
-                "[{lo=2025-06-10T18:30:00.000000Z, hi=2025-06-10T18:30:59.999999Z},{lo=2025-06-17T18:30:00.000000Z, hi=2025-06-17T18:30:59.999999Z},{lo=2025-06-18T18:30:00.000000Z, hi=2025-06-18T18:30:59.999999Z}]",
-                "[$today, $yesterday, 2025-06-10]T18:30",
-                "2025-06-18T08:15:00.000000Z"
-        );
-    }
-
-    @Test
-    public void testDateVariableNow() throws SqlException {
-        // [$now] preserves time component from now (10:30) at minute precision
-        assertBracketIntervalWithNow(
-                "[{lo=2026-01-22T10:30:00.000000Z, hi=2026-01-22T10:30:59.999999Z}]",
-                "[$now]",
-                "2026-01-22T10:30:00.000000Z"
-        );
-    }
-
-    @Test
-    public void testDateVariableNowMixedWithGlobalTimezone() throws SqlException {
-        // [$now, 2026-01-15]@America/New_York - both get timezone applied
-        // $now 10:30 in NY = 15:30 UTC; 2026-01-15 full day in NY = 05:00 UTC to 04:59:59 UTC next day
-        assertBracketIntervalWithNow(
-                "[{lo=2026-01-15T05:00:00.000000Z, hi=2026-01-16T04:59:59.999999Z},{lo=2026-01-22T15:30:00.000000Z, hi=2026-01-22T15:30:59.999999Z}]",
-                "[$now, 2026-01-15]@America/New_York",
-                "2026-01-22T10:30:00.000000Z"
+    public void testDateListSingleDate() throws SqlException {
+        // '[2025-12-31]' produces 1 full-day interval
+        assertBracketInterval(
+                "[{lo=2025-12-31T00:00:00.000000Z, hi=2025-12-31T23:59:59.999999Z}]",
+                "[2025-12-31]"
         );
     }
 
@@ -1280,6 +1030,19 @@ public class IntrinsicModelTest {
         assertBracketInterval(
                 "[{lo=2025-01-05T00:00:00.000000Z, hi=2025-01-05T23:59:59.999999Z},{lo=2025-01-15T00:00:00.000000Z, hi=2025-01-15T23:59:59.999999Z},{lo=2025-01-20T00:00:00.000000Z, hi=2025-01-20T23:59:59.999999Z}]",
                 "[2025-01-20,2025-01-05,2025-01-15]"
+        );
+    }
+
+    @Test
+    public void testDateListUnsortedDatesWithDayFilter() throws SqlException {
+        // Dates out of chronological order WITH day filter
+        // [2024-01-15,2024-01-01,2024-01-08]#Mon - all three are Mondays, out of order
+        // Should be sorted to: Jan 1, Jan 8, Jan 15
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}," +
+                        "{lo=2024-01-08T00:00:00.000000Z, hi=2024-01-08T23:59:59.999999Z}," +
+                        "{lo=2024-01-15T00:00:00.000000Z, hi=2024-01-15T23:59:59.999999Z}]",
+                "[2024-01-15,2024-01-01,2024-01-08]#Mon"
         );
     }
 
@@ -1367,8 +1130,6 @@ public class IntrinsicModelTest {
         );
     }
 
-    // ==================== Bracket Expansion Tests ====================
-
     @Test
     public void testDateListWithDurationSuffix() throws SqlException {
         // '[2025-01-15,2025-01-20]T09:30;389m' produces 2 trading-hours intervals
@@ -1433,15 +1194,54 @@ public class IntrinsicModelTest {
         );
     }
 
-    // ================= Date Variable Tests =================
-
     @Test
-    public void testDateVariableNowMixedWithStaticDate() throws SqlException {
-        // [$now, 2026-01-15]T09:00 - $now keeps its time (10:30), static date gets T09:00
-        assertBracketIntervalWithNow(
-                "[{lo=2026-01-15T09:00:00.000000Z, hi=2026-01-15T09:00:59.999999Z},{lo=2026-01-22T10:30:00.000000Z, hi=2026-01-22T10:30:59.999999Z}]",
-                "[$now, 2026-01-15]T09:00",
-                "2026-01-22T10:30:00.000000Z"
+    public void testDateVariableArithmeticBusinessDays() throws SqlException {
+        // 2026-01-22 is Thursday
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        long now = timestampDriver.parseFloorLiteral("2026-01-22T10:30:00.000000Z");
+        LongList out = new LongList();
+
+        // [$today + 1bd] should be Friday 2026-01-23
+        String interval = "[$today + 1bd]";
+        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, now);
+        TestUtils.assertEquals(
+                ColumnType.isTimestampNano(timestampType.getTimestampType())
+                        ? "[{lo=2026-01-23T00:00:00.000000000Z, hi=2026-01-23T23:59:59.999999999Z}]"
+                        : "[{lo=2026-01-23T00:00:00.000000Z, hi=2026-01-23T23:59:59.999999Z}]",
+                intervalToString(timestampDriver, out)
+        );
+
+        out.clear();
+        // [$today + 2bd] should be Monday 2026-01-26 (skip weekend)
+        interval = "[$today + 2bd]";
+        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, now);
+        TestUtils.assertEquals(
+                ColumnType.isTimestampNano(timestampType.getTimestampType())
+                        ? "[{lo=2026-01-26T00:00:00.000000000Z, hi=2026-01-26T23:59:59.999999999Z}]"
+                        : "[{lo=2026-01-26T00:00:00.000000Z, hi=2026-01-26T23:59:59.999999Z}]",
+                intervalToString(timestampDriver, out)
+        );
+
+        out.clear();
+        // [$today - 1bd] should be Wednesday 2026-01-21
+        interval = "[$today - 1bd]";
+        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, now);
+        TestUtils.assertEquals(
+                ColumnType.isTimestampNano(timestampType.getTimestampType())
+                        ? "[{lo=2026-01-21T00:00:00.000000000Z, hi=2026-01-21T23:59:59.999999999Z}]"
+                        : "[{lo=2026-01-21T00:00:00.000000Z, hi=2026-01-21T23:59:59.999999Z}]",
+                intervalToString(timestampDriver, out)
+        );
+
+        out.clear();
+        // [$today + 0bd] should be today 2026-01-22
+        interval = "[$today + 0bd]";
+        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, now);
+        TestUtils.assertEquals(
+                ColumnType.isTimestampNano(timestampType.getTimestampType())
+                        ? "[{lo=2026-01-22T00:00:00.000000000Z, hi=2026-01-22T23:59:59.999999999Z}]"
+                        : "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-22T23:59:59.999999Z}]",
+                intervalToString(timestampDriver, out)
         );
     }
 
@@ -1470,6 +1270,22 @@ public class IntrinsicModelTest {
                         ? "[{lo=2026-01-19T00:00:00.000000000Z, hi=2026-01-19T23:59:59.999999999Z}]"
                         : "[{lo=2026-01-19T00:00:00.000000Z, hi=2026-01-19T23:59:59.999999Z}]",
                 intervalToString(timestampDriver, out)
+        );
+    }
+
+    @Test
+    public void testDateVariableArithmeticWithTimeSuffix() throws SqlException {
+        // Date variable arithmetic + time suffix
+        // $today + 3d at 09:30
+        assertDateVariableInterval(
+                (now, driver, tsType) -> {
+                    // $today + 3d at 09:30
+                    long todayStart = driver.startOfDay(now, 0);
+                    long targetDay = driver.addDays(todayStart, 3);
+                    String date = formatDate(targetDay, driver);
+                    return "[{lo=" + date + "T09:30:00.000000Z, hi=" + date + "T09:30:59.999999Z}]";
+                },
+                "[$today + 3d]T09:30"
         );
     }
 
@@ -1503,6 +1319,17 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testDateVariableBusinessDaysWithTimeSuffix() throws SqlException {
+        // Date variable business day arithmetic + time suffix
+        // $today (Wednesday 2025-04-09) + 2bd = Friday 2025-04-11
+        assertBracketIntervalWithNow(
+                "[{lo=2025-04-11T09:30:00.000000Z, hi=2025-04-11T10:30:59.999999Z}]",
+                "[$today + 2bd]T09:30;1h",
+                "2025-04-09T14:45:00.000000Z"
+        );
+    }
+
+    @Test
     public void testDateVariableCaseInsensitive() throws SqlException {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         long now = timestampDriver.parseFloorLiteral("2026-01-22T10:30:00.000000Z");
@@ -1530,13 +1357,109 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testDateVariableInvalidAddition() {
+        // Adding two date variables is not supported - expects number after operator
+        assertBracketIntervalError("[$today + $today]", "Expected number after operator");
+    }
+
+    @Test
     public void testDateVariableInvalidName() {
         assertBracketIntervalError("[$invalid]", "Unknown date variable");
     }
 
     @Test
+    public void testDateVariableInvalidOperator() {
+        // "$today * 5d" - multiplication is not a valid operator
+        assertBracketIntervalError("[$today * 5d]", "Expected '+' or '-' operator");
+    }
+
+    @Test
     public void testDateVariableInvalidUnit() {
         assertBracketIntervalError("[$today + 5x]", "Invalid unit");
+    }
+
+    @Test
+    public void testDateVariableInvalidUnitStartingWithB() {
+        // 'b' followed by non-'d' character
+        assertBracketIntervalError("[$today + 5bx]", "Invalid unit");
+    }
+
+    @Test
+    public void testDateVariableMissingOffsetAfterOperator() {
+        // Operator at end with nothing after
+        assertBracketIntervalError("[$today +]", "Expected number after operator");
+    }
+
+    @Test
+    public void testDateVariableMissingUnit() {
+        // Number without unit at end
+        assertBracketIntervalError("[$today + 5]", "Expected unit 'd' or 'bd' after number");
+    }
+
+    // ==================== Bracket Expansion Tests ====================
+
+    @Test
+    public void testDateVariableMixedList() throws SqlException {
+        // [$today, $yesterday, 2025-06-10]T18:30 - mixed list with date variables and static date
+        // Intervals should be sorted: Jun 10, Jun 17 (yesterday), Jun 18 (today)
+        assertBracketIntervalWithNow(
+                "[{lo=2025-06-10T18:30:00.000000Z, hi=2025-06-10T18:30:59.999999Z},{lo=2025-06-17T18:30:00.000000Z, hi=2025-06-17T18:30:59.999999Z},{lo=2025-06-18T18:30:00.000000Z, hi=2025-06-18T18:30:59.999999Z}]",
+                "[$today, $yesterday, 2025-06-10]T18:30",
+                "2025-06-18T08:15:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableMixedListWithDifferentTimes() throws SqlException {
+        // Mixed list: some date vars, some static dates with times, some without
+        // $yesterday gets T14:00, 2025-03-05T09:30 keeps 09:30, 2025-03-10 gets T14:00
+        assertBracketIntervalWithNow(
+                "[{lo=2025-03-05T09:30:00.000000Z, hi=2025-03-05T09:30:59.999999Z},{lo=2025-03-10T14:00:00.000000Z, hi=2025-03-10T14:00:59.999999Z},{lo=2025-03-19T14:00:00.000000Z, hi=2025-03-19T14:00:59.999999Z}]",
+                "[$yesterday, 2025-03-05T09:30, 2025-03-10]T14:00",
+                "2025-03-20T16:45:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableMixedWithStaticDateWithTime() throws SqlException {
+        // Date variable gets time suffix, static date with time keeps its time
+        // $today (2025-08-12) gets T10:00, 2025-08-01T09:30 keeps 09:30
+        assertBracketIntervalWithNow(
+                "[{lo=2025-08-01T09:30:00.000000Z, hi=2025-08-01T09:30:59.999999Z},{lo=2025-08-12T10:00:00.000000Z, hi=2025-08-12T10:00:59.999999Z}]",
+                "[$today, 2025-08-01T09:30]T10:00",
+                "2025-08-12T11:20:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableNow() throws SqlException {
+        // [$now] preserves time component from now (10:30) at minute precision
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T10:30:00.000000Z, hi=2026-01-22T10:30:59.999999Z}]",
+                "[$now]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableNowMixedWithGlobalTimezone() throws SqlException {
+        // [$now, 2026-01-15]@America/New_York - both get timezone applied
+        // $now 10:30 in NY = 15:30 UTC; 2026-01-15 full day in NY = 05:00 UTC to 04:59:59 UTC next day
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-15T05:00:00.000000Z, hi=2026-01-16T04:59:59.999999Z},{lo=2026-01-22T15:30:00.000000Z, hi=2026-01-22T15:30:59.999999Z}]",
+                "[$now, 2026-01-15]@America/New_York",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableNowMixedWithStaticDate() throws SqlException {
+        // [$now, 2026-01-15]T09:00 - $now keeps its time (10:30), static date gets T09:00
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-15T09:00:00.000000Z, hi=2026-01-15T09:00:59.999999Z},{lo=2026-01-22T10:30:00.000000Z, hi=2026-01-22T10:30:59.999999Z}]",
+                "[$now, 2026-01-15]T09:00",
+                "2026-01-22T10:30:00.000000Z"
+        );
     }
 
     @Test
@@ -1548,6 +1471,8 @@ public class IntrinsicModelTest {
                 "2026-01-22T10:30:00.000000Z"
         );
     }
+
+    // ================= Date Variable Tests =================
 
     @Test
     public void testDateVariableNowWithPerElementTimezone() throws SqlException {
@@ -1565,183 +1490,6 @@ public class IntrinsicModelTest {
         // Number too large for int
         assertBracketIntervalError("[$today + 99999999999d]", "Invalid number in date expression");
     }
-
-    @Test
-    public void testRepeatingIntervalWithSecondPeriod() throws SqlException {
-        // 2018-01-10T10:30:00;5s;10s;3 means 5sec window starting at 10:30:00, then 10:30:10, then 10:30:20
-        assertBracketInterval(
-                "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T10:30:05.999999Z},{lo=2018-01-10T10:30:10.000000Z, hi=2018-01-10T10:30:15.999999Z},{lo=2018-01-10T10:30:20.000000Z, hi=2018-01-10T10:30:25.999999Z}]",
-                "2018-01-10T10:30:00;5s;10s;3"
-        );
-    }
-
-    @Test
-    public void testDateVariableToday() throws SqlException {
-        // [$today] should resolve to full day
-        assertBracketIntervalWithNow(
-                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-22T23:59:59.999999Z}]",
-                "[$today]",
-                "2026-01-22T10:30:00.000000Z"
-        );
-    }
-
-    @Test
-    public void testDateVariableTodayWithDuration() throws SqlException {
-        // [$today]T09:30;1h should resolve to 2026-01-22T09:30 to 10:30
-        // Duration is added to end of the minute (09:30:59), so end is 10:30:59
-        assertBracketIntervalWithNow(
-                "[{lo=2026-01-22T09:30:00.000000Z, hi=2026-01-22T10:30:59.999999Z}]",
-                "[$today]T09:30;1h",
-                "2026-01-22T10:30:00.000000Z"
-        );
-    }
-
-    @Test
-    public void testDayFilterDateListOppositeTimezones() throws SqlException {
-        // Same date with opposite timezones - both are Monday locally
-        // 2024-01-01 00:00 +12:00 = 2023-12-31 12:00 UTC, ends at 2024-01-01 12:00 UTC
-        // 2024-01-01 00:00 -12:00 = 2024-01-01 12:00 UTC, ends at 2024-01-02 12:00 UTC
-        // Both days are Monday in their respective local times
-        // The two intervals are adjacent and get merged
-        assertBracketInterval(
-                "[{lo=2023-12-31T12:00:00.000000Z, hi=2024-01-02T11:59:59.999999Z}]",
-                "[2024-01-01@+12:00,2024-01-01@-12:00]#Mon"
-        );
-    }
-
-    @Test
-    public void testDayFilterIsoWeek() throws SqlException {
-        // ISO week is exactly 7 days, so totalDays % 7 == 0 (no remainder)
-        // 2024-W01 is Mon Jan 1 to Sun Jan 7
-        // #Tue should return just Tuesday Jan 2
-        assertBracketInterval(
-                "[{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T23:59:59.999999Z}]",
-                "2024-W01#Tue"
-        );
-    }
-
-    @Test
-    public void testDayFilterIsoWeekMultipleDays() throws SqlException {
-        // ISO week with workday filter (Mon-Fri) = 5 days
-        // 2024-W01 is Mon Jan 1 to Sun Jan 7
-        // #workday should return Mon-Fri (Jan 1-5)
-        assertBracketInterval(
-                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}," +
-                        "{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T23:59:59.999999Z}," +
-                        "{lo=2024-01-03T00:00:00.000000Z, hi=2024-01-03T23:59:59.999999Z}," +
-                        "{lo=2024-01-04T00:00:00.000000Z, hi=2024-01-04T23:59:59.999999Z}," +
-                        "{lo=2024-01-05T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z}]",
-                "2024-W01#workday"
-        );
-    }
-
-    @Test
-    public void testDayFilterMonthStartingSunday() throws SqlException {
-        // December 2024 starts on Sunday (dow=6), has 31 days
-        // remainderDays = 31 % 7 = 3, startDow + remainderDays = 6 + 3 = 9 > 7 → wrap-around case
-        // #Mon should return all 5 Mondays: Dec 2, 9, 16, 23, 30
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2024-12#Mon";
-        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-
-        // Should have 5 Mondays
-        Assert.assertEquals(10, out.size());
-
-        String result = intervalToString(timestampDriver, out).toString();
-        Assert.assertTrue("Should have Dec 2", result.contains("2024-12-02T00:00:00"));
-        Assert.assertTrue("Should have Dec 30", result.contains("2024-12-30T"));
-    }
-
-    @Test
-    public void testDayFilterPreciseTimeAtEndOfDay() throws SqlException {
-        // Precise time that happens to be at end-of-day
-        // 2024-01-01T23:59:59 with minute precision ends at 23:59:59.999999
-        // This should NOT be treated as a "natural" interval and expanded
-        // 2024-01-01 is Monday, so #Mon should keep it
-        assertBracketInterval(
-                "[{lo=2024-01-01T23:59:00.000000Z, hi=2024-01-01T23:59:59.999999Z}]",
-                "[2024-01-01T23:59#Mon]"
-        );
-    }
-
-    @Test
-    public void testDateVariableTodayWithTimeSuffix() throws SqlException {
-        // [$today]T09:30 should resolve to 2026-01-22T09:30
-        assertBracketIntervalWithNow(
-                "[{lo=2026-01-22T09:30:00.000000Z, hi=2026-01-22T09:30:59.999999Z}]",
-                "[$today]T09:30",
-                "2026-01-22T10:30:00.000000Z"
-        );
-    }
-
-    @Test
-    public void testDateVariableTomorrow() throws SqlException {
-        // [$tomorrow] should resolve to 2026-01-23
-        assertBracketIntervalWithNow(
-                "[{lo=2026-01-23T00:00:00.000000Z, hi=2026-01-23T23:59:59.999999Z}]",
-                "[$tomorrow]",
-                "2026-01-22T10:30:00.000000Z"
-        );
-    }
-
-    @Test
-    public void testDateVariableWithTimezone() throws SqlException {
-        // [$today]T09:00@America/New_York
-        // 2026-01-22 - New York is in EST (UTC-5) during winter
-        // 09:00 EST = 14:00 UTC
-        assertBracketIntervalWithNow(
-                "[{lo=2026-01-22T14:00:00.000000Z, hi=2026-01-22T14:00:59.999999Z}]",
-                "[$today]T09:00@America/New_York",
-                "2026-01-22T10:30:00.000000Z"
-        );
-    }
-
-    @Test
-    public void testDateVariableTrailingCharactersAfterBusinessDayUnit() {
-        // "$today + 2bdxyz" should fail - trailing characters after 'bd' unit
-        assertBracketIntervalError("[$today + 2bdxyz]", "Unexpected characters after unit");
-    }
-
-    @Test
-    public void testDateVariableTrailingCharactersAfterUnit() {
-        // "$today + 3dabc" should fail - trailing characters after 'd' unit
-        assertBracketIntervalError("[$today + 3dabc]", "Unexpected characters after unit");
-    }
-
-    @Test
-    public void testDateVariableWithWhitespace() throws SqlException {
-        // Test whitespace handling in expressions
-        // Whitespace around operators and between number and unit
-        assertBracketIntervalWithNow(
-                "[{lo=2026-01-25T00:00:00.000000Z, hi=2026-01-25T23:59:59.999999Z}]",
-                "[ $today   +   3 d ]",
-                "2026-01-22T10:30:00.000000Z"
-        );
-    }
-
-    @Test
-    public void testDayFilterWithMultiDayDuration() throws SqlException {
-        // Single date with 3d duration and day filter
-        // 2024-01-01 is Monday. With ;3d duration, interval spans Jan 1-4
-        // Day filter #Mon should keep the ENTIRE interval, not expand
-        assertBracketInterval(
-                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-04T23:59:59.999999Z}]",
-                "[2024-01-01#Mon];3d"
-        );
-    }
-
-    @Test
-    public void testDateVariableYesterday() throws SqlException {
-        // [$yesterday] should resolve to 2026-01-21
-        assertBracketIntervalWithNow(
-                "[{lo=2026-01-21T00:00:00.000000Z, hi=2026-01-21T23:59:59.999999Z}]",
-                "[$yesterday]",
-                "2026-01-22T10:30:00.000000Z"
-        );
-    }
-
-    // ================= Date Variable Range Tests =================
 
     @Test
     public void testDateVariableRangeArithmeticBothSides() throws SqlException {
@@ -1994,6 +1742,8 @@ public class IntrinsicModelTest {
         assertBracketIntervalError("[$today.$tomorrow]", "Unknown date variable: tomorrow");
     }
 
+    // ================= Date Variable Range Tests =================
+
     @Test
     public void testDateVariableRangeSpanningMonthBoundary() throws SqlException {
         // Range spanning Jan 29 to Feb 2 (month boundary)
@@ -2144,7 +1894,179 @@ public class IntrinsicModelTest {
         );
     }
 
-    // ================= End Date Variable Tests =================
+    @Test
+    public void testDateVariableToday() throws SqlException {
+        // [$today] should resolve to full day
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-22T23:59:59.999999Z}]",
+                "[$today]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableTodayWithDuration() throws SqlException {
+        // [$today]T09:30;1h should resolve to 2026-01-22T09:30 to 10:30
+        // Duration is added to end of the minute (09:30:59), so end is 10:30:59
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T09:30:00.000000Z, hi=2026-01-22T10:30:59.999999Z}]",
+                "[$today]T09:30;1h",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableTodayWithTimeSuffix() throws SqlException {
+        // [$today]T09:30 should resolve to 2026-01-22T09:30
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T09:30:00.000000Z, hi=2026-01-22T09:30:59.999999Z}]",
+                "[$today]T09:30",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableTomorrow() throws SqlException {
+        // [$tomorrow] should resolve to 2026-01-23
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-23T00:00:00.000000Z, hi=2026-01-23T23:59:59.999999Z}]",
+                "[$tomorrow]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableTrailingCharactersAfterBusinessDayUnit() {
+        // "$today + 2bdxyz" should fail - trailing characters after 'bd' unit
+        assertBracketIntervalError("[$today + 2bdxyz]", "Unexpected characters after unit");
+    }
+
+    @Test
+    public void testDateVariableTrailingCharactersAfterUnit() {
+        // "$today + 3dabc" should fail - trailing characters after 'd' unit
+        assertBracketIntervalError("[$today + 3dabc]", "Unexpected characters after unit");
+    }
+
+    @Test
+    public void testDateVariableWithPerElementDayFilter() throws SqlException {
+        // Date variable with per-element day filter: $today#Thu
+        // 2025-07-17 is Thursday, so it passes the filter
+        assertBracketIntervalWithNow(
+                "[{lo=2025-07-17T00:00:00.000000Z, hi=2025-07-17T23:59:59.999999Z}]",
+                "[$today#Thu]",
+                "2025-07-17T09:15:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableWithPerElementDayFilterNoMatch() throws SqlException {
+        // Date variable with per-element day filter that doesn't match
+        // 2025-09-10 is Wednesday, but we filter for Monday - empty result
+        assertBracketIntervalWithNow(
+                "[]",
+                "[$today#Mon]",
+                "2025-09-10T17:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableWithPerElementTimezone() throws SqlException {
+        // Date variable with per-element timezone: $today@+02:00
+        // Start of day in UTC+2 = previous day at 22:00 UTC
+        assertDateVariableInterval(
+                (now, driver, tsType) -> {
+                    long todayStart = driver.startOfDay(now, 0);
+                    String prevDate = formatDate(driver.addDays(todayStart, -1), driver);
+                    String todayDate = formatDate(todayStart, driver);
+                    // Full day in +02:00 = 22:00 UTC previous day to 21:59:59 UTC today
+                    return "[{lo=" + prevDate + "T22:00:00.000000Z, hi=" + todayDate + "T21:59:59.999999Z}]";
+                },
+                "[$today@+02:00]"
+        );
+    }
+
+    @Test
+    public void testDateVariableWithPerElementTimezoneAndGlobalTimeSuffix() throws SqlException {
+        // Date variable with per-element timezone + global time suffix
+        // $today@+02:00 at T09:00 = today at 09:00 in UTC+2 = 07:00 UTC
+        assertDateVariableInterval(
+                (now, driver, tsType) -> {
+                    String date = formatDate(driver.startOfDay(now, 0), driver);
+                    return "[{lo=" + date + "T07:00:00.000000Z, hi=" + date + "T07:00:59.999999Z}]";
+                },
+                "[$today@+02:00]T09:00"
+        );
+    }
+
+    @Test
+    public void testDateVariableWithTimeListSuffix() throws SqlException {
+        // Date variable gets expanded with time list
+        assertDateVariableInterval(
+                (now, driver, tsType) -> {
+                    String date = formatDate(driver.startOfDay(now, 0), driver);
+                    return "[{lo=" + date + "T09:00:00.000000Z, hi=" + date + "T09:00:59.999999Z},{lo=" + date + "T14:30:00.000000Z, hi=" + date + "T14:30:59.999999Z}]";
+                },
+                "[$today]T[09:00,14:30]"
+        );
+    }
+
+    @Test
+    public void testDateVariableWithTimeSuffixAndDuration() throws SqlException {
+        // Date variable gets time and duration from suffix
+        assertDateVariableInterval(
+                (now, driver, tsType) -> {
+                    String date = formatDate(driver.startOfDay(now, 0), driver);
+                    return "[{lo=" + date + "T09:30:00.000000Z, hi=" + date + "T10:30:59.999999Z}]";
+                },
+                "[$today]T09:30;1h"
+        );
+    }
+
+    @Test
+    public void testDateVariableWithTimeSuffixAndTimezone() throws SqlException {
+        // Date variable gets time and timezone from suffix
+        // $today at 09:30 in UTC+2 = 07:30 UTC
+        assertDateVariableInterval(
+                (now, driver, tsType) -> {
+                    String date = formatDate(driver.startOfDay(now, 0), driver);
+                    return "[{lo=" + date + "T07:30:00.000000Z, hi=" + date + "T07:30:59.999999Z}]";
+                },
+                "[$today]T09:30@+02:00"
+        );
+    }
+
+    @Test
+    public void testDateVariableWithTimezone() throws SqlException {
+        // [$today]T09:00@America/New_York
+        // 2026-01-22 - New York is in EST (UTC-5) during winter
+        // 09:00 EST = 14:00 UTC
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T14:00:00.000000Z, hi=2026-01-22T14:00:59.999999Z}]",
+                "[$today]T09:00@America/New_York",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableWithWhitespace() throws SqlException {
+        // Test whitespace handling in expressions
+        // Whitespace around operators and between number and unit
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-25T00:00:00.000000Z, hi=2026-01-25T23:59:59.999999Z}]",
+                "[ $today   +   3 d ]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableYesterday() throws SqlException {
+        // [$yesterday] should resolve to 2026-01-21
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-21T00:00:00.000000Z, hi=2026-01-21T23:59:59.999999Z}]",
+                "[$yesterday]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
 
     @Test
     public void testDayFilterAllDaysOfWeek() throws SqlException {
@@ -2289,83 +2211,15 @@ public class IntrinsicModelTest {
     }
 
     @Test
-    public void testDayFilterWithOneDayDuration() throws SqlException {
-        // Single date with 1d duration and day filter
-        // 2024-01-01 is Monday. With ;1d duration, interval spans Jan 1-2 (ends at end of Jan 2)
-        // Day filter #Mon should check if Jan 1 is Monday (yes) and keep the ENTIRE 2-day interval
-        // Should NOT expand into individual days
+    public void testDayFilterDateListOppositeTimezones() throws SqlException {
+        // Same date with opposite timezones - both are Monday locally
+        // 2024-01-01 00:00 +12:00 = 2023-12-31 12:00 UTC, ends at 2024-01-01 12:00 UTC
+        // 2024-01-01 00:00 -12:00 = 2024-01-01 12:00 UTC, ends at 2024-01-02 12:00 UTC
+        // Both days are Monday in their respective local times
+        // The two intervals are adjacent and get merged
         assertBracketInterval(
-                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-02T23:59:59.999999Z}]",
-                "[2024-01-01#Mon];1d"
-        );
-    }
-
-    @Test
-    public void testDayFilterWithOneDayDurationNoMatch() throws SqlException {
-        // Single date with 1d duration and day filter that doesn't match
-        // 2024-01-01 is Monday. With ;1d duration and #Tue filter, should be empty
-        assertBracketInterval(
-                "[]",
-                "[2024-01-01#Tue];1d"
-        );
-    }
-
-    @Test
-    public void testDayFilterYearOnly() throws SqlException {
-        // Year-only date with day filter expands to all matching days
-        // 2022 has 52 Tuesdays, first is Jan 4, last is Dec 27
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2022#Tue";
-        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-
-        // Should have 52 Tuesdays (52 intervals = 104 longs)
-        Assert.assertEquals(104, out.size());
-
-        // First Tuesday is 2022-01-04
-        String result = intervalToString(timestampDriver, out).toString();
-        Assert.assertTrue("Should start with Jan 4", result.contains("2022-01-04T00:00:00"));
-
-        // Last Tuesday is 2022-12-27
-        Assert.assertTrue("Should end with Dec 27", result.contains("2022-12-27T"));
-    }
-
-    @Test
-    public void testDayFilterYearOnlyMatches() throws SqlException {
-        // Year-only date with day filter - all Saturdays in 2022
-        // 2022 has 53 Saturdays: Jan 1 is Saturday, and since 365 = 52*7 + 1, Dec 31 is also Saturday
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        LongList out = new LongList();
-        String interval = "2022#Sat";
-        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-
-        // Should have 53 Saturdays (53 intervals = 106 longs)
-        Assert.assertEquals(106, out.size());
-
-        // First Saturday is 2022-01-01
-        String result = intervalToString(timestampDriver, out).toString();
-        Assert.assertTrue("Should start with Jan 1", result.contains("2022-01-01T00:00:00"));
-
-        // Last Saturday is 2022-12-31
-        Assert.assertTrue("Should end with Dec 31", result.contains("2022-12-31T"));
-    }
-
-    @Test
-    public void testRepeatingIntervalCountOne() throws SqlException {
-        // Count=1 with period - the period is parsed but only one interval is generated
-        // This tests the `if (count > 1)` branch being false
-        assertBracketInterval(
-                "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T11:00:59.999999Z}]",
-                "2018-01-10T10:30;30m;2h;1"
-        );
-    }
-
-    @Test
-    public void testRepeatingIntervalWithHourPeriod() throws SqlException {
-        // 2018-01-10T10:30;30m;2h;3 means 30min window starting at 10:30, then 12:30, then 14:30
-        assertBracketInterval(
-                "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T11:00:59.999999Z},{lo=2018-01-10T12:30:00.000000Z, hi=2018-01-10T13:00:59.999999Z},{lo=2018-01-10T14:30:00.000000Z, hi=2018-01-10T15:00:59.999999Z}]",
-                "2018-01-10T10:30;30m;2h;3"
+                "[{lo=2023-12-31T12:00:00.000000Z, hi=2024-01-02T11:59:59.999999Z}]",
+                "[2024-01-01@+12:00,2024-01-01@-12:00]#Mon"
         );
     }
 
@@ -2533,8 +2387,6 @@ public class IntrinsicModelTest {
         assertBracketIntervalError("2024-01-[01..07]#invalid", "Invalid day name");
     }
 
-    // ==================== TIME LIST BRACKET TESTS ====================
-
     @Test
     public void testDayFilterErrorInvalidDayInList() {
         assertBracketIntervalError("2024-01-[01..07]#Mon,invalid,Fri", "Invalid day name");
@@ -2598,11 +2450,67 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testDayFilterIsoWeek() throws SqlException {
+        // ISO week is exactly 7 days, so totalDays % 7 == 0 (no remainder)
+        // 2024-W01 is Mon Jan 1 to Sun Jan 7
+        // #Tue should return just Tuesday Jan 2
+        assertBracketInterval(
+                "[{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T23:59:59.999999Z}]",
+                "2024-W01#Tue"
+        );
+    }
+
+    @Test
+    public void testDayFilterIsoWeekMultipleDays() throws SqlException {
+        // ISO week with workday filter (Mon-Fri) = 5 days
+        // 2024-W01 is Mon Jan 1 to Sun Jan 7
+        // #workday should return Mon-Fri (Jan 1-5)
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}," +
+                        "{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T23:59:59.999999Z}," +
+                        "{lo=2024-01-03T00:00:00.000000Z, hi=2024-01-03T23:59:59.999999Z}," +
+                        "{lo=2024-01-04T00:00:00.000000Z, hi=2024-01-04T23:59:59.999999Z}," +
+                        "{lo=2024-01-05T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z}]",
+                "2024-W01#workday"
+        );
+    }
+
+    @Test
+    public void testDayFilterMonthStartingSunday() throws SqlException {
+        // December 2024 starts on Sunday (dow=6), has 31 days
+        // remainderDays = 31 % 7 = 3, startDow + remainderDays = 6 + 3 = 9 > 7 → wrap-around case
+        // #Mon should return all 5 Mondays: Dec 2, 9, 16, 23, 30
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2024-12#Mon";
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+
+        // Should have 5 Mondays
+        Assert.assertEquals(10, out.size());
+
+        String result = intervalToString(timestampDriver, out).toString();
+        Assert.assertTrue("Should have Dec 2", result.contains("2024-12-02T00:00:00"));
+        Assert.assertTrue("Should have Dec 30", result.contains("2024-12-30T"));
+    }
+
+    @Test
     public void testDayFilterMultipleDays() throws SqlException {
         // 2024-01-01 is Monday, 2024-01-03 is Wednesday, 2024-01-05 is Friday
         assertBracketInterval(
                 "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z},{lo=2024-01-03T00:00:00.000000Z, hi=2024-01-03T23:59:59.999999Z},{lo=2024-01-05T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z}]",
                 "2024-01-[01..07]#Mon,Wed,Fri"
+        );
+    }
+
+    @Test
+    public void testDayFilterPreciseTimeAtEndOfDay() throws SqlException {
+        // Precise time that happens to be at end-of-day
+        // 2024-01-01T23:59:59 with minute precision ends at 23:59:59.999999
+        // This should NOT be treated as a "natural" interval and expanded
+        // 2024-01-01 is Monday, so #Mon should keep it
+        assertBracketInterval(
+                "[{lo=2024-01-01T23:59:00.000000Z, hi=2024-01-01T23:59:59.999999Z}]",
+                "[2024-01-01T23:59#Mon]"
         );
     }
 
@@ -2636,6 +2544,8 @@ public class IntrinsicModelTest {
         );
     }
 
+    // ==================== TIME LIST BRACKET TESTS ====================
+
     @Test
     public void testDayFilterWeekend() throws SqlException {
         // 2024-01-06 is Saturday, 2024-01-07 is Sunday
@@ -2662,6 +2572,39 @@ public class IntrinsicModelTest {
         assertBracketInterval(
                 "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T10:00:59.999999Z},{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T10:00:59.999999Z},{lo=2024-01-03T09:00:00.000000Z, hi=2024-01-03T10:00:59.999999Z},{lo=2024-01-04T09:00:00.000000Z, hi=2024-01-04T10:00:59.999999Z},{lo=2024-01-05T09:00:00.000000Z, hi=2024-01-05T10:00:59.999999Z}]",
                 "2024-01-[01..07]T09:00#workday;1h"
+        );
+    }
+
+    @Test
+    public void testDayFilterWithMultiDayDuration() throws SqlException {
+        // Single date with 3d duration and day filter
+        // 2024-01-01 is Monday. With ;3d duration, interval spans Jan 1-4
+        // Day filter #Mon should keep the ENTIRE interval, not expand
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-04T23:59:59.999999Z}]",
+                "[2024-01-01#Mon];3d"
+        );
+    }
+
+    @Test
+    public void testDayFilterWithOneDayDuration() throws SqlException {
+        // Single date with 1d duration and day filter
+        // 2024-01-01 is Monday. With ;1d duration, interval spans Jan 1-2 (ends at end of Jan 2)
+        // Day filter #Mon should check if Jan 1 is Monday (yes) and keep the ENTIRE 2-day interval
+        // Should NOT expand into individual days
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-02T23:59:59.999999Z}]",
+                "[2024-01-01#Mon];1d"
+        );
+    }
+
+    @Test
+    public void testDayFilterWithOneDayDurationNoMatch() throws SqlException {
+        // Single date with 1d duration and day filter that doesn't match
+        // 2024-01-01 is Monday. With ;1d duration and #Tue filter, should be empty
+        assertBracketInterval(
+                "[]",
+                "[2024-01-01#Tue];1d"
         );
     }
 
@@ -2697,54 +2640,43 @@ public class IntrinsicModelTest {
     }
 
     @Test
-    public void testExchangeCalendarXnysSingleDay() throws SqlException {
-        // 2026-01-02 is a Friday (trading day)
-        // XNYS (NYSE) trading hours: 9:30 AM - 4:00 PM EST = 14:30 - 21:00 UTC
-        // Query for full day intersected with trading hours should return trading hours
-        assertBracketInterval(
-                "[{lo=2026-01-02T14:30:00.000000Z, hi=2026-01-02T21:00:00.000000Z}]",
-                "2026-01-02#XNYS"
-        );
+    public void testDayFilterYearOnly() throws SqlException {
+        // Year-only date with day filter expands to all matching days
+        // 2022 has 52 Tuesdays, first is Jan 4, last is Dec 27
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2022#Tue";
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+
+        // Should have 52 Tuesdays (52 intervals = 104 longs)
+        Assert.assertEquals(104, out.size());
+
+        // First Tuesday is 2022-01-04
+        String result = intervalToString(timestampDriver, out).toString();
+        Assert.assertTrue("Should start with Jan 4", result.contains("2022-01-04T00:00:00"));
+
+        // Last Tuesday is 2022-12-27
+        Assert.assertTrue("Should end with Dec 27", result.contains("2022-12-27T"));
     }
 
     @Test
-    public void testExchangeCalendarXnysHoliday() throws SqlException {
-        // 2026-01-01 is New Year's Day (holiday, non-trading day)
-        // Query for full day intersected with empty trading schedule should return empty
-        assertBracketInterval(
-                "[]",
-                "2026-01-01#XNYS"
-        );
-    }
+    public void testDayFilterYearOnlyMatches() throws SqlException {
+        // Year-only date with day filter - all Saturdays in 2022
+        // 2022 has 53 Saturdays: Jan 1 is Saturday, and since 365 = 52*7 + 1, Dec 31 is also Saturday
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        LongList out = new LongList();
+        String interval = "2022#Sat";
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
 
-    @Test
-    public void testExchangeCalendarXnysMultipleDays() throws SqlException {
-        // 2026-01-02 (Fri) and 2026-01-05 (Mon) are both trading days
-        // Each should return its trading hours
-        assertBracketInterval(
-                "[{lo=2026-01-02T14:30:00.000000Z, hi=2026-01-02T21:00:00.000000Z}," +
-                "{lo=2026-01-05T14:30:00.000000Z, hi=2026-01-05T21:00:00.000000Z}]",
-                "[2026-01-02,2026-01-05]#XNYS"
-        );
-    }
+        // Should have 53 Saturdays (53 intervals = 106 longs)
+        Assert.assertEquals(106, out.size());
 
-    @Test
-    public void testExchangeCalendarXnysWeekendExcluded() throws SqlException {
-        // 2026-01-03 (Sat) and 2026-01-04 (Sun) are weekends (non-trading)
-        // Query should return empty
-        assertBracketInterval(
-                "[]",
-                "[2026-01-03,2026-01-04]#XNYS"
-        );
-    }
+        // First Saturday is 2022-01-01
+        String result = intervalToString(timestampDriver, out).toString();
+        Assert.assertTrue("Should start with Jan 1", result.contains("2022-01-01T00:00:00"));
 
-    @Test
-    public void testExchangeCalendarXnysCaseInsensitive() throws SqlException {
-        // Exchange identifier should be case-insensitive
-        assertBracketInterval(
-                "[{lo=2026-01-02T14:30:00.000000Z, hi=2026-01-02T21:00:00.000000Z}]",
-                "2026-01-02#xnys"
-        );
+        // Last Saturday is 2022-12-31
+        Assert.assertTrue("Should end with Dec 31", result.contains("2022-12-31T"));
     }
 
     @Test
@@ -2978,8 +2910,6 @@ public class IntrinsicModelTest {
         );
     }
 
-    // ==================== Date List Tests ====================
-
     @Test
     public void testIsoWeekWithDay() throws SqlException {
         // 2024-W01-1 is Monday of week 1 (2024-01-01)
@@ -3017,6 +2947,8 @@ public class IntrinsicModelTest {
                 "2024-W01-1 09:00"
         );
     }
+
+    // ==================== Date List Tests ====================
 
     @Test
     public void testIsoWeekWithTime() throws SqlException {
@@ -3182,10 +3114,6 @@ public class IntrinsicModelTest {
         assertShortInterval("[{lo=2016-03-21T10:30:40.100000Z, hi=2016-03-21T10:30:40.100000Z}]", "2016-03-21T10:30:40.100Z");
     }
 
-    // =====================================================
-    // Timezone tests
-    // =====================================================
-
     @Test
     public void testParseShortInterval8() throws Exception {
         assertShortInterval("[{lo=2016-03-21T10:30:40.100000Z, hi=2016-03-21T10:30:40.100999Z}]", "2016-03-21T10:30:40.100");
@@ -3202,6 +3130,10 @@ public class IntrinsicModelTest {
     public void testParseShortMilliErr() {
         assertIntervalError("2016-03-21T10:31:61.23");
     }
+
+    // =====================================================
+    // Timezone tests
+    // =====================================================
 
     @Test
     public void testParseShortMinErr() {
@@ -3246,6 +3178,34 @@ public class IntrinsicModelTest {
     @Test
     public void testParseShortYearErr1() {
         assertIntervalError("20-");
+    }
+
+    @Test
+    public void testRepeatingIntervalCountOne() throws SqlException {
+        // Count=1 with period - the period is parsed but only one interval is generated
+        // This tests the `if (count > 1)` branch being false
+        assertBracketInterval(
+                "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T11:00:59.999999Z}]",
+                "2018-01-10T10:30;30m;2h;1"
+        );
+    }
+
+    @Test
+    public void testRepeatingIntervalWithHourPeriod() throws SqlException {
+        // 2018-01-10T10:30;30m;2h;3 means 30min window starting at 10:30, then 12:30, then 14:30
+        assertBracketInterval(
+                "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T11:00:59.999999Z},{lo=2018-01-10T12:30:00.000000Z, hi=2018-01-10T13:00:59.999999Z},{lo=2018-01-10T14:30:00.000000Z, hi=2018-01-10T15:00:59.999999Z}]",
+                "2018-01-10T10:30;30m;2h;3"
+        );
+    }
+
+    @Test
+    public void testRepeatingIntervalWithSecondPeriod() throws SqlException {
+        // 2018-01-10T10:30:00;5s;10s;3 means 5sec window starting at 10:30:00, then 10:30:10, then 10:30:20
+        assertBracketInterval(
+                "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T10:30:05.999999Z},{lo=2018-01-10T10:30:10.000000Z, hi=2018-01-10T10:30:15.999999Z},{lo=2018-01-10T10:30:20.000000Z, hi=2018-01-10T10:30:25.999999Z}]",
+                "2018-01-10T10:30:00;5s;10s;3"
+        );
     }
 
     @Test
@@ -3827,6 +3787,16 @@ public class IntrinsicModelTest {
         assertBracketIntervalError("   ", "Invalid date");
     }
 
+    /**
+     * Formats a timestamp as YYYY-MM-DD for use in expected results.
+     */
+    private static String formatDate(long timestamp, TimestampDriver driver) {
+        int year = driver.getYear(timestamp);
+        int month = driver.getMonthOfYear(timestamp);
+        int day = driver.getDayOfMonth(timestamp);
+        return String.format("%04d-%02d-%02d", year, month, day);
+    }
+
     private void assertBracketInterval(String expected, String interval) throws SqlException {
         LongList out = new LongList();
         final TimestampDriver timestampDriver = timestampType.getDriver();
@@ -3839,14 +3809,16 @@ public class IntrinsicModelTest {
         );
     }
 
-    /**
-     * Formats a timestamp as YYYY-MM-DD for use in expected results.
-     */
-    private static String formatDate(long timestamp, TimestampDriver driver) {
-        int year = driver.getYear(timestamp);
-        int month = driver.getMonthOfYear(timestamp);
-        int day = driver.getDayOfMonth(timestamp);
-        return String.format("%04d-%02d-%02d", year, month, day);
+    private void assertBracketIntervalError(String interval, String expectedError) {
+        try {
+            final TimestampDriver timestampDriver = timestampType.getDriver();
+            LongList out = new LongList();
+            parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+            Assert.fail("Expected SqlException with message containing: " + expectedError);
+        } catch (SqlException e) {
+            Assert.assertTrue("Expected error message to contain '" + expectedError + "' but got: " + e.getMessage(),
+                    e.getMessage().contains(expectedError));
+        }
     }
 
     private void assertBracketIntervalWithNow(String expected, String interval, String nowTimestamp) throws SqlException {
@@ -3859,6 +3831,19 @@ public class IntrinsicModelTest {
                         ? expected.replaceAll("00Z", "00000Z").replaceAll("99Z", "99999Z")
                         : expected,
                 intervalToString(timestampDriver, out)
+        );
+    }
+
+    private void assertDateFloor(String expected, String value) throws NumericException {
+        sink.clear();
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        long t = timestampDriver.parseFloorLiteral(value);
+        timestampDriver.append(sink, t);
+        TestUtils.assertEquals(
+                ColumnType.isTimestampNano(timestampType.getTimestampType())
+                        ? expected.replaceAll("Z", "000Z").replaceAll("999999Z", "999999999Z")
+                        : expected,
+                sink
         );
     }
 
@@ -3897,36 +3882,6 @@ public class IntrinsicModelTest {
         );
     }
 
-    @FunctionalInterface
-    interface DateVariableExpectedBuilder {
-        String build(long now, TimestampDriver driver, TestTimestampType tsType);
-    }
-
-    private void assertBracketIntervalError(String interval, String expectedError) {
-        try {
-            final TimestampDriver timestampDriver = timestampType.getDriver();
-            LongList out = new LongList();
-            parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-            Assert.fail("Expected SqlException with message containing: " + expectedError);
-        } catch (SqlException e) {
-            Assert.assertTrue("Expected error message to contain '" + expectedError + "' but got: " + e.getMessage(),
-                    e.getMessage().contains(expectedError));
-        }
-    }
-
-    private void assertDateFloor(String expected, String value) throws NumericException {
-        sink.clear();
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        long t = timestampDriver.parseFloorLiteral(value);
-        timestampDriver.append(sink, t);
-        TestUtils.assertEquals(
-                ColumnType.isTimestampNano(timestampType.getTimestampType())
-                        ? expected.replaceAll("Z", "000Z").replaceAll("999999Z", "999999999Z")
-                        : expected,
-                sink
-        );
-    }
-
     private void assertIntersect(String expected) {
         out.add(a);
         out.add(b);
@@ -3958,5 +3913,10 @@ public class IntrinsicModelTest {
                         : expected,
                 intervalToString(timestampDriver, out)
         );
+    }
+
+    @FunctionalInterface
+    interface DateVariableExpectedBuilder {
+        String build(long now, TimestampDriver driver, TestTimestampType tsType);
     }
 }
