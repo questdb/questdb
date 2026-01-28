@@ -18,10 +18,7 @@ pub fn encode_u32<W: Write, I: Iterator<Item = u32>>(
     Ok(())
 }
 
-fn encode_header<W: Write>(
-    writer: &mut W,
-    length: usize,
-) -> std::io::Result<()> {
+fn encode_header<W: Write>(writer: &mut W, length: usize) -> std::io::Result<()> {
     // write the length + indicator
     let mut header = ceil8(length) as u64;
     header <<= 1;
@@ -124,11 +121,7 @@ mod tests {
         let values = vec![true, true, true, true, true, true, true, true];
         let len = values.len();
         let iter = values.into_iter();
-        encode_bool(
-            &mut vec,
-            iter,
-            len,
-        )?;
+        encode_bool(&mut vec, iter, len)?;
 
         assert_eq!(vec, vec![(1 << 1 | 1), 0b11111111]);
         Ok(())

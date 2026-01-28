@@ -359,12 +359,18 @@ pub fn symbol_to_pages(
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
+    required: bool,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
     let num_rows = column_top + column_values.len();
     let mut null_count = 0;
+    let mut data_buffer = vec![];
 
-    // Build def levels and count nulls in a single pass
-    let def_levels: Vec<bool> = (0..num_rows)
+    let definition_levels_byte_length = if required {
+        debug_assert!(column_top == 0);
+        0
+    } else {
+        // Build def levels and count nulls in a single pass
+        let def_levels: Vec<bool> = (0..num_rows)
         .map(|i| {
             if i < column_top {
                 false
@@ -380,14 +386,15 @@ pub fn symbol_to_pages(
         })
         .collect();
 
-    let mut data_buffer = vec![];
+
     encode_primitive_def_levels(
         &mut data_buffer,
         def_levels.into_iter(),
         num_rows,
         options.version,
     )?;
-    let definition_levels_byte_length = data_buffer.len();
+     data_buffer.len()
+    };
 
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
     let (dict_buffer, keys, max_key) =
@@ -415,6 +422,7 @@ pub fn symbol_to_pages(
         primitive_type,
         options,
         Encoding::RleDictionary,
+        required,
     )?;
 
     let uniq_vals = if !dict_buffer.is_empty() {
