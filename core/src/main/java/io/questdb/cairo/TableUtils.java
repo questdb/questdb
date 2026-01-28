@@ -50,6 +50,10 @@ import io.questdb.griffin.AnyRecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.parquet.MappedMemoryPartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
@@ -129,7 +133,7 @@ public final class TableUtils {
     public static final int NULL_LEN = -1;
     public static final String PARQUET_PARTITION_NAME = "data.parquet";
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
-    public static final String SP_TABLE_WRITE_REASON = "Storage Policy Enforcement";
+    public static final String SP_TABLE_WRITE_REASON = "Storage Policy";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
     public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
     public static final int TABLE_DOES_NOT_EXIST = 1;
@@ -312,19 +316,10 @@ public final class TableUtils {
             TxReader txReader,
             TimestampDriver timestampDriver,
             long partitionTimestamp,
-            int ttl,
-            long wallClockMicros,
-            boolean ttlWallClockEnabled
+            long maxTimestamp,
+            int ttl
     ) {
-        long maxTimestamp = txReader.getMaxTimestamp();
-        // When wall clock mode is enabled (default), use the minimum of maxTimestamp and current wall clock time.
-        // This prevents accidental data loss when future timestamps are inserted into a table with TTL enabled.
-        if (ttlWallClockEnabled) {
-            long wallClockTimestamp = timestampDriver.fromMicros(wallClockMicros);
-            maxTimestamp = Math.min(maxTimestamp, wallClockTimestamp);
-        }
-
-        long partitionCeiling = txReader.getNextLogicalPartitionTimestamp(partitionTimestamp);
+        final long partitionCeiling = txReader.getNextLogicalPartitionTimestamp(partitionTimestamp);
         // TTL < 0 means it's in months
         return ttl > 0
                 ? maxTimestamp - partitionCeiling >= timestampDriver.fromHours(ttl)
@@ -811,6 +806,22 @@ public final class TableUtils {
         return metaMem.getInt(offset);
     }
 
+    public static long getMaxTimestamp(
+            TxReader txReader,
+            TimestampDriver timestampDriver,
+            long wallClockMicros,
+            boolean wallClockEnabled
+    ) {
+        long maxTimestamp = txReader.getMaxTimestamp();
+        // When wall clock mode is enabled (default), use the minimum of maxTimestamp and current wall clock time.
+        // This prevents accidental data loss when future timestamps are inserted into a table with TTL enabled.
+        if (wallClockEnabled) {
+            final long wallClockTimestamp = timestampDriver.fromMicros(wallClockMicros);
+            maxTimestamp = Math.min(maxTimestamp, wallClockTimestamp);
+        }
+        return maxTimestamp;
+    }
+
     public static int getMaxUncommittedRows(TableRecordMetadata metadata, CairoEngine engine) {
         if (!metadata.isWalEnabled() && metadata instanceof TableWriterMetadata) {
             return ((TableWriterMetadata) metadata).getMaxUncommittedRows();
@@ -1051,7 +1062,8 @@ public final class TableUtils {
         //noinspection StringEquality
         return lockReason != NO_LOCK_REASON
                 && !WAL_2_TABLE_WRITE_REASON.equals(lockReason)
-                && !WAL_2_TABLE_RESUME_REASON.equals(lockReason);
+                && !WAL_2_TABLE_RESUME_REASON.equals(lockReason)
+                && !SP_TABLE_WRITE_REASON.equals(lockReason);
     }
 
     public static boolean isValidColumnName(CharSequence columnName, int fsFileNameLimit) {
@@ -1474,6 +1486,196 @@ public final class TableUtils {
         memory.jumpTo(0);
         createTableNameFile(memory, tableName);
         memory.close(true, Vm.TRUNCATE_TO_POINTER);
+    }
+
+    /**
+     * Produces a Parquet file from a native partition.
+     *
+     * @param reader             Table reader
+     * @param path               Path to the native partition directory (will be modified during execution)
+     * @param other              Path for the output parquet file (will be modified during execution)
+     * @param pathSize           Root path size for restoring paths after modifications
+     * @param partitionTimestamp Timestamp of the partition
+     * @param tableName          Name of the table
+     * @param partitionIndex     Number of rows in the partition
+     * @param configuration      Cairo configuration for parquet encoder options
+     * @return The length of the produced Parquet file
+     */
+    public static long produceParquetFromNative(
+            TableReader reader,
+            Path path,
+            Path other,
+            int pathSize,
+            long partitionTimestamp,
+            String tableName,
+            int partitionIndex,
+            CairoConfiguration configuration
+    ) {
+        final int memoryTag = MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER;
+        final TxReader txReader = reader.getTxFile();
+        final TableMetadata metadata = reader.getMetadata();
+        final FilesFacade ff = configuration.getFilesFacade();
+        final ColumnVersionReader columnVersionReader = reader.getColumnVersionReader();
+        final int partitionBy = metadata.getPartitionBy();
+        final int timestampType = metadata.getTimestampType();
+        final long partitionRowCount = txReader.getPartitionSize(partitionIndex);
+        final long partitionNameTxn = txReader.getPartitionNameTxn(partitionIndex);
+
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        if (!ff.exists(path.$())) {
+            throw CairoException.nonCritical().put("partition directory does not exist [path=").put(path).put(']');
+        }
+        final int partitionDirLen = path.size();
+
+        setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        if (ff.exists(other.$())) {
+            return ff.length(other.$());
+        }
+
+        final int pathRootSize = configuration.getDbRoot().length();
+        LOG.info().$("producing parquet for native partition [path=").$substr(pathRootSize, path).I$();
+
+        try {
+            try (PartitionDescriptor partitionDescriptor = new MappedMemoryPartitionDescriptor(ff)) {
+                final int timestampIndex = metadata.getTimestampIndex();
+                partitionDescriptor.of(tableName, partitionRowCount, timestampIndex);
+
+                final int columnCount = metadata.getColumnCount();
+                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                    final int columnType = metadata.getColumnType(columnIndex);
+                    if (columnType <= 0) {
+                        continue; // skip deleted columns
+                    }
+                    final String columnName = metadata.getColumnName(columnIndex);
+                    final int columnId = metadata.getColumnMetadata(columnIndex).getWriterIndex();
+
+                    final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnIndex);
+                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnIndex);
+                    final long columnRowCount = (columnTop != -1) ? partitionRowCount - columnTop : 0;
+
+                    if (columnRowCount > 0) {
+                        if (ColumnType.isSymbol(columnType)) {
+                            partitionDescriptor.addColumn(
+                                    columnName,
+                                    columnType,
+                                    columnId,
+                                    columnTop
+                            );
+
+                            final long columnSize = columnRowCount * ColumnType.sizeOf(columnType);
+                            final long columnAddr = mapRO(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, columnSize, memoryTag);
+                            partitionDescriptor.setColumnAddr(columnAddr, columnSize);
+
+                            // root symbol files use separate txn
+                            final long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(columnIndex);
+
+                            offsetFileName(path.trimTo(pathSize), columnName, symbolTableNameTxn);
+                            if (!ff.exists(path.$())) {
+                                LOG.error().$(path).$(" is not found").$();
+                                throw CairoException.fileNotFound().put("offset file does not exist: ").put(path);
+                            }
+
+                            final long fileLength = ff.length(path.$());
+                            if (fileLength < SymbolMapWriter.HEADER_SIZE) {
+                                LOG.error().$(path).$("symbol file is too small [fileLength=").$(fileLength).$(']').$();
+                                throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
+                            }
+
+                            final int symbolCount = reader.getSymbolMapReader(columnIndex).getSymbolCount();
+                            final long offsetsMemSize = SymbolMapWriter.keyToOffset(symbolCount + 1);
+                            final long symbolOffsetsAddr = mapRO(ff, path.$(), LOG, offsetsMemSize, memoryTag);
+                            partitionDescriptor.setSymbolOffsetsAddr(symbolOffsetsAddr + SymbolMapWriter.HEADER_SIZE, symbolCount);
+
+                            final LPSZ charFileName = charFileName(path.trimTo(pathSize), columnName, symbolTableNameTxn);
+                            final long columnSecondarySize = ff.length(charFileName);
+                            final long columnSecondaryAddr = mapRO(ff, charFileName, LOG, columnSecondarySize, memoryTag);
+                            partitionDescriptor.setSecondaryColumnAddr(columnSecondaryAddr, columnSecondarySize);
+
+                            // recover the partition path
+                            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+                        } else if (ColumnType.isVarSize(columnType)) {
+                            partitionDescriptor.addColumn(columnName, columnType, columnId, columnTop);
+
+                            final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+                            final long auxVectorSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
+                            final long auxVectorAddr = mapRO(ff, iFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, auxVectorSize, memoryTag);
+                            partitionDescriptor.setSecondaryColumnAddr(auxVectorAddr, auxVectorSize);
+
+                            final long dataSize = columnTypeDriver.getDataVectorSizeAt(auxVectorAddr, columnRowCount - 1);
+                            if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
+                                LOG.critical().$("Invalid var len column size [column=").$safe(columnName)
+                                        .$(", size=").$(dataSize)
+                                        .$(", path=").$(path)
+                                        .I$();
+                                throw CairoException.critical(0).put("Invalid column size [column=").put(path)
+                                        .put(", size=").put(dataSize)
+                                        .put(']');
+                            }
+
+                            final long dataAddr = dataSize > 0
+                                    ? mapRO(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, dataSize, memoryTag)
+                                    : 0;
+                            partitionDescriptor.setColumnAddr(dataAddr, dataSize);
+                        } else {
+                            final long mapBytes = columnRowCount * ColumnType.sizeOf(columnType);
+                            final long fixedAddr = mapRO(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, mapBytes, memoryTag);
+                            partitionDescriptor.addColumn(
+                                    columnName,
+                                    columnType,
+                                    columnId,
+                                    columnTop,
+                                    fixedAddr,
+                                    mapBytes,
+                                    0,
+                                    0,
+                                    0,
+                                    0
+                            );
+                        }
+                    } else {
+                        // no rows in column
+                        partitionDescriptor.addColumn(
+                                columnName,
+                                columnType,
+                                columnId,
+                                partitionRowCount
+                        );
+                    }
+                }
+
+                final int compressionCodec = configuration.getPartitionEncoderParquetCompressionCodec();
+                final int compressionLevel = configuration.getPartitionEncoderParquetCompressionLevel();
+                final int rowGroupSize = configuration.getPartitionEncoderParquetRowGroupSize();
+                final int dataPageSize = configuration.getPartitionEncoderParquetDataPageSize();
+                final boolean statisticsEnabled = configuration.isPartitionEncoderParquetStatisticsEnabled();
+                final boolean rawArrayEncoding = configuration.isPartitionEncoderParquetRawArrayEncoding();
+                final int parquetVersion = configuration.getPartitionEncoderParquetVersion();
+
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        other,
+                        ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                        statisticsEnabled,
+                        rawArrayEncoding,
+                        rowGroupSize,
+                        dataPageSize,
+                        parquetVersion
+                );
+                return ff.length(other.$());
+            }
+        } catch (CairoException e) {
+            LOG.error().$("could not convert partition to parquet [table=").$(tableName)
+                    .$(", error=").$safe(e.getMessage()).I$();
+
+            // rollback
+            if (!ff.rmdir(other.trimTo(other.size() - PARQUET_PARTITION_NAME.length()))) {
+                LOG.error().$("could not remove parquet dir [path=").$(other).I$();
+            }
+            throw e;
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
     }
 
     public static int readIntOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {

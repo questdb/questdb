@@ -199,22 +199,14 @@ public class TxReader implements Closeable, Mutable {
         return dataVersion;
     }
 
-    public long getFirstNativePartitionTimestamp() {
-        return getFirstNativePartitionTimestamp(-1L);
-    }
-
-    public long getFirstNativePartitionTimestamp(long offset) {
-        int index;
-        for (index = 0; index < getPartitionCount(); index++) {
-            if (!isPartitionParquet(index)) {
-                final long partitionTimestamp = attachedPartitions.getQuick(index * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET);
-                if (partitionTimestamp > offset) {
-                    return partitionTimestamp;
-                }
+    public int getFirstNativePartitionIndex() {
+        for (int i = 0, n = getPartitionCount(); i < n; i++) {
+            if (!isPartitionParquet(i)) {
+                return i;
             }
         }
         // we should never be here, because the active partition is always native
-        throw CairoException.critical(0).put("could not find native partition");
+        throw CairoException.critical(0).put("could not find first native partition");
     }
 
     public long getFixedRowCount() {
@@ -258,16 +250,6 @@ public class TxReader implements Closeable, Mutable {
 
     public long getMinTimestamp() {
         return minTimestamp;
-    }
-
-    public int getNativePartitionCount() {
-        int count = 0;
-        for (int i = 0; i < getPartitionCount(); i++) {
-            if (!isPartitionParquet(i)) {
-                count++;
-            }
-        }
-        return count;
     }
 
     public long getNextExistingPartitionTimestamp(long timestamp) {

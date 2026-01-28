@@ -1205,7 +1205,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public TableWriter getWriter(TableToken tableToken, @NotNull String lockReason) {
         verifyTableToken(tableToken);
-        return writerPool.get(tableToken, lockReason);
+        return getWriterUnsafe(tableToken, lockReason);
     }
 
     public TableWriter getWriterOrPublishCommand(TableToken tableToken, @NotNull AsyncWriterCommand asyncWriterCommand) {

@@ -143,6 +143,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final String RELEASE_VERSION = "release.version";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
     protected final byte httpHealthCheckAuthType;
+    protected final Metrics metrics;
     private final String acceptingWrites;
     private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
     private final boolean allowTableRegistrySharedWrite;
@@ -341,7 +342,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int maxUncommittedRows;
     private final MemoryConfiguration memoryConfiguration;
     private final int metadataStringPoolCapacity;
-    private final Metrics metrics;
     private final MetricsConfiguration metricsConfiguration = new PropMetricsConfiguration();
     private final boolean metricsEnabled;
     private final MicrosecondClock microsecondClock;
@@ -466,8 +466,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelReadParquetEnabled;
     private final boolean sqlParallelTopKEnabled;
     private final boolean sqlParallelWindowJoinEnabled;
-    private final int sqlParallelWorkStealingThreshold;
     private final long sqlParallelWorkStealingSpinTimeout;
+    private final int sqlParallelWorkStealingThreshold;
     private final int sqlParquetFrameCacheCapacity;
     private final int sqlPivotForColumnPoolCapacity;
     private final int sqlPivotMaxProducedColumns;
@@ -2133,27 +2133,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         return poolConfiguration.sharedWorkerCount;
     }
 
-    private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int workerCount) throws ServerConfigurationException {
-        final int[] result = new int[workerCount];
-        String value = getString(properties, env, key, null);
-        if (value == null) {
-            Arrays.fill(result, -1);
-        } else {
-            String[] affinity = value.split(",");
-            if (affinity.length != workerCount) {
-                throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "wrong number of affinity values");
-            }
-            for (int i = 0; i < workerCount; i++) {
-                try {
-                    result[i] = Numbers.parseInt(affinity[i]);
-                } catch (NumericException e) {
-                    throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "Invalid affinity value: " + affinity[i]);
-                }
-            }
-        }
-        return result;
-    }
-
     private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {
         final String commitMode = getString(properties, env, key, "nosync");
 
@@ -2303,6 +2282,27 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     protected String getAcceptingWrites() {
         return acceptingWrites;
+    }
+
+    protected int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int workerCount) throws ServerConfigurationException {
+        final int[] result = new int[workerCount];
+        String value = getString(properties, env, key, null);
+        if (value == null) {
+            Arrays.fill(result, -1);
+        } else {
+            String[] affinity = value.split(",");
+            if (affinity.length != workerCount) {
+                throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "wrong number of affinity values");
+            }
+            for (int i = 0; i < workerCount; i++) {
+                try {
+                    result[i] = Numbers.parseInt(affinity[i]);
+                } catch (NumericException e) {
+                    throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "Invalid affinity value: " + affinity[i]);
+                }
+            }
+        }
+        return result;
     }
 
     protected boolean getBoolean(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, boolean defaultValue) {
@@ -3984,13 +3984,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlParallelWorkStealingThreshold() {
-            return sqlParallelWorkStealingThreshold;
+        public long getSqlParallelWorkStealingSpinTimeout() {
+            return sqlParallelWorkStealingSpinTimeout;
         }
 
         @Override
-        public long getSqlParallelWorkStealingSpinTimeout() {
-            return sqlParallelWorkStealingSpinTimeout;
+        public int getSqlParallelWorkStealingThreshold() {
+            return sqlParallelWorkStealingThreshold;
         }
 
         @Override
