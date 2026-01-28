@@ -172,6 +172,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             destShards.setPos(NUM_SHARDS);
 
             final Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(
+                    configuration,
                     asm,
                     columnTypes,
                     listColumnFilter,
@@ -179,8 +180,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                     null,
                     null,
                     null,
-                    null,
-                    configuration
+                    null
             );
             ownerMapSink = RecordSinkFactory.getInstance(
                     sinkClass,

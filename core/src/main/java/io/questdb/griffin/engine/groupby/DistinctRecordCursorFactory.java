@@ -84,7 +84,7 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
             final RecordMetadata metadata = base.getMetadata();
             // sink will be storing record columns to map key
             columnFilter.of(metadata.getColumnCount());
-            mapSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter, configuration);
+            mapSink = RecordSinkFactory.getInstance(configuration, asm, metadata, columnFilter);
             cursor = new DistinctRecordCursor(configuration, metadata, limitLoFunction, limitHiFunction);
         } catch (Throwable th) {
             close();
