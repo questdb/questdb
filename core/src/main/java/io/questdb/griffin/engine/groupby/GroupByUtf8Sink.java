@@ -155,7 +155,7 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
     @Override
     public long zeroPaddedSixPrefix() {
         // MIN_CAPACITY is 8, so it's safe to read 8 bytes even for short varchars.
-        return Unsafe.getUnsafe().getLong(ptr + HEADER_SIZE) & VARCHAR_INLINED_PREFIX_MASK;
+        return ptr != 0 ? Unsafe.getUnsafe().getLong(ptr + HEADER_SIZE) & VARCHAR_INLINED_PREFIX_MASK : 0;
     }
 
     private void checkCapacity(int bytes) {

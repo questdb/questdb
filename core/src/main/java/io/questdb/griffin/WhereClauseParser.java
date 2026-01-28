@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.SymbolMapReader;
@@ -64,6 +65,10 @@ import static io.questdb.griffin.SqlKeywords.*;
  * - indexed symbol column expressions to use for index scan
  **/
 public final class WhereClauseParser implements Mutable {
+    // Internal optimization marker for timestamp predicates pushed through dateadd transforms.
+    // and_offset(predicate, unit, offset) wraps predicates that need offset adjustment.
+    // This is NOT a user-facing function - it's injected by SqlOptimiser during predicate pushdown.
+    private static final int INTRINSIC_OP_AND_OFFSET = 10;
     private static final int INTRINSIC_OP_BETWEEN = 9;
     private static final int INTRINSIC_OP_EQUAL = 6;
     private static final int INTRINSIC_OP_GREATER = 2;
@@ -151,7 +156,7 @@ public final class WhereClauseParser implements Mutable {
 
         IntrinsicModel model = models.next();
         int timestampType = reader.getMetadata().getTimestampType();
-        model.of(timestampType, reader.getPartitionedBy());
+        model.of(timestampType, reader.getPartitionedBy(), executionContext.getCairoEngine().getConfiguration());
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
 
         // pre-order iterative tree traversal
@@ -188,7 +193,7 @@ public final class WhereClauseParser implements Mutable {
                             latestByMultiColumn,
                             reader)) {
                         // Check if rhs is an OR of timestamp intrinsics
-                        if (!tryExtractOrTimestampIntrinsics(timestampDriver, model, node.rhs)) {
+                        if (!tryExtractOrTimestampIntrinsics(timestampDriver, model, node.rhs, functionParser, metadata, executionContext)) {
                             stack.push(node.rhs);
                         }
                     }
@@ -204,13 +209,13 @@ public final class WhereClauseParser implements Mutable {
                             latestByMultiColumn,
                             reader)) {
                         node = null;
-                    } else if (tryExtractOrTimestampIntrinsics(timestampDriver, model, node.lhs)) {
+                    } else if (tryExtractOrTimestampIntrinsics(timestampDriver, model, node.lhs, functionParser, metadata, executionContext)) {
                         // lhs was an OR of timestamp intrinsics, successfully extracted
                         node = null;
                     } else {
                         node = node.lhs;
                     }
-                } else if (isOrKeyword(node.token) && tryExtractOrTimestampIntrinsics(timestampDriver, model, node)) {
+                } else if (isOrKeyword(node.token) && tryExtractOrTimestampIntrinsics(timestampDriver, model, node, functionParser, metadata, executionContext)) {
                     // Entire OR tree was extracted as timestamp intrinsics
                     node = stack.poll();
                 } else {
@@ -226,9 +231,9 @@ public final class WhereClauseParser implements Mutable {
         return model;
     }
 
-    public IntrinsicModel getEmpty(int timestampType, int partitionBy) {
+    public IntrinsicModel getEmpty(int timestampType, int partitionBy, CairoConfiguration configuration) {
         IntrinsicModel model = models.next();
-        model.of(timestampType, partitionBy);
+        model.of(timestampType, partitionBy, configuration);
         return model;
     }
 
@@ -361,6 +366,106 @@ public final class WhereClauseParser implements Mutable {
         }
         parentNode.intrinsicValue = IntrinsicModel.TRUE;
         keyNodes.add(parentNode);
+    }
+
+    /**
+     * Analyzes an and_offset node, which wraps a timestamp predicate that needs offset adjustment.
+     * The and_offset function has the form: and_offset(predicate, unit, offset)
+     * where:
+     * - predicate is the inner timestamp predicate (e.g., ts in '2022')
+     * - unit is the time unit character (e.g., 'h', 'd', 'm')
+     * - offset is the offset value to apply (in the given unit)
+     *
+     * @return true if intervals were extracted and offset applied
+     */
+    private boolean analyzeAndOffset(
+            TimestampDriver timestampDriver,
+            AliasTranslator translator,
+            IntrinsicModel model,
+            ExpressionNode node,
+            RecordMetadata m,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext,
+            boolean latestByMultiColumn,
+            TableReader reader
+    ) throws SqlException {
+        // and_offset args are stored in reverse order: [offset, unit, predicate]
+        // This matches how ExpressionNode.toSink renders function args
+        ObjList<ExpressionNode> args = node.args;
+        if (args.size() != 3) {
+            return false;
+        }
+
+        ExpressionNode predicate = args.getQuick(2);
+        ExpressionNode unitNode = args.getQuick(1);
+        ExpressionNode offsetNode = args.getQuick(0);
+
+        // Parse unit character - must be a constant single-character token
+        // Valid forms: 'h' (quoted single char) or h (unquoted single char)
+        if (unitNode.type != ExpressionNode.CONSTANT) {
+            return false;  // Reject bind variables, columns, etc.
+        }
+        CharSequence unitToken = unitNode.token;
+        if (unitToken == null || unitToken.isEmpty()) {
+            return false;  // Reject empty tokens
+        }
+        char unit;
+        int len = unitToken.length();
+        if (len == 3 && unitToken.charAt(0) == '\'' && unitToken.charAt(2) == '\'') {
+            // Quoted single char: 'h'
+            unit = unitToken.charAt(1);
+        } else if (len == 1) {
+            // Unquoted single char: h
+            unit = unitToken.charAt(0);
+        } else {
+            // Reject multi-char tokens like 'ms', ':v', etc.
+            return false;
+        }
+
+        // Parse offset value
+        int offsetValue;
+        try {
+            offsetValue = Numbers.parseInt(offsetNode.token);
+        } catch (NumericException e) {
+            return false;
+        }
+
+        // Get the add method for this unit from the timestamp driver
+        TimestampDriver.TimestampAddMethod addMethod = timestampDriver.getAddMethod(unit);
+        if (addMethod == null) {
+            return false;  // Unknown unit
+        }
+
+        // Create a temporary model to extract intervals from the inner predicate
+        IntrinsicModel tempModel = models.next();
+        int timestampType = reader.getMetadata().getTimestampType();
+        tempModel.of(timestampType, reader.getPartitionedBy(), executionContext.getCairoEngine().getConfiguration());
+
+        // Process the inner predicate recursively
+        boolean extracted = removeAndIntrinsics(
+                timestampDriver,
+                translator,
+                tempModel,
+                predicate,
+                m,
+                functionParser,
+                metadata,
+                executionContext,
+                latestByMultiColumn,
+                reader
+        );
+
+        if (extracted || tempModel.hasIntervalFilters()) {
+            // Merge directly from the temp model without allocating an intermediate RuntimeIntervalModel.
+            // This applies the offset to each interval boundary using the timestamp driver's add method,
+            // which correctly handles variable-length units like months and years.
+            model.mergeIntervalModelWithAddMethod(tempModel, addMethod, offsetValue);
+            node.intrinsicValue = IntrinsicModel.TRUE;
+            return true;
+        }
+
+        return false;
     }
 
     private boolean analyzeBetween(
@@ -1941,6 +2046,110 @@ public final class WhereClauseParser implements Mutable {
         throw NumericException.instance().put("integer constant expected");
     }
 
+    /**
+     * Extracts timestamp intervals from an OR tree and unions them into the model.
+     * Assumes isOrOfTimestampIn() has already returned true for this node.
+     * <p>
+     * Returns true if intervals were successfully extracted and applied.
+     */
+    private boolean extractOrTimestampIntervals(
+            TimestampDriver timestampDriver,
+            IntrinsicModel model,
+            ExpressionNode node,
+            boolean leftFirst,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (isOrKeyword(node.token)) {
+            // Process left side, then right side
+            // The first interval uses intersect, subsequent ones use union
+            if (!extractOrTimestampIntervals(timestampDriver, model, node.lhs, leftFirst, functionParser, metadata, executionContext)) {
+                return false;
+            }
+            // After processing left side, we're no longer "first"
+            if (!extractOrTimestampIntervals(timestampDriver, model, node.rhs, false, functionParser, metadata, executionContext)) {
+                return false;
+            }
+            node.intrinsicValue = IntrinsicModel.TRUE;
+            return true;
+        }
+
+        // Handle timestamp IN 'value' or timestamp IN ('v1', 'v2', ...) or timestamp IN now()
+        if (isInKeyword(node.token)) {
+            if (node.paramCount == 2) {
+                // Single value: timestamp IN 'value' or timestamp IN now()
+                ExpressionNode inArg = node.rhs;
+                if (isNullKeyword(inArg.token)) {
+                    if (leftFirst) {
+                        model.intersectIntervals(Numbers.LONG_NULL, Numbers.LONG_NULL);
+                    } else {
+                        model.unionIntervals(Numbers.LONG_NULL, Numbers.LONG_NULL);
+                    }
+                } else if (isFunc(inArg)) {
+                    // Function like now() - parse and handle as runtime timestamp
+                    if (!tryAccumulateTimestampFunction(model, inArg, leftFirst, functionParser, metadata, executionContext)) {
+                        return false;
+                    }
+                } else {
+                    // Constant string - treat as interval (e.g., '2018-01-01' spans full day)
+                    if (leftFirst) {
+                        model.intersectIntervals(inArg.token, 1, inArg.token.length() - 1, inArg.position);
+                    } else {
+                        model.unionIntervals(inArg.token, 1, inArg.token.length() - 1, inArg.position);
+                    }
+                }
+            } else {
+                // Multiple values: timestamp IN ('v1', 'v2', ...) - treat as points
+                int n = node.args.size() - 1;
+                for (int i = 0; i < n; i++) {
+                    ExpressionNode inListItem = node.args.getQuick(i);
+                    boolean isFirst = leftFirst && i == 0;
+                    if (isFunc(inListItem)) {
+                        if (!tryAccumulateTimestampFunction(model, inListItem, isFirst, functionParser, metadata, executionContext)) {
+                            return false;
+                        }
+                    } else {
+                        long ts = parseTokenAsTimestamp(timestampDriver, inListItem);
+                        if (isFirst) {
+                            model.intersectIntervals(ts, ts);
+                        } else {
+                            model.unionIntervals(ts, ts);
+                        }
+                    }
+                }
+            }
+            node.intrinsicValue = IntrinsicModel.TRUE;
+            return true;
+        }
+
+        // Handle timestamp = 'value' or timestamp = now() - parse as point interval [ts, ts]
+        if (Chars.equals(node.token, '=')) {
+            ExpressionNode valueNode;
+            if (node.lhs.type == ExpressionNode.LITERAL && isTimestamp(node.lhs)) {
+                valueNode = node.rhs;
+            } else {
+                valueNode = node.lhs;
+            }
+            if (isFunc(valueNode)) {
+                if (!tryAccumulateTimestampFunction(model, valueNode, leftFirst, functionParser, metadata, executionContext)) {
+                    return false;
+                }
+            } else {
+                long ts = parseTokenAsTimestamp(timestampDriver, valueNode);
+                if (leftFirst) {
+                    model.intersectIntervals(ts, ts);
+                } else {
+                    model.unionIntervals(ts, ts);
+                }
+            }
+            node.intrinsicValue = IntrinsicModel.TRUE;
+            return true;
+        }
+
+        return false;
+    }
+
     private CharSequence getStrFromFunction(
             FunctionParser functionParser,
             ExpressionNode node,
@@ -2040,10 +2249,6 @@ public final class WhereClauseParser implements Mutable {
         return node == null || isNullKeyword(node.token);
     }
 
-    private boolean isTimestamp(ExpressionNode n) {
-        return Chars.equalsIgnoreCaseNc(n.token, timestamp);
-    }
-
     /**
      * Checks if an expression node is an OR tree where all leaf predicates are
      * timestamp IN intrinsics that can be unioned together.
@@ -2073,15 +2278,15 @@ public final class WhereClauseParser implements Mutable {
             if (col.type != ExpressionNode.LITERAL || !isTimestamp(col)) {
                 return false;
             }
-            // Check that all values are constants (no functions/bind variables for simplicity)
+            // Check that all values are constants, functions, or bind variables
             if (node.paramCount == 2) {
-                // Single value: timestamp IN 'value'
-                return node.rhs != null && node.rhs.type == ExpressionNode.CONSTANT;
+                // Single value: timestamp IN 'value' or timestamp IN now() or timestamp IN $1
+                return node.rhs != null && (node.rhs.type == ExpressionNode.CONSTANT || isFunc(node.rhs));
             } else {
                 // Multiple values: timestamp IN ('v1', 'v2', ...)
                 for (int i = 0, n = node.args.size() - 1; i < n; i++) {
                     ExpressionNode arg = node.args.getQuick(i);
-                    if (arg.type != ExpressionNode.CONSTANT) {
+                    if (arg.type != ExpressionNode.CONSTANT && !isFunc(arg)) {
                         return false;
                     }
                 }
@@ -2089,131 +2294,25 @@ public final class WhereClauseParser implements Mutable {
             }
         }
 
-        // Check for timestamp = 'value'
+        // Check for timestamp = 'value' or timestamp = now() or timestamp = $1
         if (Chars.equals(node.token, '=')) {
             if (node.lhs == null || node.rhs == null) {
                 return false;
             }
             // Check both orientations: timestamp = 'value' and 'value' = timestamp
             if (node.lhs.type == ExpressionNode.LITERAL && isTimestamp(node.lhs)
-                    && node.rhs.type == ExpressionNode.CONSTANT) {
+                    && (node.rhs.type == ExpressionNode.CONSTANT || isFunc(node.rhs))) {
                 return true;
             }
             return node.rhs.type == ExpressionNode.LITERAL && isTimestamp(node.rhs)
-                    && node.lhs.type == ExpressionNode.CONSTANT;
+                    && (node.lhs.type == ExpressionNode.CONSTANT || isFunc(node.lhs));
         }
 
         return false;
     }
 
-    /**
-     * Extracts timestamp intervals from an OR tree and unions them into the model.
-     * Assumes isOrOfTimestampIn() has already returned true for this node.
-     * <p>
-     * Returns true if intervals were successfully extracted and applied.
-     */
-    private boolean extractOrTimestampIntervals(
-            TimestampDriver timestampDriver,
-            IntrinsicModel model,
-            ExpressionNode node,
-            boolean leftFirst
-    ) throws SqlException {
-        if (isOrKeyword(node.token)) {
-            // Process left side, then right side
-            // The first interval uses intersect, subsequent ones use union
-            if (!extractOrTimestampIntervals(timestampDriver, model, node.lhs, leftFirst)) {
-                return false;
-            }
-            // After processing left side, we're no longer "first"
-            if (!extractOrTimestampIntervals(timestampDriver, model, node.rhs, false)) {
-                return false;
-            }
-            node.intrinsicValue = IntrinsicModel.TRUE;
-            return true;
-        }
-
-        // Handle timestamp IN 'value' or timestamp IN ('v1', 'v2', ...)
-        if (isInKeyword(node.token)) {
-            if (node.paramCount == 2) {
-                // Single value: timestamp IN 'value' - treat as interval (e.g., '2018-01-01' spans full day)
-                ExpressionNode inArg = node.rhs;
-                if (isNullKeyword(inArg.token)) {
-                    if (leftFirst) {
-                        model.intersectIntervals(Numbers.LONG_NULL, Numbers.LONG_NULL);
-                    } else {
-                        model.unionIntervals(Numbers.LONG_NULL, Numbers.LONG_NULL);
-                    }
-                } else {
-                    if (leftFirst) {
-                        model.intersectIntervals(inArg.token, 1, inArg.token.length() - 1, inArg.position);
-                    } else {
-                        model.unionIntervals(inArg.token, 1, inArg.token.length() - 1, inArg.position);
-                    }
-                }
-            } else {
-                // Multiple values: timestamp IN ('v1', 'v2', ...) - treat as points
-                int n = node.args.size() - 1;
-                for (int i = 0; i < n; i++) {
-                    ExpressionNode inListItem = node.args.getQuick(i);
-                    long ts = parseTokenAsTimestamp(timestampDriver, inListItem);
-                    if (leftFirst && i == 0) {
-                        model.intersectIntervals(ts, ts);
-                    } else {
-                        model.unionIntervals(ts, ts);
-                    }
-                }
-            }
-            node.intrinsicValue = IntrinsicModel.TRUE;
-            return true;
-        }
-
-        // Handle timestamp = 'value' - parse as point interval [ts, ts]
-        if (Chars.equals(node.token, '=')) {
-            ExpressionNode valueNode;
-            if (node.lhs.type == ExpressionNode.LITERAL && isTimestamp(node.lhs)) {
-                valueNode = node.rhs;
-            } else {
-                valueNode = node.lhs;
-            }
-            long ts = parseTokenAsTimestamp(timestampDriver, valueNode);
-            if (leftFirst) {
-                model.intersectIntervals(ts, ts);
-            } else {
-                model.unionIntervals(ts, ts);
-            }
-            node.intrinsicValue = IntrinsicModel.TRUE;
-            return true;
-        }
-
-        return false;
-    }
-
-    /**
-     * Tries to extract timestamp intervals from an OR tree.
-     * Only succeeds if:
-     * - The node is an OR tree consisting entirely of timestamp IN/= predicates
-     * - The model doesn't already have interval filters (to allow union semantics)
-     * <p>
-     * Returns true if extraction was successful.
-     */
-    private boolean tryExtractOrTimestampIntrinsics(
-            TimestampDriver timestampDriver,
-            IntrinsicModel model,
-            ExpressionNode node
-    ) throws SqlException {
-        // Only attempt OR extraction if we don't have existing interval filters
-        // This allows us to use union semantics for the OR branches
-        if (model.hasIntervalFilters()) {
-            return false;
-        }
-
-        // Check if this is an OR tree of timestamp intrinsics
-        if (!isOrOfTimestampIn(node)) {
-            return false;
-        }
-
-        // Extract the intervals with union semantics
-        return extractOrTimestampIntervals(timestampDriver, model, node, true);
+    private boolean isTimestamp(ExpressionNode n) {
+        return Chars.equalsIgnoreCaseNc(n.token, timestamp);
     }
 
     // calculates intersect of existing and new set for IN ()
@@ -2274,6 +2373,50 @@ public final class WhereClauseParser implements Mutable {
         }
 
         return true;
+    }
+
+    /**
+     * Accumulates a timestamp function (like now()) into the OR interval model.
+     * For constant functions, evaluates immediately. For runtime constants, defers to runtime.
+     * Returns true on success, false if the function cannot be accumulated.
+     */
+    private boolean tryAccumulateTimestampFunction(
+            IntrinsicModel model,
+            ExpressionNode funcNode,
+            boolean isFirst,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        Function func = functionParser.parseFunction(funcNode, metadata, executionContext);
+        try {
+            if (!ColumnType.isTimestamp(func.getType())) {
+                Misc.free(func);
+                return false;
+            }
+            if (func.isConstant()) {
+                long ts = func.getTimestamp(null);
+                Misc.free(func);
+                if (isFirst) {
+                    model.intersectIntervals(ts, ts);
+                } else {
+                    model.unionIntervals(ts, ts);
+                }
+            } else if (func.isRuntimeConstant()) {
+                if (isFirst) {
+                    model.intersectRuntimeTimestamp(func);
+                } else {
+                    model.unionRuntimeTimestamp(func);
+                }
+            } else {
+                Misc.free(func);
+                return false;
+            }
+            return true;
+        } catch (Throwable th) {
+            Misc.free(func);
+            throw th;
+        }
     }
 
     private long parseFullOrPartialDate(
@@ -2422,6 +2565,8 @@ public final class WhereClauseParser implements Mutable {
             );
             case INTRINSIC_OP_BETWEEN ->
                     analyzeBetween(timestampDriver, translator, model, node, m, functionParser, metadata, executionContext);
+            case INTRINSIC_OP_AND_OFFSET ->
+                    analyzeAndOffset(timestampDriver, translator, model, node, m, functionParser, metadata, executionContext, latestByMultiColumn, reader);
             default -> false;
         };
     }
@@ -2592,6 +2737,37 @@ public final class WhereClauseParser implements Mutable {
     }
 
     /**
+     * Tries to extract timestamp intervals from an OR tree.
+     * Only succeeds if:
+     * - The node is an OR tree consisting entirely of timestamp IN/= predicates
+     * - The model doesn't already have interval filters (to allow union semantics)
+     * <p>
+     * Returns true if extraction was successful.
+     */
+    private boolean tryExtractOrTimestampIntrinsics(
+            TimestampDriver timestampDriver,
+            IntrinsicModel model,
+            ExpressionNode node,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        // Only attempt OR extraction if we don't have existing interval filters
+        // This allows us to use union semantics for the OR branches
+        if (model.hasIntervalFilters()) {
+            return false;
+        }
+
+        // Check if this is an OR tree of timestamp intrinsics
+        if (!isOrOfTimestampIn(node)) {
+            return false;
+        }
+
+        // Extract the intervals with union semantics
+        return extractOrTimestampIntervals(timestampDriver, model, node, true, functionParser, metadata, executionContext);
+    }
+
+    /**
      * Tries to rewrite a BETWEEN node if the column is wrapped in dateadd.
      * <p>
      * Transforms: dateadd(p, s, ts) BETWEEN lo AND hi  ->  ts BETWEEN dateadd(p, -s, lo) AND dateadd(p, -s, hi)
@@ -2702,5 +2878,6 @@ public final class WhereClauseParser implements Mutable {
         intrinsicOps.put("!=", INTRINSIC_OP_NOT_EQ);
         intrinsicOps.put("not", INTRINSIC_OP_NOT);
         intrinsicOps.put("between", INTRINSIC_OP_BETWEEN);
+        intrinsicOps.put("and_offset", INTRINSIC_OP_AND_OFFSET);
     }
 }
