@@ -34,20 +34,16 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.view.ViewState;
 import io.questdb.client.Sender;
+import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
-import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.MicrosecondClock;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8String;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.*;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.cutlass.pgwire.BasePGTest;
 import io.questdb.test.tools.LogCapture;
@@ -58,15 +54,11 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.sql.*;
 
 import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
-import static io.questdb.test.tools.TestUtils.assertEquals;
 import static io.questdb.test.tools.TestUtils.*;
+import static io.questdb.test.tools.TestUtils.assertEquals;
 import static java.net.HttpURLConnection.HTTP_OK;
 import static org.junit.Assert.*;
 
@@ -78,6 +70,121 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     private static final LogCapture capture = new LogCapture();
     private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
     private ServerMain questdb;
+
+    private static void assertExecRequest(
+            HttpClient httpClient,
+            String sql,
+            String expectedHttpResponse
+    ) {
+        final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+        request.GET().url("/exec").query("query", sql);
+        assertHttpRequest(request, HTTP_OK, expectedHttpResponse);
+    }
+
+    private static void assertHttpRequest(
+            HttpClient.Request request,
+            int expectedHttpStatusCode,
+            String expectedHttpResponse,
+            String... expectedHeaders
+    ) {
+        try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
+            responseHeaders.await();
+
+            assertEquals(String.valueOf(expectedHttpStatusCode), responseHeaders.getStatusCode());
+
+            for (int i = 0; i < expectedHeaders.length; i += 2) {
+                final Utf8Sequence value = responseHeaders.getHeader(new Utf8String(expectedHeaders[i]));
+                assertTrue(Utf8s.equals(new Utf8String(expectedHeaders[i + 1]), value));
+            }
+
+            final StringSink sink = tlSink.get();
+
+            Fragment fragment;
+            final Response chunkedResponse = responseHeaders.getResponse();
+            while ((fragment = chunkedResponse.recv()) != null) {
+                Utf8s.utf8ToUtf16(fragment.lo(), fragment.hi(), sink);
+            }
+
+            TestUtils.assertEquals(expectedHttpResponse, sink);
+            sink.clear();
+        }
+    }
+
+    private static void assertSqlViaPG(String sql, String expectedResult) throws SQLException {
+        try (
+                final Connection connection = getPGConnection();
+                final PreparedStatement stmt = connection.prepareStatement(sql);
+                final ResultSet resultSet = stmt.executeQuery()
+        ) {
+            final StringSink sink = Misc.getThreadLocalSink();
+            sink.clear();
+
+            BasePGTest.assertResultSet(expectedResult, sink, resultSet);
+        }
+    }
+
+    private static ServerMain createServerMain() {
+        return new ServerMain(new Bootstrap(Bootstrap.getServerMainArgs(root)) {
+            @Override
+            public MicrosecondClock getMicrosecondClock() {
+                return new TestMicroClock(1750345200000000L, 0L);
+            }
+        }) {
+            @Override
+            protected void setupViewJobs(WorkerPool workerPool, CairoEngine engine, int sharedWorkerCount) {
+            }
+
+            @Override
+            protected void setupWalApplyJob(WorkerPool workerPool, CairoEngine engine, int sharedWorkerCount) {
+            }
+        };
+    }
+
+    private static void createTable(HttpClient httpClient, String tableName) {
+        assertExecRequest(
+                httpClient,
+                "create table if not exists " + tableName +
+                        " (ts timestamp, k symbol capacity 2048, k2 symbol capacity 512, v long)" +
+                        " timestamp(ts) partition by day wal",
+                "{\"ddl\":\"OK\"}"
+        );
+        for (int i = 0; i < 9; i++) {
+            assertExecRequest(
+                    httpClient,
+                    "insert into " + tableName + " values (" + (i * 10000000) + ", 'k" + i + "', " + "'k2_" + i + "', " + i + ")",
+                    "{\"dml\":\"OK\"}"
+            );
+        }
+    }
+
+    private static void createView(HttpClient httpClient, String viewName, String viewQuery) {
+        assertExecRequest(
+                httpClient,
+                "create view " + viewName + " as (" + viewQuery + ")",
+                "{\"ddl\":\"OK\"}"
+        );
+    }
+
+    private static void executeViaPG(Connection conn, String sql, String... bindVars) throws SQLException {
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            for (int i = 0; i < bindVars.length; i++) {
+                stmt.setString(i + 1, bindVars[i]);
+            }
+            stmt.execute();
+        }
+    }
+
+    private static Connection getPGConnection() throws SQLException {
+        return DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+    }
+
+    private static void runSqlViaPG(String... sqls) throws SQLException {
+        try (final Connection connection = getPGConnection()) {
+            for (String sql : sqls) {
+                executeViaPG(connection, sql);
+            }
+        }
+    }
 
     @Before
     @Override
@@ -552,121 +659,6 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
                             "\"count\":2" +
                             "}"
             );
-        }
-    }
-
-    private static void assertExecRequest(
-            HttpClient httpClient,
-            String sql,
-            String expectedHttpResponse
-    ) {
-        final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-        request.GET().url("/exec").query("query", sql);
-        assertHttpRequest(request, HTTP_OK, expectedHttpResponse);
-    }
-
-    private static void assertHttpRequest(
-            HttpClient.Request request,
-            int expectedHttpStatusCode,
-            String expectedHttpResponse,
-            String... expectedHeaders
-    ) {
-        try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
-            responseHeaders.await();
-
-            assertEquals(String.valueOf(expectedHttpStatusCode), responseHeaders.getStatusCode());
-
-            for (int i = 0; i < expectedHeaders.length; i += 2) {
-                final Utf8Sequence value = responseHeaders.getHeader(new Utf8String(expectedHeaders[i]));
-                assertTrue(Utf8s.equals(new Utf8String(expectedHeaders[i + 1]), value));
-            }
-
-            final StringSink sink = tlSink.get();
-
-            Fragment fragment;
-            final Response chunkedResponse = responseHeaders.getResponse();
-            while ((fragment = chunkedResponse.recv()) != null) {
-                Utf8s.utf8ToUtf16(fragment.lo(), fragment.hi(), sink);
-            }
-
-            TestUtils.assertEquals(expectedHttpResponse, sink);
-            sink.clear();
-        }
-    }
-
-    private static void assertSqlViaPG(String sql, String expectedResult) throws SQLException {
-        try (
-                final Connection connection = getPGConnection();
-                final PreparedStatement stmt = connection.prepareStatement(sql);
-                final ResultSet resultSet = stmt.executeQuery()
-        ) {
-            final StringSink sink = Misc.getThreadLocalSink();
-            sink.clear();
-
-            BasePGTest.assertResultSet(expectedResult, sink, resultSet);
-        }
-    }
-
-    private static ServerMain createServerMain() {
-        return new ServerMain(new Bootstrap(Bootstrap.getServerMainArgs(root)) {
-            @Override
-            public MicrosecondClock getMicrosecondClock() {
-                return new TestMicroClock(1750345200000000L, 0L);
-            }
-        }) {
-            @Override
-            protected void setupViewJobs(WorkerPool workerPool, CairoEngine engine, int sharedWorkerCount) {
-            }
-
-            @Override
-            protected void setupWalApplyJob(WorkerPool workerPool, CairoEngine engine, int sharedWorkerCount) {
-            }
-        };
-    }
-
-    private static void createTable(HttpClient httpClient, String tableName) {
-        assertExecRequest(
-                httpClient,
-                "create table if not exists " + tableName +
-                        " (ts timestamp, k symbol capacity 2048, k2 symbol capacity 512, v long)" +
-                        " timestamp(ts) partition by day wal",
-                "{\"ddl\":\"OK\"}"
-        );
-        for (int i = 0; i < 9; i++) {
-            assertExecRequest(
-                    httpClient,
-                    "insert into " + tableName + " values (" + (i * 10000000) + ", 'k" + i + "', " + "'k2_" + i + "', " + i + ")",
-                    "{\"dml\":\"OK\"}"
-            );
-        }
-    }
-
-    private static void createView(HttpClient httpClient, String viewName, String viewQuery) {
-        assertExecRequest(
-                httpClient,
-                "create view " + viewName + " as (" + viewQuery + ")",
-                "{\"ddl\":\"OK\"}"
-        );
-    }
-
-    private static void executeViaPG(Connection conn, String sql, String... bindVars) throws SQLException {
-        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
-            for (int i = 0; i < bindVars.length; i++) {
-                stmt.setString(i + 1, bindVars[i]);
-            }
-            stmt.execute();
-        }
-    }
-
-    private static Connection getPGConnection() throws SQLException {
-        return DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
-    }
-
-    private static void runSqlViaPG(String... sqls) throws SQLException {
-        try (final Connection connection = getPGConnection()) {
-            for (String sql : sqls) {
-                executeViaPG(connection, sql);
-            }
         }
     }
 

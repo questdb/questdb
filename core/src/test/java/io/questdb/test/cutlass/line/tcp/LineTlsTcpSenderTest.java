@@ -25,7 +25,7 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.client.Sender;
-import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.std.Files;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TlsProxyRule;
@@ -41,6 +41,20 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Rule
     public TlsProxyRule tlsProxy = TlsProxyRule.toHostAndPort("localhost", 9002);
+
+    private static void withCustomProperty(RunnableWithException runnable, String key, String value) throws Exception {
+        String orig = System.getProperty(key);
+        System.setProperty(key, value);
+        try {
+            runnable.run();
+        } finally {
+            if (orig != null) {
+                System.setProperty(key, orig);
+            } else {
+                System.clearProperty(key);
+            }
+        }
+    }
 
     @Test
     public void simpleTest() throws Exception {
@@ -169,20 +183,6 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                 assertTableSizeEventually(engine, tableName, rows);
             }
         });
-    }
-
-    private static void withCustomProperty(RunnableWithException runnable, String key, String value) throws Exception {
-        String orig = System.getProperty(key);
-        System.setProperty(key, value);
-        try {
-            runnable.run();
-        } finally {
-            if (orig != null) {
-                System.setProperty(key, orig);
-            } else {
-                System.clearProperty(key);
-            }
-        }
     }
 
     private interface RunnableWithException {

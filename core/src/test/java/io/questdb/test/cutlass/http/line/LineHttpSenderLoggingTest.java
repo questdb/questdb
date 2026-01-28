@@ -24,19 +24,15 @@
 
 package io.questdb.test.cutlass.http.line;
 
-import io.questdb.Bootstrap;
-import io.questdb.DefaultHttpClientConfiguration;
-import io.questdb.FactoryProviderImpl;
-import io.questdb.PropBootstrapConfiguration;
-import io.questdb.PropServerConfiguration;
-import io.questdb.ServerConfiguration;
+import io.questdb.*;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.client.DefaultHttpClientConfiguration;
+import io.questdb.client.cutlass.line.http.AbstractLineHttpSender;
+import io.questdb.client.cutlass.line.http.LineHttpSenderV2;
 import io.questdb.cutlass.http.processors.LineHttpProcessorState;
-import io.questdb.cutlass.line.http.AbstractLineHttpSender;
-import io.questdb.cutlass.line.http.LineHttpSenderV2;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.test.AbstractBootstrapTest;
@@ -55,56 +51,6 @@ public class LineHttpSenderLoggingTest extends AbstractBootstrapTest {
     private static final Class<?>[] guaranteedLoggers = new Class[]{
             LineHttpProcessorState.class
     };
-
-    @Before
-    @Override
-    public void setUp() {
-        LogFactory.enableGuaranteedLogging(guaranteedLoggers);
-        super.setUp();
-        capture.start();
-        TestUtils.unchecked(() -> createDummyConfiguration());
-        dbPath.parent().$();
-    }
-
-    @After
-    @Override
-    public void tearDown() throws Exception {
-        capture.stop();
-        super.tearDown();
-        LogFactory.disableGuaranteedLogging(guaranteedLoggers);
-    }
-
-    @Test
-    public void testAuthorizationErrorLogging() throws Exception {
-        final TestSecurityContext testSecurityContext = new TestSecurityContext();
-        final String errorMessage = "Test authorization error";
-
-        TestUtils.assertMemoryLeak(() -> {
-            // set authorization error
-            testSecurityContext.setException(CairoException.authorization().put(errorMessage));
-
-            ingestWithError(testSecurityContext, errorMessage);
-
-            // check that error is logged as non-critical error
-            assertLogLevel('E');
-        });
-    }
-
-    @Test
-    public void testCriticalErrorLogging() throws Exception {
-        final TestSecurityContext testSecurityContext = new TestSecurityContext();
-        final String errorMessage = "Test too many open files";
-
-        TestUtils.assertMemoryLeak(() -> {
-            // set critical error
-            testSecurityContext.setException(CairoException.critical(24).put(errorMessage));
-
-            ingestWithError(testSecurityContext, errorMessage);
-
-            // check that error is logged as critical error
-            assertLogLevel('C');
-        });
-    }
 
     private static void assertLogLevel(char errorLevel) {
         capture.waitForRegex(errorLevel + " i.q.c.h.p.LineHttpProcessorState \\[[0-9]*\\] could not commit");
@@ -163,6 +109,56 @@ public class LineHttpSenderLoggingTest extends AbstractBootstrapTest {
                 TestUtils.assertContains(ex.getMessage(), errorMessage);
             }
         }
+    }
+
+    @Before
+    @Override
+    public void setUp() {
+        LogFactory.enableGuaranteedLogging(guaranteedLoggers);
+        super.setUp();
+        capture.start();
+        TestUtils.unchecked(() -> createDummyConfiguration());
+        dbPath.parent().$();
+    }
+
+    @After
+    @Override
+    public void tearDown() throws Exception {
+        capture.stop();
+        super.tearDown();
+        LogFactory.disableGuaranteedLogging(guaranteedLoggers);
+    }
+
+    @Test
+    public void testAuthorizationErrorLogging() throws Exception {
+        final TestSecurityContext testSecurityContext = new TestSecurityContext();
+        final String errorMessage = "Test authorization error";
+
+        TestUtils.assertMemoryLeak(() -> {
+            // set authorization error
+            testSecurityContext.setException(CairoException.authorization().put(errorMessage));
+
+            ingestWithError(testSecurityContext, errorMessage);
+
+            // check that error is logged as non-critical error
+            assertLogLevel('E');
+        });
+    }
+
+    @Test
+    public void testCriticalErrorLogging() throws Exception {
+        final TestSecurityContext testSecurityContext = new TestSecurityContext();
+        final String errorMessage = "Test too many open files";
+
+        TestUtils.assertMemoryLeak(() -> {
+            // set critical error
+            testSecurityContext.setException(CairoException.critical(24).put(errorMessage));
+
+            ingestWithError(testSecurityContext, errorMessage);
+
+            // check that error is logged as critical error
+            assertLogLevel('C');
+        });
     }
 
     private static final class TestSecurityContext extends AllowAllSecurityContext {

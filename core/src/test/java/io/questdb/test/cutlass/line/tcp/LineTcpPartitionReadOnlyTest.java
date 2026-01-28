@@ -25,16 +25,10 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.ServerMain;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cutlass.line.AbstractLineTcpSender;
-import io.questdb.cutlass.line.LineTcpSenderV2;
+import io.questdb.client.cutlass.line.AbstractLineTcpSender;
+import io.questdb.client.cutlass.line.LineTcpSenderV2;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SOCountDownLatch;
@@ -53,6 +47,86 @@ import java.time.temporal.ChronoUnit;
 import static io.questdb.test.tools.TestUtils.*;
 
 public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyTest {
+
+    private static void assertServerMainWithLineTCP(
+            String tableName,
+            Runnable test,
+            SOCountDownLatch sendComplete,
+            String finallyExpected,
+            boolean... partitionIsReadOnly
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    ServerMain qdb = new ServerMain(getServerMainArgs());
+                    SqlCompiler compiler = qdb.getEngine().getSqlCompiler();
+                    SqlExecutionContext context = TestUtils.createSqlExecutionCtx(qdb.getEngine())
+            ) {
+                qdb.start();
+                CairoEngine engine = qdb.getEngine();
+
+                // create a table with 4 partitions and 1111 rows
+                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+
+                TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
+                        .col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL).symbolCapacity(32)
+                        .timestamp("ts");
+                engine.execute("create table " + tableName + " (l long, i int, s symbol, ts timestamp) timestamp(ts) partition by day bypass wal", context);
+                CharSequence insertSql = insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4);
+                engine.execute(insertSql, context);
+
+                // set partition read-only state
+                TableToken tableToken = engine.getTableTokenIfExists(tableName);
+                try (TableWriter writer = getWriter(engine, tableToken)) {
+                    TxWriter txWriter = writer.getTxWriter();
+                    int partitionCount = txWriter.getPartitionCount();
+                    Assert.assertTrue(partitionCount <= partitionIsReadOnly.length);
+                    for (int i = 0; i < partitionCount; i++) {
+                        txWriter.setPartitionReadOnly(i, partitionIsReadOnly[i]);
+                    }
+                    txWriter.bumpTruncateVersion();
+                    txWriter.commit(writer.getDenseSymbolMapWriters()); // default commit mode
+                }
+
+                // check read only state
+                checkPartitionReadOnlyState(engine, tableToken, partitionIsReadOnly);
+
+                assertSql(
+                        compiler,
+                        context,
+                        "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
+                        Misc.getThreadLocalSink(),
+                        TABLE_START_CONTENT);
+
+                // so that we know when the table writer is returned to the pool
+                final SOCountDownLatch tableWriterReturnedToPool = new SOCountDownLatch(1);
+                engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
+                    if (token != null && Chars.equalsNc(tableName, token.getTableName()) && PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
+                        tableWriterReturnedToPool.countDown();
+                    }
+                });
+
+                // run the test
+                test.run();
+                sendComplete.await();
+
+                // wait for the table writer to be returned to the pool
+                tableWriterReturnedToPool.await();
+
+                // check read only state, no changes
+                checkPartitionReadOnlyState(engine, tableToken, partitionIsReadOnly);
+
+                // check expected results
+                assertSql(
+                        compiler,
+                        context,
+                        "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
+                        Misc.getThreadLocalSink(),
+                        finallyExpected);
+            }
+        });
+    }
 
     @Override
     @Before
@@ -189,85 +263,5 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 TABLE_START_CONTENT,
                 true, true, true, true
         );
-    }
-
-    private static void assertServerMainWithLineTCP(
-            String tableName,
-            Runnable test,
-            SOCountDownLatch sendComplete,
-            String finallyExpected,
-            boolean... partitionIsReadOnly
-    ) throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = qdb.getEngine().getSqlCompiler();
-                    SqlExecutionContext context = TestUtils.createSqlExecutionCtx(qdb.getEngine())
-            ) {
-                qdb.start();
-                CairoEngine engine = qdb.getEngine();
-
-                // create a table with 4 partitions and 1111 rows
-                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
-
-                TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
-                        .col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .col("s", ColumnType.SYMBOL).symbolCapacity(32)
-                        .timestamp("ts");
-                engine.execute("create table " + tableName + " (l long, i int, s symbol, ts timestamp) timestamp(ts) partition by day bypass wal", context);
-                CharSequence insertSql = insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4);
-                engine.execute(insertSql, context);
-
-                // set partition read-only state
-                TableToken tableToken = engine.getTableTokenIfExists(tableName);
-                try (TableWriter writer = getWriter(engine, tableToken)) {
-                    TxWriter txWriter = writer.getTxWriter();
-                    int partitionCount = txWriter.getPartitionCount();
-                    Assert.assertTrue(partitionCount <= partitionIsReadOnly.length);
-                    for (int i = 0; i < partitionCount; i++) {
-                        txWriter.setPartitionReadOnly(i, partitionIsReadOnly[i]);
-                    }
-                    txWriter.bumpTruncateVersion();
-                    txWriter.commit(writer.getDenseSymbolMapWriters()); // default commit mode
-                }
-
-                // check read only state
-                checkPartitionReadOnlyState(engine, tableToken, partitionIsReadOnly);
-
-                assertSql(
-                        compiler,
-                        context,
-                        "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        Misc.getThreadLocalSink(),
-                        TABLE_START_CONTENT);
-
-                // so that we know when the table writer is returned to the pool
-                final SOCountDownLatch tableWriterReturnedToPool = new SOCountDownLatch(1);
-                engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
-                    if (token != null && Chars.equalsNc(tableName, token.getTableName()) && PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
-                        tableWriterReturnedToPool.countDown();
-                    }
-                });
-
-                // run the test
-                test.run();
-                sendComplete.await();
-
-                // wait for the table writer to be returned to the pool
-                tableWriterReturnedToPool.await();
-
-                // check read only state, no changes
-                checkPartitionReadOnlyState(engine, tableToken, partitionIsReadOnly);
-
-                // check expected results
-                assertSql(
-                        compiler,
-                        context,
-                        "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        Misc.getThreadLocalSink(),
-                        finallyExpected);
-            }
-        });
     }
 }
