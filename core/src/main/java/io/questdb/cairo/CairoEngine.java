@@ -1589,6 +1589,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     (short) 0
             );
         }
+        walLocker.clearTable(tableToken);
     }
 
     public void removeThreadLocalReaderPoolSupervisor() {

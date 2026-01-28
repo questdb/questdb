@@ -242,7 +242,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         // wait for them to be closed before fully removing the token from name registry
                         // and marking table as fully deleted.
                         if (fullyDeleted) {
-                            walLocker.clearTable(tableToken);
                             engine.removeTableToken(tableToken);
                             LOG.info().$("table is fully dropped [tableDir=").$(pathToDelete).I$();
                             TableUtils.lockName(pathToDelete);
