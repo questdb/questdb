@@ -681,6 +681,14 @@ public final class IntervalUtils {
                 // Apply exchange calendar filter if specified
                 if (exchangeSchedule != null) {
                     applyExchangeCalendarFilter(timestampDriver, exchangeSchedule, out, outSize);
+                    // Apply duration AFTER exchange calendar filter to extend trading hours
+                    // Duration is in effectiveSeq after the ';'
+                    for (int j = effectiveSeqLo; j < effectiveSeqLim; j++) {
+                        if (effectiveSeq.charAt(j) == ';') {
+                            applyDurationToIntervals(timestampDriver, out, outSize, effectiveSeq, j + 1, effectiveSeqLim, position);
+                            break;
+                        }
+                    }
                 }
                 // In static mode, union all bracket-expanded intervals and validate count
                 if (applyEncoded) {
@@ -745,7 +753,18 @@ public final class IntervalUtils {
         int outSize = out.size();
 
         if (!hasBrackets) {
-            if (tzMarkerPos >= 0 && semicolonPos >= 0) {
+            // When exchange calendar filter AND duration are both present, parse without duration first,
+            // apply the filter, then extend intervals with duration
+            boolean hasDurationWithExchange = exchangeSchedule != null && semicolonPos >= 0;
+            if (hasDurationWithExchange) {
+                // Parse without duration - use dateLim which excludes the duration suffix
+                if (tzMarkerPos >= 0) {
+                    // Reconstruct without timezone and without duration
+                    parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, tzMarkerPos, position, out, operation);
+                } else {
+                    parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, dateLim, position, out, operation);
+                }
+            } else if (tzMarkerPos >= 0 && semicolonPos >= 0) {
                 // Parse from reconstructed tzSink
                 parseIntervalSuffix(timestampDriver, tzSink, 0, effectiveLim, position, out, operation);
             } else if (tzMarkerPos >= 0) {
@@ -756,26 +775,26 @@ public final class IntervalUtils {
             }
             if (applyEncoded) {
                 applyLastEncodedInterval(timestampDriver, out);
-                // Apply filter BEFORE timezone conversion (based on local time)
-                if (exchangeSchedule != null) {
-                    // Exchange calendar: intersect with trading schedule
-                    applyExchangeCalendarFilter(timestampDriver, exchangeSchedule, out, outSize);
-                } else if (dayFilterMask != 0) {
-                    // Day filter: expand to matching days of week
+                // Day filter applies BEFORE timezone conversion (based on local time)
+                if (dayFilterMask != 0 && exchangeSchedule == null) {
                     boolean expandMultiDay = !hasDatePrecision(effectiveSeq, effectiveSeqLo, effectiveDateLim);
                     applyDayFilter(timestampDriver, out, outSize, dayFilterMask, expandMultiDay);
                 }
-            } else if (exchangeSchedule != null) {
-                // Dynamic mode: exchange calendars not yet supported
-                // For now, apply statically (schedule is pre-computed)
-                applyExchangeCalendarFilter(timestampDriver, exchangeSchedule, out, outSize);
-            } else if (dayFilterMask != 0) {
+            } else if (dayFilterMask != 0 && exchangeSchedule == null) {
                 // Dynamic mode: store day filter mask for runtime evaluation
                 setDayFilterMaskOnEncodedIntervals(out, outSize, dayFilterMask);
             }
-            // Apply timezone conversion if present (after day filter)
+            // Apply timezone conversion if present (before exchange calendar filter)
             if (tzMarkerPos >= 0) {
                 applyTimezoneToIntervals(timestampDriver, configuration, out, outSize, effectiveSeq, tzLo, tzHi, position, applyEncoded);
+            }
+            // Exchange calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
+            if (exchangeSchedule != null) {
+                applyExchangeCalendarFilter(timestampDriver, exchangeSchedule, out, outSize);
+                // Apply duration AFTER exchange calendar filter to extend trading hours
+                if (semicolonPos >= 0) {
+                    applyDurationToIntervals(timestampDriver, out, outSize, effectiveSeq, semicolonPos + 1, effectiveSeqLim, position);
+                }
             }
             return;
         }
@@ -787,16 +806,23 @@ public final class IntervalUtils {
         int parseDateLim = effectiveDateLim;
         int parseLim = effectiveSeqLim;
 
+        // When exchange calendar filter AND duration are both present, exclude duration from parsing
+        // Duration will be applied after the exchange calendar filter
+        boolean excludeDurationFromParsing = exchangeSchedule != null && semicolonPos >= 0;
+
         if (tzMarkerPos >= 0) {
             // Reconstruct the string without timezone
             reconstructSink.put(effectiveSeq, effectiveSeqLo, tzMarkerPos);
-            if (semicolonPos >= 0) {
+            if (semicolonPos >= 0 && !excludeDurationFromParsing) {
                 reconstructSink.put(effectiveSeq, semicolonPos, effectiveSeqLim);
             }
             parseSeq = reconstructSink;
             parseLo = 0;
             parseDateLim = tzMarkerPos - effectiveSeqLo;
             parseLim = reconstructSink.length();
+        } else if (excludeDurationFromParsing) {
+            // No timezone but need to exclude duration - use dateLim
+            parseLim = dateLim;
         }
 
         StringSink expansionSink = tlSink1.get();
@@ -820,13 +846,9 @@ public final class IntervalUtils {
                     tzLo,         // globalTzLo
                     tzHi          // globalTzHi
             );
-            // Apply filter BEFORE timezone conversion (based on local time)
-            if (exchangeSchedule != null) {
-                // Exchange calendar: intersect with trading schedule
-                applyExchangeCalendarFilter(timestampDriver, exchangeSchedule, out, outSize);
-            } else if (dayFilterMask != 0) {
+            // Day filter applies BEFORE timezone conversion (based on local time)
+            if (dayFilterMask != 0 && exchangeSchedule == null) {
                 if (applyEncoded) {
-                    // Day filter: expand to matching days of week
                     boolean expandMultiDay = !hasDatePrecision(parseSeq, parseLo, parseDateLim);
                     applyDayFilter(timestampDriver, out, outSize, dayFilterMask, expandMultiDay);
                 } else {
@@ -838,6 +860,14 @@ public final class IntervalUtils {
             // (time list brackets handle their own timezone internally)
             if (tzMarkerPos >= 0 && !hadTimeListBracket) {
                 applyTimezoneToIntervals(timestampDriver, configuration, out, outSize, effectiveSeq, tzLo, tzHi, position, applyEncoded);
+            }
+            // Exchange calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
+            if (exchangeSchedule != null) {
+                applyExchangeCalendarFilter(timestampDriver, exchangeSchedule, out, outSize);
+                // Apply duration AFTER exchange calendar filter to extend trading hours
+                if (semicolonPos >= 0) {
+                    applyDurationToIntervals(timestampDriver, out, outSize, effectiveSeq, semicolonPos + 1, effectiveSeqLim, position);
+                }
             }
             // In static mode, union all bracket-expanded intervals with each other
             // (they were added without union during expansion)
@@ -1274,13 +1304,40 @@ public final class IntervalUtils {
             return;
         }
 
+        // Sort query intervals by lo value before intersection (intersectInPlace requires sorted input)
+        // Using insertion sort since interval lists are typically small
+        for (int i = 1; i < queryIntervalCount; i++) {
+            int idx = startIndex + 2 * i;
+            long lo = out.getQuick(idx);
+            long hi = out.getQuick(idx + 1);
+            int j = i - 1;
+            while (j >= 0 && out.getQuick(startIndex + 2 * j) > lo) {
+                int srcIdx = startIndex + 2 * j;
+                int dstIdx = startIndex + 2 * (j + 1);
+                out.setQuick(dstIdx, out.getQuick(srcIdx));
+                out.setQuick(dstIdx + 1, out.getQuick(srcIdx + 1));
+                j--;
+            }
+            int insertIdx = startIndex + 2 * (j + 1);
+            out.setQuick(insertIdx, lo);
+            out.setQuick(insertIdx + 1, hi);
+        }
+
         // Append trading schedule to out for intersection
         // Convert microseconds to nanoseconds if needed
+        // Adjust hi bounds (odd indices) to be exclusive (subtract 1 unit)
         int dividerIndex = out.size();
         boolean isNanos = timestampDriver == NanosTimestampDriver.INSTANCE;
         for (int i = 0, n = schedule.size(); i < n; i++) {
             long ts = schedule.getQuick(i);
-            out.add(isNanos ? ts * 1000L : ts);
+            if (isNanos) {
+                ts = ts * 1000L;
+            }
+            // Odd indices are hi bounds - make them exclusive
+            if ((i & 1) == 1) {
+                ts--;
+            }
+            out.add(ts);
         }
 
         // Intersect in place: query intervals [startIndex, dividerIndex) with schedule [dividerIndex, end)
@@ -1304,6 +1361,35 @@ public final class IntervalUtils {
             for (int i = 0; i < temp.size(); i++) {
                 out.add(temp.getQuick(i));
             }
+        }
+    }
+
+    /**
+     * Applies duration suffix to intervals by extending the hi bound of each interval.
+     * This is used when both an exchange calendar filter and duration are present.
+     * The duration is applied after the exchange calendar filter to extend trading hours.
+     *
+     * @param timestampDriver the timestamp driver
+     * @param out             the interval list
+     * @param startIndex      index to start from
+     * @param seq             the duration string (e.g., "1h", "30m")
+     * @param lo              start position in seq
+     * @param lim             end position in seq
+     * @param position        position for error reporting
+     */
+    private static void applyDurationToIntervals(
+            TimestampDriver timestampDriver,
+            LongList out,
+            int startIndex,
+            CharSequence seq,
+            int lo,
+            int lim,
+            int position
+    ) throws SqlException {
+        for (int i = startIndex + 1; i < out.size(); i += 2) {
+            long hi = out.getQuick(i);
+            long extendedHi = addDuration(timestampDriver, hi, seq, lo, lim, position);
+            out.setQuick(i, extendedHi);
         }
     }
 
@@ -1802,6 +1888,15 @@ public final class IntervalUtils {
         int globalTzLo = -1;
         int globalTzHi = -1;
 
+        // Find duration semicolon in suffix (for applying duration after exchange calendar filter)
+        int globalDurationSemicolon = -1;
+        for (int j = suffixStart; j < lim; j++) {
+            if (seq.charAt(j) == ';') {
+                globalDurationSemicolon = j;
+                break;
+            }
+        }
+
         if (globalTzMarker >= 0) {
             globalTzLo = globalTzMarker + 1;
             // Find where timezone ends (at ';' or end of string)
@@ -1930,10 +2025,18 @@ public final class IntervalUtils {
                 }
 
                 int elemDayFilterMask = 0;
+                LongList elemExchangeSchedule = null;
                 int effectiveElementEndForTz = resolvedElementEnd;
                 if (elemDayFilterMarker >= 0) {
-                    // Parse per-element day filter
-                    elemDayFilterMask = parseDayFilter(elementSeq, elemDayFilterMarker + 1, resolvedElementEnd, errorPos);
+                    // First try to look up as exchange calendar
+                    ExchangeCalendarService calendarService = configuration.getFactoryProvider()
+                            .getExchangeCalendarServiceFactory()
+                            .getInstance();
+                    elemExchangeSchedule = calendarService.getSchedule(elementSeq.subSequence(elemDayFilterMarker + 1, resolvedElementEnd));
+                    if (elemExchangeSchedule == null) {
+                        // Not an exchange calendar, parse as day filter
+                        elemDayFilterMask = parseDayFilter(elementSeq, elemDayFilterMarker + 1, resolvedElementEnd, errorPos);
+                    }
                     effectiveElementEndForTz = elemDayFilterMarker;
                 }
 
@@ -1966,6 +2069,8 @@ public final class IntervalUtils {
 
                 // Determine which day filter to use: per-element takes precedence over global
                 int activeDayFilterMask = elemDayFilterMask != 0 ? elemDayFilterMask : dayFilterMask;
+                // Per-element exchange schedule (no global fallback here - global is applied after expandDateList)
+                LongList activeExchangeSchedule = elemExchangeSchedule;
 
                 // Remember output size before parsing this element
                 int outSizeBeforeElement = out.size();
@@ -1995,22 +2100,31 @@ public final class IntervalUtils {
                 }
 
                 // Build the full interval string: element (without tz) + suffix (without tz)
+                // When exchange calendar filter is present, exclude duration from parsing
+                // (duration will be applied after the exchange calendar filter)
                 sink.clear();
                 sink.put(elementSeq, resolvedElementStart, effectiveElementEnd);
 
                 // If element already has time, skip the time part of suffix but include duration
                 int effectiveSuffixStart = elementHasTime ? suffixTimeEnd : suffixStart;
 
+                // Determine suffix end - exclude duration if exchange calendar is active
+                int effectiveSuffixEnd = lim;
+                if (activeExchangeSchedule != null && globalDurationSemicolon >= 0) {
+                    effectiveSuffixEnd = globalDurationSemicolon;
+                }
+
                 if (globalTzMarker >= 0) {
-                    // Add suffix without timezone: part before @ and part after timezone (;duration)
+                    // Add suffix without timezone: part before @
                     if (effectiveSuffixStart < globalTzMarker) {
                         sink.put(seq, effectiveSuffixStart, globalTzMarker);
                     }
-                    if (globalTzHi < lim) {
-                        sink.put(seq, globalTzHi, lim);
+                    // Add part after timezone but before duration end
+                    if (globalTzHi < effectiveSuffixEnd) {
+                        sink.put(seq, globalTzHi, effectiveSuffixEnd);
                     }
                 } else {
-                    sink.put(seq, effectiveSuffixStart, lim);
+                    sink.put(seq, effectiveSuffixStart, effectiveSuffixEnd);
                 }
 
                 // Check if the combined string contains brackets that need expansion
@@ -2068,9 +2182,8 @@ public final class IntervalUtils {
                     parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
                 }
 
-                // Apply day filter BEFORE timezone conversion (based on local time)
-                // Use per-element day filter if present, otherwise use global
-                if (activeDayFilterMask != 0) {
+                // Day filter applies BEFORE timezone conversion (based on local time)
+                if (activeDayFilterMask != 0 && activeExchangeSchedule == null) {
                     if (applyEncoded) {
                         // Only expand to individual days if the element is an imprecise date (year/month)
                         // Precise dates (with day component) should just be filtered, not expanded
@@ -2085,6 +2198,15 @@ public final class IntervalUtils {
                 // Apply timezone conversion if present (per-element or global) and NOT already handled by time list
                 if (activeTzLo >= 0) {
                     applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, activeTzSeq, activeTzLo, activeTzHi, errorPos, applyEncoded);
+                }
+
+                // Exchange calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
+                if (activeExchangeSchedule != null) {
+                    applyExchangeCalendarFilter(timestampDriver, activeExchangeSchedule, out, outSizeBeforeElement);
+                    // Apply duration AFTER exchange calendar filter to extend trading hours
+                    if (globalDurationSemicolon >= 0) {
+                        applyDurationToIntervals(timestampDriver, out, outSizeBeforeElement, seq, globalDurationSemicolon + 1, lim, errorPos);
+                    }
                 }
 
                 elementStart = i + 1;
@@ -2125,6 +2247,15 @@ public final class IntervalUtils {
             boolean applyEncoded,
             int outSizeBeforeExpansion
     ) throws SqlException {
+        // Find duration semicolon in suffix (for applying duration after exchange calendar filter)
+        int durationSemicolon = -1;
+        for (int j = suffixStart; j < lim; j++) {
+            if (seq.charAt(j) == ';') {
+                durationSemicolon = j;
+                break;
+            }
+        }
+
         // Find where the range expression ends (at '@' or '#' or element end)
         int rangeEnd = elementEnd;
         for (int j = rangeOpPos + 2; j < elementEnd; j++) {
@@ -2231,9 +2362,18 @@ public final class IntervalUtils {
             }
 
             int elemDayFilterMask = 0;
+            LongList elemExchangeSchedule = null;
             int effectiveElementEndForTz = resolvedElementEnd;
             if (elemDayFilterMarker >= 0) {
-                elemDayFilterMask = parseDayFilter(dateVarSink, elemDayFilterMarker + 1, resolvedElementEnd, errorPos);
+                // First try to look up as exchange calendar
+                ExchangeCalendarService calendarService = configuration.getFactoryProvider()
+                        .getExchangeCalendarServiceFactory()
+                        .getInstance();
+                elemExchangeSchedule = calendarService.getSchedule(dateVarSink.subSequence(elemDayFilterMarker + 1, resolvedElementEnd));
+                if (elemExchangeSchedule == null) {
+                    // Not an exchange calendar, parse as day filter
+                    elemDayFilterMask = parseDayFilter(dateVarSink, elemDayFilterMarker + 1, resolvedElementEnd, errorPos);
+                }
                 effectiveElementEndForTz = elemDayFilterMarker;
             }
 
@@ -2256,22 +2396,31 @@ public final class IntervalUtils {
             }
 
             int activeDayFilterMask = elemDayFilterMask != 0 ? elemDayFilterMask : dayFilterMask;
+            LongList activeExchangeSchedule = elemExchangeSchedule;
             int outSizeBeforeElement = out.size();
 
             // Build the full interval string
+            // When exchange calendar filter is present, exclude duration from parsing
+            // (duration will be applied after the exchange calendar filter)
             sink.clear();
             sink.put(dateVarSink, resolvedElementStart, effectiveElementEnd);
+
+            // Determine suffix end - exclude duration if exchange calendar is active
+            int effectiveSuffixEnd = lim;
+            if (activeExchangeSchedule != null && durationSemicolon >= 0) {
+                effectiveSuffixEnd = durationSemicolon;
+            }
 
             // Add suffix (time, duration) from global suffix
             if (globalTzMarker >= 0) {
                 if (suffixStart < globalTzMarker) {
                     sink.put(seq, suffixStart, globalTzMarker);
                 }
-                if (globalTzHi < lim) {
-                    sink.put(seq, globalTzHi, lim);
+                if (globalTzHi < effectiveSuffixEnd) {
+                    sink.put(seq, globalTzHi, effectiveSuffixEnd);
                 }
             } else {
-                sink.put(seq, suffixStart, lim);
+                sink.put(seq, suffixStart, effectiveSuffixEnd);
             }
 
             // Check for brackets in combined string
@@ -2322,8 +2471,8 @@ public final class IntervalUtils {
                 parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
             }
 
-            // Apply day filter
-            if (activeDayFilterMask != 0) {
+            // Day filter applies BEFORE timezone conversion (based on local time)
+            if (activeDayFilterMask != 0 && activeExchangeSchedule == null) {
                 if (applyEncoded) {
                     // expandMultiDay=false: appendDate always produces full "YYYY-MM-DD" dates
                     applyDayFilter(timestampDriver, out, outSizeBeforeElement, activeDayFilterMask, false);
@@ -2335,6 +2484,15 @@ public final class IntervalUtils {
             // Apply timezone conversion
             if (activeTzLo >= 0) {
                 applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, activeTzSeq, activeTzLo, activeTzHi, errorPos, applyEncoded);
+            }
+
+            // Exchange calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
+            if (activeExchangeSchedule != null) {
+                applyExchangeCalendarFilter(timestampDriver, activeExchangeSchedule, out, outSizeBeforeElement);
+                // Apply duration AFTER exchange calendar filter to extend trading hours
+                if (durationSemicolon >= 0) {
+                    applyDurationToIntervals(timestampDriver, out, outSizeBeforeElement, seq, durationSemicolon + 1, lim, errorPos);
+                }
             }
 
             // Incremental merge: when interval count exceeds threshold, merge to bound memory
