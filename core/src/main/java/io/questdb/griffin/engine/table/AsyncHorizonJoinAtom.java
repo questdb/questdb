@@ -75,7 +75,7 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMem
  * 2. Per-worker aggregation maps and group by functions
  * 3. Per-worker ASOF join maps for symbol -> rowId mappings
  */
-class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
+public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledFilter;
@@ -111,7 +111,6 @@ class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable, Plann
     private final ObjList<MarkoutTimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
     private final long sequenceRowCount;
     private final RecordSink slaveKeyCopier;
-    private final long slaveTsScale;
     private long ownerPrevFirstOffsetAsOfRowId = Long.MIN_VALUE;
 
     public AsyncHorizonJoinAtom(
@@ -161,9 +160,8 @@ class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable, Plann
             this.masterKeyCopier = masterKeyCopier;
             this.slaveKeyCopier = slaveKeyCopier;
 
-            // Timestamp scale factors for cross-resolution support (1 if same type, otherwise scale to nanos)
+            // Timestamp scale factor for cross-resolution support (1 if same type, otherwise scale to nanos)
             this.masterTsScale = masterTsScale;
-            this.slaveTsScale = slaveTsScale;
 
             // GROUP BY key copier for MarkoutRecord
             this.groupByKeyCopier = groupByKeyCopier;
@@ -374,10 +372,6 @@ class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable, Plann
             map.reopen();
         }
         return map;
-    }
-
-    public MarkoutSymbolTableSource getMarkoutSymbolTableSource() {
-        return markoutSymbolTableSource;
     }
 
     public RecordSink getMasterKeyCopier() {
@@ -627,5 +621,10 @@ class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable, Plann
                 GroupByUtils.toTop(perWorkerGroupByFunctions.getQuick(i));
             }
         }
+    }
+
+    // package-private to make linter happy
+    MarkoutSymbolTableSource getMarkoutSymbolTableSource() {
+        return markoutSymbolTableSource;
     }
 }

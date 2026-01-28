@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.std.Rows;
@@ -137,7 +136,6 @@ public class MarkoutTimeFrameHelper {
      * Returns the row ID, or Long.MIN_VALUE if not found.
      * <p>
      * After a successful call, the helper is positioned at the found row.
-     * Use {@link #getCurrentRowId()} to get the current position.
      *
      * @param targetTimestamp the target timestamp to search for
      * @return rowId if found, Long.MIN_VALUE otherwise
