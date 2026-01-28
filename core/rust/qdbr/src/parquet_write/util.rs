@@ -269,6 +269,7 @@ pub fn build_plain_page(
     primitive_type: PrimitiveType,
     options: WriteOptions,
     encoding: Encoding,
+    required: bool,
 ) -> ParquetResult<DataPage> {
     let header = match options.version {
         Version::V1 => DataPageHeader::V1(DataPageHeaderV1 {
@@ -292,7 +293,11 @@ pub fn build_plain_page(
     Ok(DataPage::new(
         header,
         buffer,
-        Descriptor { primitive_type, max_def_level: 1, max_rep_level: 0 },
+        Descriptor {
+            primitive_type,
+            max_def_level: if required { 0 } else { 1 },
+            max_rep_level: 0,
+        },
         Some(num_rows),
     ))
 }

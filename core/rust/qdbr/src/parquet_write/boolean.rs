@@ -46,6 +46,7 @@ pub fn slice_to_page(
         primitive_type,
         options,
         Encoding::Plain,
+        true,
     )
     .map(Page::Data)
 }

@@ -10,7 +10,9 @@ use crate::{
 
 use super::hybrid_rle::{HybridDecoderBitmapIter, HybridRleIter};
 
-pub(super) fn dict_indices_decoder(page: &DataPage) -> Result<hybrid_rle::HybridRleDecoder<'_>, Error> {
+pub(super) fn dict_indices_decoder(
+    page: &DataPage,
+) -> Result<hybrid_rle::HybridRleDecoder<'_>, Error> {
     let (_, _, indices_buffer) = split_buffer(page)?;
 
     // SPEC: Data page format: the bit width used to encode the entry ids stored as 1 byte (max bit width = 32),

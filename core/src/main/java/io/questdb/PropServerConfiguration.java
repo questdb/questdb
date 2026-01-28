@@ -468,8 +468,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelReadParquetEnabled;
     private final boolean sqlParallelTopKEnabled;
     private final boolean sqlParallelWindowJoinEnabled;
-    private final int sqlParallelWorkStealingThreshold;
     private final long sqlParallelWorkStealingSpinTimeout;
+    private final int sqlParallelWorkStealingThreshold;
     private final int sqlParquetFrameCacheCapacity;
     private final int sqlPivotForColumnPoolCapacity;
     private final int sqlPivotMaxProducedColumns;
@@ -1524,7 +1524,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.parquetExportCopyReportFrequencyLines = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_COPY_REPORT_FREQUENCY_LINES, 500_000);
             this.parquetExportVersion = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_VERSION, ParquetVersion.PARQUET_VERSION_V1);
             this.parquetExportStatisticsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_STATISTICS_ENABLED, true);
-            this.parquetExportCompressionCodec = ParquetCompression.getCompressionCodec(getString(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_COMPRESSION_CODEC, "ZSTD"));
+            this.parquetExportCompressionCodec = ParquetCompression.getCompressionCodec(getString(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_COMPRESSION_CODEC, "LZ4_RAW"));
 
             this.parquetExportRawArrayEncoding = getBoolean(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_RAW_ARRAY_ENCODING_ENABLED, false);
             int defaultCompressionLevel = parquetExportCompressionCodec == ParquetCompression.COMPRESSION_ZSTD ? 9 : 0;
@@ -1931,8 +1931,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewParallelExecutionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, true);
             this.sqlParallelWorkStealingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 16);
             this.sqlParallelWorkStealingSpinTimeout = getNanos(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT, 50_000);
-            // TODO(puzpuzpuz): consider increasing default Parquet cache capacity
-            this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 3), 3);
+            this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 8), 8);
             this.sqlOrderBySortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
             this.sqlOrderByRadixSortThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_THRESHOLD, 600);
             this.copierChunkedEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_COPIER_CHUNKED, true);
@@ -1957,7 +1956,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.partitionEncoderParquetVersion = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_VERSION, ParquetVersion.PARQUET_VERSION_V1);
         this.partitionEncoderParquetStatisticsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, true);
-        this.partitionEncoderParquetCompressionCodec = ParquetCompression.getCompressionCodec(getString(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, "ZSTD"));
+        this.partitionEncoderParquetCompressionCodec = ParquetCompression.getCompressionCodec(getString(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, "LZ4_RAW"));
         this.partitionEncoderParquetRawArrayEncoding = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, false);
         int defaultCompressionLevel = partitionEncoderParquetCompressionCodec == ParquetCompression.COMPRESSION_ZSTD ? 9 : 0;
         this.partitionEncoderParquetCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, defaultCompressionLevel);
@@ -4086,13 +4085,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlParallelWorkStealingThreshold() {
-            return sqlParallelWorkStealingThreshold;
+        public long getSqlParallelWorkStealingSpinTimeout() {
+            return sqlParallelWorkStealingSpinTimeout;
         }
 
         @Override
-        public long getSqlParallelWorkStealingSpinTimeout() {
-            return sqlParallelWorkStealingSpinTimeout;
+        public int getSqlParallelWorkStealingThreshold() {
+            return sqlParallelWorkStealingThreshold;
         }
 
         @Override
