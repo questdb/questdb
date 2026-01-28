@@ -612,7 +612,7 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val("AsyncMarkoutGroupByAtom");
+        sink.val("AsyncHorizonGroupByAtom");
     }
 
     public void toTop() {

@@ -210,9 +210,9 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public void toPlan(PlanSink sink) {
         if (usesCompiledFilter()) {
-            sink.type("Async JIT Markout GroupBy");
+            sink.type("Async JIT Horizon Join");
         } else {
-            sink.type("Async Markout GroupBy");
+            sink.type("Async Horizon Join");
         }
         sink.meta("workers").val(workerCount);
         sink.meta("offsets").val(offsets.size());

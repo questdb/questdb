@@ -201,7 +201,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     ) {
                         CursorPrinter.println(cursor, planFactory.getMetadata(), planSink);
                     }
-                    TestUtils.assertContains(planSink, "Async Markout GroupBy");
+                    TestUtils.assertContains(planSink, "Async Horizon Join");
 
                     // Execute the query to verify it runs successfully
                     StringSink result = new StringSink();
@@ -214,9 +214,6 @@ public class HorizonJoinTest extends AbstractCairoTest {
         );
     }
 
-    /**
-     * Test that the Async Markout GroupBy factory appears in the query plan.
-     */
     @Test
     public void testHorizonJoinQueryPlan() throws Exception {
         assertMemoryLeak(() -> {
@@ -230,7 +227,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "RANGE FROM 0s TO 1s STEP 1s AS h",
                     "VirtualRecord\n" +
                             "  functions: [offset/" + getSecondsDivisor() + ",avg,avg1]\n" +
-                            "    Async Markout GroupBy workers: 1 offsets: 2\n" +
+                            "    Async Horizon Join workers: 1 offsets: 2\n" +
                             "      keys: [offset]\n" +
                             "      values: [avg(p.bid),avg(p.ask)]\n" +
                             "        PageFrame\n" +
@@ -300,7 +297,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                 planSink.clear();
                 CursorPrinter.println(cursor, planFactory.getMetadata(), planSink);
             }
-            TestUtils.assertContains(planSink, "Async Markout GroupBy");
+            TestUtils.assertContains(planSink, "Async Horizon Join");
 
             // Verify results
             assertQueryNoLeakCheck(
@@ -535,7 +532,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "  keys: [sec_offs]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [offset/" + getSecondsDivisor() + ",avg]\n" +
-                            "        Async Markout GroupBy workers: 1 offsets: 3\n" +
+                            "        Async Horizon Join workers: 1 offsets: 3\n" +
                             "          keys: [offset]\n" +
                             "          values: [avg(p.price)]\n" +
                             "            PageFrame\n" +
