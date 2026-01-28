@@ -32,6 +32,8 @@ import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.std.Rows;
 
+import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
+
 /**
  * Helper for navigating and searching through time frames for ASOF join lookups
  * in markout queries.
@@ -45,6 +47,8 @@ import io.questdb.std.Rows;
 public class MarkoutTimeFrameHelper {
     private static final int LINEAR_SCAN_LIMIT = 64;
     private final long lookahead;
+    // Scale factor for slave timestamps to normalize to nanoseconds (1 if no scaling needed)
+    private final long slaveTsScale;
     // Bookmark position: where to start the next findAsOfRow search (optimization for sequential access)
     private int bookmarkedFrameIndex = -1;
     private long bookmarkedRowIndex = Long.MIN_VALUE;
@@ -56,8 +60,9 @@ public class MarkoutTimeFrameHelper {
     private TimeFrameCursor timeFrameCursor;
     private int timestampIndex;
 
-    public MarkoutTimeFrameHelper(long lookahead) {
+    public MarkoutTimeFrameHelper(long lookahead, long slaveTsScale) {
         this.lookahead = lookahead;
+        this.slaveTsScale = slaveTsScale;
     }
 
     /**
@@ -143,11 +148,11 @@ public class MarkoutTimeFrameHelper {
         if (bookmarkedFrameIndex != -1) {
             timeFrameCursor.jumpTo(bookmarkedFrameIndex);
             if (timeFrameCursor.open() > 0) {
-                long frameTsHi = timeFrame.getTimestampHi() - 1; // timestampHi is exclusive
+                long frameTsHi = scaleTimestamp(timeFrame.getTimestampHi() - 1, slaveTsScale); // timestampHi is exclusive
                 if (frameTsHi <= targetTimestamp) {
                     // Bookmarked frame is entirely <= target, use as candidate
                     rowLo = bookmarkedRowIndex;
-                } else if (timeFrame.getTimestampLo() <= targetTimestamp) {
+                } else if (scaleTimestamp(timeFrame.getTimestampLo(), slaveTsScale) <= targetTimestamp) {
                     // Target is within this frame
                     rowLo = bookmarkedRowIndex;
                 }
@@ -162,7 +167,7 @@ public class MarkoutTimeFrameHelper {
             if (rowLo == Long.MIN_VALUE) {
                 // Navigate through frames to find one containing or before the target
                 while (timeFrameCursor.next()) {
-                    long frameEstimateHi = timeFrame.getTimestampEstimateHi();
+                    long frameEstimateHi = scaleTimestamp(timeFrame.getTimestampEstimateHi(), slaveTsScale);
 
                     if (frameEstimateHi <= targetTimestamp) {
                         // Frame is entirely before target, record as candidate
@@ -175,13 +180,14 @@ public class MarkoutTimeFrameHelper {
                     }
 
                     // Frame may contain or straddle the target
-                    if (timeFrame.getTimestampEstimateLo() <= targetTimestamp) {
+                    if (scaleTimestamp(timeFrame.getTimestampEstimateLo(), slaveTsScale) <= targetTimestamp) {
                         if (timeFrameCursor.open() == 0) {
                             continue;
                         }
 
-                        long frameTsLo = timeFrame.getTimestampLo();
-                        long frameTsHi = timeFrame.getTimestampHi() - 1;
+                        // Scale slave frame timestamps to common unit
+                        long frameTsLo = scaleTimestamp(timeFrame.getTimestampLo(), slaveTsScale);
+                        long frameTsHi = scaleTimestamp(timeFrame.getTimestampHi() - 1, slaveTsScale);
 
                         if (frameTsHi <= targetTimestamp) {
                             // Entire frame is <= target
@@ -342,7 +348,7 @@ public class MarkoutTimeFrameHelper {
         while (high - low > LINEAR_SCAN_LIMIT) {
             long mid = (low + high) >>> 1;
             timeFrameCursor.recordAtRowIndex(record, mid);
-            long midTimestamp = record.getTimestamp(timestampIndex);
+            long midTimestamp = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
 
             if (midTimestamp <= targetTimestamp) {
                 result = mid;
@@ -355,7 +361,7 @@ public class MarkoutTimeFrameHelper {
         // Linear scan for small range
         for (long r = low; r <= high; r++) {
             timeFrameCursor.recordAtRowIndex(record, r);
-            long timestamp = record.getTimestamp(timestampIndex);
+            long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
             if (timestamp <= targetTimestamp) {
                 result = r;
             } else {
@@ -384,7 +390,8 @@ public class MarkoutTimeFrameHelper {
 
         for (long r = rowLo; r < scanHi; r++) {
             timeFrameCursor.recordAtRowIndex(record, r);
-            long timestamp = record.getTimestamp(timestampIndex);
+            // Scale slave timestamp to common unit for cross-resolution support
+            long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
 
             if (timestamp <= targetTimestamp) {
                 result = r;

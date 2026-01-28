@@ -31,24 +31,31 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Ignore;
 import org.junit.Test;
 
-/**
- * Tests for HORIZON JOIN SQL syntax.
- */
 public class HorizonJoinTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(HorizonJoinTest.class);
+    private final TestTimestampType leftTableTimestampType;
+    private final TestTimestampType rightTableTimestampType;
+
+    public HorizonJoinTest() {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        this.leftTableTimestampType = TestUtils.getTimestampType(rnd);
+        this.rightTableTimestampType = TestUtils.getTimestampType(rnd);
+    }
 
     @Test
     public void testHorizonJoinCannotBeCombinedWithOtherJoins() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
-            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
-            execute("CREATE TABLE other (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)");
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE other (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
 
             // HORIZON JOIN after another join
             assertExceptionNoLeakCheck(
@@ -77,8 +84,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Test
     public void testHorizonJoinEmptyList() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
-            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
             assertExceptionNoLeakCheck(
                     "SELECT h.offset, avg(p.price) " +
@@ -94,8 +101,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Test
     public void testHorizonJoinMissingRangeOrList() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
-            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
             assertExceptionNoLeakCheck(
                     "SELECT h.offset, avg(p.price) " +
@@ -213,29 +220,25 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Test
     public void testHorizonJoinQueryPlan() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
-            execute("CREATE TABLE prices (sym SYMBOL, bid DOUBLE, ask DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            executeWithRewriteTimestamp("CREATE TABLE trades (sym SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (sym SYMBOL, bid DOUBLE, ask DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", rightTableTimestampType.getTypeName());
 
             assertPlanNoLeakCheck(
-                    """
-                            SELECT h.offset / 1000000 AS sec_off, avg(p.bid), avg(p.ask)
-                            FROM trades AS t
-                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
-                            RANGE FROM 0s TO 1s STEP 1s AS h
-                            """,
-                    """
-                            VirtualRecord
-                              functions: [offset/1000000,avg,avg1]
-                                Async Markout GroupBy workers: 1 offsets: 2
-                                  keys: [offset]
-                                  values: [avg(p.bid),avg(p.ask)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: trades
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: prices
-                            """
+                    "SELECT h.offset / " + getSecondsDivisor() + " AS sec_off, avg(p.bid), avg(p.ask) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                            "RANGE FROM 0s TO 1s STEP 1s AS h",
+                    "VirtualRecord\n" +
+                            "  functions: [offset/" + getSecondsDivisor() + ",avg,avg1]\n" +
+                            "    Async Markout GroupBy workers: 1 offsets: 2\n" +
+                            "      keys: [offset]\n" +
+                            "      values: [avg(p.bid),avg(p.ask)]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trades\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: prices\n"
             );
         });
     }
@@ -243,50 +246,50 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Test
     public void testHorizonJoinSmoke() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     """
                             CREATE TABLE prices (
-                                price_ts TIMESTAMP,
+                                price_ts #TIMESTAMP,
                                 sym SYMBOL,
                                 price DOUBLE)
                             TIMESTAMP(price_ts) PARTITION BY HOUR
-                            """
+                            """,
+                    rightTableTimestampType.getTypeName()
             );
             execute(
                     """
                             INSERT INTO prices VALUES
-                                (0_000_000, 'AX', 2),
-                                (1_100_000, 'AX', 4),
-                                (3_100_000, 'AX', 8)
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 2),
+                                ('1970-01-01T00:00:01.100000Z', 'AX', 4),
+                                ('1970-01-01T00:00:03.100000Z', 'AX', 8)
                             """
             );
 
-            execute(
+            executeWithRewriteTimestamp(
                     """
                             CREATE TABLE orders (
-                                order_ts TIMESTAMP,
+                                order_ts #TIMESTAMP,
                                 sym SYMBOL,
                                 qty DOUBLE
                             ) TIMESTAMP(order_ts)
-                            """
+                            """,
+                    leftTableTimestampType.getTypeName()
             );
             execute(
                     """
                             INSERT INTO orders VALUES
-                                (0_000_000, 'AX', 100),
-                                (1_000_000, 'AX', 200),
-                                (2_000_000, 'AX', 300)
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 200),
+                                ('1970-01-01T00:00:02.000000Z', 'AX', 300)
                             """
             );
 
             // Query with HORIZON JOIN
-            String sql = """
-                    SELECT h.offset / 1000000 AS sec_offs, avg(p.price)
-                    FROM orders AS t
-                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
-                    RANGE FROM 0s TO 2s STEP 1s AS h
-                    ORDER BY sec_offs;
-                    """;
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price) " +
+                    "FROM orders AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 2s STEP 1s AS h " +
+                    "ORDER BY sec_offs";
 
             // Verify the query plan contains the Async Markout GroupBy factory
             StringSink planSink = new StringSink();
@@ -318,22 +321,28 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Test
     public void testHorizonJoinWithListBasic() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)");
-            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
 
             // Insert test data
             execute(
                     """
                             INSERT INTO prices VALUES
-                                (0, 'AX', 10),
-                                (1_000_000, 'AX', 20),
-                                (2_000_000, 'AX', 30)
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 20),
+                                ('1970-01-01T00:00:02.000000Z', 'AX', 30)
                             """
             );
             execute(
                     """
                             INSERT INTO trades VALUES
-                                (1_000_000, 'AX', 100)
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 100)
                             """
             );
 
@@ -341,7 +350,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
             // For trade at 1s:
             //   offset=0: look at 1s+0=1s -> ASOF to price at 1s -> 20
             //   offset=1000000: look at 1s+1s=2s -> ASOF to price at 2s -> 30
-            String sql = "SELECT h.offset / 1000000 AS sec_offs, avg(p.price) " +
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price) " +
                     "FROM trades AS t " +
                     "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
                     "LIST (0, 1000000) AS h " +
@@ -365,8 +374,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
     public void testHorizonJoinWithMasterJavaFilter() throws Exception {
         // Test filter with concat() on master table (Java implementation, symbol table matters)
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (order_sym SYMBOL, ts TIMESTAMP, qty LONG) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE prices (price_sym SYMBOL, ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            executeWithRewriteTimestamp("CREATE TABLE orders (order_sym SYMBOL, ts #TIMESTAMP, qty LONG) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (price_sym SYMBOL, ts #TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", rightTableTimestampType.getTypeName());
 
             execute(
                     """
@@ -413,8 +422,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
     public void testHorizonJoinWithMasterJitFilter() throws Exception {
         // Test simple symbol filter on master table (JIT compiled)
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (order_sym SYMBOL, ts TIMESTAMP, qty LONG) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE prices (price_sym SYMBOL, ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            executeWithRewriteTimestamp("CREATE TABLE orders (order_sym SYMBOL, ts #TIMESTAMP, qty LONG) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (price_sym SYMBOL, ts #TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", rightTableTimestampType.getTypeName());
 
             execute(
                     """
@@ -460,8 +469,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Test
     public void testHorizonJoinWithRangeAndGroupByNotSupported() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
-            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
             // Explicit GROUP BY is not supported with HORIZON JOIN
             assertExceptionNoLeakCheck(
@@ -479,18 +488,24 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Test
     public void testHorizonJoinWithRangeBasic() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)");
-            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
 
             // Insert test data
             // Prices at 0s, 1s, 2s, 3s for sym 'AX'
             execute(
                     """
                             INSERT INTO prices VALUES
-                                (0_000_000, 'AX', 10),
-                                (1_000_000, 'AX', 20),
-                                (2_000_000, 'AX', 30),
-                                (3_000_000, 'AX', 40)
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 20),
+                                ('1970-01-01T00:00:02.000000Z', 'AX', 30),
+                                ('1970-01-01T00:00:03.000000Z', 'AX', 40)
                             """
             );
 
@@ -498,7 +513,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
             execute(
                     """
                             INSERT INTO trades VALUES
-                                (1_000_000, 'AX', 100)
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 100)
                             """
             );
 
@@ -507,7 +522,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
             //   offset=0: look at 1s+0=1s -> ASOF to price at 1s -> 20
             //   offset=1s: look at 1s+1s=2s -> ASOF to price at 2s -> 30
             //   offset=2s: look at 1s+2s=3s -> ASOF to price at 3s -> 40
-            String sql = "SELECT h.offset / 1000000 AS sec_offs, avg(p.price) " +
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price) " +
                     "FROM trades AS t " +
                     "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
                     "RANGE FROM 0s TO 2s STEP 1s AS h " +
@@ -516,21 +531,19 @@ public class HorizonJoinTest extends AbstractCairoTest {
             // Verify the query plan
             assertPlanNoLeakCheck(
                     sql,
-                    """
-                            Radix sort light
-                              keys: [sec_offs]
-                                VirtualRecord
-                                  functions: [offset/1000000,avg]
-                                    Async Markout GroupBy workers: 1 offsets: 3
-                                      keys: [offset]
-                                      values: [avg(p.price)]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: trades
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: prices
-                            """
+                    "Radix sort light\n" +
+                            "  keys: [sec_offs]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [offset/" + getSecondsDivisor() + ",avg]\n" +
+                            "        Async Markout GroupBy workers: 1 offsets: 3\n" +
+                            "          keys: [offset]\n" +
+                            "          values: [avg(p.price)]\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: prices\n"
             );
 
             // Verify results
@@ -552,18 +565,18 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Test
     public void testHorizonJoinWithRangeMinuteUnits() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)");
-            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
             // Insert test data with minute-level timestamps
             // Prices at 0m, 1m, 2m, 3m for sym 'AX'
             execute(
                     """
                             INSERT INTO prices VALUES
-                                (0, 'AX', 10),
-                                (60_000_000, 'AX', 20),
-                                (120_000_000, 'AX', 30),
-                                (180_000_000, 'AX', 40)
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:01:00.000000Z', 'AX', 20),
+                                ('1970-01-01T00:02:00.000000Z', 'AX', 30),
+                                ('1970-01-01T00:03:00.000000Z', 'AX', 40)
                             """
             );
 
@@ -571,7 +584,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
             execute(
                     """
                             INSERT INTO trades VALUES
-                                (60_000_000, 'AX', 100)
+                                ('1970-01-01T00:01:00.000000Z', 'AX', 100)
                             """
             );
 
@@ -580,7 +593,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
             //   offset=0m: look at 1m+0=1m -> ASOF to price at 1m -> 20
             //   offset=1m: look at 1m+1m=2m -> ASOF to price at 2m -> 30
             //   offset=2m: look at 1m+2m=3m -> ASOF to price at 3m -> 40
-            String sql = "SELECT h.offset / 60000000 AS min_offs, avg(p.price) " +
+            String sql = "SELECT h.offset / " + getMinutesDivisor() + " AS min_offs, avg(p.price) " +
                     "FROM trades AS t " +
                     "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
                     "RANGE FROM 0m TO 2m STEP 1m AS h " +
@@ -606,8 +619,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
     public void testHorizonJoinWithSlaveSymbolAsKey() throws Exception {
         // Test using a slave symbol as a grouping key
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (order_sym SYMBOL, ts TIMESTAMP, qty LONG) TIMESTAMP(ts)");
-            execute("CREATE TABLE prices (price_sym SYMBOL, exchange SYMBOL, ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)");
+            executeWithRewriteTimestamp("CREATE TABLE orders (order_sym SYMBOL, ts #TIMESTAMP, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (price_sym SYMBOL, exchange SYMBOL, ts #TIMESTAMP, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
             // Insert orders for multiple symbols
             execute(
@@ -660,7 +673,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Test
     public void testHorizonJoinWithSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            executeWithRewriteTimestamp("CREATE TABLE trades (sym SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;", leftTableTimestampType.getTypeName());
             execute(
                     """
                             INSERT INTO trades VALUES
@@ -669,7 +682,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                 ('sym3', '2000-01-01T00:00:10.000000Z')
                             """
             );
-            execute("CREATE TABLE prices (sym SYMBOL, bid DOUBLE, ask DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            executeWithRewriteTimestamp("CREATE TABLE prices (sym SYMBOL, bid DOUBLE, ask DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", rightTableTimestampType.getTypeName());
             execute(
                     """
                             INSERT INTO prices VALUES
@@ -685,13 +698,11 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             0\t3.0\t4.0
                             1\t3.0\t4.0
                             """,
-                    """
-                            SELECT h.offset / 1000000 AS sec_off, avg(p.bid), avg(p.ask)
-                            FROM trades AS t
-                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
-                            RANGE FROM 0s TO 1s STEP 1s AS h
-                            ORDER BY sec_off
-                            """,
+                    "SELECT h.offset / " + getSecondsDivisor() + " AS sec_off, avg(p.bid), avg(p.ask) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                            "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                            "ORDER BY sec_off",
                     null,
                     true,
                     true
@@ -704,8 +715,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
         // Test that symbol tables from both left (master) and right (slave) tables
         // are correctly resolved when used as keys and in aggregate functions
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (order_sym SYMBOL, category SYMBOL, ts TIMESTAMP, qty LONG) TIMESTAMP(ts)");
-            execute("CREATE TABLE prices (price_sym SYMBOL, exchange SYMBOL, ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)");
+            executeWithRewriteTimestamp("CREATE TABLE orders (order_sym SYMBOL, category SYMBOL, ts #TIMESTAMP, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (price_sym SYMBOL, exchange SYMBOL, ts #TIMESTAMP, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
             // Insert data with distinct symbol values
             execute(
@@ -776,8 +787,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
     public void testHorizonJoinWithSymbolTableSourcesFirstLast() throws Exception {
         // Test first() and last() aggregates on slave symbols
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (order_sym SYMBOL, ts TIMESTAMP, qty LONG) TIMESTAMP(ts)");
-            execute("CREATE TABLE prices (price_sym SYMBOL, exchange SYMBOL, ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)");
+            executeWithRewriteTimestamp("CREATE TABLE orders (order_sym SYMBOL, ts #TIMESTAMP, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (price_sym SYMBOL, exchange SYMBOL, ts #TIMESTAMP, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
             // Insert orders - two orders for AAPL at different times
             execute(
@@ -824,23 +835,23 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Test
     public void testHorizonJoinWithoutOnClause() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (ts TIMESTAMP, qty DOUBLE) TIMESTAMP(ts)");
-            execute("CREATE TABLE prices (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)");
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
             // Insert test data
             execute(
                     """
                             INSERT INTO prices VALUES
-                                (0, 10),
-                                (1_000_000, 20),
-                                (2_000_000, 30),
-                                (3_000_000, 40)
+                                ('1970-01-01T00:00:00.000000Z', 10),
+                                ('1970-01-01T00:00:01.000000Z', 20),
+                                ('1970-01-01T00:00:02.000000Z', 30),
+                                ('1970-01-01T00:00:03.000000Z', 40)
                             """
             );
             execute(
                     """
                             INSERT INTO trades VALUES
-                                (1_000_000, 100)
+                                ('1970-01-01T00:00:01.000000Z', 100)
                             """
             );
 
@@ -850,7 +861,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
             //   offset=0: look at 1s+0=1s -> ASOF to price at 1s -> 20
             //   offset=1s: look at 1s+1s=2s -> ASOF to price at 2s -> 30
             //   offset=2s: look at 1s+2s=3s -> ASOF to price at 3s -> 40
-            String sql = "SELECT h.offset / 1000000 AS sec_offs, avg(p.price) " +
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price) " +
                     "FROM trades AS t " +
                     "HORIZON JOIN prices AS p " +
                     "RANGE FROM 0s TO 2s STEP 1s AS h " +
@@ -869,5 +880,21 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     true
             );
         });
+    }
+
+    /**
+     * Returns the divisor to convert offset values to minutes.
+     */
+    private long getMinutesDivisor() {
+        return leftTableTimestampType == TestTimestampType.MICRO ? 60_000_000L : 60_000_000_000L;
+    }
+
+    /**
+     * Returns the divisor to convert offset values to seconds.
+     * For MICRO timestamps, offset is in microseconds (divide by 1_000_000).
+     * For NANO timestamps, offset is in nanoseconds (divide by 1_000_000_000).
+     */
+    private long getSecondsDivisor() {
+        return leftTableTimestampType == TestTimestampType.MICRO ? 1_000_000L : 1_000_000_000L;
     }
 }

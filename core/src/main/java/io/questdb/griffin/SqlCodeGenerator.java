@@ -1361,9 +1361,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         if (context.getMode() == HorizonJoinContext.MODE_RANGE) {
             // RANGE FROM <from> TO <to> STEP <step>
-            long from = evalHorizonTimeValue(context.getRangeFrom(), timestampDriver);
-            long to = evalHorizonTimeValue(context.getRangeTo(), timestampDriver);
-            long step = evalHorizonTimeValue(context.getRangeStep(), timestampDriver);
+            final long from = evalHorizonTimeValue(context.getRangeFrom(), timestampDriver);
+            final long to = evalHorizonTimeValue(context.getRangeTo(), timestampDriver);
+            final long step = evalHorizonTimeValue(context.getRangeStep(), timestampDriver);
 
             if (step <= 0) {
                 throw SqlException.position(context.getRangeStepPosition()).put("STEP must be positive");
@@ -1372,24 +1372,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw SqlException.position(context.getRangeFromPosition()).put("FROM must be less than or equal to TO");
             }
 
-            int count = (int) ((to - from) / step) + 1;
-            LongList offsets = new LongList(count);
+            final int count = (int) ((to - from) / step) + 1;
+            final LongList offsets = new LongList(count);
             for (int i = 0; i < count; i++) {
                 offsets.add(from + i * step);
             }
             return offsets;
         } else if (context.getMode() == HorizonJoinContext.MODE_LIST) {
             // LIST (offset1, offset2, ...)
-            ObjList<ExpressionNode> listOffsets = context.getListOffsets();
-            LongList offsets = new LongList(listOffsets.size());
-            for (int i = 0, n = listOffsets.size(); i < n; i++) {
-                ExpressionNode expr = listOffsets.getQuick(i);
+            // LIST values are in microseconds and converted to master's timestamp resolution
+            final ObjList<ExpressionNode> offsetExpressions = context.getListOffsets();
+            final LongList offsets = new LongList(offsetExpressions.size());
+            for (int i = 0, n = offsetExpressions.size(); i < n; i++) {
+                ExpressionNode expr = offsetExpressions.getQuick(i);
                 Function func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, executionContext);
                 try {
                     if (!func.isConstant()) {
                         throw SqlException.position(expr.position).put("LIST offset must be a constant");
                     }
-                    long offsetValue = func.getLong(null);
+                    // Convert from microseconds to master's timestamp resolution
+                    long offsetValue = timestampDriver.fromMicros(func.getLong(null));
                     // Validate monotonically increasing
                     if (offsets.size() > 0 && offsetValue <= offsets.getLast()) {
                         throw SqlException.position(expr.position).put("LIST offsets must be monotonically increasing");

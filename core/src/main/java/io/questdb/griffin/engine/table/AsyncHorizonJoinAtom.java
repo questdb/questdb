@@ -83,6 +83,8 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
     private final MarkoutSymbolTableSource markoutSymbolTableSource;
     private final RecordSink masterKeyCopier;
     private final int masterTimestampColumnIndex;
+    private final long masterTsScale;
+    private final LongList offsets;
     private final GroupByAllocator ownerAllocator;
     private final Map ownerAsOfJoinMap;
     private final MarkoutRecord ownerCombinedRecord;
@@ -107,10 +109,10 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
     private final ObjList<SingleRecordSink> perWorkerSlaveSinkTargets;
     private final ObjList<ConcurrentTimeFrameCursor> perWorkerSlaveTimeFrameCursors;
     private final ObjList<MarkoutTimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
-    private final LongList sequenceOffsetValues;
     private final long sequenceRowCount;
     private final RecordSink slaveKeyCopier;
     private final int slaveTimestampIndex;
+    private final long slaveTsScale;
     private long ownerPrevFirstOffsetAsOfRowId = Long.MIN_VALUE;
 
     public AsyncHorizonJoinAtom(
@@ -135,6 +137,8 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function ownerFilter,
             @Nullable ObjList<Function> perWorkerFilters,
+            long masterTsScale,
+            long slaveTsScale,
             int workerCount
     ) {
         assert slaveFactory.supportsTimeFrameCursor();
@@ -144,7 +148,7 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
         final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
         try {
             this.masterTimestampColumnIndex = masterTimestampColumnIndex;
-            this.sequenceOffsetValues = offsets;
+            this.offsets = offsets;
             this.sequenceRowCount = offsets.size();
             this.markoutSymbolTableSource = new MarkoutSymbolTableSource(columnSources, columnIndexes);
 
@@ -160,6 +164,10 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
             this.slaveKeyCopier = slaveKeyCopier;
             this.slaveTimestampIndex = slaveTimestampIndex;
 
+            // Timestamp scale factors for cross-resolution support (1 if same type, otherwise scale to nanos)
+            this.masterTsScale = masterTsScale;
+            this.slaveTsScale = slaveTsScale;
+
             // GROUP BY key copier for MarkoutRecord
             this.groupByKeyCopier = groupByKeyCopier;
 
@@ -169,12 +177,12 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
             // Create time frame cursors from slave factory - one per worker + owner
             final long lookahead = configuration.getSqlAsOfJoinLookAhead();
             this.ownerSlaveTimeFrameCursor = slaveFactory.newTimeFrameCursor();
-            this.ownerSlaveTimeFrameHelper = new MarkoutTimeFrameHelper(lookahead);
+            this.ownerSlaveTimeFrameHelper = new MarkoutTimeFrameHelper(lookahead, slaveTsScale);
             this.perWorkerSlaveTimeFrameCursors = new ObjList<>(slotCount);
             this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
                 perWorkerSlaveTimeFrameCursors.add(slaveFactory.newTimeFrameCursor());
-                perWorkerSlaveTimeFrameHelpers.add(new MarkoutTimeFrameHelper(lookahead));
+                perWorkerSlaveTimeFrameHelpers.add(new MarkoutTimeFrameHelper(lookahead, slaveTsScale));
             }
 
             // Per-worker ASOF maps and SingleRecordSink targets for key comparison
@@ -371,6 +379,10 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
         return map;
     }
 
+    public MarkoutSymbolTableSource getMarkoutSymbolTableSource() {
+        return markoutSymbolTableSource;
+    }
+
     public RecordSink getMasterKeyCopier() {
         return masterKeyCopier;
     }
@@ -396,8 +408,15 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
         return masterTimestampColumnIndex;
     }
 
-    public MarkoutSymbolTableSource getMarkoutSymbolTableSource() {
-        return markoutSymbolTableSource;
+    public long getMasterTsScale() {
+        return masterTsScale;
+    }
+
+    /**
+     * Get the offset value at the given index. Offsets are in master's scale.
+     */
+    public long getOffset(int index) {
+        return offsets.getQuick(index);
     }
 
     public ObjList<GroupByFunction> getOwnerGroupByFunctions() {
@@ -409,13 +428,6 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
             return ownerPrevFirstOffsetAsOfRowId;
         }
         return perWorkerPrevFirstOffsetAsOfRowIds.getQuick(slotId);
-    }
-
-    /**
-     * Get the pre-computed sequence offset value at the given index.
-     */
-    public long getSequenceOffsetValue(int index) {
-        return sequenceOffsetValues.getQuick(index);
     }
 
     public long getSequenceRowCount() {
@@ -455,6 +467,10 @@ public class AsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable
 
     public int getSlaveTimestampIndex() {
         return slaveTimestampIndex;
+    }
+
+    public long getSlaveTsScale() {
+        return slaveTsScale;
     }
 
     @Override

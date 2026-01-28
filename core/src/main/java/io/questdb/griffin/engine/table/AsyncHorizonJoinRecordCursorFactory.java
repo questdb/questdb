@@ -29,6 +29,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleRecordSink;
@@ -66,6 +67,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
@@ -127,6 +129,16 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             this.recordFunctions = recordFunctions;
             this.workerCount = workerCount;
 
+            // Compute timestamp scale factors for cross-resolution support
+            final int masterTsType = masterFactory.getMetadata().getTimestampType();
+            final int slaveTsType = slaveFactory.getMetadata().getTimestampType();
+            long masterTsScale = 1;
+            long slaveTsScale = 1;
+            if (masterTsType != slaveTsType) {
+                masterTsScale = ColumnType.getTimestampDriver(masterTsType).toNanosScale();
+                slaveTsScale = ColumnType.getTimestampDriver(slaveTsType).toNanosScale();
+            }
+
             final AsyncHorizonJoinAtom atom = new AsyncHorizonJoinAtom(
                     asm,
                     configuration,
@@ -149,6 +161,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     bindVarFunctions,
                     filter,
                     perWorkerFilters,
+                    masterTsScale,
+                    slaveTsScale,
                     workerCount
             );
 
@@ -272,6 +286,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             final Map partialMap = atom.getMap(slotId);
             final RecordSink groupByKeyCopier = atom.getGroupByKeyCopier();
             final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
+            final long masterTsScale = atom.getMasterTsScale();
             final MarkoutRecord markoutRecord = atom.getCombinedRecord(slotId);
             final CompiledFilter compiledFilter = atom.getCompiledFilter();
             final Function filter = atom.getFilter(slotId);
@@ -335,7 +350,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                         groupByKeyCopier,
                         functionUpdater,
                         masterTimestampColumnIndex,
-                        sequenceRowCount
+                        sequenceRowCount,
+                        masterTsScale
                 );
             }
 
@@ -369,7 +385,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             RecordSink groupByKeyCopier,
             GroupByFunctionsUpdater functionUpdater,
             int masterTimestampColumnIndex,
-            long sequenceRowCount
+            long sequenceRowCount,
+            long masterTsScale
     ) {
         final long masterTimestamp = masterRecord.getTimestamp(masterTimestampColumnIndex);
 
@@ -395,9 +412,9 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         // ========================================
         // FIRST OFFSET (bootstrap) - handles cache lookup and update
         // ========================================
-        long offset = atom.getSequenceOffsetValue(0);
-        // Offset values are already in microseconds from computeHorizonOffsets
-        long horizonTs0 = masterTimestamp + offset;
+        long offset = atom.getOffset(0);
+        // Scale horizon timestamp to common unit (nanos) for cross-resolution support
+        long horizonTs0 = scaleTimestamp(masterTimestamp + offset, masterTsScale);
 
         long match0RowId = Long.MIN_VALUE;
         long asOfRowId0 = Long.MIN_VALUE;  // Track first offset's ASOF position for bookmark optimization
@@ -438,9 +455,9 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         // REMAINING OFFSETS
         // ========================================
         for (int seqIdx = 1; seqIdx < sequenceRowCount; seqIdx++) {
-            long offset0 = atom.getSequenceOffsetValue(seqIdx);
-            // Offset values are already in microseconds from computeHorizonOffsets
-            long horizonTs = masterTimestamp + offset0;
+            long offset0 = atom.getOffset(seqIdx);
+            // Scale horizon timestamp to common unit (nanos) for cross-resolution support
+            long horizonTs = scaleTimestamp(masterTimestamp + offset0, masterTsScale);
 
             long matchRowId = Long.MIN_VALUE;
             if (asOfJoinMap != null && masterKeyCopier != null) {
@@ -527,6 +544,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             final Map partialMap = atom.getMap(slotId);
             final RecordSink groupByKeyCopier = atom.getGroupByKeyCopier();
             final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
+            final long masterTsScale = atom.getMasterTsScale();
             final MarkoutRecord markoutRecord = atom.getCombinedRecord(slotId);
 
             // Get ASOF join resources
@@ -573,7 +591,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                         groupByKeyCopier,
                         functionUpdater,
                         masterTimestampColumnIndex,
-                        sequenceRowCount
+                        sequenceRowCount,
+                        masterTsScale
                 );
             }
 
