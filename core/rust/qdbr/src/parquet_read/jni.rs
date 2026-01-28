@@ -232,7 +232,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     row_group_hi: u32,
     filtered_rows_ptr: *const i64,
     filtered_rows_size: i64,
-) -> u32 {
+) {
     decode_row_group_impl::<{ DecodeMode::FilterSkip as u8 }>(
         &mut env,
         decoder,
@@ -246,7 +246,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
         row_group_hi,
         filtered_rows_ptr,
         filtered_rows_size as usize,
-    )
+    );
 }
 
 #[no_mangle]
@@ -264,7 +264,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     row_group_hi: u32,
     filtered_rows_ptr: *const i64,
     filtered_rows_size: i64,
-) -> u32 {
+) {
     decode_row_group_impl::<{ DecodeMode::FilterFillNulls as u8 }>(
         &mut env,
         decoder,
@@ -278,7 +278,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
         row_group_hi,
         filtered_rows_ptr,
         filtered_rows_size as usize,
-    )
+    );
 }
 
 #[no_mangle]

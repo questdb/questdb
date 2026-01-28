@@ -296,7 +296,7 @@ public class PartitionDecoder implements QuietCloseable {
             int rowHi
     ) throws CairoException;
 
-    private static native int decodeRowGroupWithRowFilter(
+    private static native void decodeRowGroupWithRowFilter(
             long decoderPtr,
             long decodeContextPtr,
             long rowGroupBuffersPtr,
@@ -310,7 +310,7 @@ public class PartitionDecoder implements QuietCloseable {
             long filteredRowsSize
     ) throws CairoException;
 
-    private static native int decodeRowGroupWithRowFilterFillNulls(
+    private static native void decodeRowGroupWithRowFilterFillNulls(
             long decoderPtr,
             long decodeContextPtr,
             long rowGroupBuffersPtr,
