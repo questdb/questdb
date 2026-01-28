@@ -421,7 +421,7 @@ public class CheckpointTest extends AbstractCairoTest {
         Assert.assertEquals("Listener should not be called before restore", 0, restoreCompleteCallCount[0]);
 
         // Server 2: Start with trigger file and custom listener - should trigger restore
-        try (TestServerMain _server2 = startServerMainWithListener(dir2.getAbsolutePath(), listener)) {
+        try (@SuppressWarnings("unused") TestServerMain _server2 = startServerMainWithListener(dir2.getAbsolutePath(), listener)) {
             // Restore happens during startup, so listener should have been called exactly once
             Assert.assertEquals("Listener onCheckpointRestoreComplete should be called exactly once", 1, restoreCompleteCallCount[0]);
         }
