@@ -35,7 +35,7 @@ jobs:
           toolchain: 1.90.0
           cache-workspaces: compat/src/test/rust/scenarios
       - name: Setup Python version
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v5
         with:
           python-version: 3
       - name: Run all scenarios
