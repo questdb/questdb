@@ -141,8 +141,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final String ILP_PROTO_TRANSPORTS = "ilp.proto.transports";
     private static final String RELEASE_TYPE = "release.type";
     private static final String RELEASE_VERSION = "release.version";
-    private static final String SECRET_FILE_PROPERTY_SUFFIX = ".file";
-    private static final String SECRET_FILE_ENV_VAR_SUFFIX = "_FILE";
+    static final String SECRET_FILE_PROPERTY_SUFFIX = ".file";
+    static final String SECRET_FILE_ENV_VAR_SUFFIX = "_FILE";
     private static final int SECRET_FILE_MAX_SIZE = 65536; // 64KB max for secret files
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
     protected final byte httpHealthCheckAuthType;
@@ -2509,7 +2509,7 @@ public class PropServerConfiguration implements ServerConfiguration {
      *
      * @return the file path if specified, null otherwise
      */
-    private String getSecretFilePath(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {
+    protected String getSecretFilePath(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {
         // Check env var: QDB_KEY_FILE
         String envFileKey = key.getEnvVarName() + SECRET_FILE_ENV_VAR_SUFFIX;
         String filePath = env != null ? env.get(envFileKey) : null;

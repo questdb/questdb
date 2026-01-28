@@ -68,8 +68,6 @@ import java.util.function.Function;
 
 public class DynamicPropServerConfiguration implements ServerConfiguration, ConfigReloader {
     private static final Log LOG = LogFactory.getLog(DynamicPropServerConfiguration.class);
-    private static final String SECRET_FILE_PROPERTY_SUFFIX = ".file";
-    private static final String SECRET_FILE_ENV_VAR_SUFFIX = "_FILE";
     private static final Set<? extends ConfigPropertyKey> dynamicProps = new HashSet<>(Arrays.asList(
             PropertyKey.PG_USER,
             PropertyKey.PG_PASSWORD,
@@ -228,10 +226,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             ObjHashSet<String> changedKeys,
             Log log
     ) {
-//        if (newProperties.equals(oldProperties)) {
-//            return false;
-//        }
-
         changedKeys.clear();
         boolean changed = false;
         // Compare the new and existing properties
@@ -459,7 +453,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             }
 
             // Check for secret file path (env var or property)
-            String secretFilePath = getSecretFilePath(currentProperties, key);
+            String secretFilePath = currentConfig.getSecretFilePath(currentProperties, env, key);
             if (secretFilePath == null || secretFilePath.isEmpty()) {
                 continue;
             }
@@ -492,24 +486,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         }
 
         return changed;
-    }
-
-    /**
-     * Gets the file path for a secret property by checking the _FILE env var or .file property.
-     */
-    private String getSecretFilePath(Properties properties, ConfigPropertyKey key) {
-        // Check env var: QDB_KEY_FILE
-        if (env != null) {
-            String envFileKey = key.getEnvVarName() + SECRET_FILE_ENV_VAR_SUFFIX;
-            String filePath = env.get(envFileKey);
-            if (filePath != null) {
-                return filePath.trim();
-            }
-        }
-        // Check property: key.file
-        String propFileKey = key.getPropertyPath() + SECRET_FILE_PROPERTY_SUFFIX;
-        String filePath = properties.getProperty(propFileKey);
-        return filePath != null ? filePath.trim() : null;
     }
 
     @Override

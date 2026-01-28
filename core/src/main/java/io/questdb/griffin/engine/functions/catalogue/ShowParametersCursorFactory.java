@@ -105,8 +105,9 @@ public class ShowParametersCursorFactory extends AbstractRecordCursorFactory {
                     case 3 -> switch (entry.value.getValueSource()) {
                         case ConfigPropertyValue.VALUE_SOURCE_DEFAULT -> "default";
                         case ConfigPropertyValue.VALUE_SOURCE_CONF -> "conf";
+                        case ConfigPropertyValue.VALUE_SOURCE_ENV -> "env";
                         case ConfigPropertyValue.VALUE_SOURCE_FILE -> "file";
-                        default -> "env";
+                        default -> "unknown";
                     };
                     default -> null;
                 };
