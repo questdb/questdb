@@ -379,29 +379,28 @@ pub fn symbol_to_pages(
     } else {
         // Build def levels and count nulls in a single pass
         let def_levels: Vec<bool> = (0..num_rows)
-        .map(|i| {
-            if i < column_top {
-                false
-            } else {
-                let key = column_values[i - column_top];
-                if key >= 0 {
-                    true
-                } else {
-                    null_count += 1;
+            .map(|i| {
+                if i < column_top {
                     false
+                } else {
+                    let key = column_values[i - column_top];
+                    if key >= 0 {
+                        true
+                    } else {
+                        null_count += 1;
+                        false
+                    }
                 }
-            }
-        })
-        .collect();
+            })
+            .collect();
 
-
-    encode_primitive_def_levels(
-        &mut data_buffer,
-        def_levels.into_iter(),
-        num_rows,
-        options.version,
-    )?;
-     data_buffer.len()
+        encode_primitive_def_levels(
+            &mut data_buffer,
+            def_levels.into_iter(),
+            num_rows,
+            options.version,
+        )?;
+        data_buffer.len()
     };
 
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
