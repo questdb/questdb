@@ -69,6 +69,7 @@ pub fn build_symbol_dict_page(
     Ok((DictPage::new(dict_buffer, uniq_vals as usize, false), stats))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn symbol_to_data_page_only(
     column_values: &[i32],
     column_top: usize,
@@ -77,34 +78,40 @@ pub fn symbol_to_data_page_only(
     primitive_type: PrimitiveType,
     offsets: &[u64],
     chars: &[u8],
+    required: bool,
 ) -> ParquetResult<Page> {
     let num_rows = column_top + column_values.len();
     let mut null_count = 0;
-
-    let def_levels: Vec<bool> = (0..num_rows)
-        .map(|i| {
-            if i < column_top {
-                false
-            } else {
-                let key = column_values[i - column_top];
-                if key >= 0 {
-                    true
-                } else {
-                    null_count += 1;
-                    false
-                }
-            }
-        })
-        .collect();
-
     let mut data_buffer = vec![];
-    encode_primitive_def_levels(
-        &mut data_buffer,
-        def_levels.into_iter(),
-        num_rows,
-        options.version,
-    )?;
-    let definition_levels_byte_length = data_buffer.len();
+
+    let definition_levels_byte_length = if required {
+        debug_assert!(column_top == 0);
+        0
+    } else {
+        let def_levels: Vec<bool> = (0..num_rows)
+            .map(|i| {
+                if i < column_top {
+                    false
+                } else {
+                    let key = column_values[i - column_top];
+                    if key >= 0 {
+                        true
+                    } else {
+                        null_count += 1;
+                        false
+                    }
+                }
+            })
+            .collect();
+
+        encode_primitive_def_levels(
+            &mut data_buffer,
+            def_levels.into_iter(),
+            num_rows,
+            options.version,
+        )?;
+        data_buffer.len()
+    };
 
     let page_stats = if options.write_statistics {
         let mut stats = BinaryMaxMinStats::new(&primitive_type);
@@ -132,6 +139,7 @@ pub fn symbol_to_data_page_only(
         primitive_type,
         options,
         Encoding::RleDictionary,
+        required,
     )?;
 
     Ok(Page::Data(data_page))

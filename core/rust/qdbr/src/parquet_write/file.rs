@@ -732,6 +732,7 @@ fn symbol_column_to_pages_multi_partition(
             primitive_type.clone(),
             offsets,
             chars,
+            col.required
         )?;
 
         pages.push(data_page);
