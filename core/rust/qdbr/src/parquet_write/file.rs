@@ -391,9 +391,9 @@ pub fn create_row_group_from_partitions(
             |col_idx: usize| -> ParquetResult<DynStreamingIterator<CompressedPage, ParquetError>> {
                 let column_type = &column_types[col_idx];
                 let col_encoding = encoding[col_idx];
-                let first_column = partitions[0].columns[col_idx];
+                let first_partition_column = partitions[0].columns[col_idx];
 
-                if num_partitions > 1 && first_column.data_type.is_symbol() {
+                if num_partitions > 1 && first_partition_column.data_type.is_symbol() {
                     let partition_ranges: Vec<(Column, usize, usize)> = partitions
                         .iter()
                         .enumerate()
@@ -480,7 +480,7 @@ pub fn create_row_group_from_partitions(
             |col_idx: usize| -> ParquetResult<DynStreamingIterator<CompressedPage, ParquetError>> {
                 let column_type = &column_types[col_idx];
                 let col_encoding = encoding[col_idx];
-                let first_column = partitions[0].columns[col_idx];
+                let first_partition_column = partitions[0].columns[col_idx];
 
                 let partition_ranges: Vec<(Column, usize, usize)> = partitions
                     .iter()
@@ -498,7 +498,7 @@ pub fn create_row_group_from_partitions(
                     })
                     .collect();
 
-                if num_partitions > 1 && first_column.data_type.is_symbol() {
+                if num_partitions > 1 && first_partition_column.data_type.is_symbol() {
                     let primitive_type = match column_type {
                         ParquetType::PrimitiveType(pt) => pt,
                         _ => {

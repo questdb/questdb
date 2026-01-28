@@ -9,7 +9,6 @@ use parquet2::page::{DictPage, Page};
 use parquet2::schema::types::PrimitiveType;
 use parquet2::write::DynIter;
 use std::char::DecodeUtf16Error;
-use std::cmp::max;
 use std::collections::HashSet;
 
 pub struct SymbolGlobalInfo {
@@ -74,16 +73,14 @@ fn encode_symbols_dict<'a>(
     chars: &[u8],
     stats: &mut BinaryMaxMinStats,
 ) -> ParquetResult<(Vec<u8>, impl Iterator<Item = u32> + 'a, u32)> {
-    let mut max_key = 0u32;
-    let mut values_set = HashSet::new();
+    let mut values_set = HashSet::with_capacity(offsets.len());
     for &v in column_vals {
         if v >= 0 {
-            let k = v as u32;
-            max_key = max(max_key, k);
-            values_set.insert(k);
+            values_set.insert(v as u32);
         }
     }
 
+    let max_key = values_set.iter().copied().max().unwrap_or(0);
     let dict_buffer = build_dict_buffer(&values_set, max_key, offsets, chars, Some(stats))?;
 
     let local_keys = column_vals
@@ -112,18 +109,17 @@ pub fn collect_symbol_global_info<'a>(
     key_slices: impl Iterator<Item = &'a [i32]>,
 ) -> SymbolGlobalInfo {
     let mut used_keys = HashSet::new();
-    let mut max_key = 0u32;
 
     for keys in key_slices {
         for &key in keys {
             if key >= 0 {
                 let k = key as u32;
-                max_key = max(max_key, k);
                 used_keys.insert(k);
             }
         }
     }
 
+    let max_key = used_keys.iter().copied().max().unwrap_or(0);
     SymbolGlobalInfo { used_keys, max_key }
 }
 
