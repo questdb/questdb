@@ -2859,9 +2859,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         path.concat(PARQUET_PARTITION_NAME);
         if (!ff.exists(path.$())) {
-            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-            LOG.info().$("producing parquet for partition [path=").$substr(pathRootSize, other).I$();
-            produceParquetFromNative(other, path, partitionTimestamp, partitionIndex, partitionNameTxn);
+            return false;
         }
 
         // upgrade partition version
