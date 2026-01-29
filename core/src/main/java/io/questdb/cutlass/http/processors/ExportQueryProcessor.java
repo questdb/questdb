@@ -48,7 +48,6 @@ import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
-import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.parquet.HTTPSerialParquetExporter;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.CompiledQuery;
@@ -92,7 +91,7 @@ import static io.questdb.cairo.sql.RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
 import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.griffin.model.ExportModel.COPY_FORMAT_PARQUET;
 
-public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable, CopyExportRequestTask.StreamWriteParquetCallBack {
+public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable {
     static final int QUERY_DONE = 1;
     static final int QUERY_METADATA = 2;
     static final int QUERY_PARQUET_EXPORT_DATA = 14;
@@ -124,9 +123,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     private final int maxSqlRecompileAttempts;
     private final Metrics metrics;
     private final byte requiredAuthType;
-    private final HTTPSerialParquetExporter serialParquetExporter;
     private final SqlExecutionContextImpl sqlExecutionContext;
-    private HttpConnectionContext currentContext;
     private long timeout;
 
     public ExportQueryProcessor(
@@ -136,7 +133,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     ) {
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
-        this.serialParquetExporter = new HTTPSerialParquetExporter(engine);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, sharedQueryWorkerCount);
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
         this.metrics = engine.getMetrics();
@@ -277,14 +273,13 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         }
     }
 
-    @Override
-    public void onWrite(long dataPtr, long dataLen) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    void writeParquetData(ExportQueryProcessorState state, long dataPtr, long dataLen)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (dataLen <= 0) {
             return;
         }
-        assert currentContext != null;
-        ExportQueryProcessorState state = LV.get(currentContext);
-        HttpChunkedResponse response = currentContext.getChunkedResponse();
+        HttpConnectionContext context = state.getHttpConnectionContext();
+        HttpChunkedResponse response = context.getChunkedResponse();
         if (state.firstParquetWriteCall) {
             state.firstParquetWriteCall = false;
             if (!state.getExportModel().isNoDelay()) {
@@ -631,10 +626,14 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             try {
                 var copyExportContext = engine.getCopyExportContext();
                 entry = copyExportContext.getEntry(state.copyID);
+                HTTPSerialParquetExporter exporter = state.getOrCreateSerialParquetExporter(engine);
                 if (state.serialExporterInit) {
-                    serialParquetExporter.of(state.task);
-                    serialParquetExporter.process();
+                    exporter.of(state.task);
+                    exporter.process();
                     return;
+                }
+                if (state.writeCallback == null) {
+                    state.initWriteCallback(this);
                 }
                 int nowTimestampType = sqlExecutionContext.getNowTimestampType();
                 long now = sqlExecutionContext.getNow(nowTimestampType);
@@ -655,13 +654,13 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.descending,
                         state.pageFrameCursor,
                         state.metadata,
-                        this
+                        state.writeCallback
                 );
 
-                serialParquetExporter.of(state.task);
+                exporter.of(state.task);
                 state.task.setUpStreamPartitionParquetExporter();
                 state.serialExporterInit = true;
-                serialParquetExporter.process();
+                exporter.process();
             } catch (PeerIsSlowToReadException e) {
                 cleanup = false;
                 throw e;
@@ -780,7 +779,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         if (state == null) {
             return;
         }
-        currentContext = context;
 
         // copy random during query resume
         sqlExecutionContext.with(context.getSecurityContext(), null, state.rnd, context.getFd(), circuitBreaker.of(context.getFd()));
