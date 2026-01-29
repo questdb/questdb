@@ -221,6 +221,9 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 // this call is idempotent
                 return this;
             }
+            if (tempMem8b == 0) {
+                tempMem8b = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
             tsColName = null;
             tableReader = executionContext.getReader(tableToken);
             timestampType = tableReader.getMetadata().getTimestampType();
