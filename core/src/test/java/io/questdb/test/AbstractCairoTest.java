@@ -683,6 +683,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     public void setUp() {
         super.setUp();
         SharedRandom.RANDOM.set(new Rnd());
+        engine.getViewStateStore().clear();
         forEachNode(QuestDBTestNode::setUpCairo);
         engine.resetNameRegistryMemory();
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
@@ -703,7 +704,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         ParanoiaState.FD_PARANOIA_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
         engine.getMetrics().clear();
         engine.getMatViewStateStore().clear();
-        engine.getViewStateStore().clear();
     }
 
     public void tearDown(boolean removeDir) {

@@ -67,17 +67,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static io.questdb.PropertyKey.*;
 
 public class ServerMain implements Closeable {
+    protected final CairoEngine engine;
     private final Bootstrap bootstrap;
     private final AtomicBoolean closed = new AtomicBoolean();
-    private final CairoEngine engine;
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean running = new AtomicBoolean();
-    protected PGServer pgServer;
+    protected WorkerPoolManager workerPoolManager;
     private Thread compileViewsThread;
     private HttpServer httpServer;
     private Thread hydrateMetadataThread;
     private boolean initialized;
-    private WorkerPoolManager workerPoolManager;
+    private PGServer pgServer;
 
     public ServerMain(String... args) {
         this(new Bootstrap(args));
@@ -299,7 +299,6 @@ public class ServerMain implements Closeable {
         final boolean walSupported = cairoConfig.isWalSupported();
         final boolean isReadOnly = cairoConfig.isReadOnlyInstance();
         final boolean walApplyEnabled = cairoConfig.isWalApplyEnabled();
-        final boolean matViewEnabled = cairoConfig.isMatViewEnabled();
 
         workerPoolManager = new WorkerPoolManager(config) {
             @Override
@@ -390,37 +389,7 @@ public class ServerMain implements Closeable {
         // all views have to be loaded with their dependencies before the compiler starts processing notifications
         engine.buildViewGraphs();
 
-        if (matViewEnabled && !isReadOnly) {
-            if (config.getMatViewRefreshPoolConfiguration().getWorkerCount() > 0) {
-                // This starts mat view refresh jobs only when there is a dedicated pool for mat view refresh
-                // this will not use shared pool write because getWorkerCount() > 0
-                WorkerPool mvRefreshWorkerPool = workerPoolManager.getSharedPoolWrite(
-                        config.getMatViewRefreshPoolConfiguration(),
-                        WorkerPoolManager.Requester.MAT_VIEW_REFRESH
-                );
-                setupMatViewJobs(mvRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
-            } else {
-                log.advisory().$("mat view refresh is disabled; set ")
-                        .$(MAT_VIEW_REFRESH_WORKER_COUNT.getPropertyPath())
-                        .$(" to a positive value or keep default to enable mat view refresh.")
-                        .$();
-            }
-        }
-
-        if (config.getViewCompilerPoolConfiguration().getWorkerCount() > 0) {
-            // This starts view compiler jobs only when there is a dedicated pool configured
-            // this will not use shared pool write because getWorkerCount() > 0
-            WorkerPool viewCompilerWorkerPool = workerPoolManager.getSharedPoolWrite(
-                    config.getViewCompilerPoolConfiguration(),
-                    WorkerPoolManager.Requester.VIEW_COMPILER
-            );
-            setupViewJobs(viewCompilerWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
-        } else {
-            log.advisory().$("view compiler job is disabled; set ")
-                    .$(VIEW_COMPILER_WORKER_COUNT.getPropertyPath())
-                    .$(" to a positive value or keep default to enable view compiler.")
-                    .$();
-        }
+        setupDedicatedPools(log, isReadOnly, config);
 
         if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
             WorkerPool walApplyWorkerPool = workerPoolManager.getSharedPoolWrite(
@@ -511,6 +480,40 @@ public class ServerMain implements Closeable {
 
     protected Services services() {
         return Services.INSTANCE;
+    }
+
+    protected void setupDedicatedPools(Log log, boolean isReadOnly, ServerConfiguration config) {
+        if (config.getCairoConfiguration().isMatViewEnabled() && !isReadOnly) {
+            if (config.getMatViewRefreshPoolConfiguration().getWorkerCount() > 0) {
+                // This starts mat view refresh jobs only when there is a dedicated pool for mat view refresh
+                // this will not use shared pool write because getWorkerCount() > 0
+                WorkerPool mvRefreshWorkerPool = workerPoolManager.getSharedPoolWrite(
+                        config.getMatViewRefreshPoolConfiguration(),
+                        WorkerPoolManager.Requester.MAT_VIEW_REFRESH
+                );
+                setupMatViewJobs(mvRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
+            } else {
+                log.advisory().$("mat view refresh is disabled; set ")
+                        .$(MAT_VIEW_REFRESH_WORKER_COUNT.getPropertyPath())
+                        .$(" to a positive value or keep default to enable mat view refresh.")
+                        .$();
+            }
+        }
+
+        if (config.getViewCompilerPoolConfiguration().getWorkerCount() > 0) {
+            // This starts view compiler jobs only when there is a dedicated pool configured
+            // this will not use shared pool write because getWorkerCount() > 0
+            WorkerPool viewCompilerWorkerPool = workerPoolManager.getSharedPoolWrite(
+                    config.getViewCompilerPoolConfiguration(),
+                    WorkerPoolManager.Requester.VIEW_COMPILER
+            );
+            setupViewJobs(viewCompilerWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
+        } else {
+            log.advisory().$("view compiler job is disabled; set ")
+                    .$(VIEW_COMPILER_WORKER_COUNT.getPropertyPath())
+                    .$(" to a positive value or keep default to enable view compiler.")
+                    .$();
+        }
     }
 
     protected Job setupEngineMaintenanceJob(CairoEngine engine) {

@@ -202,6 +202,16 @@ public class TxReader implements Closeable, Mutable {
         return dataVersion;
     }
 
+    public int getFirstNativePartitionIndex() {
+        for (int i = 0, n = getPartitionCount(); i < n; i++) {
+            if (!isPartitionParquet(i)) {
+                return i;
+            }
+        }
+        // we should never be here, because the active partition is always native
+        throw CairoException.critical(0).put("could not find first native partition");
+    }
+
     public long getFixedRowCount() {
         return fixedRowCount;
     }

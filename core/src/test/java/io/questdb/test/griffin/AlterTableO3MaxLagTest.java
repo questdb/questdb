@@ -333,7 +333,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
         assertException("ALTER TABLE X SET o3MaxLag = 111ms",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 18,
-                "'param' or 'type' expected");
+                "'param', 'ttl' or 'type' expected");
     }
 
     @Test

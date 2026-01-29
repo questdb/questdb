@@ -35,17 +35,17 @@ import static io.questdb.griffin.engine.ops.AlterOperation.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
 
 public class AlterOperationBuilder implements Mutable {
-    private final LongList extraInfo = new LongList();
-    private final ObjList<CharSequence> extraStrInfo = new ObjList<>();
-    private final AlterOperation op;
-    private short command;
-    private int tableId = -1;
-    private int tableNamePosition = -1;
-    private TableToken tableToken;
+    protected final LongList extraInfo = new LongList();
+    protected final ObjList<CharSequence> extraStrInfo = new ObjList<>();
+    protected final AlterOperation op;
+    protected short command;
+    protected int tableId = -1;
+    protected int tableNamePosition = -1;
+    protected TableToken tableToken;
 
     // the builder and the operation it builds share the extraInfo list
     public AlterOperationBuilder() {
-        this.op = new AlterOperation(extraInfo, extraStrInfo);
+        this.op = createAlterOperation(extraInfo, extraStrInfo);
     }
 
     public void addColumnToList(
@@ -327,5 +327,9 @@ public class AlterOperationBuilder implements Mutable {
 
     public void setDedupKeyFlag(int writerColumnIndex) {
         extraInfo.add(writerColumnIndex);
+    }
+
+    protected AlterOperation createAlterOperation(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
+        return new AlterOperation(extraInfo, extraStrInfo);
     }
 }

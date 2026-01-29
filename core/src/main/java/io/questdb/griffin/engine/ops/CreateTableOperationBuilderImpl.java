@@ -226,8 +226,14 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         return timestampExpr != null ? getColumnIndex(timestampExpr.token) : -1;
     }
 
+    @Override
     public int getTtlHoursOrMonths() {
         return ttlHoursOrMonths;
+    }
+
+    @Override
+    public int getTtlPosition() {
+        return ttlPosition;
     }
 
     public CharSequence getVolumeAlias() {

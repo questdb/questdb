@@ -74,18 +74,15 @@ import java.io.Closeable;
 import static io.questdb.TelemetryEvent.*;
 import static io.questdb.cairo.ErrorTag.OUT_OF_MEMORY;
 import static io.questdb.cairo.ErrorTag.resolveTag;
-import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
-import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
-import static io.questdb.cairo.wal.WalTxnType.*;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
+import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
 import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
 
 public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificationTask> implements Closeable {
-    public static final String WAL_2_TABLE_RESUME_REASON = "Resume WAL Data Application";
     private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
-    private static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
     private final BlockFileWriter blockFileWriter;
     private final CairoConfiguration config;
     private final CairoEngine engine;
@@ -940,10 +937,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     writerTxn = writer.getSeqTxn();
                     dirtyWriterTxn = writer.getAppliedSeqTxn();
                 } catch (EntryUnavailableException tableBusy) {
-                    //noinspection StringEquality
-                    if (tableBusy.getReason() != NO_LOCK_REASON
-                            && !WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())
-                            && !WAL_2_TABLE_RESUME_REASON.equals(tableBusy.getReason())) {
+                    if (isUnsolicitedTableLock(tableBusy.getReason())) {
                         LOG.critical().$("unsolicited table lock [table=").$(tableToken)
                                 .$(", lockReason=").$(tableBusy.getReason())
                                 .I$();
