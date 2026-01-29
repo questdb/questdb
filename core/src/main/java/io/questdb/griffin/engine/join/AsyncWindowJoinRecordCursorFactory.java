@@ -961,7 +961,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
         final PageFrameMemory frameMemory;
         final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMaterialization = atom.shoulduseLateMaterialization(slotId, isParquetFrame);
+        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
         if (useLateMaterialization) {
             frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
         } else {
@@ -1110,7 +1110,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
         final PageFrameMemory frameMemory;
         final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMaterialization = atom.shoulduseLateMaterialization(slotId, isParquetFrame);
+        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
         if (useLateMaterialization) {
             frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
         } else {
@@ -1267,7 +1267,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
         final PageFrameMemory frameMemory;
         final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMaterialization = atom.shoulduseLateMaterialization(slotId, isParquetFrame);
+        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
         if (useLateMaterialization) {
             frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
         } else {
@@ -1423,7 +1423,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
         final PageFrameMemory frameMemory;
         final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMaterialization = atom.shoulduseLateMaterialization(slotId, isParquetFrame);
+        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
         if (useLateMaterialization) {
             frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
         } else {
@@ -1568,7 +1568,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
         final PageFrameMemory frameMemory;
         final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMaterialization = atom.shoulduseLateMaterialization(slotId, isParquetFrame);
+        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
         if (useLateMaterialization) {
             frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
         } else {
