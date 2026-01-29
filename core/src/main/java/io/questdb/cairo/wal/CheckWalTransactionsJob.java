@@ -69,40 +69,9 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         lastRunMs = millisecondClock.getTicks();
     }
 
-    @Override
-    public boolean runSerially() {
-        long unpublishedWalTxnCount = engine.getUnpublishedWalTxnCount();
-        if (unpublishedWalTxnCount == lastProcessedCount || notificationQueueIsFull) {
-            // when notification queue was full last run, re-evaluate tables after a timeout
-            final long t = millisecondClock.getTicks();
-            if (lastRunMs + checkInterval < t) {
-                lastRunMs = t;
-                notificationQueueIsFull = !republishNotificationsFromTrackers();
-            }
-            return false;
-        }
-        checkMissingWalTransactions();
-        lastProcessedCount = unpublishedWalTxnCount;
-        return !notificationQueueIsFull;
-    }
-
     private void checkMissingWalTransactions() {
         threadLocalPath = Path.PATH.get().of(dbRoot);
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, true, checkNotifyOutstandingTxnInWalRef);
-    }
-
-    private boolean republishNotificationsFromTrackers() {
-        engine.getTableTokens(tableTokenBucket, false);
-        for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
-            TableToken tableToken = tableTokenBucket.get(i);
-            SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-            if (!tracker.isSuspended() && tracker.getWriterTxn() < tracker.getSeqTxn()) {
-                if (!engine.notifyWalTxnCommitted(tableToken)) {
-                    return false;
-                }
-            }
-        }
-        return true;
     }
 
     protected void checkNotifyOutstandingTxnInWal(@NotNull TableToken tableToken, long seqTxn) {
@@ -148,5 +117,36 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
                 } // else table is dropped, ApplyWal2TableJob already is deleting the files
             }
         }
+    }
+
+    @Override
+    public boolean runSerially() {
+        long unpublishedWalTxnCount = engine.getUnpublishedWalTxnCount();
+        if (unpublishedWalTxnCount == lastProcessedCount || notificationQueueIsFull) {
+            // when notification queue was full last run, re-evaluate tables after a timeout
+            final long t = millisecondClock.getTicks();
+            if (lastRunMs + checkInterval < t) {
+                lastRunMs = t;
+                notificationQueueIsFull = !republishNotificationsFromTrackers();
+            }
+            return false;
+        }
+        checkMissingWalTransactions();
+        lastProcessedCount = unpublishedWalTxnCount;
+        return !notificationQueueIsFull;
+    }
+
+    private boolean republishNotificationsFromTrackers() {
+        engine.getTableTokens(tableTokenBucket, false);
+        for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
+            TableToken tableToken = tableTokenBucket.get(i);
+            SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+            if (!tracker.isSuspended() && tracker.getWriterTxn() < tracker.getSeqTxn()) {
+                if (!engine.notifyWalTxnCommitted(tableToken)) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 }
