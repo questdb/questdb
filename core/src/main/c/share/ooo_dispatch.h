@@ -34,18 +34,18 @@ struct index_l {
 };
 
 struct index_t {
-    uint64_t ts;
+    int64_t ts;
     uint64_t i;
 
     bool operator<(const index_t& other) const {
         return ts < other.ts;
     }
 
-    bool operator<(uint64_t other) const {
+    bool operator<(int64_t other) const {
         return ts < other;
     }
 
-    bool operator>(uint64_t other) const {
+    bool operator>(int64_t other) const {
         return ts > other;
     }
 
@@ -57,7 +57,7 @@ struct index_t {
         return ts == other.ts;
     }
 
-    bool operator==(uint64_t other) const {
+    bool operator==(int64_t other) const {
         return ts == other;
     }
 
@@ -66,11 +66,11 @@ struct index_t {
     }
 
     uint64_t operator>>(uint64_t shr) const {
-        return ts >> shr;
+        return (uint64_t)ts >> shr;
     }
 
     uint64_t operator&(uint64_t mask) const{
-        return ts & mask;
+        return (uint64_t)ts & mask;
     }
 };
 

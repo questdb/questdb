@@ -7805,10 +7805,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (needsDedup) {
                         o3TimestampMemCpy.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
                         o3TimestampMem.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
-                        // Re-get timestampAddr in case jumpTo caused buffer reallocation.
-                        // The radix sort output data is preserved during reallocation.
-                        timestampAddr = o3TimestampMem.getAddress();
-                        long dedupTimestampAddr = timestampAddr;
+                        // Re-get timestampAddr in case jumpTo caused buffer reallocation,
+                        // but only if radix sort was done (needsOrdering=true), which stored
+                        // data in o3TimestampMem. If needsOrdering=false, timestampAddr points
+                        // to walTimestampColumn and should not be changed.
+                        if (needsOrdering) {
+                            timestampAddr = o3TimestampMem.getAddress();
+                        }
+                        long dedupTimestampAddr = o3TimestampMem.getAddress();
                         long deduplicatedRowCount = deduplicateSortedIndex(
                                 totalUncommitted,
                                 timestampAddr,
