@@ -295,7 +295,15 @@ private:
 struct ConstantCacheYmm {
     static constexpr size_t MAX_CONSTANTS = 8;
 
-    ConstantCacheYmm() : count(0) {}
+    ConstantCacheYmm() : count(0), has_varchar_null_perm_ctrl(false) {}
+
+    // Get the varchar header permutation control vector (for extracting 4-byte headers from 16-byte aux entries)
+    bool hasVarcharNullPermCtrl() const { return has_varchar_null_perm_ctrl; }
+    asmjit::x86::Vec getVarcharNullPermCtrl() const { return varchar_null_perm_ctrl; }
+    void setVarcharNullPermCtrl(asmjit::x86::Vec reg) {
+        varchar_null_perm_ctrl = reg;
+        has_varchar_null_perm_ctrl = true;
+    }
 
     // Find an integer constant and return its YMM register
     bool findInt(int64_t value, asmjit::x86::Vec &out_reg) const {
@@ -345,6 +353,10 @@ private:
     int64_t int_values[MAX_CONSTANTS];
     double float_values[MAX_CONSTANTS];
     asmjit::x86::Vec ymm_regs[MAX_CONSTANTS];
+    // Varchar NULL check permutation control: [0, 4, 0, 0, 0, 0, 0, 0] for extracting
+    // the first dword from each 16-byte aux entry
+    bool has_varchar_null_perm_ctrl;
+    asmjit::x86::Vec varchar_null_perm_ctrl;
 };
 
 #endif //QUESTDB_JIT_COMMON_H

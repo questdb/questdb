@@ -49,8 +49,15 @@ namespace questdb::avx2 {
                                size_t size,
                                ConstantCacheYmm &cache) {
         const auto scope = ConstPoolScope::kLocal;
+        bool has_varchar_header = false;
         for (size_t i = 0; i < size; ++i) {
             auto &instr = istream[i];
+            if (instr.opcode == opcodes::Mem) {
+                auto type = static_cast<data_type_t>(instr.options);
+                if (type == data_type_t::varchar_header) {
+                    has_varchar_header = true;
+                }
+            }
             if (instr.opcode == opcodes::Imm) {
                 auto type = static_cast<data_type_t>(instr.options);
                 switch (type) {
@@ -115,6 +122,14 @@ namespace questdb::avx2 {
                         break;
                 }
             }
+        }
+        // Preload varchar NULL check permutation control if needed
+        if (has_varchar_header) {
+            Vec perm_ctrl = c.new_ymm("varchar_null_perm_ctrl");
+            int32_t ctrl_data[8] = {0, 4, 0, 0, 0, 0, 0, 0};
+            Mem ctrl_mem = c.new_const(scope, &ctrl_data, 32);
+            c.vmovdqu(perm_ctrl, ctrl_mem);
+            cache.setVarcharNullPermCtrl(perm_ctrl);
         }
     }
 
@@ -287,7 +302,8 @@ namespace questdb::avx2 {
     jit_value_t read_mem_varchar_header(Compiler &c,
                                         int32_t column_idx,
                                         const Gp &varsize_aux_ptr,
-                                        const Gp &input_index) {
+                                        const Gp &input_index,
+                                        const ConstantCacheYmm &const_cache) {
         Gp varsize_aux_address = c.new_gp64("varsize_aux_address");
         c.mov(varsize_aux_address, ptr(varsize_aux_ptr, 8 * column_idx, 8));
 
@@ -312,10 +328,8 @@ namespace questdb::avx2 {
         // We want to extract the first dword (4 bytes) from each 16-byte entry.
         // Dword layout in each YMM: [H0, x, x, x, H1, x, x, x] where H is header, x is don't-care.
         // Use vpermd to select dwords at indices 0 and 4 from each YMM.
-        Vec perm_ctrl = c.new_ymm("perm_ctrl");
-        int32_t ctrl_data[8] = {0, 4, 0, 0, 0, 0, 0, 0};
-        Mem ctrl_mem = c.new_const(ConstPoolScope::kLocal, &ctrl_data, 32);
-        c.vmovdqu(perm_ctrl, ctrl_mem);
+        // The permutation control is preloaded in const_cache to avoid loading it every iteration.
+        Vec perm_ctrl = const_cache.getVarcharNullPermCtrl();
 
         c.vpermd(ymm0, perm_ctrl, ymm0);  // [H0, H1, x, x, x, x, x, x]
         c.vpermd(ymm1, perm_ctrl, ymm1);  // [H2, H3, x, x, x, x, x, x]
@@ -333,9 +347,9 @@ namespace questdb::avx2 {
 
     jit_value_t
     read_mem(Compiler &c, data_type_t type, int32_t column_idx, const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &input_index,
-             const ColumnAddressCache &cache) {
+             const ColumnAddressCache &addr_cache, const ConstantCacheYmm &const_cache) {
         if (type == data_type_t::varchar_header) {
-            return read_mem_varchar_header(c, column_idx, varsize_aux_ptr, input_index);
+            return read_mem_varchar_header(c, column_idx, varsize_aux_ptr, input_index, const_cache);
         }
 
         uint32_t header_size;
@@ -356,8 +370,8 @@ namespace questdb::avx2 {
         // Simple case: a fixed-width column
         // Use cached column address if available
         Gp column_address;
-        if (cache.has(column_idx)) {
-            column_address = cache.get(column_idx);
+        if (addr_cache.has(column_idx)) {
+            column_address = addr_cache.get(column_idx);
         } else {
             column_address = c.new_gp64("column_address");
             c.mov(column_address, ptr(data_ptr, 8 * column_idx, 8));
@@ -680,7 +694,7 @@ namespace questdb::avx2 {
                 case opcodes::Mem: {
                     auto type = static_cast<data_type_t>(instr.options);
                     auto idx = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(arena, read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index, addr_cache));
+                    values.append(arena, read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index, addr_cache, const_cache));
                 }
                     break;
                 case opcodes::Imm:
