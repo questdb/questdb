@@ -248,7 +248,6 @@ public final class TableUtils {
         return TX_RECORD_HEADER_SIZE + bytesSymbols + Integer.BYTES + bytesPartitions;
     }
 
-    @SuppressWarnings("JavaExistingMethodCanBeUsed")
     // the mig methods are deliberately standalone so that between old versions
     // does not regress if the main code changes
     public static int calculateTxnLagChecksum(long txn, long seqTxn, int lagRowCount, long lagMinTimestamp, long lagMaxTimestamp, int lagTxnCount) {
@@ -336,10 +335,6 @@ public final class TableUtils {
             checksum = -1337;
         }
         return checksum;
-    }
-
-    public static void cleanupDirQuiet(FilesFacade ff, Utf8Sequence dir) {
-        cleanupDirQuiet(ff, dir, LOG);
     }
 
     public static void cleanupDirQuiet(FilesFacade ff, Utf8Sequence dir, Log log) {
@@ -1513,14 +1508,11 @@ public final class TableUtils {
             int partitionIndex,
             CairoConfiguration configuration
     ) {
-        final int memoryTag = MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER;
         final TxReader txReader = reader.getTxFile();
         final TableMetadata metadata = reader.getMetadata();
         final FilesFacade ff = configuration.getFilesFacade();
-        final ColumnVersionReader columnVersionReader = reader.getColumnVersionReader();
         final int partitionBy = metadata.getPartitionBy();
         final int timestampType = metadata.getTimestampType();
-        final long partitionRowCount = txReader.getPartitionSize(partitionIndex);
         final long partitionNameTxn = txReader.getPartitionNameTxn(partitionIndex);
 
         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
@@ -1528,15 +1520,18 @@ public final class TableUtils {
             throw CairoException.nonCritical().put("partition directory does not exist [path=").put(path).put(']');
         }
         final int partitionDirLen = path.size();
+        final int pathRootSize = configuration.getDbRoot().length();
 
         setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         if (ff.exists(other.$())) {
+            LOG.info().$("parquet for native partition already present [path=").$substr(pathRootSize, path).I$();
             return ff.length(other.$());
         }
 
-        final int pathRootSize = configuration.getDbRoot().length();
         LOG.info().$("producing parquet for native partition [path=").$substr(pathRootSize, path).I$();
-
+        final int memoryTag = MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER;
+        final long partitionRowCount = txReader.getPartitionSize(partitionIndex);
+        final ColumnVersionReader columnVersionReader = reader.getColumnVersionReader();
         try {
             try (PartitionDescriptor partitionDescriptor = new MappedMemoryPartitionDescriptor(ff)) {
                 final int timestampIndex = metadata.getTimestampIndex();
