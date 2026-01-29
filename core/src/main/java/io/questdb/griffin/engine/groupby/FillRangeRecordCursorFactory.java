@@ -277,6 +277,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             presentTimestamps.clear();
             gapFilling = false;
             needsSorting = false;
+            hasNegative = false;
             lastTimestamp = Long.MIN_VALUE;
         }
 

@@ -1,34 +1,16 @@
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class NegativeTimestampTest extends AbstractCairoTest {
-    private static final Log LOG = LogFactory.getLog(NegativeTimestampTest.class);
 
-    // TODO: DEDUP mode with negative timestamps needs further investigation.
-    // The radix sort index format check fails when processing blocks with
-    // mixed negative and positive timestamps. The dedup function expects
-    // format=1 but receives a different value. This needs investigation
-    // of the radix_sort_segments_index_asc code path.
-    @Ignore("DEDUP with negative timestamps not yet fully supported")
     @Test
     public void testNegativeTimestampDeduplication() throws Exception {
         assertMemoryLeak(() -> {
@@ -41,45 +23,17 @@ public class NegativeTimestampTest extends AbstractCairoTest {
 
             // Insert mixed positive and negative timestamps
             execute("insert into " + tableName + " values (" + ts1 + ", 1)");
-            LOG.info().$("After insert ts1, rowCount=").$(getRowCount(tableName)).$();
-
             execute("insert into " + tableName + " values (" + ts2 + ", 2)");
-            LOG.info().$("After insert ts2, rowCount=").$(getRowCount(tableName)).$();
 
             // Insert duplicate
             execute("insert into " + tableName + " values (" + ts1 + ", 1)");
-            LOG.info().$("After insert duplicate, rowCount=").$(getRowCount(tableName)).$();
 
-            try {
-                drainWalQueue();
-            } catch (Throwable t) {
-                LOG.error().$("drainWalQueue failed: ").$(t).$();
-                throw t;
-            }
-            LOG.info().$("After drainWalQueue, rowCount=").$(getRowCount(tableName)).$();
-
-            // Debug: print actual content
-            try (RecordCursorFactory factory = engine.select("select * from " + tableName, sqlExecutionContext);
-                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                LOG.info().$("Actual rows:").$();
-                Record record = cursor.getRecord();
-                while (cursor.hasNext()) {
-                    LOG.info().$("  ts=").$(record.getTimestamp(0)).$(", val=").$(record.getInt(1)).$();
-                }
-            }
+            drainWalQueue();
 
             assertSql("ts\tval\n" +
                     "1969-12-31T23:59:59.000000Z\t1\n" +
                     "1970-01-01T00:00:01.000000Z\t2\n", "select * from " + tableName);
         });
-    }
-
-    private long getRowCount(String tableName) throws Exception {
-        try (RecordCursorFactory factory = engine.select("select count() from " + tableName, sqlExecutionContext);
-             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            cursor.hasNext();
-            return cursor.getRecord().getLong(0);
-        }
     }
 
     @Test
@@ -141,11 +95,6 @@ public class NegativeTimestampTest extends AbstractCairoTest {
         });
     }
 
-    // TODO: Complex O3 spanning multiple partitions across 1970 boundary fails.
-    // The partition directory for 1970 (timestamp=0) is not being created
-    // correctly when O3 data spans from negative to positive timestamps.
-    // This needs investigation in the O3 partition creation code path.
-    @Ignore("O3 across 1970 boundary with YEAR partitioning not yet fully supported")
     @Test
     public void testComplexO3NegativeTimestamps() throws Exception {
         assertMemoryLeak(() -> {
@@ -194,6 +143,50 @@ public class NegativeTimestampTest extends AbstractCairoTest {
     }
 
     /**
+     * Direct test of binary search with negative timestamps.
+     */
+    @Test
+    public void testBinarySearchWithNegativeTimestamps() throws Exception {
+        // Create index_t array with sorted timestamps: 1900, 1950, 1960, 1970
+        int count = 4;
+        int entrySize = 2 * Long.BYTES; // 16 bytes per index_t entry
+        long addr = Unsafe.malloc(count * entrySize, MemoryTag.NATIVE_DEFAULT);
+
+        try {
+            // Timestamps (sorted order)
+            long ts1900 = -2208988800000000L; // 1900-01-01
+            long ts1950 = -631152000000000L;  // 1950-01-01
+            long ts1960 = -315619200000000L;  // 1960-01-01
+            long ts1970 = 0L;                  // 1970-01-01
+
+            // Write sorted index_t entries: {ts, i}
+            Unsafe.getUnsafe().putLong(addr + 0 * entrySize, ts1900);
+            Unsafe.getUnsafe().putLong(addr + 0 * entrySize + Long.BYTES, 0L);
+            Unsafe.getUnsafe().putLong(addr + 1 * entrySize, ts1950);
+            Unsafe.getUnsafe().putLong(addr + 1 * entrySize + Long.BYTES, 1L);
+            Unsafe.getUnsafe().putLong(addr + 2 * entrySize, ts1960);
+            Unsafe.getUnsafe().putLong(addr + 2 * entrySize + Long.BYTES, 2L);
+            Unsafe.getUnsafe().putLong(addr + 3 * entrySize, ts1970);
+            Unsafe.getUnsafe().putLong(addr + 3 * entrySize + Long.BYTES, 3L);
+
+            // Ceiling for 1900 partition (end of year 1900)
+            long ceilFor1900 = Micros.ceilYYYY(ts1900) - 1;
+
+            // Verify that only ts1900 is <= ceiling
+            Assert.assertTrue(ts1900 <= ceilFor1900);
+            Assert.assertFalse(ts1950 <= ceilFor1900);
+            Assert.assertFalse(ts1960 <= ceilFor1900);
+            Assert.assertFalse(ts1970 <= ceilFor1900);
+
+            // Binary search should find only index 0 (the 1900 timestamp)
+            long result = Vect.boundedBinarySearchIndexT(addr, ceilFor1900, 0, count - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+            Assert.assertEquals("Binary search should return 0 (only 1900 is <= ceiling)", 0, result);
+        } finally {
+            Unsafe.free(addr, count * entrySize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    /**
      * Direct test of radixSortABLongIndexAsc with negative timestamps.
      * This isolates the radix sort behavior from the full DEDUP flow.
      */
@@ -227,23 +220,8 @@ public class NegativeTimestampTest extends AbstractCairoTest {
             long min = -1000000L;
             long max = 1000000L;
 
-            System.out.println("Before radix sort:");
-            System.out.println("  Array A (LAG raw ts): " + Unsafe.getUnsafe().getLong(aAddr));
-            System.out.println("  Array B (WAL indexed): ts=" + Unsafe.getUnsafe().getLong(bAddr)
-                    + ", i=" + Unsafe.getUnsafe().getLong(bAddr + Long.BYTES));
-            System.out.println("  min=" + min + ", max=" + max);
-
             // Output goes to aAddr (which has extra space allocated)
             long rowCount = Vect.radixSortABLongIndexAsc(aAddr, countA, bAddr, countB, aAddr, cpyAddr, min, max);
-
-            System.out.println("After radix sort, rowCount=" + rowCount);
-
-            // Check output (indexed format: {ts, i} pairs)
-            for (int i = 0; i < rowCount; i++) {
-                long ts = Unsafe.getUnsafe().getLong(aAddr + i * 2L * Long.BYTES);
-                long idx = Unsafe.getUnsafe().getLong(aAddr + i * 2L * Long.BYTES + Long.BYTES);
-                System.out.println("  Output[" + i + "]: ts=" + ts + ", i=" + idx);
-            }
 
             Assert.assertEquals("Row count should match", countA + countB, rowCount);
 
@@ -251,7 +229,6 @@ public class NegativeTimestampTest extends AbstractCairoTest {
             long ts0 = Unsafe.getUnsafe().getLong(aAddr);
             long ts1 = Unsafe.getUnsafe().getLong(aAddr + 2 * Long.BYTES);
 
-            System.out.println("Verifying sorted order: ts0=" + ts0 + ", ts1=" + ts1);
             Assert.assertTrue("Should be sorted: ts0 <= ts1", ts0 <= ts1);
             Assert.assertEquals("ts0 should be -1000000", -1000000L, ts0);
             Assert.assertEquals("ts1 should be 1000000", 1000000L, ts1);
