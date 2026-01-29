@@ -118,12 +118,6 @@ impl<'a, 'b> SlicerInner<'a, 'b> {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    fn next_slice(&mut self, _count: usize) -> Option<&[u8]> {
-        // Not supported
-        None
-    }
-
     fn skip(&mut self, count: usize) {
         if self.error.is_some() {
             return;

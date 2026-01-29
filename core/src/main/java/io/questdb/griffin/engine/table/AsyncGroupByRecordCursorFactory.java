@@ -36,6 +36,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameFilteredNoRandomAccessMemoryRecord;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordCursor;
@@ -57,6 +58,7 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -98,6 +100,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @Nullable MemoryCARW bindVarMemory,
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function filter,
+            @Nullable IntHashSet filterUsedColumnIndexes,
             @Nullable ObjList<Function> perWorkerFilters,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             int workerCount
@@ -121,6 +124,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     bindVarMemory,
                     bindVarFunctions,
                     filter,
+                    filterUsedColumnIndexes,
                     perWorkerFilters,
                     workerCount
             );
@@ -368,19 +372,27 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
         final PageFrameSequence<AsyncGroupByAtom> frameSequence = task.getFrameSequence(AsyncGroupByAtom.class);
+        final AsyncGroupByAtom atom = frameSequence.getAtom();
 
-        final PageFrameMemory frameMemory = task.populateFrameMemory();
+        final long frameRowCount = task.getFrameRowCount();
+        assert frameRowCount > 0;
+
+        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == frameSequence;
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+        final boolean isParquetFrame = task.isParquetFrame();
+        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
+
+        final PageFrameMemory frameMemory;
+        if (useLateMaterialization) {
+            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+        } else {
+            frameMemory = task.populateFrameMemory();
+        }
         record.init(frameMemory);
 
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
 
-        final long frameRowCount = task.getFrameRowCount();
-        assert frameRowCount > 0;
-        final AsyncGroupByAtom atom = frameSequence.getAtom();
-
-        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == frameSequence;
-        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final AsyncGroupByAtom.MapFragment fragment = atom.getFragment(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledFilter();
@@ -394,6 +406,15 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
+            }
+
+            if (isParquetFrame) {
+                atom.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
+            }
+            if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, false)) {
+                PageFrameFilteredNoRandomAccessMemoryRecord filteredMemoryRecord = atom.getPageFrameFilteredMemoryRecord(slotId);
+                filteredMemoryRecord.of(frameMemory, record, atom.getFilterUsedColumnIndexes());
+                record = filteredMemoryRecord;
             }
 
             if (atom.isSharded()) {

@@ -790,6 +790,47 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    private static void collectColumnIndexes(
+            ArrayDeque<ExpressionNode> sqlNodeStack,
+            RecordMetadata metadata,
+            ExpressionNode node,
+            IntHashSet outIndexes
+    ) {
+        sqlNodeStack.clear();
+
+        // pre-order iterative tree traversal
+        // see: http://en.wikipedia.org/wiki/Tree_traversal
+
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (node.type == LITERAL) {
+                    int index = metadata.getColumnIndexQuiet(node.token);
+                    if (index < 0) {
+                        int dot = Chars.indexOfLastUnquoted(node.token, '.');
+                        if (dot > -1) {
+                            index = metadata.getColumnIndexQuiet(node.token, dot + 1, node.token.length());
+                        }
+                    }
+                    if (index >= 0) {
+                        outIndexes.add(index);
+                    }
+                    node = null;
+                    continue;
+                } else {
+                    for (int i = 0, n = node.args.size(); i < n; i++) {
+                        sqlNodeStack.add(node.args.getQuick(i));
+                    }
+                    if (node.rhs != null) {
+                        sqlNodeStack.push(node.rhs);
+                    }
+                }
+                node = node.lhs;
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+    }
+
     private static RecordCursorFactory createFullFatAsOfJoin(
             CairoConfiguration configuration,
             RecordMetadata metadata,
@@ -2860,6 +2901,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final boolean enableParallelFilter = executionContext.isParallelFilterEnabled();
         final boolean enablePreTouch = SqlHints.hasEnablePreTouchHint(model, model.getName());
         if (enableParallelFilter && factory.supportsPageFrameCursor()) {
+            IntHashSet filterUsedColumnIndexes = new IntHashSet();
+            collectColumnIndexes(sqlNodeStack, factory.getMetadata(), filterExpr, filterUsedColumnIndexes);
+
             final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED
                     && (!model.isUpdate() || executionContext.isWalApplication());
             final boolean canCompile = factory.supportsPageFrameCursor() && JitUtil.isJitSupported();
@@ -2897,6 +2941,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             compiledFilter,
                             compiledCountOnlyFilter,
                             filter,
+                            filterUsedColumnIndexes,
                             reduceTaskFactory,
                             compileWorkerFilterConditionally(
                                     executionContext,
@@ -2943,6 +2988,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         executionContext.getMessageBus(),
                         factory,
                         filter,
+                        filterUsedColumnIndexes,
                         reduceTaskFactory,
                         compileWorkerFilterConditionally(
                                 executionContext,
@@ -3905,6 +3951,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     ObjList<Function> bindVarFunctions = null;
                                     Function masterFilter = null;
                                     ExpressionNode masterFilterExpr = null;
+                                    IntHashSet masterFilterUsedColumnIndexes = null;
                                     if (master.supportsFilterStealing() && master.getBaseFactory().supportsPageFrameCursor()) {
                                         RecordCursorFactory filterFactory = master;
                                         master = master.getBaseFactory();
@@ -3913,6 +3960,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         bindVarFunctions = filterFactory.getBindVarFunctions();
                                         masterFilter = filterFactory.getFilter();
                                         masterFilterExpr = filterFactory.getStealFilterExpr();
+                                        masterFilterUsedColumnIndexes = new IntHashSet();
+                                        collectColumnIndexes(sqlNodeStack, master.getMetadata(), masterFilterExpr, masterFilterUsedColumnIndexes);
                                         filterFactory.halfClose();
                                     }
 
@@ -3962,6 +4011,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         masterFilterExpr,
                                                         master.getMetadata()
                                                 ),
+                                                masterFilterUsedColumnIndexes,
                                                 allVectorized,
                                                 reduceTaskFactory,
                                                 executionContext.getSharedQueryWorkerCount()
@@ -4008,6 +4058,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         masterFilterExpr,
                                                         master.getMetadata()
                                                 ),
+                                                masterFilterUsedColumnIndexes,
                                                 allVectorized,
                                                 reduceTaskFactory,
                                                 executionContext.getSharedQueryWorkerCount()
@@ -4115,6 +4166,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 master.getMetadata(),
                                 executionContext
                         );
+                        IntHashSet filterUsedColumnIndexes = new IntHashSet();
+                        collectColumnIndexes(sqlNodeStack, master.getMetadata(), filterExpr, filterUsedColumnIndexes);
 
                         master = new AsyncFilteredRecordCursorFactory(
                                 executionContext.getCairoEngine(),
@@ -4122,6 +4175,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 executionContext.getMessageBus(),
                                 master,
                                 filter,
+                                filterUsedColumnIndexes,
                                 reduceTaskFactory,
                                 compileWorkerFilterConditionally(
                                         executionContext,
@@ -4171,12 +4225,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 } else {
                     // make it a post-join filter (same as for post join where clause above)
                     if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
+                        IntHashSet filterUsedColumnIndexes = new IntHashSet();
+                        collectColumnIndexes(sqlNodeStack, master.getMetadata(), constFilterExpr, filterUsedColumnIndexes);
+
                         master = new AsyncFilteredRecordCursorFactory(
                                 executionContext.getCairoEngine(),
                                 configuration,
                                 executionContext.getMessageBus(),
                                 master,
                                 filter,
+                                filterUsedColumnIndexes,
                                 reduceTaskFactory,
                                 compileWorkerFilterConditionally(
                                         executionContext,
@@ -4713,6 +4771,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     ObjList<Function> bindVarFunctions = null;
                                     Function filter = null;
                                     ExpressionNode filterExpr = null;
+                                    IntHashSet filterUsedColumnIndexes = null;
                                     if (recordCursorFactory.supportsFilterStealing()) {
                                         baseFactory = recordCursorFactory.getBaseFactory();
                                         compiledFilter = recordCursorFactory.getCompiledFilter();
@@ -4720,6 +4779,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         bindVarFunctions = recordCursorFactory.getBindVarFunctions();
                                         filter = recordCursorFactory.getFilter();
                                         filterExpr = recordCursorFactory.getStealFilterExpr();
+                                        filterUsedColumnIndexes = new IntHashSet();
+                                        collectColumnIndexes(sqlNodeStack, baseFactory.getMetadata(), filterExpr, filterUsedColumnIndexes);
                                         recordCursorFactory.halfClose();
                                     }
 
@@ -4734,6 +4795,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             baseFactory,
                                             reduceTaskFactory,
                                             filter,
+                                            filterUsedColumnIndexes,
                                             compileWorkerFilterConditionally(
                                                     executionContext,
                                                     filter,
@@ -5837,6 +5899,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 ObjList<Function> bindVarFunctions = null;
                 Function filter = null;
                 ExpressionNode filterExpr = null;
+                IntHashSet filterUsedColumnIndexes = null;
                 // Try to steal the filter from the nested factory, if possible.
                 // We aim for simple cases such as select key, avg(value) from t where value > 0
                 if (!supportsParallelism && factory.supportsFilterStealing()) {
@@ -5849,6 +5912,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     filter = filterFactory.getFilter();
                     supportsParallelism = true;
                     filterExpr = filterFactory.getStealFilterExpr();
+                    filterUsedColumnIndexes = new IntHashSet();
+                    collectColumnIndexes(sqlNodeStack, factory.getMetadata(), filterExpr, filterUsedColumnIndexes);
                     filterFactory.halfClose();
                 }
 
@@ -5884,6 +5949,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 bindVarMemory,
                                 bindVarFunctions,
                                 filter,
+                                filterUsedColumnIndexes,
                                 reduceTaskFactory,
                                 compileWorkerFilterConditionally(
                                         executionContext,
@@ -5937,6 +6003,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     bindVarMemory,
                                     bindVarFunctions,
                                     filter,
+                                    filterUsedColumnIndexes,
                                     compileWorkerFilterConditionally(
                                             executionContext,
                                             filter,

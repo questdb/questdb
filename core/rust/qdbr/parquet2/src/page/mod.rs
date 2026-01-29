@@ -96,6 +96,10 @@ impl CompressedDataPage {
         self.header.num_values()
     }
 
+    pub fn descriptor(&self) -> &Descriptor {
+        &self.descriptor
+    }
+
     /// Decodes the raw statistics into a statistics
     pub fn statistics(&self) -> Option<Result<Arc<dyn Statistics>>> {
         match &self.header {

@@ -62,29 +62,32 @@ import org.jetbrains.annotations.Nullable;
 public class PageFrameMemoryRecord implements Record, StableStringSource, QuietCloseable, Mutable {
     public static final byte RECORD_A_LETTER = 0;
     public static final byte RECORD_B_LETTER = 1;
-    private final ObjList<BorrowedArray> arrayBuffers = new ObjList<>();
-    private final ObjList<DirectByteSequenceView> bsViews = new ObjList<>();
-    private final ObjList<DirectString> csViewsA = new ObjList<>();
-    private final ObjList<DirectString> csViewsB = new ObjList<>();
+    protected final ObjList<BorrowedArray> arrayBuffers = new ObjList<>();
+    protected final ObjList<DirectByteSequenceView> bsViews = new ObjList<>();
+    protected final ObjList<DirectString> csViewsA = new ObjList<>();
+    protected final ObjList<DirectString> csViewsB = new ObjList<>();
+    protected final ObjList<Long256Impl> longs256A = new ObjList<>();
+    protected final ObjList<Long256Impl> longs256B = new ObjList<>();
+    protected final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
+    protected final ObjList<Utf8SplitString> utf8ViewsA = new ObjList<>();
+    protected final ObjList<Utf8SplitString> utf8ViewsB = new ObjList<>();
+    protected DirectLongList auxPageAddresses;
+    protected DirectLongList auxPageSizes;
+    protected int columnOffset;
+    protected byte frameFormat = -1;
+    protected int frameIndex = -1;
     // Letters are used for parquet buffer reference counting in PageFrameMemoryPool.
     // RECORD_A_LETTER (0) stands for record A, RECORD_B_LETTER (1) stands for record B.
-    private final byte letter;
-    private final ObjList<Long256Impl> longs256A = new ObjList<>();
-    private final ObjList<Long256Impl> longs256B = new ObjList<>();
-    private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
-    private final ObjList<Utf8SplitString> utf8ViewsA = new ObjList<>();
-    private final ObjList<Utf8SplitString> utf8ViewsB = new ObjList<>();
-    private DirectLongList auxPageAddresses;
-    private DirectLongList auxPageSizes;
-    private int columnOffset;
-    private byte frameFormat = -1;
-    private int frameIndex = -1;
-    private DirectLongList pageAddresses;
-    private DirectLongList pageSizes;
-    private long rowIdOffset;
-    private long rowIndex;
-    private boolean stableStrings;
-    private SymbolTableSource symbolTableSource;
+    protected byte letter;
+    protected DirectLongList pageAddresses;
+    protected DirectLongList pageSizes;
+    protected long rowIdOffset;
+    protected long rowIndex;
+    protected boolean stableStrings;
+    protected SymbolTableSource symbolTableSource;
+
+    public PageFrameMemoryRecord() {
+    }
 
     public PageFrameMemoryRecord(byte letter) {
         this.letter = letter;
@@ -428,10 +431,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return Rows.toRowID(frameIndex, rowIndex);
     }
 
-    public long getRowIndex() {
-        return rowIndex;
-    }
-
     @Override
     public short getShort(int columnIndex) {
         final long address = pageAddresses.get(columnOffset + columnIndex);
@@ -554,24 +553,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.rowIndex = rowIndex;
     }
 
-    private @NotNull BorrowedArray borrowedArray(int columnIndex) {
-        BorrowedArray array = arrayBuffers.getQuiet(columnIndex);
-        if (array != null) {
-            return array;
-        }
-        arrayBuffers.extendAndSet(columnIndex, array = new BorrowedArray());
-        return array;
-    }
-
-    private @NotNull DirectByteSequenceView bsView(int columnIndex) {
-        DirectByteSequenceView view = bsViews.getQuiet(columnIndex);
-        if (view != null) {
-            return view;
-        }
-        bsViews.extendAndSet(columnIndex, view = new DirectByteSequenceView());
-        return view;
-    }
-
     private @NotNull DirectString csViewA(int columnIndex) {
         DirectString view = csViewsA.getQuiet(columnIndex);
         if (view != null) {
@@ -590,25 +571,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return view;
     }
 
-    private BinarySequence getBin(long base, long offset, long dataLim, DirectByteSequenceView view) {
-        final long address = base + offset;
-        final long len = Unsafe.getUnsafe().getLong(address);
-        if (len != TableUtils.NULL_LEN) {
-            if (dataLim < offset + len + 8) {
-                throw CairoException.critical(0)
-                        .put("binary is outside of file boundary [offset=")
-                        .put(offset)
-                        .put(", len=")
-                        .put(len)
-                        .put(", dataLim=")
-                        .put(dataLim)
-                        .put(']');
-            }
-            return view.of(address + Long.BYTES, len);
-        }
-        return null;
-    }
-
     private void getLong256(int columnIndex, Long256Acceptor sink) {
         final long columnAddress = pageAddresses.get(columnOffset + columnIndex);
         if (columnAddress != 0) {
@@ -616,78 +578,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             return;
         }
         NullMemoryCMR.INSTANCE.getLong256(0, sink);
-    }
-
-    private void getLong256(long addr, CharSink<?> sink) {
-        Numbers.appendLong256FromUnsafe(addr, sink);
-    }
-
-    private DirectString getStr(long base, long offset, long dataLim, DirectString view) {
-        final long address = base + offset;
-        final int len = Unsafe.getUnsafe().getInt(address);
-        if (len != TableUtils.NULL_LEN) {
-            if (dataLim < offset + len + 4) {
-                throw CairoException.critical(0)
-                        .put("string is outside of file boundary [offset=")
-                        .put(offset)
-                        .put(", len=")
-                        .put(len)
-                        .put(", dataLim=")
-                        .put(dataLim)
-                        .put(']');
-            }
-            return view.of(address + Vm.STRING_LENGTH_BYTES, len);
-        }
-        return null; // Column top.
-    }
-
-    private CharSequence getStr0(int columnIndex, DirectString csView) {
-        final long dataPageAddress = pageAddresses.get(columnOffset + columnIndex);
-        if (dataPageAddress != 0) {
-            final long auxPageAddress = auxPageAddresses.get(columnOffset + columnIndex);
-            final long auxPageLim = auxPageSizes.get(columnOffset + columnIndex);
-            final long auxOffset = rowIndex << 3;
-            if (auxPageLim < auxOffset + 8) {
-                throw CairoException.critical(0)
-                        .put("string is outside of file boundary [auxOffset=")
-                        .put(auxOffset)
-                        .put(", auxPageLim=")
-                        .put(auxPageLim)
-                        .put(']');
-            }
-            final long dataPageLim = pageSizes.get(columnOffset + columnIndex);
-            final long dataOffset = Unsafe.getUnsafe().getLong(auxPageAddress + auxOffset);
-            return getStr(dataPageAddress, dataOffset, dataPageLim, csView);
-        }
-        return NullMemoryCMR.INSTANCE.getStrB(0);
-    }
-
-    private SymbolTable getSymbolTable(int columnIndex) {
-        SymbolTable symbolTable = symbolTableCache.getQuiet(columnIndex);
-        if (symbolTable == null) {
-            symbolTable = symbolTableSource.newSymbolTable(columnIndex);
-            symbolTableCache.extendAndSet(columnIndex, symbolTable);
-        }
-        return symbolTable;
-    }
-
-    @Nullable
-    private Utf8Sequence getVarchar(int columnIndex, Utf8SplitString utf8View) {
-        final long auxPageAddress = auxPageAddresses.get(columnOffset + columnIndex);
-        if (auxPageAddress != 0) {
-            final long auxPageLim = auxPageAddress + auxPageSizes.get(columnOffset + columnIndex);
-            final long dataPageAddress = pageAddresses.get(columnOffset + columnIndex);
-            final long dataPageLim = dataPageAddress + pageSizes.get(columnOffset + columnIndex);
-            return VarcharTypeDriver.getSplitValue(
-                    auxPageAddress,
-                    auxPageLim,
-                    dataPageAddress,
-                    dataPageLim,
-                    rowIndex,
-                    utf8View
-            );
-        }
-        return null; // Column top.
     }
 
     private @NotNull Long256Impl long256A(int columnIndex) {
@@ -724,6 +614,115 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         }
         utf8ViewsB.extendAndSet(columnIndex, view = new Utf8SplitString(this));
         return view;
+    }
+
+    protected @NotNull BorrowedArray borrowedArray(int columnIndex) {
+        BorrowedArray array = arrayBuffers.getQuiet(columnIndex);
+        if (array != null) {
+            return array;
+        }
+        arrayBuffers.extendAndSet(columnIndex, array = new BorrowedArray());
+        return array;
+    }
+
+    protected @NotNull DirectByteSequenceView bsView(int columnIndex) {
+        DirectByteSequenceView view = bsViews.getQuiet(columnIndex);
+        if (view != null) {
+            return view;
+        }
+        bsViews.extendAndSet(columnIndex, view = new DirectByteSequenceView());
+        return view;
+    }
+
+    protected BinarySequence getBin(long base, long offset, long dataLim, DirectByteSequenceView view) {
+        final long address = base + offset;
+        final long len = Unsafe.getUnsafe().getLong(address);
+        if (len != TableUtils.NULL_LEN) {
+            if (dataLim < offset + len + 8) {
+                throw CairoException.critical(0)
+                        .put("binary is outside of file boundary [offset=")
+                        .put(offset)
+                        .put(", len=")
+                        .put(len)
+                        .put(", dataLim=")
+                        .put(dataLim)
+                        .put(']');
+            }
+            return view.of(address + Long.BYTES, len);
+        }
+        return null;
+    }
+
+    protected void getLong256(long addr, CharSink<?> sink) {
+        Numbers.appendLong256FromUnsafe(addr, sink);
+    }
+
+    protected DirectString getStr(long base, long offset, long dataLim, DirectString view) {
+        final long address = base + offset;
+        final int len = Unsafe.getUnsafe().getInt(address);
+        if (len != TableUtils.NULL_LEN) {
+            if (dataLim < offset + len + 4) {
+                throw CairoException.critical(0)
+                        .put("string is outside of file boundary [offset=")
+                        .put(offset)
+                        .put(", len=")
+                        .put(len)
+                        .put(", dataLim=")
+                        .put(dataLim)
+                        .put(']');
+            }
+            return view.of(address + Vm.STRING_LENGTH_BYTES, len);
+        }
+        return null; // Column top.
+    }
+
+    protected CharSequence getStr0(int columnIndex, DirectString csView) {
+        final long dataPageAddress = pageAddresses.get(columnOffset + columnIndex);
+        if (dataPageAddress != 0) {
+            final long auxPageAddress = auxPageAddresses.get(columnOffset + columnIndex);
+            final long auxPageLim = auxPageSizes.get(columnOffset + columnIndex);
+            final long auxOffset = rowIndex << 3;
+            if (auxPageLim < auxOffset + 8) {
+                throw CairoException.critical(0)
+                        .put("string is outside of file boundary [auxOffset=")
+                        .put(auxOffset)
+                        .put(", auxPageLim=")
+                        .put(auxPageLim)
+                        .put(']');
+            }
+            final long dataPageLim = pageSizes.get(columnOffset + columnIndex);
+            final long dataOffset = Unsafe.getUnsafe().getLong(auxPageAddress + auxOffset);
+            return getStr(dataPageAddress, dataOffset, dataPageLim, csView);
+        }
+        return NullMemoryCMR.INSTANCE.getStrB(0);
+    }
+
+    protected SymbolTable getSymbolTable(int columnIndex) {
+        SymbolTable symbolTable = symbolTableCache.getQuiet(columnIndex);
+        if (symbolTable == null) {
+            symbolTable = symbolTableSource.newSymbolTable(columnIndex);
+            symbolTableCache.extendAndSet(columnIndex, symbolTable);
+        }
+        return symbolTable;
+    }
+
+    @Nullable
+    protected Utf8Sequence getVarchar(int columnIndex, Utf8SplitString utf8View) {
+        final long auxPageAddress = auxPageAddresses.get(columnOffset + columnIndex);
+        if (auxPageAddress != 0) {
+            final long auxPageLim = auxPageAddress + auxPageSizes.get(columnOffset + columnIndex);
+            final long dataPageAddress = pageAddresses.get(columnOffset + columnIndex);
+            final long dataPageLim = dataPageAddress + pageSizes.get(columnOffset + columnIndex);
+            return VarcharTypeDriver.getSplitValue(
+                    auxPageAddress,
+                    auxPageLim,
+                    dataPageAddress,
+                    dataPageLim,
+                    rowIndex,
+                    utf8View
+            );
+        }
+        return null; // Column top.
     }
 
     void init(

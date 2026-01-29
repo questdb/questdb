@@ -51,6 +51,7 @@ import io.questdb.jit.CompiledCountOnlyFilter;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -90,6 +91,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             @NotNull CompiledFilter compiledFilter,
             @NotNull CompiledCountOnlyFilter compiledCountOnlyFilter,
             @NotNull Function filter,
+            @NotNull IntHashSet filterUsedColumnIndexes,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @Nullable ObjList<Function> perWorkerFilters,
             @NotNull ExpressionNode filterExpr,
@@ -123,6 +125,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         final AsyncJitFilterAtom atom = new AsyncJitFilterAtom(
                 configuration,
                 filter,
+                filterUsedColumnIndexes,
                 perWorkerFilters,
                 compiledFilter,
                 compiledCountOnlyFilter,
@@ -308,19 +311,27 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         final long frameRowCount = task.getFrameRowCount();
         final PageFrameSequence<AsyncJitFilterAtom> frameSequence = task.getFrameSequence(AsyncJitFilterAtom.class);
         final AsyncJitFilterAtom atom = frameSequence.getAtom();
-
-        final PageFrameMemory frameMemory = task.populateFrameMemory();
-        record.init(frameMemory);
-
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
+        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
+        final int filterId = atom.maybeAcquireFilter(workerId, owner, circuitBreaker);
 
-        if (frameMemory.hasColumnTops()) {
-            // Use Java-based filter in case of a page frame with column tops.
-            final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
-            final int filterId = atom.maybeAcquireFilter(workerId, owner, circuitBreaker);
-            final Function filter = atom.getFilter(filterId);
-            try {
+        try {
+            final boolean isParquetFrame = task.isParquetFrame();
+            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, isParquetFrame, task.isCountOnly());
+
+            final PageFrameMemory frameMemory;
+            if (useLateMaterialization) {
+                frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = task.populateFrameMemory();
+            }
+            record.init(frameMemory);
+
+            if (frameMemory.hasColumnTops()) {
+                // Use Java-based filter in case of a page frame with column tops.
+                final Function filter = atom.getFilter(filterId);
+
                 if (task.isCountOnly()) {
                     long count = 0;
                     for (long r = 0; r < frameRowCount; r++) {
@@ -337,47 +348,61 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                             rows.add(r);
                         }
                     }
+
+                    if (isParquetFrame) {
+                        atom.getSelectivityStats(filterId).update(rows.size(), frameRowCount);
+                    }
+                    if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
+                        record.init(frameMemory);
+                    }
                     task.setFilteredRowCount(rows.size());
                 }
                 return;
-            } finally {
-                atom.releaseFilter(filterId);
             }
-        }
 
-        // Use JIT-compiled filter.
+            // Use JIT-compiled filter.
+            task.populateJitData();
+            final DirectLongList dataAddresses = task.getDataAddresses();
+            final DirectLongList auxAddresses = task.getAuxAddresses();
 
-        task.populateJitData();
-        final DirectLongList dataAddresses = task.getDataAddresses();
-        final DirectLongList auxAddresses = task.getAuxAddresses();
+            if (task.isCountOnly()) {
+                final long filteredRowCount = atom.compiledCountOnlyFilter.call(
+                        dataAddresses.getAddress(),
+                        dataAddresses.size(),
+                        auxAddresses.getAddress(),
+                        atom.bindVarMemory.getAddress(),
+                        atom.bindVarFunctions.size(),
+                        frameRowCount
+                );
+                task.setFilteredRowCount(filteredRowCount);
+            } else { // normal filter task
+                final long filteredRowCount = atom.compiledFilter.call(
+                        dataAddresses.getAddress(),
+                        dataAddresses.size(),
+                        auxAddresses.getAddress(),
+                        atom.bindVarMemory.getAddress(),
+                        atom.bindVarFunctions.size(),
+                        rows.getAddress(),
+                        frameRowCount
+                );
 
-        if (task.isCountOnly()) {
-            final long filteredRowCount = atom.compiledCountOnlyFilter.call(
-                    dataAddresses.getAddress(),
-                    dataAddresses.size(),
-                    auxAddresses.getAddress(),
-                    atom.bindVarMemory.getAddress(),
-                    atom.bindVarFunctions.size(),
-                    frameRowCount
-            );
-            task.setFilteredRowCount(filteredRowCount);
-        } else { // normal filter task
-            final long filteredRowCount = atom.compiledFilter.call(
-                    dataAddresses.getAddress(),
-                    dataAddresses.size(),
-                    auxAddresses.getAddress(),
-                    atom.bindVarMemory.getAddress(),
-                    atom.bindVarFunctions.size(),
-                    rows.getAddress(),
-                    frameRowCount
-            );
-            rows.setPos(filteredRowCount);
-            task.setFilteredRowCount(rows.size());
+                rows.setPos(filteredRowCount);
+                if (isParquetFrame) {
+                    atom.getSelectivityStats(filterId).update(filteredRowCount, frameRowCount);
+                }
+                if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
+                    record.init(frameMemory);
+                }
 
-            // Pre-touch native columns, if asked.
-            if (frameMemory.getFrameFormat() == PartitionFormat.NATIVE) {
-                atom.preTouchColumns(record, rows, frameRowCount);
+                task.setFilteredRowCount(rows.size());
+
+                // Pre-touch native columns, if asked.
+                if (frameMemory.getFrameFormat() == PartitionFormat.NATIVE) {
+                    atom.preTouchColumns(record, rows, frameRowCount);
+                }
             }
+        } finally {
+            atom.releaseFilter(filterId);
         }
     }
 
@@ -401,6 +426,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         public AsyncJitFilterAtom(
                 CairoConfiguration configuration,
                 Function filter,
+                IntHashSet filterUsedColumnIndexes,
                 ObjList<Function> perWorkerFilters,
                 CompiledFilter compiledFilter,
                 CompiledCountOnlyFilter compiledCountOnlyFilter,
@@ -409,7 +435,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 IntList columnTypes,
                 boolean enablePreTouch
         ) {
-            super(configuration, filter, perWorkerFilters, columnTypes, enablePreTouch);
+            super(configuration, filter, filterUsedColumnIndexes, perWorkerFilters, columnTypes, enablePreTouch);
             this.compiledFilter = compiledFilter;
             this.compiledCountOnlyFilter = compiledCountOnlyFilter;
             this.bindVarMemory = bindVarMemory;
