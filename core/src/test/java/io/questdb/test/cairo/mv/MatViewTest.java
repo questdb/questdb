@@ -556,10 +556,13 @@ public class MatViewTest extends AbstractCairoTest {
             currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.000000Z");
             drainQueues();
 
+            // refresh_period_hi is the exclusive upper bound of completed periods.
+            // With floor division, round(2024-01-01T01:01:01) = 2024-01-01T00:00:00,
+            // meaning all periods before this are complete.
             assertQueryNoLeakCheck(
                     """
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_status\trefresh_period_hi\trefresh_base_table_txn\tbase_table_txn\tperiod_length\tperiod_length_unit\trefresh_limit\trefresh_limit_unit
-                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.000000Z\t2024-01-01T01:01:01.000000Z\tvalid\t2024-01-02T00:00:00.000000Z\t1\t1\t24\tHOUR\t2\tMONTH
+                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.000000Z\t2024-01-01T01:01:01.000000Z\tvalid\t2024-01-01T00:00:00.000000Z\t1\t1\t24\tHOUR\t2\tMONTH
                             """,
                     "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
                             "view_status, refresh_period_hi, refresh_base_table_txn, base_table_txn, " +

@@ -3020,7 +3020,9 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         .address("localhost:" + port)
                         .build()
                 ) {
-                    long max = NanosTimestampDriver.floor("2262-01-31 23:59:59.999999999");
+                    // Use a direct nanosecond value that exceeds the max valid ns timestamp
+                    // The max is 9214646399999999999, so use 9214646400000000000 to trigger overflow
+                    long max = 9214646400000000000L; // exceeds max valid ns timestamp
                     sender.table("tab")
                             .timestampColumn("ts2", max, ChronoUnit.NANOS)
                             .at(max, ChronoUnit.NANOS);

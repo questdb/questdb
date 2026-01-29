@@ -98,10 +98,13 @@ public class FixedOffsetIntervalIteratorTest extends AbstractIntervalIteratorTes
                 1
         );
 
-        Assert.assertEquals(offset, iterator.getMinTimestamp());
+        // With floor division, minTs=0 with offset=1h floors to -23h (previous day boundary)
+        // Day boundaries with 1h offset are at: ..., -23h, 1h, 25h, 49h, ...
+        Assert.assertEquals(offset - timestampDriver.fromDays(1), iterator.getMinTimestamp());
         Assert.assertEquals(offset + timestampDriver.fromDays(7), iterator.getMaxTimestamp());
 
-        for (int i = 0; i < 7; i++) {
+        // Now we get 8 intervals starting from -23h
+        for (int i = -1; i < 7; i++) {
             Assert.assertTrue(iterator.next());
             Assert.assertEquals(offset + timestampDriver.fromDays(i), iterator.getTimestampLo());
             Assert.assertEquals(offset + timestampDriver.fromDays(i + 1), iterator.getTimestampHi());
