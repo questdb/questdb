@@ -80,6 +80,7 @@ import static java.net.HttpURLConnection.HTTP_UNAUTHORIZED;
 public class HttpConnectionContext extends IOContext<HttpConnectionContext> implements Locality, Retry {
     private static final String FALSE = "false";
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
+    private static final int NO_RESUME_PROCESSOR = Integer.MIN_VALUE;
     private static final String TRUE = "true";
     private final ActiveConnectionTracker activeConnectionTracker;
     private final HttpAuthenticator authenticator;
@@ -123,7 +124,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private int recvBufferReadSize;
     private int recvBufferSize;
     private long recvPos;
-    private HttpRequestProcessor resumeProcessor = null;
+    private int currentHandlerId = HttpRequestProcessorSelector.REJECT_PROCESSOR_ID;
+    private int resumeHandlerId = NO_RESUME_PROCESSOR;
     private SecurityContext securityContext;
     private long totalBytesSent;
     private long totalReceived;
@@ -341,7 +343,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             throws HeartBeatException, PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
         boolean keepGoing = switch (operation) {
             case IOOperation.READ -> handleClientRecv(selector, rescheduleContext);
-            case IOOperation.WRITE -> handleClientSend();
+            case IOOperation.WRITE -> handleClientSend(selector);
             case IOOperation.HEARTBEAT -> throw registerDispatcherHeartBeat();
             default -> throw registerDispatcherDisconnect(DISCONNECT_REASON_UNKNOWN_OPERATION);
         };
@@ -369,7 +371,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.totalBytesSent += responseSink.getTotalBytesSent();
         this.responseSink.clear();
         this.nCompletedRequests++;
-        this.resumeProcessor = null;
+        this.resumeHandlerId = NO_RESUME_PROCESSOR;
         this.headerParser.clear();
         this.multipartContentParser.clear();
         this.multipartContentHeaderParser.clear();
@@ -444,7 +446,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 LOG.info().$("peer is slow on running the rerun [fd=").$(getFd())
                         .$(", thread=").$(Thread.currentThread().getId()).I$();
                 processor.parkRequest(this, false);
-                resumeProcessor = processor;
+                resumeHandlerId = (processor instanceof RejectProcessor)
+                        ? HttpRequestProcessorSelector.REJECT_PROCESSOR_ID : currentHandlerId;
                 throw registerDispatcherWrite();
             } catch (ServerDisconnectException e) {
                 LOG.info().$("kicked out [fd=").$(getFd()).I$();
@@ -886,7 +889,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         } catch (PeerIsSlowToReadException peerIsSlowToReadException) {
             LOG.info().$("peer is slow to receive failed to retry response [fd=").$(getFd()).I$();
             processor.parkRequest(this, false);
-            resumeProcessor = processor;
+            resumeHandlerId = (processor instanceof RejectProcessor)
+                    ? HttpRequestProcessorSelector.REJECT_PROCESSOR_ID : currentHandlerId;
             canReset = false;
             throw registerDispatcherWrite();
         } finally {
@@ -898,6 +902,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {
         final HttpRequestProcessor processor = selector.select(headerParser);
+        this.currentHandlerId = selector.getLastSelectedHandlerId();
         return requestValidator.validateRequestType(processor, rejectProcessor);
     }
 
@@ -1003,7 +1008,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         processor.onHeadersReady(this);
                         LOG.debug().$("good [fd=").$(getFd()).I$();
                         processor.onRequestComplete(this);
-                        resumeProcessor = null;
+                        resumeHandlerId = NO_RESUME_PROCESSOR;
                         reset();
                     }
                 }
@@ -1015,10 +1020,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 return disconnectHttp(processor, DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV);
             } catch (PeerIsSlowToReadException e) {
                 LOG.debug().$("peer is slow reader [two]").$();
-                // it is important to assign resume processor before we fire
+                // it is important to assign resume handler ID before we fire
                 // event off to dispatcher
                 processor.parkRequest(this, false);
-                resumeProcessor = processor;
+                resumeHandlerId = (processor instanceof RejectProcessor)
+                        ? HttpRequestProcessorSelector.REJECT_PROCESSOR_ID : currentHandlerId;
                 throw registerDispatcherWrite();
             }
         } catch (ServerDisconnectException | PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
@@ -1033,16 +1039,25 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return busyRecv;
     }
 
-    private boolean handleClientSend() throws PeerIsSlowToReadException, ServerDisconnectException {
-        if (resumeProcessor != null) {
+    private HttpRequestProcessor resolveResumeProcessor(HttpRequestProcessorSelector selector) {
+        if (resumeHandlerId == HttpRequestProcessorSelector.REJECT_PROCESSOR_ID) {
+            return rejectProcessor;
+        }
+        return selector.resolveProcessorById(resumeHandlerId, headerParser);
+    }
+
+    private boolean handleClientSend(HttpRequestProcessorSelector selector) throws PeerIsSlowToReadException, ServerDisconnectException {
+        if (resumeHandlerId != NO_RESUME_PROCESSOR) {
+            final HttpRequestProcessor proc = resolveResumeProcessor(selector);
             try {
-                resumeProcessor.resumeSend(this);
+                proc.resumeSend(this);
                 reset();
                 return true;
             } catch (PeerIsSlowToReadException ignore) {
-                resumeProcessor.parkRequest(this, false);
+                proc.parkRequest(this, false);
                 LOG.debug().$("peer is slow reader").$();
                 throw registerDispatcherWrite();
+                // resumeHandlerId stays set (re-park with same ID)
             } catch (PeerDisconnectedException ignore) {
                 throw registerDispatcherDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
             } catch (ServerDisconnectException ignore) {
