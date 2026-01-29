@@ -71,7 +71,7 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
     private static final int PARQUET_VERSION = ParquetVersion.PARQUET_VERSION_V2;
     private static final boolean RAW_ARRAY_ENCODING = false;
     // Configuration - adjust these for your benchmark
-    private static final long ROW_COUNT = 20_000_000;  // 10M rows for quick test, use 140M for full benchmark
+    private static final long ROW_COUNT = 140_000_000;  // 10M rows for quick test, use 140M for full benchmark
     private static final int ROW_GROUP_SIZE = 220_000;
     private static final boolean STATISTICS_ENABLED = true;
 
@@ -97,7 +97,7 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStreamingParquetExportBenchmark() throws Exception {
+    public void testParquetExportBenchmark() throws Exception {
         assertMemoryLeak(() -> {
             // Create table if it doesn't exist
             createBenchmarkTableIfNotExists();
@@ -114,71 +114,24 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Pure read benchmark using 64-bit reads - reads all data as longs and sums them.
+     * This measures disk/mmap read speed with per-value processing overhead.
+     */
     @Test
-    public void testStreamingParquetExportBenchmarkOld() throws Exception {
+    public void testPureReadBenchmark64bit() throws Exception {
         assertMemoryLeak(() -> {
-            // Create table with same schema as benchmark script
-            LOG.info().$("Creating table with ").$(ROW_COUNT).$(" rows...").$();
-
-            execute("CREATE TABLE benchmark_table (" +
-                    "publisher SYMBOL," +
-                    "exch SYMBOL," +
-                    "symbol SYMBOL," +
-                    "event_id LONG," +
-                    "ccy LONG," +
-                    "incr_pnl DOUBLE," +
-                    "real_pnl DOUBLE," +
-                    "est_pnl DOUBLE," +
-                    "incr_fee DOUBLE," +
-                    "fee_amt DOUBLE," +
-                    "rebate_amt DOUBLE," +
-                    "net_traded_qty DOUBLE," +
-                    "excess_qty DOUBLE," +
-                    "expected_qty DOUBLE," +
-                    "pnl_ccy_usd_rate DOUBLE," +
-                    "fee_ccy_usd_rate DOUBLE," +
-                    "last_seen_md_id LONG," +
-                    "timestamp TIMESTAMP" +
-                    ") TIMESTAMP(timestamp) PARTITION BY DAY");
-
-            // Populate table
-            LOG.info().$("Inserting data...").$();
-            long insertStart = System.nanoTime();
-
-            execute("INSERT INTO benchmark_table " +
-                    "SELECT " +
-                    "rnd_symbol('PUB_A', 'PUB_B', 'PUB_C', 'PUB_D', 'PUB_E') as publisher," +
-                    "rnd_symbol('NYSE', 'NASDAQ', 'CME', 'EUREX', 'LSE') as exch," +
-                    "rnd_symbol('AAPL', 'GOOG', 'MSFT', 'AMZN', 'META', 'NVDA', 'TSLA', 'JPM', 'BAC', 'WFC') as symbol," +
-                    "x as event_id," +
-                    "rnd_long(1, 100, 0) as ccy," +
-                    "rnd_double() * 10000 - 5000 as incr_pnl," +
-                    "rnd_double() * 100000 - 50000 as real_pnl," +
-                    "rnd_double() * 100000 - 50000 as est_pnl," +
-                    "rnd_double() * 100 as incr_fee," +
-                    "rnd_double() * 1000 as fee_amt," +
-                    "rnd_double() * 500 as rebate_amt," +
-                    "rnd_double() * 10000 as net_traded_qty," +
-                    "rnd_double() * 100 as excess_qty," +
-                    "rnd_double() * 10000 as expected_qty," +
-                    "rnd_double() * 2 as pnl_ccy_usd_rate," +
-                    "rnd_double() * 2 as fee_ccy_usd_rate," +
-                    "rnd_long(1, 1000000000, 0) as last_seen_md_id," +
-                    "'2025-01-01'::timestamp + x * 10000L as timestamp " +
-                    "FROM long_sequence(" + ROW_COUNT + ")");
-
-            long insertElapsed = System.nanoTime() - insertStart;
-            LOG.info().$("Insert completed in ").$(insertElapsed / 1_000_000).$("ms").$();
+            // Create table if it doesn't exist
+            createBenchmarkTableIfNotExists();
 
             engine.releaseInactive();
 
             // Get table disk size
             long tableDiskSize = getTableDiskSize("benchmark_table");
-            LOG.info().$("Table disk size: ").$(tableDiskSize / (1024 * 1024)).$(" MB (")
-                    .$(String.format("%.2f", tableDiskSize / (1024.0 * 1024.0 * 1024.0))).$(" GB)").$();
+            LOG.info().$("Table disk size: ").$(tableDiskSize / (1024 * 1024)).$(" MB").$();
 
-            // Run the streaming export benchmark
-            runStreamingExportBenchmark(tableDiskSize);
+            // Run pure read benchmark with 64-bit reads
+            runPureReadBenchmark64bit(tableDiskSize);
         });
     }
 
@@ -258,7 +211,103 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                 long totalBytesRead = 0;
                 int frameCount = 0;
 
+                // Pre-allocate 4KB buffer for memcpy
+                final int BUFFER_SIZE = 4096;
+                long buffer = Unsafe.getUnsafe().allocateMemory(BUFFER_SIZE);
+
                 LOG.info().$("Starting pure read benchmark (no Parquet, no Rust)...").$();
+
+                ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
+                long startCpuTime = threadMXBean.getCurrentThreadCpuTime();
+                long startTime = System.nanoTime();
+
+                try {
+                    PageFrame frame;
+                    while ((frame = pageFrameCursor.next()) != null) {
+                        long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
+
+                        // Read all columns in 4KB chunks using memcpy
+                        for (int col = 0; col < columnCount; col++) {
+                            long pageAddress = frame.getPageAddress(col);
+                            long pageSize = frame.getPageSize(col);
+
+                            if (pageAddress > 0 && pageSize > 0) {
+                                // Copy in 4KB chunks
+                                for (long offset = 0; offset < pageSize; offset += BUFFER_SIZE) {
+                                    long chunkSize = Math.min(BUFFER_SIZE, pageSize - offset);
+                                    Unsafe.getUnsafe().copyMemory(pageAddress + offset, buffer, chunkSize);
+                                }
+                                // Read one value to prevent optimization
+                                totalSum += Unsafe.getUnsafe().getLong(buffer);
+                                totalBytesRead += pageSize;
+                            }
+
+                            // Also read aux page if present (for var-length columns)
+                            long auxPageAddress = frame.getAuxPageAddress(col);
+                            long auxPageSize = frame.getAuxPageSize(col);
+                            if (auxPageAddress > 0 && auxPageSize > 0) {
+                                for (long offset = 0; offset < auxPageSize; offset += BUFFER_SIZE) {
+                                    long chunkSize = Math.min(BUFFER_SIZE, auxPageSize - offset);
+                                    Unsafe.getUnsafe().copyMemory(auxPageAddress + offset, buffer, chunkSize);
+                                }
+                                totalSum += Unsafe.getUnsafe().getLong(buffer);
+                                totalBytesRead += auxPageSize;
+                            }
+                        }
+
+                        totalRows += frameRowCount;
+                        frameCount++;
+                    }
+                } finally {
+                    Unsafe.getUnsafe().freeMemory(buffer);
+                }
+
+                long elapsedNs = System.nanoTime() - startTime;
+                long cpuTimeNs = threadMXBean.getCurrentThreadCpuTime() - startCpuTime;
+
+                double elapsedSec = elapsedNs / 1_000_000_000.0;
+                double cpuTimeSec = cpuTimeNs / 1_000_000_000.0;
+                double cpuUtilization = (cpuTimeNs * 100.0) / elapsedNs;
+                double throughputMBps = (totalBytesRead / (1024.0 * 1024.0)) / elapsedSec;
+                double tableThroughputMBps = (tableDiskSize / (1024.0 * 1024.0)) / elapsedSec;
+
+                LOG.info().$("=== Pure Read Benchmark Results ===").$();
+                LOG.info().$("Total rows: ").$(totalRows).$();
+                LOG.info().$("Total frames: ").$(frameCount).$();
+                LOG.info().$("Bytes read: ").$(totalBytesRead / (1024 * 1024)).$(" MB").$();
+                LOG.info().$("Table disk size: ").$(tableDiskSize / (1024 * 1024)).$(" MB").$();
+                LOG.info().$("Checksum (to prevent optimization): ").$(totalSum).$();
+                LOG.info().$("Elapsed (wall) time: ").$(String.format("%.3f", elapsedSec)).$("s").$();
+                LOG.info().$("CPU time: ").$(String.format("%.3f", cpuTimeSec)).$("s").$();
+                LOG.info().$("CPU utilization: ").$(String.format("%.1f", cpuUtilization)).$("%").$();
+                LOG.info().$("Read throughput: ").$(String.format("%.2f", throughputMBps)).$(" MB/s").$();
+                LOG.info().$("Table throughput: ").$(String.format("%.2f", tableThroughputMBps)).$(" MB/s").$();
+                LOG.info().$("==========================================").$();
+
+                if (cpuUtilization > 90) {
+                    LOG.info().$("Analysis: CPU-bound (memory/compute limited)").$();
+                } else if (cpuUtilization > 50) {
+                    LOG.info().$("Analysis: Mixed CPU/IO").$();
+                } else {
+                    LOG.info().$("Analysis: IO-bound (disk limited)").$();
+                }
+            }
+        }
+    }
+
+    private void runPureReadBenchmark64bit(long tableDiskSize) throws Exception {
+        try (RecordCursorFactory factory = select("SELECT * FROM benchmark_table")) {
+            RecordMetadata metadata = factory.getMetadata();
+            int columnCount = metadata.getColumnCount();
+
+            try (PageFrameCursor pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
+
+                long totalSum = 0;
+                long totalRows = 0;
+                long totalBytesRead = 0;
+                int frameCount = 0;
+
+                LOG.info().$("Starting pure read benchmark (64-bit reads)...").$();
 
                 ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
                 long startCpuTime = threadMXBean.getCurrentThreadCpuTime();
@@ -268,7 +317,7 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                 while ((frame = pageFrameCursor.next()) != null) {
                     long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
 
-                    // Read all columns, sum all 64-bit values
+                    // Read all columns as 64-bit values
                     for (int col = 0; col < columnCount; col++) {
                         long pageAddress = frame.getPageAddress(col);
                         long pageSize = frame.getPageSize(col);
@@ -307,7 +356,7 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                 double throughputMBps = (totalBytesRead / (1024.0 * 1024.0)) / elapsedSec;
                 double tableThroughputMBps = (tableDiskSize / (1024.0 * 1024.0)) / elapsedSec;
 
-                LOG.info().$("=== Pure Read Benchmark Results ===").$();
+                LOG.info().$("=== Pure Read Benchmark (64-bit) Results ===").$();
                 LOG.info().$("Total rows: ").$(totalRows).$();
                 LOG.info().$("Total frames: ").$(frameCount).$();
                 LOG.info().$("Bytes read: ").$(totalBytesRead / (1024 * 1024)).$(" MB").$();
