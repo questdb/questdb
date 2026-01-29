@@ -967,6 +967,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             if (isParquet) {
+                txWriter.setPartitionParquetGenerated(timestamp, true);
                 txWriter.setPartitionParquetFormat(timestamp, parquetSize, true);
             }
 
@@ -1455,6 +1456,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long originalSize = txWriter.getPartitionSize(partitionIndex);
         // used to update txn and bump recordStructureVersion
         txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
+        txWriter.setPartitionParquetGenerated(partitionIndex, true);
         txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileLength);
         txWriter.bumpPartitionTableVersion();
         txWriter.commit(denseSymbolMapWriters);
@@ -1527,6 +1529,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // used to update txn and bump recordStructureVersion
         txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, parquetRowCount);
         txWriter.resetPartitionParquetFormat(partitionTimestamp);
+        txWriter.resetPartitionParquetGenerated(partitionIndex);
         txWriter.bumpPartitionTableVersion();
         txWriter.commit(denseSymbolMapWriters);
 
@@ -2261,7 +2264,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.distressed = true;
     }
 
-    public long markPartitionForParquetConversion(long partitionTimestamp) {
+    public long preparePartitionForParquetConversion(long partitionTimestamp) {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
 
@@ -2293,19 +2296,51 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .put(", partition=").put(utf8Sink).put(']');
         }
 
-        if (txWriter.isPartitionParquet(partitionIndex)) {
+        if (txWriter.isPartitionParquetGenerated(partitionIndex) || txWriter.isPartitionParquet(partitionIndex)) {
+            // parquet has been generated for the partition
             return -1L;
         }
-
-        // todo: mark partition to be converted to parquet,
-        //  keep track of these flags, and check against them
-        //  if already flagged, just return -1L;
-        //  remove the mark when the partition has been converted
-        //  also remove if conversion failed for any reason
 
         squashPartitionForce(partitionIndex);
 
         return partitionTimestamp;
+    }
+
+    public boolean markPartitionParquetReady(long partitionTimestamp) {
+        assert metadata.getTimestampIndex() > -1;
+        assert PartitionBy.isPartitioned(partitionBy);
+
+        if (inTransaction()) {
+            assert !tableToken.isWal();
+            LOG.info()
+                    .$("committing open transaction before marking partition parquet ready [table=")
+                    .$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .I$();
+            commit();
+        }
+
+        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        if (partitionIndex < 0) {
+            return false;
+        }
+
+        if (txWriter.isPartitionParquetGenerated(partitionIndex) || txWriter.isPartitionParquet(partitionIndex)) {
+            return true;
+        }
+
+        final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        path.concat(PARQUET_PARTITION_NAME);
+        if (!ff.exists(path.$())) {
+            return false;
+        }
+
+        txWriter.setPartitionParquetGenerated(partitionIndex, true);
+        txWriter.bumpPartitionTableVersion();
+        txWriter.commit(denseSymbolMapWriters);
+        return true;
     }
 
     public void markSeqTxnCommitted(long seqTxn) {
@@ -2844,8 +2879,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         if (txWriter.isPartitionParquet(partitionIndex)) {
-            return true; // Partition is already in Parquet format.
+            // Partition is already in Parquet format.
+            return true;
         }
+        if (!txWriter.isPartitionParquetGenerated(partitionIndex)) {
+            // parquet file has not been generated yet
+            return false;
+        }
+
         lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
         boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
         squashPartitionForce(partitionIndex);
@@ -2859,6 +2900,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         path.concat(PARQUET_PARTITION_NAME);
         if (!ff.exists(path.$())) {
+            // parquet flags suggest all good, but no parquet file to switch to.
+            // clear the parquet generated flag, because the parquet file has been removed.
+            txWriter.resetPartitionParquetGenerated(partitionIndex);
+            txWriter.bumpPartitionTableVersion();
+            txWriter.commit(denseSymbolMapWriters);
             return false;
         }
 
@@ -6389,6 +6435,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         final long parquetFileSize = Unsafe.getUnsafe().getLong(blockAddress + 7 * Long.BYTES);
                         if (parquetFileSize > -1) {
                             txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
+                            txWriter.setPartitionParquetGeneratedByRawIndex(partitionIndexRaw, true);
                             txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileSize);
                         } else {
                             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
