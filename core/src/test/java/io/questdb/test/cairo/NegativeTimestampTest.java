@@ -139,11 +139,6 @@ public class NegativeTimestampTest extends AbstractCairoTest {
         });
     }
 
-    // TODO: Complex O3 patterns with multiple partitions spanning negative and positive
-    // timestamps need further investigation. The issue is that partition 1970 gets registered
-    // in the transaction metadata with a different suffix than what's created on disk.
-    // See TODO-negative-timestamps.md for detailed root cause analysis.
-    @Ignore("Complex O3 with mixed negative/positive partitions not yet fully supported")
     @Test
     public void testComplexO3NegativeTimestamps() throws Exception {
         assertMemoryLeak(() -> {

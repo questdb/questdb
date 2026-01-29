@@ -65,12 +65,15 @@ struct index_t {
         return ts <= other.ts;
     }
 
+    // XOR with sign bit to convert signed to unsigned for radix sort.
+    // This maps: INT64_MIN -> 0, -1 -> 0x7FFF..., 0 -> 0x8000..., INT64_MAX -> 0xFFFF...
+    // preserving sort order when treating values as unsigned.
     uint64_t operator>>(uint64_t shr) const {
-        return (uint64_t)ts >> shr;
+        return ((uint64_t)ts ^ 0x8000000000000000ULL) >> shr;
     }
 
     uint64_t operator&(uint64_t mask) const{
-        return (uint64_t)ts & mask;
+        return ((uint64_t)ts ^ 0x8000000000000000ULL) & mask;
     }
 };
 
