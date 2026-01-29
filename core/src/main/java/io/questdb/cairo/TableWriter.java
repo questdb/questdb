@@ -1503,49 +1503,54 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return true; // Partition already has a Native format
         }
 
-        lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
-        boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
+        try {
+            lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+            boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
 
-        long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-        final int partitionDirLen = path.size();
-        // set the parquet file full path
-        setPathForParquetPartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-        if (!ff.exists(path.$())) {
-            throw CairoException.nonCritical().put("partition path does not exist [path=").put(path).put(']');
+            long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            final int partitionDirLen = path.size();
+            // set the parquet file full path
+            setPathForParquetPartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            if (!ff.exists(path.$())) {
+                throw CairoException.nonCritical().put("partition path does not exist [path=").put(path).put(']');
+            }
+
+            // upgrade partition version
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
+            createDirsOrFail(ff, other, configuration.getMkDirMode());
+            final int newPartitionDirLen = other.size();
+
+            LOG.info().$("converting parquet partition to native [path=").$substr(pathRootSize, path).I$();
+            long parquetRowCount = produceNativeFromParquet(path, other, partitionTimestamp, partitionIndex);
+
+            LOG.info().$("copying index files to native [path=").$substr(pathRootSize, path).I$();
+            copyPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
+
+            // used to update txn and bump recordStructureVersion
+            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, parquetRowCount);
+            txWriter.resetPartitionParquetFormat(partitionTimestamp);
+            txWriter.resetPartitionParquetGenerated(partitionIndex);
+            txWriter.bumpPartitionTableVersion();
+            txWriter.commit(denseSymbolMapWriters);
+
+            if (lastPartitionConverted) {
+                closeActivePartition(false);
+            }
+
+            // remove old partition dir
+            safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
+
+            if (lastPartitionConverted) {
+                // Open last partition as read-only
+                openPartition(partitionTimestamp, txWriter.getTransientRowCount());
+                setAppendPosition(txWriter.getTransientRowCount(), false);
+            }
+            return true;
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
         }
-
-        // upgrade partition version
-        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
-        createDirsOrFail(ff, other, configuration.getMkDirMode());
-        final int newPartitionDirLen = other.size();
-
-        LOG.info().$("converting parquet partition to native [path=").$substr(pathRootSize, path).I$();
-        long parquetRowCount = produceNativeFromParquet(path, other, partitionTimestamp, partitionIndex);
-
-        LOG.info().$("copying index files to native [path=").$substr(pathRootSize, path).I$();
-        copyPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
-
-        // used to update txn and bump recordStructureVersion
-        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, parquetRowCount);
-        txWriter.resetPartitionParquetFormat(partitionTimestamp);
-        txWriter.resetPartitionParquetGenerated(partitionIndex);
-        txWriter.bumpPartitionTableVersion();
-        txWriter.commit(denseSymbolMapWriters);
-
-        if (lastPartitionConverted) {
-            closeActivePartition(false);
-        }
-
-        // remove old partition dir
-        safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
-
-        if (lastPartitionConverted) {
-            // Open last partition as read-only
-            openPartition(partitionTimestamp, txWriter.getTransientRowCount());
-            setAppendPosition(txWriter.getTransientRowCount(), false);
-        }
-        return true;
     }
 
     public void destroy() {
@@ -2330,17 +2335,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return true;
         }
 
-        final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-        path.concat(PARQUET_PARTITION_NAME);
-        if (!ff.exists(path.$())) {
-            return false;
-        }
+        try {
+            final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            path.concat(PARQUET_PARTITION_NAME);
+            if (!ff.exists(path.$())) {
+                return false;
+            }
 
-        txWriter.setPartitionParquetGenerated(partitionIndex, true);
-        txWriter.bumpPartitionTableVersion();
-        txWriter.commit(denseSymbolMapWriters);
-        return true;
+            txWriter.setPartitionParquetGenerated(partitionIndex, true);
+            txWriter.bumpPartitionTableVersion();
+            txWriter.commit(denseSymbolMapWriters);
+            return true;
+        } finally {
+            path.trimTo(pathSize);
+        }
     }
 
     public void markSeqTxnCommitted(long seqTxn) {
@@ -2893,56 +2902,61 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
 
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-        final int partitionDirLen = path.size();
-        if (!ff.exists(path.$())) {
-            throw CairoException.nonCritical().put("partition directory does not exist [path=").put(path).put(']');
-        }
-        path.concat(PARQUET_PARTITION_NAME);
-        if (!ff.exists(path.$())) {
-            // parquet flags suggest all good, but no parquet file to switch to.
-            // clear the parquet generated flag, because the parquet file has been removed.
-            txWriter.resetPartitionParquetGenerated(partitionIndex);
+        try {
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            final int partitionDirLen = path.size();
+            if (!ff.exists(path.$())) {
+                throw CairoException.nonCritical().put("partition directory does not exist [path=").put(path).put(']');
+            }
+            path.concat(PARQUET_PARTITION_NAME);
+            if (!ff.exists(path.$())) {
+                // parquet flags suggest all good, but no parquet file to switch to.
+                // clear the parquet generated flag, because the parquet file has been removed.
+                txWriter.resetPartitionParquetGenerated(partitionIndex);
+                txWriter.bumpPartitionTableVersion();
+                txWriter.commit(denseSymbolMapWriters);
+                return false;
+            }
+
+            // upgrade partition version
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
+            createDirsOrFail(ff, other, configuration.getMkDirMode());
+            final int newPartitionDirLen = other.size();
+
+            // set the parquet file full path
+            setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
+
+            LOG.info().$("switching native partition to parquet [path=").$substr(pathRootSize, path).I$();
+            ff.copy(path.$(), other.$());
+            final long parquetFileLength = ff.length(other.$());
+
+            LOG.info().$("copying index files to parquet [path=").$substr(pathRootSize, path).I$();
+            copyPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
+
+            final long originalSize = txWriter.getPartitionSize(partitionIndex);
+            // used to update txn and bump recordStructureVersion
+            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
+            txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileLength);
             txWriter.bumpPartitionTableVersion();
             txWriter.commit(denseSymbolMapWriters);
-            return false;
+
+            if (lastPartitionConverted) {
+                closeActivePartition(false);
+            }
+
+            // remove old partition dir
+            safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
+
+            if (lastPartitionConverted) {
+                // Open last partition as read-only
+                openPartition(partitionTimestamp, txWriter.getTransientRowCount());
+                setAppendPosition(txWriter.getTransientRowCount(), false);
+            }
+            return true;
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
         }
-
-        // upgrade partition version
-        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
-        createDirsOrFail(ff, other, configuration.getMkDirMode());
-        final int newPartitionDirLen = other.size();
-
-        // set the parquet file full path
-        setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
-
-        LOG.info().$("switching native partition to parquet [path=").$substr(pathRootSize, path).I$();
-        ff.copy(path.$(), other.$());
-        final long parquetFileLength = ff.length(other.$());
-
-        LOG.info().$("copying index files to parquet [path=").$substr(pathRootSize, path).I$();
-        copyPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
-
-        final long originalSize = txWriter.getPartitionSize(partitionIndex);
-        // used to update txn and bump recordStructureVersion
-        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
-        txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileLength);
-        txWriter.bumpPartitionTableVersion();
-        txWriter.commit(denseSymbolMapWriters);
-
-        if (lastPartitionConverted) {
-            closeActivePartition(false);
-        }
-
-        // remove old partition dir
-        safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
-
-        if (lastPartitionConverted) {
-            // Open last partition as read-only
-            openPartition(partitionTimestamp, txWriter.getTransientRowCount());
-            setAppendPosition(txWriter.getTransientRowCount(), false);
-        }
-        return true;
     }
 
     /**
