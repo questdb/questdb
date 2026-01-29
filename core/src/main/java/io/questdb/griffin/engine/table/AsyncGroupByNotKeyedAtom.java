@@ -312,7 +312,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         }
     }
 
-    public boolean shoulduseLateMaterialization(int slotId, boolean isParquetFrame) {
+    public boolean shouldUseLateMaterialization(int slotId, boolean isParquetFrame) {
         if (!isParquetFrame) {
             return false;
         }

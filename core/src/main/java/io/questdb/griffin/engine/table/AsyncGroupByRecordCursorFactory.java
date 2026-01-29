@@ -380,7 +380,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == frameSequence;
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMaterialization = atom.shoulduseLateMaterialization(slotId, isParquetFrame);
+        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
 
         final PageFrameMemory frameMemory;
         if (useLateMaterialization) {

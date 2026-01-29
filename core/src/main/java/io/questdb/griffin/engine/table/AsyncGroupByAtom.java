@@ -282,6 +282,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         Misc.freeObjList(perWorkerAllocators);
         Misc.free(ownerLongTopKList);
         Misc.freeObjListAndKeepObjects(perWorkerLongTopKLists);
+        Misc.freeObjList(frameFilteredMemoryRecords);
+        Misc.free(ownerPageFrameFilteredNoRandomAccessMemoryRecord);
         if (perWorkerKeyFunctions != null) {
             for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
                 Misc.freeObjList(perWorkerKeyFunctions.getQuick(i));
@@ -636,7 +638,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
     }
 
-    public boolean shoulduseLateMaterialization(int slotId, boolean isParquetFrame) {
+    public boolean shouldUseLateMaterialization(int slotId, boolean isParquetFrame) {
         if (!isParquetFrame) {
             return false;
         }

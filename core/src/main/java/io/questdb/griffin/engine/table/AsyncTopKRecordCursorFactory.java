@@ -214,7 +214,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         final PageFrameMemoryPool frameMemoryPool = atom.getMemoryPool(slotId);
         final PageFrameMemoryRecord recordB = atom.getRecordB(slotId);
         final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMaterialization = atom.shoulduseLateMaterialization(slotId, isParquetFrame);
+        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
         final PageFrameMemory frameMemory;
         if (useLateMaterialization) {
             frameMemory = frameMemoryPool.navigateTo(task.getFrameIndex(), atom.getFilterUsedColumnIndexes());

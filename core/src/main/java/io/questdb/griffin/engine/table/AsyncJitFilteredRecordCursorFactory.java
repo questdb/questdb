@@ -386,13 +386,14 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                         frameRowCount
                 );
 
+                rows.setPos(filteredRowCount);
                 if (isParquetFrame) {
                     atom.getSelectivityStats(filterId).update(filteredRowCount, frameRowCount);
                 }
                 if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
                     record.init(frameMemory);
                 }
-                rows.setPos(filteredRowCount);
+
                 task.setFilteredRowCount(rows.size());
 
                 // Pre-touch native columns, if asked.
