@@ -72,8 +72,7 @@ pub extern "system" fn Java_io_questdb_std_Os_smokeTest(
     a: i64,
     b: i64,
 ) -> i64 {
-    let result = a + b;
-    result
+    a + b
 }
 
 #[no_mangle]
