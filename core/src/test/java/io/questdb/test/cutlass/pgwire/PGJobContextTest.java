@@ -6822,7 +6822,7 @@ nodejs code:
                 }
 
                 try {
-                    // insert out of order
+                    // insert out of order - negative timestamp is now allowed but O3 on non-partitioned table is not
                     batchInsert.setLong(1, 0L);
                     batchInsert.setInt(2, 1);
                     batchInsert.setLong(3, -100);
@@ -6830,7 +6830,7 @@ nodejs code:
                     batchInsert.executeBatch();
                     Assert.fail();
                 } catch (SQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "timestamp before 1970-01-01 is not allowed");
+                    TestUtils.assertContains(e.getMessage(), "cannot insert rows out of order to non-partitioned table");
                     connection.rollback();
                 }
 

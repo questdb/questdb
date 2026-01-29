@@ -358,7 +358,12 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             presentTimestampsSize = presentTimestamps.size();
 
             if (needsSorting && presentTimestampsSize > 1) {
-                presentTimestamps.sortAsUnsigned();
+                // Use signed sort when there are negative timestamps to ensure correct ordering
+                if (hasNegative) {
+                    presentTimestamps.sortAsSigned();
+                } else {
+                    presentTimestamps.sortAsUnsigned();
+                }
             }
 
             if (presentTimestampsSize > 0) {

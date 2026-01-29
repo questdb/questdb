@@ -850,6 +850,10 @@ public class NanosTimestampDriver implements TimestampDriver {
         }
         int p = lo;
         int year = Numbers.parseInt(str, p, p += 4);
+        // Check for year overflow - nanosecond timestamps max out at year 2261
+        if (year > MAX_NANO_YEAR) {
+            throw NumericException.instance();
+        }
         boolean l = CommonUtils.isLeapYear(year);
         if (CommonUtils.checkLen3(p, hi)) {
             CommonUtils.checkChar(str, p++, hi, '-');
@@ -952,6 +956,10 @@ public class NanosTimestampDriver implements TimestampDriver {
         }
         int p = lo;
         int year = Numbers.parseInt(str, p, p += 4);
+        // Check for year overflow - nanosecond timestamps max out at year 2261
+        if (year > MAX_NANO_YEAR) {
+            throw NumericException.instance();
+        }
         boolean l = CommonUtils.isLeapYear(year);
         if (CommonUtils.checkLen3(p, hi)) {
             CommonUtils.checkChar(str, p++, hi, '-');
@@ -1621,9 +1629,7 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public void validateBounds(long timestamp) {
-        if (timestamp < 0) {
-            validateBounds0(timestamp);
-        }
+        validateBounds0(timestamp);
     }
 
     private static long checkTimezoneTail(CharSequence seq, int p, int lim) throws NumericException {
@@ -1732,7 +1738,7 @@ public class NanosTimestampDriver implements TimestampDriver {
         if (timestamp == Long.MIN_VALUE) {
             throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
         }
-        if (timestamp > CommonUtils.TIMESTAMP_UNIT_NANOS) {
+        if (timestamp > CommonUtils.MAX_TIMESTAMP) {
             throw CairoException.nonCritical().put("designated timestamp_ns beyond ").put(MAX_NANO_TIMESTAMP_STR).put(" is not allowed");
         }
     }

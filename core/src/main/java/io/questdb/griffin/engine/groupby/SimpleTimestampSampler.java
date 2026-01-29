@@ -80,8 +80,11 @@ public class SimpleTimestampSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        long q = (value - start) / bucket;
-        if (value < 0 && q * bucket != value) {
+        long diff = value - start;
+        long q = diff / bucket;
+        // Java division truncates towards zero, but we need floor division.
+        // For negative diff with a remainder, subtract 1 to get the floor.
+        if (diff < 0 && q * bucket != diff) {
             q = q - 1;
         }
         return start + q * bucket;

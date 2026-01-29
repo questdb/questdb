@@ -5317,15 +5317,17 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     ('1970-01-01T01:00:00.0Z', 15),
                     ('1970-01-01T02:00:00.0Z', 20),\
                     ('1970-01-01T03:00:00.0Z', 25);""");
+        // ALIGN TO CALENDAR produces midnight-aligned buckets
         assertQueryNoLeakCheck(
                 """
                         ts\tavg
                         1969-12-31T00:00:00.000000000Z\t5.0
                         1970-01-01T00:00:00.000000000Z\t17.5
                         """,
-                "SELECT ts, avg(value) FROM(select ts, value from test order by ts asc) sample BY 1d FILL(NULL);",
+                "SELECT ts, avg(value) FROM(select ts, value from test order by ts asc) sample BY 1d FILL(NULL) ALIGN TO CALENDAR;",
                 "ts"
         );
+        // ALIGN TO CALENDAR WITH OFFSET '02:00' produces 02:00-aligned buckets
         assertQueryNoLeakCheck(
                 """
                         ts\tavg
