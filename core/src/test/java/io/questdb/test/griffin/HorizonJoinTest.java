@@ -36,7 +36,6 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class HorizonJoinTest extends AbstractCairoTest {
@@ -828,7 +827,6 @@ public class HorizonJoinTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore("HORIZON JOIN without ON clause not yet supported")
     @Test
     public void testHorizonJoinWithoutOnClause() throws Exception {
         assertMemoryLeak(() -> {
@@ -870,6 +868,160 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             0\t20.0
                             1\t30.0
                             2\t40.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithoutOnClauseMultipleMasterRows() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            // Prices at 0s, 1s, 2s, 3s, 4s
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 10),
+                                ('1970-01-01T00:00:01.000000Z', 20),
+                                ('1970-01-01T00:00:02.000000Z', 30),
+                                ('1970-01-01T00:00:03.000000Z', 40),
+                                ('1970-01-01T00:00:04.000000Z', 50)
+                            """
+            );
+            // Trades at 1s and 2s
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 100),
+                                ('1970-01-01T00:00:02.000000Z', 200)
+                            """
+            );
+
+            // HORIZON JOIN without ON clause with multiple master rows
+            // For trade at 1s with offset 0: ASOF to 1s -> 20
+            // For trade at 1s with offset 1s: ASOF to 2s -> 30
+            // For trade at 2s with offset 0: ASOF to 2s -> 30
+            // For trade at 2s with offset 1s: ASOF to 3s -> 40
+            // avg at offset 0: (20+30)/2 = 25
+            // avg at offset 1s: (30+40)/2 = 35
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tsum
+                            0\t25.0\t300.0
+                            1\t35.0\t300.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithoutOnClauseNegativeOffsets() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            // Prices at 0s, 1s, 2s, 3s
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 10),
+                                ('1970-01-01T00:00:01.000000Z', 20),
+                                ('1970-01-01T00:00:02.000000Z', 30),
+                                ('1970-01-01T00:00:03.000000Z', 40)
+                            """
+            );
+            // Trade at 2s
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:02.000000Z', 100)
+                            """
+            );
+
+            // HORIZON JOIN without ON clause with negative offsets
+            // For trade at 2s:
+            //   offset=-1s: look at 2s-1s=1s -> ASOF to price at 1s -> 20
+            //   offset=0: look at 2s -> ASOF to price at 2s -> 30
+            //   offset=1s: look at 2s+1s=3s -> ASOF to price at 3s -> 40
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p " +
+                    "RANGE FROM -1s TO 1s STEP 1s AS h " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg
+                            -1\t20.0
+                            0\t30.0
+                            1\t40.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithoutOnClauseWithFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            // Prices at 0s, 1s, 2s, 3s, 4s
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 10),
+                                ('1970-01-01T00:00:01.000000Z', 20),
+                                ('1970-01-01T00:00:02.000000Z', 30),
+                                ('1970-01-01T00:00:03.000000Z', 40),
+                                ('1970-01-01T00:00:04.000000Z', 50)
+                            """
+            );
+            // Trades at 1s (qty=100), 2s (qty=200), 3s (qty=150)
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 100),
+                                ('1970-01-01T00:00:02.000000Z', 200),
+                                ('1970-01-01T00:00:03.000000Z', 150)
+                            """
+            );
+
+            // Filter to only trades with qty > 100 (2s and 3s)
+            // For trade at 2s with offset 0: ASOF to 2s -> 30
+            // For trade at 3s with offset 0: ASOF to 3s -> 40
+            // avg at offset 0: (30+40)/2 = 35
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "WHERE t.qty > 100 " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tsum
+                            0\t35.0\t350.0
                             """,
                     sql,
                     null,

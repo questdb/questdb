@@ -169,7 +169,6 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     configuration,
                     messageBus,
                     atom,
-                    // TODO(puzpuzpuz): support HORIZON JOIN without ON clause (timestamp-only ASOF lookup)
                     filter != null ? FILTER_AND_REDUCE : REDUCE,
                     reduceTaskFactory,
                     workerCount,
@@ -251,7 +250,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
      * Page frame reducer for filtered markout GROUP BY.
      * <p>
      * Applies filter first, then for each filtered master row iterates through all sequence offsets,
-     * performs keyed ASOF JOIN lookup using MarkoutTimeFrameHelper, and aggregates results.
+     * performs ASOF JOIN lookup using MarkoutTimeFrameHelper, and aggregates results.
+     * Supports both keyed and timestamp-only ASOF JOIN modes.
      */
     private static void filterAndReduce(
             int workerId,
@@ -363,7 +363,13 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     /**
-     * Process a single master row through all offsets with proper keyed ASOF JOIN semantics.
+     * Process a single master row through all offsets with ASOF JOIN semantics.
+     * <p>
+     * Supports two modes:
+     * <ul>
+     *   <li>Keyed ASOF JOIN (when asOfJoinMap != null): finds ASOF position, then backward scans for key match</li>
+     *   <li>Timestamp-only ASOF JOIN: uses the ASOF position directly as the match (no key filtering)</li>
+     * </ul>
      *
      * @return the ASOF position (rowId) found for the first offset, for bookmark optimization
      */
@@ -417,7 +423,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         long match0RowId = Long.MIN_VALUE;
         long asOfRowId0 = Long.MIN_VALUE;  // Track first offset's ASOF position for bookmark optimization
         if (asOfJoinMap != null && masterKeyCopier != null) {
-            // Navigate to ASOF position for first offset
+            // Keyed ASOF JOIN: navigate to ASOF position, then backward scan for key match
             asOfRowId0 = slaveTimeFrameHelper.findAsOfRow(horizonTs0);
             prevAsOfRowId = asOfRowId0;
 
@@ -438,6 +444,11 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     prevMatchRowId = match0RowId;
                 }
             }
+        } else {
+            // Timestamp-only ASOF JOIN: the ASOF row IS the match (no key filtering)
+            match0RowId = slaveTimeFrameHelper.findAsOfRow(horizonTs0);
+            asOfRowId0 = match0RowId;
+            prevMatchRowId = match0RowId;
         }
 
         // Aggregate first offset
@@ -459,7 +470,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
             long matchRowId = Long.MIN_VALUE;
             if (asOfJoinMap != null && masterKeyCopier != null) {
-                // Navigate forward to ASOF position for this offset
+                // Keyed ASOF JOIN: navigate forward to ASOF position, then backward scan for key match
                 long asOfRowId = slaveTimeFrameHelper.findAsOfRow(horizonTs);
 
                 if (asOfRowId != Long.MIN_VALUE) {
@@ -489,6 +500,12 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
                     prevAsOfRowId = asOfRowId;
                 }
+            } else {
+                // Timestamp-only ASOF JOIN: the ASOF row IS the match (no key filtering)
+                matchRowId = slaveTimeFrameHelper.findAsOfRow(horizonTs);
+                if (matchRowId != Long.MIN_VALUE) {
+                    prevMatchRowId = matchRowId;
+                }
             }
 
             // Aggregate with prevMatchRowId (may be from earlier offset or null)
@@ -509,7 +526,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
      * Page frame reducer for markout GROUP BY.
      * <p>
      * For each master row in the page frame, iterates through all sequence offsets,
-     * performs keyed ASOF JOIN lookup using MarkoutTimeFrameHelper, and aggregates results.
+     * performs ASOF JOIN lookup using MarkoutTimeFrameHelper, and aggregates results.
+     * Supports both keyed and timestamp-only ASOF JOIN modes.
      */
     private static void reduce(
             int workerId,
