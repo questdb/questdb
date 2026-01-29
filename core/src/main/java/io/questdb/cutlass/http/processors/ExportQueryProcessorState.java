@@ -83,6 +83,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     private String parquetExportTableName;
     private boolean queryCacheable = false;
     private HTTPSerialParquetExporter serialParquetExporter;
+    long timeout;
     private final ParquetWriteCallback writeCallback = new ParquetWriteCallback();
 
     public ExportQueryProcessorState(HttpConnectionContext httpConnectionContext, CopyExportContext copyContext) {

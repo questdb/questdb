@@ -69,7 +69,6 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Interval;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -113,7 +112,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     // Being asynchronous we may need to be able to return factory to the cache
     // by the same thread that executes the dispatcher.
     private static final LocalValue<ExportQueryProcessorState> LV = new LocalValue<>();
-    private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final MillisecondClock clock;
     private final JsonQueryProcessorConfiguration configuration;
     private final Decimal128 decimal128 = new Decimal128();
@@ -123,8 +121,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     private final int maxSqlRecompileAttempts;
     private final Metrics metrics;
     private final byte requiredAuthType;
-    private final SqlExecutionContextImpl sqlExecutionContext;
-    private long timeout;
+    private final int sharedWorkerCount;
 
     public ExportQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
@@ -133,8 +130,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     ) {
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, sharedQueryWorkerCount);
-        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
+        this.sharedWorkerCount = sharedQueryWorkerCount;
         this.metrics = engine.getMetrics();
         this.engine = engine;
         maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
@@ -143,7 +139,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
     @Override
     public void close() {
-        Misc.free(circuitBreaker);
     }
 
     public void execute(
@@ -153,7 +148,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         try {
             boolean isExpRequest = isExpUrl(context.getRequestHeader().getUrl());
 
-            circuitBreaker.setTimeout(timeout);
+            NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
+            SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
+            circuitBreaker.setTimeout(state.timeout);
             circuitBreaker.resetTimer();
             state.recordCursorFactory = context.getSelectCache().poll(state.sqlText);
             sqlExecutionContext.with(
@@ -266,7 +263,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         }
 
         HttpChunkedResponse response = context.getChunkedResponse();
-        if (parseUrl(response, context.getRequestHeader(), state)) {
+        if (parseUrl(response, context.getRequestHeader(), state, context)) {
             execute(context, state);
         } else {
             readyForNextRequest(context);
@@ -304,6 +301,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         ExportQueryProcessorState state = LV.get(context);
         if (state != null) {
             state.pausedQuery = pausedQuery;
+            SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
             state.rnd = sqlExecutionContext.getRandom();
         }
     }
@@ -455,6 +453,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         assert state.copyID == -1;
         CopyExportContext.ExportTaskEntry entry = null;
         try {
+            SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
             var securityContext = context.getSecurityContext();
             var sqlExecutionCircuitBreaker = sqlExecutionContext.getCircuitBreaker();
             var copyExportContext = engine.getCopyExportContext();
@@ -624,6 +623,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             CopyExportContext.ExportTaskEntry entry = null;
             boolean cleanup = true;
             try {
+                SqlExecutionContextImpl sqlExecutionContext = state.getHttpConnectionContext().getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
                 var copyExportContext = engine.getCopyExportContext();
                 entry = copyExportContext.getEntry(state.copyID);
                 HTTPSerialParquetExporter exporter = state.getOrCreateSerialParquetExporter(engine);
@@ -778,7 +778,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             return;
         }
 
-        // copy random during query resume
+        NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
+        SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
         sqlExecutionContext.with(context.getSecurityContext(), null, state.rnd, context.getFd(), circuitBreaker.of(context.getFd()));
         LOG.debug().$("resume [fd=").$(context.getFd()).I$();
 
@@ -968,7 +969,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     private boolean parseUrl(
             HttpChunkedResponse response,
             HttpRequestHeader request,
-            ExportQueryProcessorState state
+            ExportQueryProcessorState state,
+            HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         // Query text.
         final DirectUtf8Sequence query = request.getUrlParam(URL_PARAM_QUERY);
@@ -1050,17 +1052,18 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         }
 
         if (exportModel.isParquetFormat()) { // parquet use export timeout
-            timeout = configuration.getExportTimeout();
+            state.timeout = configuration.getExportTimeout();
         } else { // csv use query timeout
-            timeout = circuitBreaker.getDefaultMaxTime();
+            NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
+            state.timeout = circuitBreaker.getDefaultMaxTime();
         }
 
         DirectUtf8Sequence timeoutSeq = request.getUrlParam(URL_PARAM_TIMEOUT);
         if (timeoutSeq != null) {
             try {
-                timeout = Numbers.parseLong(timeoutSeq) * 1000;
-                if (timeout <= 0) {
-                    timeout = configuration.getExportTimeout();
+                state.timeout = Numbers.parseLong(timeoutSeq) * 1000;
+                if (state.timeout <= 0) {
+                    state.timeout = configuration.getExportTimeout();
                 }
             } catch (NumericException ex) {
                 // Skip or stop will have default value.

@@ -25,11 +25,13 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.Metrics;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.ex.BufferOverflowException;
 import io.questdb.cutlass.http.ex.NotEnoughLinesException;
@@ -51,10 +53,12 @@ import io.questdb.network.ServerDisconnectException;
 import io.questdb.network.Socket;
 import io.questdb.network.SocketFactory;
 import io.questdb.network.TlsSessionInitFailedException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -109,6 +113,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private long authenticationNanos = 0L;
     private boolean connectionCounted;
     private boolean forceDisconnectOnComplete;
+    private NetworkSqlExecutionCircuitBreaker httpCircuitBreaker;
+    private SqlExecutionContextImpl httpSqlExecutionContext;
     private int nCompletedRequests;
     private boolean pendingRetry = false;
     private String processorName;
@@ -212,6 +218,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.multipartContentHeaderParser.close();
         this.headerParser.close();
         this.localValueMap.close();
+        this.httpCircuitBreaker = Misc.free(httpCircuitBreaker);
+        this.httpSqlExecutionContext = Misc.free(httpSqlExecutionContext);
         this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
         this.responseSink.close();
         this.receivedBytes = 0;
@@ -291,6 +299,32 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return selectCache;
     }
 
+    public NetworkSqlExecutionCircuitBreaker getCircuitBreaker() {
+        return httpCircuitBreaker;
+    }
+
+    public SqlExecutionContextImpl getSqlExecutionContext() {
+        return httpSqlExecutionContext;
+    }
+
+    public NetworkSqlExecutionCircuitBreaker getOrCreateCircuitBreaker(CairoEngine engine) {
+        if (httpCircuitBreaker == null) {
+            httpCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+                    engine,
+                    engine.getConfiguration().getCircuitBreakerConfiguration(),
+                    MemoryTag.NATIVE_CB3
+            );
+        }
+        return httpCircuitBreaker;
+    }
+
+    public SqlExecutionContextImpl getOrCreateSqlExecutionContext(CairoEngine engine, int workerCount) {
+        if (httpSqlExecutionContext == null) {
+            httpSqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
+        }
+        return httpSqlExecutionContext;
+    }
+
     public @NotNull StringSink getSessionIdSink() {
         return sessionIdSink;
     }
@@ -341,6 +375,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.multipartContentHeaderParser.clear();
         this.csPool.clear();
         this.localValueMap.clear();
+        if (httpCircuitBreaker != null) {
+            httpCircuitBreaker.clear();
+        }
         this.multipartParserState.multipartRetry = false;
         this.retryAttemptAttributes.waitStartTimestamp = 0;
         this.retryAttemptAttributes.lastRunTimestamp = 0;

@@ -62,7 +62,6 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -84,7 +83,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     protected final ObjList<QueryExecutor> queryExecutors = new ObjList<>();
     private final long asyncCommandTimeout;
     private final long asyncWriterStartTimeout;
-    private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final JsonQueryProcessorConfiguration configuration;
     private final CairoEngine engine;
     private final int maxSqlRecompileAttempts;
@@ -92,29 +90,18 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     private final Clock nanosecondClock;
     private final Path path;
     private final byte requiredAuthType;
-    private final SqlExecutionContextImpl sqlExecutionContext;
+    private final int sharedWorkerCount;
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
             int sharedQueryWorkerCount
     ) {
-        this(
-                configuration,
-                engine,
-                new SqlExecutionContextImpl(engine, sharedQueryWorkerCount)
-        );
-    }
-
-    public JsonQueryProcessor(
-            JsonQueryProcessorConfiguration configuration,
-            CairoEngine engine,
-            SqlExecutionContextImpl sqlExecutionContext
-    ) {
         try {
             this.configuration = configuration;
             this.path = new Path();
             this.engine = engine;
+            this.sharedWorkerCount = sharedQueryWorkerCount;
             requiredAuthType = configuration.getRequiredAuthType();
 
             final QueryExecutor sendConfirmation = this::updateMetricsAndSendConfirmation;
@@ -156,10 +143,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
 
             // Query types start with 1 instead of 0, so we have to add 1 to the expected size.
             assert this.queryExecutors.size() == (CompiledQuery.TYPES_COUNT + 1);
-            this.sqlExecutionContext = sqlExecutionContext;
             this.nanosecondClock = configuration.getNanosecondClock();
             this.maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
-            this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB3);
             this.metrics = engine.getMetrics();
             this.asyncWriterStartTimeout = engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout();
             this.asyncCommandTimeout = engine.getConfiguration().getWriterAsyncCommandMaxTimeout();
@@ -172,12 +157,14 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     @Override
     public void close() {
         Misc.free(path);
-        Misc.free(circuitBreaker);
     }
 
     public void execute0(JsonQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
         OperationFuture fut = state.getOperationFuture();
         final HttpConnectionContext context = state.getHttpConnectionContext();
+        NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
+        SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
+        sqlExecutionContext.setQueryFutureUpdateListener(configuration.getQueryFutureUpdateListener());
         circuitBreaker.resetTimer();
 
         if (fut == null) {
@@ -315,6 +302,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         if (state != null) {
             state.setPausedQuery(pausedQuery);
             // preserve random when we park the context
+            SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
             state.setRnd(sqlExecutionContext.getRandom());
         }
     }
@@ -334,6 +322,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         final JsonQueryProcessorState state = LV.get(context);
         if (state != null) {
             // we are resuming request execution, we need to copy random to execution context
+            NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
+            SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
             sqlExecutionContext.with(context.getSecurityContext(), null, state.getRnd(), context.getFd(), circuitBreaker.of(context.getFd()));
             if (!state.isPausedQuery()) {
                 context.resumeResponseSend();
@@ -474,6 +464,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     private void compileAndExecuteQuery(
             JsonQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+        SqlExecutionContextImpl sqlExecutionContext = state.getHttpConnectionContext().getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             for (int retries = 0; ; retries++) {
                 final long compilationStart = nanosecondClock.getTicks();
@@ -572,6 +563,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             RecordCursorFactory factory
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         state.setCompilerNanos(0);
+        SqlExecutionContextImpl sqlExecutionContext = state.getHttpConnectionContext().getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
         sqlExecutionContext.setCacheHit(true);
         executeSelect0(state, factory, true);
     }
@@ -581,6 +573,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             CompiledQuery cq,
             CharSequence keepAliveHeader
     ) throws PeerIsSlowToReadException, PeerDisconnectedException, SqlException {
+        SqlExecutionContextImpl sqlExecutionContext = state.getHttpConnectionContext().getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
         Operation op = cq.getOperation();
         try (OperationFuture fut = op.execute(sqlExecutionContext, state.getEventSubSequence())) {
             int waitResult = fut.await(getAsyncWriterStartTimeout(state));
@@ -611,6 +604,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             CompiledQuery cq,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+        SqlExecutionContextImpl sqlExecutionContext = state.getHttpConnectionContext().getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
         try (InsertOperation insert = cq.popInsertOperation()) {
             insert.execute(sqlExecutionContext).await();
             metrics.jsonQueryMetrics().markComplete();
@@ -647,7 +641,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             boolean queryCacheable
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
-        if (!state.of(factory, queryCacheable, sqlExecutionContext)) {
+        SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
+        if (!state.of(factory, queryCacheable)) {
             readyForNextRequest(context);
             return;
         }
@@ -676,6 +671,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             CompiledQuery cq,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+        HttpConnectionContext context = state.getHttpConnectionContext();
+        NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
+        SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
         circuitBreaker.resetTimer();
         sqlExecutionContext.initNow();
         OperationFuture fut = null;

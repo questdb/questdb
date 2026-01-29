@@ -122,7 +122,8 @@ public class HttpQueryTestBuilder {
                 .withHealthCheckAuthRequired(httpHealthCheckAuthType)
                 .withNanosClock(nanosecondClock)
                 .withForceSendFragmentationChunkSize(forceSendFragmentationChunkSize)
-                .withForceRecvFragmentationChunkSize(forceRecvFragmentationChunkSize);
+                .withForceRecvFragmentationChunkSize(forceRecvFragmentationChunkSize)
+                .withQueryFutureUpdateListener(queryFutureUpdateListener);
         if (sendBufferSize != -1) {
             serverConfigBuilder.withSendBufferSize(sendBufferSize);
         }
@@ -240,8 +241,6 @@ public class HttpQueryTestBuilder {
                 }
             });
 
-            this.sqlExecutionContexts = new ObjList<>();
-
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
                 public ObjHashSet<String> getUrls() {
@@ -252,19 +251,10 @@ public class HttpQueryTestBuilder {
 
                 @Override
                 public HttpRequestHandler newInstance() {
-                    SqlExecutionContextImpl newContext = new SqlExecutionContextImpl(engine, workerCount) {
-                        @Override
-                        public QueryFutureUpdateListener getQueryFutureUpdateListener() {
-                            return queryFutureUpdateListener != null ? queryFutureUpdateListener : QueryFutureUpdateListener.EMPTY;
-                        }
-                    };
-
-                    sqlExecutionContexts.add(newContext);
-
                     return new JsonQueryProcessor(
                             httpConfiguration.getJsonQueryProcessorConfiguration(),
                             engine,
-                            newContext
+                            workerCount
                     );
                 }
             });

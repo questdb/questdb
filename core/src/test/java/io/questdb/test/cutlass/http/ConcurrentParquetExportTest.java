@@ -59,7 +59,7 @@ public class ConcurrentParquetExportTest extends AbstractBootstrapTest {
                             sqlExecutionContext
                     );
 
-                    int threadCount = 4;
+                    int threadCount = 16;
                     CyclicBarrier barrier = new CyclicBarrier(threadCount);
                     AtomicInteger successCount = new AtomicInteger(0);
                     AtomicReference<Throwable> firstError = new AtomicReference<>();
