@@ -278,12 +278,12 @@ namespace questdb::avx2 {
         return {length_data, data_type_t::i64, data_kind_t::kMemory};
     }
 
-    // Reads length part of the varchar header for aux vector.
-    // This part is stored in the lowest bytes of the header
+    // Reads the 4-byte header from each varchar aux vector entry.
+    // The header contains flags (including NULL flag) and length.
     // (see VarcharTypeDriver to understand the format).
     //
-    // Note: unlike read_mem_varsize this method doesn't return the length,
-    //       so it can only be used in NULL checks.
+    // Processes 8 rows at a time, returning 8 x 32-bit headers in a YMM.
+    // This is optimized for NULL checks where we only need the header, not the full aux entry.
     jit_value_t read_mem_varchar_header(Compiler &c,
                                         int32_t column_idx,
                                         const Gp &varsize_aux_ptr,
@@ -294,24 +294,41 @@ namespace questdb::avx2 {
         Gp header_offset = c.new_gp64("header_offset");
 
         c.mov(header_offset, input_index);
-        auto header_shift = type_shift(data_type_t::i128);
+        auto header_shift = type_shift(data_type_t::i128);  // 16-byte aux entries
         c.sal(header_offset, header_shift);
 
-        Vec headers_0_1 = c.new_ymm("headers_0_1");
-        Vec headers_2_3 = c.new_ymm("headers_2_3");
+        // Load 8 aux entries (128 bytes) into 4 YMMs
+        Vec ymm0 = c.new_ymm("headers_0_1");
+        Vec ymm1 = c.new_ymm("headers_2_3");
+        Vec ymm2 = c.new_ymm("headers_4_5");
+        Vec ymm3 = c.new_ymm("headers_6_7");
 
-        // Load 4 headers into two YMMs.
-        c.vmovdqu(headers_0_1, ymmword_ptr(varsize_aux_address, header_offset, 0));
-        c.vmovdqu(headers_2_3, ymmword_ptr(varsize_aux_address, header_offset, 0, 32));
+        c.vmovdqu(ymm0, ymmword_ptr(varsize_aux_address, header_offset, 0, 0));
+        c.vmovdqu(ymm1, ymmword_ptr(varsize_aux_address, header_offset, 0, 32));
+        c.vmovdqu(ymm2, ymmword_ptr(varsize_aux_address, header_offset, 0, 64));
+        c.vmovdqu(ymm3, ymmword_ptr(varsize_aux_address, header_offset, 0, 96));
 
-        // Permute the first i64 of each header and combine them into single YMM.
-        // 0th and 1st i64 go to the first YMM lane in headers_0_1.
-        c.vpermq(headers_0_1, headers_0_1, 0b00001000);
-        // 2nd and 3rd i64 go to the second YMM lane in headers_2_3.
-        c.vpermq(headers_2_3, headers_2_3, 0b10000000);
-        c.vinserti128(headers_2_3, headers_2_3, headers_0_1.xmm(), 0);
+        // Each YMM contains 2 aux entries (32 bytes each = 2 x 16 bytes).
+        // We want to extract the first dword (4 bytes) from each 16-byte entry.
+        // Dword layout in each YMM: [H0, x, x, x, H1, x, x, x] where H is header, x is don't-care.
+        // Use vpermd to select dwords at indices 0 and 4 from each YMM.
+        Vec perm_ctrl = c.new_ymm("perm_ctrl");
+        int32_t ctrl_data[8] = {0, 4, 0, 0, 0, 0, 0, 0};
+        Mem ctrl_mem = c.new_const(ConstPoolScope::kLocal, &ctrl_data, 32);
+        c.vmovdqu(perm_ctrl, ctrl_mem);
 
-        return {headers_2_3, data_type_t::i64, data_kind_t::kMemory};
+        c.vpermd(ymm0, perm_ctrl, ymm0);  // [H0, H1, x, x, x, x, x, x]
+        c.vpermd(ymm1, perm_ctrl, ymm1);  // [H2, H3, x, x, x, x, x, x]
+        c.vpermd(ymm2, perm_ctrl, ymm2);  // [H4, H5, x, x, x, x, x, x]
+        c.vpermd(ymm3, perm_ctrl, ymm3);  // [H6, H7, x, x, x, x, x, x]
+
+        // Combine: each YMM now has 2 valid dwords in the low 64 bits.
+        // Use vpunpcklqdq to combine pairs, then vinserti128 to build final YMM.
+        c.vpunpcklqdq(ymm0, ymm0, ymm1);  // [H0, H1, H2, H3, x, x, x, x]
+        c.vpunpcklqdq(ymm2, ymm2, ymm3);  // [H4, H5, H6, H7, x, x, x, x]
+        c.vinserti128(ymm0, ymm0, ymm2.xmm(), 1);  // [H0, H1, H2, H3, H4, H5, H6, H7]
+
+        return {ymm0, data_type_t::i32, data_kind_t::kMemory};
     }
 
     jit_value_t

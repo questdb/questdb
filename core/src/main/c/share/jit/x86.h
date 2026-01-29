@@ -156,12 +156,11 @@ namespace questdb::x86 {
         return {length, data_type_t::i64, data_kind_t::kMemory};
     }
 
-    // Reads length part of the varchar header for aux vector.
-    // This part is stored in the lowest bytes of the header
+    // Reads the 4-byte header from each varchar aux vector entry.
+    // The header contains flags (including NULL flag) and length.
     // (see VarcharTypeDriver to understand the format).
     //
-    // Note: unlike read_mem_varsize this method doesn't return the length,
-    //       so it can only be used in NULL checks.
+    // This is optimized for NULL checks where we only need the 4-byte header.
     jit_value_t read_mem_varchar_header(Compiler &c,
                                         int32_t column_idx,
                                         const Gp &varsize_aux_ptr,
@@ -171,13 +170,14 @@ namespace questdb::x86 {
 
         Gp header_offset = c.new_gp64("header_offset");
         c.mov(header_offset, input_index);
-        auto header_shift = type_shift(data_type_t::i128);
+        auto header_shift = type_shift(data_type_t::i128);  // 16-byte aux entries
         c.sal(header_offset, header_shift);
 
         Gp header = c.new_gp64("header");
-        c.mov(header, ptr(varsize_aux_address, header_offset, 0));
+        // Load only the 4-byte header (not the full 8 bytes)
+        c.mov(header.r32(), ptr(varsize_aux_address, header_offset, 0, 0, 4));
 
-        return {header, data_type_t::i64, data_kind_t::kMemory};
+        return {header.r32(), data_type_t::i32, data_kind_t::kMemory};
     }
 
     jit_value_t read_mem(
@@ -498,10 +498,10 @@ namespace questdb::x86 {
             case data_type_t::i16:
             case data_type_t::i32:
             case data_type_t::string_header:
+            case data_type_t::varchar_header:
                 return {int32_eq(c, lhs.gp().r32(), rhs.gp().r32()), data_type_t::i32, dk};
             case data_type_t::i64:
             case data_type_t::binary_header:
-            case data_type_t::varchar_header:
                 return {int64_eq(c, lhs.gp(), rhs.gp()), data_type_t::i32, dk};
             case data_type_t::i128:
                 return {int128_eq(c, lhs.vec(), rhs.vec()), data_type_t::i32, dk};
@@ -522,10 +522,10 @@ namespace questdb::x86 {
             case data_type_t::i16:
             case data_type_t::i32:
             case data_type_t::string_header:
+            case data_type_t::varchar_header:
                 return {int32_ne(c, lhs.gp().r32(), rhs.gp().r32()), data_type_t::i32, dk};
             case data_type_t::i64:
             case data_type_t::binary_header:
-            case data_type_t::varchar_header:
                 return {int64_ne(c, lhs.gp(), rhs.gp()), data_type_t::i32, dk};
             case data_type_t::i128:
                 return {int128_ne(c, lhs.vec(), rhs.vec()), data_type_t::i32, dk};
