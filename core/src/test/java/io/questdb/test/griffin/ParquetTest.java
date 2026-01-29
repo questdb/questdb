@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -272,6 +273,383 @@ public class ParquetTest extends AbstractCairoTest {
             } finally {
                 Unsafe.setRssMemLimit(0);
             }
+        });
+    }
+
+    @Test
+    public void testDecimalAllSizes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (" +
+                    "id long, " +
+                    "ts timestamp, " +
+                    "dec8 decimal(2,1), " +
+                    "dec16 decimal(4,2), " +
+                    "dec32 decimal(9,4), " +
+                    "dec64 decimal(18,6), " +
+                    "dec128 decimal(38,10), " +
+                    "dec256 decimal(76,20)" +
+                    ") timestamp(ts) partition by day;");
+
+            execute("insert into x values(" +
+                    "1, '2024-06-10T00:00:00.000000Z', " +
+                    "1.2::decimal(2,1), " +
+                    "12.34::decimal(4,2), " +
+                    "12345.6789::decimal(9,4), " +
+                    "123456789012.345678::decimal(18,6), " +
+                    "1234567890123456789012345678.9012345678::decimal(38,10), " +
+                    "12345678901234567890123456789012345678901234567890123456.78901234567890123456::decimal(76,20)" +
+                    ");");
+
+            execute("insert into x values(" +
+                    "2, '2024-06-11T00:00:00.000000Z', " +
+                    "-1.2::decimal(2,1), " +
+                    "-12.34::decimal(4,2), " +
+                    "-12345.6789::decimal(9,4), " +
+                    "-123456789012.345678::decimal(18,6), " +
+                    "-1234567890123456789012345678.9012345678::decimal(38,10), " +
+                    "-12345678901234567890123456789012345678901234567890123456.78901234567890123456::decimal(76,20)" +
+                    ");");
+
+            execute("insert into x values(" +
+                    "3, '2024-06-12T00:00:00.000000Z', " +
+                    "0::decimal(2,1), " +
+                    "0::decimal(4,2), " +
+                    "0::decimal(9,4), " +
+                    "0::decimal(18,6), " +
+                    "0::decimal(38,10), " +
+                    "0::decimal(76,20)" +
+                    ");");
+
+            execute("alter table x convert partition to parquet where ts >= 0");
+
+            assertSql(
+                    """
+                            id\tts\tdec8\tdec16\tdec32\tdec64\tdec128\tdec256
+                            1\t2024-06-10T00:00:00.000000Z\t1.2\t12.34\t12345.6789\t123456789012.345678\t1234567890123456789012345678.9012345678\t12345678901234567890123456789012345678901234567890123456.78901234567890123456
+                            2\t2024-06-11T00:00:00.000000Z\t-1.2\t-12.34\t-12345.6789\t-123456789012.345678\t-1234567890123456789012345678.9012345678\t-12345678901234567890123456789012345678901234567890123456.78901234567890123456
+                            3\t2024-06-12T00:00:00.000000Z\t0.0\t0.00\t0.0000\t0.000000\t0.0000000000\t0.00000000000000000000
+                            """,
+                    "x order by id"
+            );
+        });
+    }
+
+    @Test
+    public void testDecimalColTops() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final int iterations = 5;
+        final int initialRows = 20;
+        final int additionalRows = 50;
+
+        for (int iter = 0; iter < iterations; iter++) {
+            assertMemoryLeak(() -> {
+                // Generate random precision/scale for each decimal type
+                // DECIMAL8: precision 1-2, DECIMAL16: 3-4, DECIMAL32: 5-9,
+                // DECIMAL64: 10-18, DECIMAL128: 19-38, DECIMAL256: 39-76
+                int p8 = 1 + rnd.nextInt(2);
+                int s8 = rnd.nextInt(p8 + 1);
+                int p16 = 3 + rnd.nextInt(2);
+                int s16 = rnd.nextInt(p16 + 1);
+                int p32 = 5 + rnd.nextInt(5);
+                int s32 = rnd.nextInt(p32 + 1);
+                int p64 = 10 + rnd.nextInt(9);
+                int s64 = rnd.nextInt(p64 + 1);
+                int p128 = 19 + rnd.nextInt(20);
+                int s128 = rnd.nextInt(p128 + 1);
+                int p256 = 39 + rnd.nextInt(38);
+                int s256 = rnd.nextInt(p256 + 1);
+
+                // Create table with initial rows (no decimal columns yet)
+                execute("create table x (ts timestamp) timestamp(ts) partition by month;");
+                execute("insert into x " +
+                        "select timestamp_sequence('2024-01-01', 100000000) as ts " +
+                        "from long_sequence(" + initialRows + ")");
+
+                // Add all 6 decimal column types with random precision/scale (these will have col-tops)
+                execute("alter table x add column dec8 decimal(" + p8 + "," + s8 + ");");
+                execute("alter table x add column dec16 decimal(" + p16 + "," + s16 + ");");
+                execute("alter table x add column dec32 decimal(" + p32 + "," + s32 + ");");
+                execute("alter table x add column dec64 decimal(" + p64 + "," + s64 + ");");
+                execute("alter table x add column dec128 decimal(" + p128 + "," + s128 + ");");
+                execute("alter table x add column dec256 decimal(" + p256 + "," + s256 + ");");
+
+                // Insert additional rows with random decimal values
+                execute("insert into x " +
+                        "select " +
+                        "timestamp_sequence('2024-02-01', 100000000) as ts, " +
+                        "rnd_decimal(" + p8 + ", " + s8 + ", 5) as dec8, " +
+                        "rnd_decimal(" + p16 + ", " + s16 + ", 5) as dec16, " +
+                        "rnd_decimal(" + p32 + ", " + s32 + ", 5) as dec32, " +
+                        "rnd_decimal(" + p64 + ", " + s64 + ", 5) as dec64, " +
+                        "rnd_decimal(" + p128 + ", " + s128 + ", 5) as dec128, " +
+                        "rnd_decimal(" + p256 + ", " + s256 + ", 5) as dec256 " +
+                        "from long_sequence(" + additionalRows + ")");
+
+                // Capture expected data before parquet conversion
+                execute("create table expected as (select * from x)");
+
+                // Convert to parquet
+                execute("alter table x convert partition to parquet where ts >= 0");
+
+                // Verify row count
+                assertSql(
+                        "cnt\n" + (initialRows + additionalRows) + "\n",
+                        "select count(*) as cnt from x"
+                );
+
+                // Verify initial rows have null decimals (col-tops)
+                assertSql(
+                        "null_count\n" + initialRows + "\n",
+                        "select count(*) as null_count from x where dec8 is null and dec16 is null and dec32 is null and dec64 is null and dec128 is null and dec256 is null"
+                );
+
+                // Verify data matches expected
+                assertSql(
+                        "diff_count\n0\n",
+                        "select count(*) as diff_count from (" +
+                                "select * from x " +
+                                "except " +
+                                "select * from expected" +
+                                ")"
+                );
+
+                // Round-trip: convert back to native and verify again
+                execute("alter table x convert partition to native where ts >= 0");
+                assertSql(
+                        "diff_count\n0\n",
+                        "select count(*) as diff_count from (" +
+                                "select * from x " +
+                                "except " +
+                                "select * from expected" +
+                                ")"
+                );
+
+                execute("drop table x");
+                execute("drop table expected");
+            });
+        }
+    }
+
+    @Test
+    public void testDecimalFuzz() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final int iterations = 5;
+        final int rowCount = 200;
+
+        for (int iter = 0; iter < iterations; iter++) {
+            assertMemoryLeak(() -> {
+                // Generate random precision/scale for each decimal type
+                int p8 = 1 + rnd.nextInt(2);
+                int s8 = rnd.nextInt(p8 + 1);
+                int p16 = 3 + rnd.nextInt(2);
+                int s16 = rnd.nextInt(p16 + 1);
+                int p32 = 5 + rnd.nextInt(5);
+                int s32 = rnd.nextInt(p32 + 1);
+                int p64 = 10 + rnd.nextInt(9);
+                int s64 = rnd.nextInt(p64 + 1);
+                int p128 = 19 + rnd.nextInt(20);
+                int s128 = rnd.nextInt(p128 + 1);
+                int p256 = 39 + rnd.nextInt(38);
+                int s256 = rnd.nextInt(p256 + 1);
+
+                // Create table with all decimal sizes using random precision/scale
+                execute("create table x (" +
+                        "ts timestamp, " +
+                        "dec8 decimal(" + p8 + "," + s8 + "), " +
+                        "dec16 decimal(" + p16 + "," + s16 + "), " +
+                        "dec32 decimal(" + p32 + "," + s32 + "), " +
+                        "dec64 decimal(" + p64 + "," + s64 + "), " +
+                        "dec128 decimal(" + p128 + "," + s128 + "), " +
+                        "dec256 decimal(" + p256 + "," + s256 + ")" +
+                        ") timestamp(ts) partition by day;");
+
+                // Insert random data using rnd_decimal function
+                execute("insert into x " +
+                        "select " +
+                        "timestamp_sequence('2024-01-01', 100000000) as ts, " +
+                        "rnd_decimal(" + p8 + ", " + s8 + ", 10) as dec8, " +
+                        "rnd_decimal(" + p16 + ", " + s16 + ", 10) as dec16, " +
+                        "rnd_decimal(" + p32 + ", " + s32 + ", 10) as dec32, " +
+                        "rnd_decimal(" + p64 + ", " + s64 + ", 10) as dec64, " +
+                        "rnd_decimal(" + p128 + ", " + s128 + ", 10) as dec128, " +
+                        "rnd_decimal(" + p256 + ", " + s256 + ", 10) as dec256 " +
+                        "from long_sequence(" + rowCount + ")");
+
+                // Capture data before parquet conversion
+                execute("create table expected as (select * from x)");
+
+                // Convert to parquet
+                execute("alter table x convert partition to parquet where ts >= 0");
+
+                // Verify data matches after parquet conversion
+                assertSql(
+                        "cnt\n" + rowCount + "\n",
+                        "select count(*) as cnt from x"
+                );
+
+                // Compare each row - join and check for differences
+                assertSql(
+                        "diff_count\n0\n",
+                        "select count(*) as diff_count from (" +
+                                "select * from x " +
+                                "except " +
+                                "select * from expected" +
+                                ")"
+                );
+
+                // Convert back to native and verify again
+                execute("alter table x convert partition to native where ts >= 0");
+                assertSql(
+                        "diff_count\n0\n",
+                        "select count(*) as diff_count from (" +
+                                "select * from x " +
+                                "except " +
+                                "select * from expected" +
+                                ")"
+                );
+
+                execute("drop table x");
+                execute("drop table expected");
+            });
+        }
+    }
+
+    @Test
+    public void testDecimalFuzzLargeValues() throws Exception {
+        // Test with larger values and edge cases for Decimal128 and Decimal256
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final int iterations = 5;
+        final int rowCount = 100;
+
+        for (int iter = 0; iter < iterations; iter++) {
+            assertMemoryLeak(() -> {
+                // Generate random precision/scale for Decimal128 and Decimal256
+                int p128a = 19 + rnd.nextInt(10);  // smaller Decimal128
+                int s128a = rnd.nextInt(p128a + 1);
+                int p128b = 29 + rnd.nextInt(10);  // larger Decimal128
+                int s128b = rnd.nextInt(p128b + 1);
+                int p256a = 39 + rnd.nextInt(10);  // smaller Decimal256
+                int s256a = rnd.nextInt(p256a + 1);
+                int p256b = 60 + rnd.nextInt(17);  // larger Decimal256
+                int s256b = rnd.nextInt(p256b + 1);
+
+                // Create table focusing on large decimal types
+                execute("create table x (" +
+                        "ts timestamp, " +
+                        "dec128_small decimal(" + p128a + "," + s128a + "), " +
+                        "dec128_large decimal(" + p128b + "," + s128b + "), " +
+                        "dec256_small decimal(" + p256a + "," + s256a + "), " +
+                        "dec256_large decimal(" + p256b + "," + s256b + ")" +
+                        ") timestamp(ts) partition by day;");
+
+                // Insert random data
+                execute("insert into x " +
+                        "select " +
+                        "timestamp_sequence('2024-01-01', 100000000) as ts, " +
+                        "rnd_decimal(" + p128a + ", " + s128a + ", 5) as dec128_small, " +
+                        "rnd_decimal(" + p128b + ", " + s128b + ", 5) as dec128_large, " +
+                        "rnd_decimal(" + p256a + ", " + s256a + ", 5) as dec256_small, " +
+                        "rnd_decimal(" + p256b + ", " + s256b + ", 5) as dec256_large " +
+                        "from long_sequence(" + rowCount + ")");
+
+                // Capture data before parquet conversion
+                execute("create table expected as (select * from x)");
+
+                // Convert to parquet
+                execute("alter table x convert partition to parquet where ts >= 0");
+
+                // Verify data matches
+                assertSql(
+                        "diff_count\n0\n",
+                        "select count(*) as diff_count from (" +
+                                "select * from x " +
+                                "except " +
+                                "select * from expected" +
+                                ")"
+                );
+
+                // Round-trip test: convert back to native and then to parquet again
+                execute("alter table x convert partition to native where ts >= 0");
+                execute("alter table x convert partition to parquet where ts >= 0");
+
+                assertSql(
+                        "diff_count\n0\n",
+                        "select count(*) as diff_count from (" +
+                                "select * from x " +
+                                "except " +
+                                "select * from expected" +
+                                ")"
+                );
+
+                execute("drop table x");
+                execute("drop table expected");
+            });
+        }
+    }
+
+    @Test
+    public void testDecimalRoundTrip() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (" +
+                    "id long, " +
+                    "ts timestamp, " +
+                    "dec32 decimal(9,4), " +
+                    "dec64 decimal(18,6), " +
+                    "dec128 decimal(38,10)" +
+                    ") timestamp(ts) partition by day;");
+
+            execute("insert into x values(1, '2024-06-10T00:00:00.000000Z', 123.4567::decimal(9,4), 123456.789012::decimal(18,6), 12345678901234567890.1234567890::decimal(38,10));");
+            execute("insert into x values(2, '2024-06-11T00:00:00.000000Z', -987.6543::decimal(9,4), -999999.999999::decimal(18,6), -98765432109876543210.9876543210::decimal(38,10));");
+            execute("insert into x values(3, '2024-06-12T00:00:00.000000Z', null, null, null);");
+
+            final String expected = """
+                    id\tts\tdec32\tdec64\tdec128
+                    1\t2024-06-10T00:00:00.000000Z\t123.4567\t123456.789012\t12345678901234567890.1234567890
+                    2\t2024-06-11T00:00:00.000000Z\t-987.6543\t-999999.999999\t-98765432109876543210.9876543210
+                    3\t2024-06-12T00:00:00.000000Z\t\t\t
+                    """;
+
+            // Convert to parquet
+            execute("alter table x convert partition to parquet where ts >= 0");
+            assertSql(expected, "x order by id");
+
+            // Convert back to native
+            execute("alter table x convert partition to native where ts >= 0");
+            assertSql(expected, "x order by id");
+
+            // Convert to parquet again
+            execute("alter table x convert partition to parquet where ts >= 0");
+            assertSql(expected, "x order by id");
+        });
+    }
+
+    @Test
+    public void testDecimalWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (" +
+                    "id long, " +
+                    "ts timestamp, " +
+                    "dec32 decimal(9,4), " +
+                    "dec64 decimal(18,6)" +
+                    ") timestamp(ts) partition by day;");
+
+            execute("insert into x values(1, '2024-06-10T00:00:00.000000Z', 123.4567::decimal(9,4), 123456.789012::decimal(18,6));");
+            execute("insert into x values(2, '2024-06-11T00:00:00.000000Z', null, 999.999999::decimal(18,6));");
+            execute("insert into x values(3, '2024-06-12T00:00:00.000000Z', 987.6543::decimal(9,4), null);");
+            execute("insert into x values(4, '2024-06-13T00:00:00.000000Z', null, null);");
+
+            execute("alter table x convert partition to parquet where ts >= 0");
+
+            assertSql(
+                    """
+                            id\tts\tdec32\tdec64
+                            1\t2024-06-10T00:00:00.000000Z\t123.4567\t123456.789012
+                            2\t2024-06-11T00:00:00.000000Z\t\t999.999999
+                            3\t2024-06-12T00:00:00.000000Z\t987.6543\t
+                            4\t2024-06-13T00:00:00.000000Z\t\t
+                            """,
+                    "x order by id"
+            );
         });
     }
 

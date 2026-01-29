@@ -7,7 +7,7 @@ const SEED: u64 = 0;
 /// (xxh64) hash of a [`NativeType`].
 #[inline]
 pub fn hash_native<T: NativeType>(value: T) -> u64 {
-    xxh64(value.to_le_bytes().as_ref(), SEED)
+    xxh64(value.to_bytes().as_ref(), SEED)
 }
 
 /// (xxh64) hash of a sequence of bytes (e.g. ByteArray).

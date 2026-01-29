@@ -241,6 +241,10 @@ const ARRAY_ELEMTYPE_FIELD_POS: i32 = 8;
 const ARRAY_NDIMS_LIMIT: i32 = 32; // inclusive
 const ARRAY_NDIMS_FIELD_MASK: i32 = ARRAY_NDIMS_LIMIT - 1;
 const ARRAY_NDIMS_FIELD_POS: i32 = 14;
+const DECIMAL_SCALE_FIELD_MASK: i32 = 0xFF;
+const DECIMAL_SCALE_FIELD_POS: i32 = 24;
+const DECIMAL_PRECISION_FIELD_MASK: i32 = 0xFF;
+const DECIMAL_PRECISION_FIELD_POS: i32 = 8;
 
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Serialize, Ord, PartialOrd, Eq)]
@@ -344,6 +348,38 @@ impl ColumnType {
     pub fn has_flag(&self, flag: i32) -> bool {
         let flag_shifted: i32 = flag << 8;
         self.code.get() & flag_shifted == flag_shifted
+    }
+
+    pub fn decimal_scale(&self) -> u8 {
+        debug_assert!(
+            matches!(
+                self.tag(),
+                ColumnTypeTag::Decimal8
+                    | ColumnTypeTag::Decimal16
+                    | ColumnTypeTag::Decimal32
+                    | ColumnTypeTag::Decimal64
+                    | ColumnTypeTag::Decimal128
+                    | ColumnTypeTag::Decimal256
+            ),
+            "decimal_scale() should only be called on decimal column types"
+        );
+        ((self.code.get() >> DECIMAL_SCALE_FIELD_POS) & DECIMAL_SCALE_FIELD_MASK) as u8
+    }
+
+    pub fn decimal_precision(&self) -> u8 {
+        debug_assert!(
+            matches!(
+                self.tag(),
+                ColumnTypeTag::Decimal8
+                    | ColumnTypeTag::Decimal16
+                    | ColumnTypeTag::Decimal32
+                    | ColumnTypeTag::Decimal64
+                    | ColumnTypeTag::Decimal128
+                    | ColumnTypeTag::Decimal256
+            ),
+            "decimal_precision() should only be called on decimal column types"
+        );
+        ((self.code.get() >> DECIMAL_PRECISION_FIELD_POS) & DECIMAL_PRECISION_FIELD_MASK) as u8
     }
 }
 

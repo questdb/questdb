@@ -284,7 +284,32 @@ pub fn column_type_to_parquet_type(
             None,
             Some(column_id),
         )?),
-        _ => todo!(),
+        ColumnTypeTag::Decimal8
+        | ColumnTypeTag::Decimal16
+        | ColumnTypeTag::Decimal32
+        | ColumnTypeTag::Decimal64
+        | ColumnTypeTag::Decimal128
+        | ColumnTypeTag::Decimal256 => {
+            let size = match column_type.tag() {
+                ColumnTypeTag::Decimal8 => 1,
+                ColumnTypeTag::Decimal16 => 2,
+                ColumnTypeTag::Decimal32 => 4,
+                ColumnTypeTag::Decimal64 => 8,
+                ColumnTypeTag::Decimal128 => 16,
+                ColumnTypeTag::Decimal256 => 32,
+                _ => unreachable!(),
+            };
+            let scale = column_type.decimal_scale() as usize;
+            let precision = column_type.decimal_precision() as usize;
+            Ok(ParquetType::try_from_primitive(
+                name,
+                PhysicalType::FixedLenByteArray(size),
+                repetition,
+                Some(PrimitiveConvertedType::Decimal(precision, scale)),
+                Some(PrimitiveLogicalType::Decimal(precision, scale)),
+                Some(column_id),
+            )?)
+        }
     }
 }
 

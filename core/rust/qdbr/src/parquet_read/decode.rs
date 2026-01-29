@@ -6,6 +6,7 @@ use crate::parquet_read::column_sink::fixed::{
     FixedBooleanColumnSink, FixedDoubleColumnSink, FixedFloatColumnSink, FixedInt2ByteColumnSink,
     FixedInt2ShortColumnSink, FixedIntColumnSink, FixedLong128ColumnSink, FixedLong256ColumnSink,
     FixedLongColumnSink, IntDecimalColumnSink, NanoTimestampColumnSink, ReverseFixedColumnSink,
+    WordSwapDecimalColumnSink,
 };
 use crate::parquet_read::column_sink::var::ARRAY_AUX_SIZE;
 use crate::parquet_read::column_sink::var::{
@@ -114,6 +115,8 @@ impl ColumnChunkStats {
 
 const UUID_NULL: [u8; 16] = unsafe { std::mem::transmute([i64::MIN; 2]) };
 const LONG256_NULL: [u8; 32] = unsafe { std::mem::transmute([i64::MIN; 4]) };
+const DECIMAL128_NULL: [u8; 16] = unsafe { std::mem::transmute((i64::MIN, 0i64)) };
+const DECIMAL256_NULL: [u8; 32] = unsafe { std::mem::transmute((i64::MIN, 0i64, 0i64, 0i64)) };
 const BYTE_NULL: [u8; 1] = [0u8];
 const INT_NULL: [u8; 4] = i32::MIN.to_le_bytes();
 const SHORT_NULL: [u8; 2] = 0i16.to_le_bytes();
@@ -806,6 +809,78 @@ pub fn decode_page(
                 _ => Err(encoding_error),
             }
         }
+        (PhysicalType::FixedLenByteArray(1), Some(PrimitiveLogicalType::Decimal(_, _)), _) => {
+            match (page.encoding(), column_type.tag()) {
+                (Encoding::Plain, ColumnTypeTag::Decimal8) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut ReverseFixedColumnSink::new(
+                            &mut DataPageFixedSlicer::<1>::new(values_buffer, row_count),
+                            bufs,
+                            i8::MIN.to_le_bytes(),
+                        ),
+                    )?;
+                    Ok(())
+                }
+                _ => Err(encoding_error),
+            }
+        }
+        (PhysicalType::FixedLenByteArray(2), Some(PrimitiveLogicalType::Decimal(_, _)), _) => {
+            match (page.encoding(), column_type.tag()) {
+                (Encoding::Plain, ColumnTypeTag::Decimal16) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut ReverseFixedColumnSink::new(
+                            &mut DataPageFixedSlicer::<2>::new(values_buffer, row_count),
+                            bufs,
+                            i16::MIN.to_le_bytes(),
+                        ),
+                    )?;
+                    Ok(())
+                }
+                _ => Err(encoding_error),
+            }
+        }
+        (PhysicalType::FixedLenByteArray(4), Some(PrimitiveLogicalType::Decimal(_, _)), _) => {
+            match (page.encoding(), column_type.tag()) {
+                (Encoding::Plain, ColumnTypeTag::Decimal32) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut ReverseFixedColumnSink::new(
+                            &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
+                            bufs,
+                            i32::MIN.to_le_bytes(),
+                        ),
+                    )?;
+                    Ok(())
+                }
+                _ => Err(encoding_error),
+            }
+        }
+        (PhysicalType::FixedLenByteArray(8), Some(PrimitiveLogicalType::Decimal(_, _)), _) => {
+            match (page.encoding(), column_type.tag()) {
+                (Encoding::Plain, ColumnTypeTag::Decimal64) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut ReverseFixedColumnSink::new(
+                            &mut DataPageFixedSlicer::<8>::new(values_buffer, row_count),
+                            bufs,
+                            i64::MIN.to_le_bytes(),
+                        ),
+                    )?;
+                    Ok(())
+                }
+                _ => Err(encoding_error),
+            }
+        }
         (PhysicalType::FixedLenByteArray(16), _logical_type, _) => {
             match (page.encoding(), column_type.tag()) {
                 (Encoding::Plain, ColumnTypeTag::Long128) => {
@@ -817,6 +892,19 @@ pub fn decode_page(
                             &mut DataPageFixedSlicer::<16>::new(values_buffer, row_count),
                             bufs,
                             &UUID_NULL,
+                        ),
+                    )?;
+                    Ok(())
+                }
+                (Encoding::Plain, ColumnTypeTag::Decimal128) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut WordSwapDecimalColumnSink::<16, 2, _>::new(
+                            &mut DataPageFixedSlicer::<16>::new(values_buffer, row_count),
+                            bufs,
+                            DECIMAL128_NULL,
                         ),
                     )?;
                     Ok(())
@@ -835,6 +923,19 @@ pub fn decode_page(
                             &mut DataPageFixedSlicer::<32>::new(values_buffer, row_count),
                             bufs,
                             &LONG256_NULL,
+                        ),
+                    )?;
+                    Ok(())
+                }
+                (Encoding::Plain, ColumnTypeTag::Decimal256) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut WordSwapDecimalColumnSink::<32, 4, _>::new(
+                            &mut DataPageFixedSlicer::<32>::new(values_buffer, row_count),
+                            bufs,
+                            DECIMAL256_NULL,
                         ),
                     )?;
                     Ok(())

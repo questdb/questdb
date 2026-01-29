@@ -1,6 +1,7 @@
 use crate::allocator::{AcVec, TestAllocatorState};
 use crate::parquet_read::column_sink::fixed::{
     FixedColumnSink, IntDecimalColumnSink, NanoTimestampColumnSink, ReverseFixedColumnSink,
+    WordSwapDecimalColumnSink,
 };
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::DataPageFixedSlicer;
@@ -359,4 +360,207 @@ fn test_int_decimal_column_sink_push_nulls() {
         let val = f64::from_le_bytes(chunk.try_into().unwrap());
         assert!(val.is_nan());
     }
+}
+
+// Decimal128 null: (i64::MIN, 0) in little-endian
+static DECIMAL128_NULL: [u8; 16] = [
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, // i64::MIN LE
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 0 LE
+];
+
+// Decimal256 null: (i64::MIN, 0, 0, 0) in little-endian
+static DECIMAL256_NULL: [u8; 32] = [
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, // i64::MIN LE
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 0 LE
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 0 LE
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 0 LE
+];
+
+#[test]
+fn test_word_swap_decimal128_push_slice() {
+    let tas = TestAllocatorState::new();
+    let allocator = tas.allocator();
+    let mut buffers = create_buffers(&allocator);
+
+    // Big-endian Decimal128 data: two 8-byte words per value
+    // Value 1: high=0x0102030405060708, low=0x090A0B0C0D0E0F10
+    // Value 2: high=0x1112131415161718, low=0x191A1B1C1D1E1F20
+    let data: Vec<u8> = vec![
+        // Value 1: big-endian
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, // high BE
+        0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, // low BE
+        // Value 2: big-endian
+        0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, // high BE
+        0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20, // low BE
+    ];
+    let mut slicer = DataPageFixedSlicer::<16>::new(&data, 2);
+    let mut sink =
+        WordSwapDecimalColumnSink::<16, 2, _>::new(&mut slicer, &mut buffers, DECIMAL128_NULL);
+
+    sink.reserve().unwrap();
+    sink.push_slice(2).unwrap();
+
+    // Each 8-byte word should be reversed within itself (BE to LE)
+    // but the word order remains the same
+    let expected: Vec<u8> = vec![
+        // Value 1: each word reversed to little-endian
+        0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, // high LE
+        0x10, 0x0F, 0x0E, 0x0D, 0x0C, 0x0B, 0x0A, 0x09, // low LE
+        // Value 2: each word reversed to little-endian
+        0x18, 0x17, 0x16, 0x15, 0x14, 0x13, 0x12, 0x11, // high LE
+        0x20, 0x1F, 0x1E, 0x1D, 0x1C, 0x1B, 0x1A, 0x19, // low LE
+    ];
+
+    assert_eq!(buffers.data_vec.as_slice(), expected.as_slice());
+}
+
+#[test]
+fn test_word_swap_decimal128_push_slice_small_counts() {
+    let tas = TestAllocatorState::new();
+    let allocator = tas.allocator();
+
+    for count in 1..=4 {
+        let mut buffers = create_buffers(&allocator);
+
+        // Generate test data: count values, each 16 bytes
+        let data: Vec<u8> = (0..count * 16).map(|i| i as u8).collect();
+        let mut slicer = DataPageFixedSlicer::<16>::new(&data, count);
+        let mut sink =
+            WordSwapDecimalColumnSink::<16, 2, _>::new(&mut slicer, &mut buffers, DECIMAL128_NULL);
+
+        sink.reserve().unwrap();
+        sink.push_slice(count).unwrap();
+
+        assert_eq!(buffers.data_vec.len(), count * 16, "count={}", count);
+
+        // Verify each value has its words byte-swapped
+        for (v, chunk) in buffers.data_vec.chunks(16).enumerate() {
+            // Each 8-byte word should be reversed
+            for w in 0..2 {
+                let word_offset = w * 8;
+                for i in 0..8 {
+                    let expected_byte = (v * 16 + word_offset + 7 - i) as u8;
+                    assert_eq!(
+                        chunk[word_offset + i],
+                        expected_byte,
+                        "count={}, value={}, word={}, byte={}",
+                        count,
+                        v,
+                        w,
+                        i
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_word_swap_decimal128_push_nulls() {
+    let tas = TestAllocatorState::new();
+    let allocator = tas.allocator();
+    let mut buffers = create_buffers(&allocator);
+
+    let data: Vec<u8> = vec![0; 16];
+    let mut slicer = DataPageFixedSlicer::<16>::new(&data, 6);
+    let mut sink =
+        WordSwapDecimalColumnSink::<16, 2, _>::new(&mut slicer, &mut buffers, DECIMAL128_NULL);
+
+    sink.reserve().unwrap();
+    sink.push_nulls(6).unwrap();
+
+    assert_eq!(buffers.data_vec.len(), 96);
+    for chunk in buffers.data_vec.chunks(16) {
+        assert_eq!(chunk, &DECIMAL128_NULL);
+    }
+}
+
+#[test]
+fn test_word_swap_decimal256_push_slice() {
+    let tas = TestAllocatorState::new();
+    let allocator = tas.allocator();
+    let mut buffers = create_buffers(&allocator);
+
+    // Big-endian Decimal256 data: four 8-byte words per value
+    let data: Vec<u8> = vec![
+        // Value 1: big-endian (4 words)
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, // word 0 BE
+        0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, // word 1 BE
+        0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, // word 2 BE
+        0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20, // word 3 BE
+    ];
+    let mut slicer = DataPageFixedSlicer::<32>::new(&data, 1);
+    let mut sink =
+        WordSwapDecimalColumnSink::<32, 4, _>::new(&mut slicer, &mut buffers, DECIMAL256_NULL);
+
+    sink.reserve().unwrap();
+    sink.push_slice(1).unwrap();
+
+    // Each 8-byte word should be reversed within itself
+    let expected: Vec<u8> = vec![
+        0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, // word 0 LE
+        0x10, 0x0F, 0x0E, 0x0D, 0x0C, 0x0B, 0x0A, 0x09, // word 1 LE
+        0x18, 0x17, 0x16, 0x15, 0x14, 0x13, 0x12, 0x11, // word 2 LE
+        0x20, 0x1F, 0x1E, 0x1D, 0x1C, 0x1B, 0x1A, 0x19, // word 3 LE
+    ];
+
+    assert_eq!(buffers.data_vec.as_slice(), expected.as_slice());
+}
+
+#[test]
+fn test_word_swap_decimal256_push_nulls() {
+    let tas = TestAllocatorState::new();
+    let allocator = tas.allocator();
+    let mut buffers = create_buffers(&allocator);
+
+    let data: Vec<u8> = vec![0; 32];
+    let mut slicer = DataPageFixedSlicer::<32>::new(&data, 5);
+    let mut sink =
+        WordSwapDecimalColumnSink::<32, 4, _>::new(&mut slicer, &mut buffers, DECIMAL256_NULL);
+
+    sink.reserve().unwrap();
+    sink.push_nulls(5).unwrap();
+
+    assert_eq!(buffers.data_vec.len(), 160);
+    for chunk in buffers.data_vec.chunks(32) {
+        assert_eq!(chunk, &DECIMAL256_NULL);
+    }
+}
+
+#[test]
+fn test_word_swap_decimal128_mixed_push_and_nulls() {
+    let tas = TestAllocatorState::new();
+    let allocator = tas.allocator();
+    let mut buffers = create_buffers(&allocator);
+
+    // 3 values in big-endian format
+    let data: Vec<u8> = (0..48).map(|i| i as u8).collect();
+    let mut slicer = DataPageFixedSlicer::<16>::new(&data, 6);
+    let mut sink =
+        WordSwapDecimalColumnSink::<16, 2, _>::new(&mut slicer, &mut buffers, DECIMAL128_NULL);
+
+    sink.reserve().unwrap();
+    sink.push_slice(1).unwrap(); // value 0
+    sink.push_nulls(2).unwrap(); // 2 nulls
+    sink.push_slice(2).unwrap(); // values 1, 2
+
+    assert_eq!(buffers.data_vec.len(), 80); // 5 values * 16 bytes
+
+    // Check value 0 (bytes swapped within each word)
+    let chunk0 = &buffers.data_vec[0..16];
+    assert_eq!(chunk0[0], 7); // first word reversed: 0-7 -> 7-0
+    assert_eq!(chunk0[7], 0);
+    assert_eq!(chunk0[8], 15); // second word reversed: 8-15 -> 15-8
+    assert_eq!(chunk0[15], 8);
+
+    // Check nulls
+    assert_eq!(&buffers.data_vec[16..32], &DECIMAL128_NULL);
+    assert_eq!(&buffers.data_vec[32..48], &DECIMAL128_NULL);
+
+    // Check value 1 (starts at input offset 16)
+    let chunk3 = &buffers.data_vec[48..64];
+    assert_eq!(chunk3[0], 23); // 16+7
+    assert_eq!(chunk3[7], 16);
+    assert_eq!(chunk3[8], 31); // 16+15
+    assert_eq!(chunk3[15], 24);
 }

@@ -62,8 +62,8 @@ pub fn write<T: types::NativeType>(v: &PrimitiveStatistics<T>) -> ParquetStatist
     ParquetStatistics {
         null_count: v.null_count,
         distinct_count: v.distinct_count,
-        max_value: v.max_value.map(|x| x.to_le_bytes().as_ref().to_vec()),
-        min_value: v.min_value.map(|x| x.to_le_bytes().as_ref().to_vec()),
+        max_value: v.max_value.map(|x| x.to_bytes().as_ref().to_vec()),
+        min_value: v.min_value.map(|x| x.to_bytes().as_ref().to_vec()),
         min: None,
         max: None,
     }

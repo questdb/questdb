@@ -6,9 +6,9 @@ use crate::schema::types::PhysicalType;
 pub trait NativeType: std::fmt::Debug + Send + Sync + 'static + Copy + Clone {
     type Bytes: AsRef<[u8]> + for<'a> TryFrom<&'a [u8], Error = std::array::TryFromSliceError>;
 
-    fn to_le_bytes(&self) -> Self::Bytes;
+    fn to_bytes(&self) -> Self::Bytes;
 
-    fn from_le_bytes(bytes: Self::Bytes) -> Self;
+    fn from_bytes(bytes: Self::Bytes) -> Self;
 
     fn ord(&self, other: &Self) -> std::cmp::Ordering;
 
@@ -20,12 +20,12 @@ macro_rules! native {
         impl NativeType for $type {
             type Bytes = [u8; std::mem::size_of::<Self>()];
             #[inline]
-            fn to_le_bytes(&self) -> Self::Bytes {
+            fn to_bytes(&self) -> Self::Bytes {
                 Self::to_le_bytes(*self)
             }
 
             #[inline]
-            fn from_le_bytes(bytes: Self::Bytes) -> Self {
+            fn from_bytes(bytes: Self::Bytes) -> Self {
                 Self::from_le_bytes(bytes)
             }
 
@@ -49,7 +49,7 @@ impl NativeType for [u32; 3] {
 
     type Bytes = [u8; std::mem::size_of::<Self>()];
     #[inline]
-    fn to_le_bytes(&self) -> Self::Bytes {
+    fn to_bytes(&self) -> Self::Bytes {
         let mut bytes = [0; 12];
         let first = self[0].to_le_bytes();
         bytes[0] = first[0];
@@ -70,7 +70,7 @@ impl NativeType for [u32; 3] {
     }
 
     #[inline]
-    fn from_le_bytes(bytes: Self::Bytes) -> Self {
+    fn from_bytes(bytes: Self::Bytes) -> Self {
         let mut first = [0; 4];
         first[0] = bytes[0];
         first[1] = bytes[1];
@@ -137,5 +137,5 @@ pub fn decode<T: NativeType>(chunk: &[u8]) -> T {
         Ok(v) => v,
         Err(_) => panic!(),
     };
-    T::from_le_bytes(chunk)
+    T::from_bytes(chunk)
 }

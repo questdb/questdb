@@ -513,3 +513,154 @@ impl<'a, T: DataPageSlicer> IntDecimalColumnSink<'a, T> {
         }
     }
 }
+
+/// A sink for Decimal128/256 types that swaps bytes within each 8-byte word.
+/// Parquet stores decimals as big-endian byte arrays, but QuestDB stores
+/// Decimal128/256 as multiple i64 values in little-endian order.
+/// N is the total size (16 for Decimal128, 32 for Decimal256).
+/// WORDS is the number of 8-byte words (2 for Decimal128, 4 for Decimal256).
+pub struct WordSwapDecimalColumnSink<'a, const N: usize, const WORDS: usize, T: DataPageSlicer> {
+    slicer: &'a mut T,
+    buffers: &'a mut ColumnChunkBuffers,
+    null_value: [u8; N],
+}
+
+impl<const N: usize, const WORDS: usize, T: DataPageSlicer> Pushable
+    for WordSwapDecimalColumnSink<'_, N, WORDS, T>
+{
+    fn reserve(&mut self) -> ParquetResult<()> {
+        self.buffers.data_vec.reserve(self.slicer.count() * N)?;
+        Ok(())
+    }
+
+    #[inline]
+    fn push(&mut self) -> ParquetResult<()> {
+        let slice = self.slicer.next();
+        let base = self.buffers.data_vec.len();
+        debug_assert!(base + N <= self.buffers.data_vec.capacity());
+
+        unsafe {
+            let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+            // Swap bytes within each 8-byte word from big-endian to little-endian
+            for w in 0..WORDS {
+                let src_offset = w * 8;
+                let dst_offset = w * 8;
+                for i in 0..8 {
+                    *ptr.add(dst_offset + i) = slice[src_offset + 7 - i];
+                }
+            }
+            AcVecSetLen::set_len(&mut self.buffers.data_vec, base + N);
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
+        match count {
+            0 => Ok(()),
+            1 => self.push(),
+            2 => {
+                self.push()?;
+                self.push()
+            }
+            3 => {
+                self.push()?;
+                self.push()?;
+                self.push()
+            }
+            4 => {
+                self.push()?;
+                self.push()?;
+                self.push()?;
+                self.push()
+            }
+            _ => {
+                let base = self.buffers.data_vec.len();
+                let total_bytes = count * N;
+                debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
+
+                unsafe {
+                    let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+                    for c in 0..count {
+                        let slice = self.slicer.next();
+                        let dest = ptr.add(c * N);
+                        // Swap bytes within each 8-byte word
+                        for w in 0..WORDS {
+                            let src_offset = w * 8;
+                            let dst_offset = w * 8;
+                            for i in 0..8 {
+                                *dest.add(dst_offset + i) = slice[src_offset + 7 - i];
+                            }
+                        }
+                    }
+                    AcVecSetLen::set_len(&mut self.buffers.data_vec, base + total_bytes);
+                }
+                Ok(())
+            }
+        }
+    }
+
+    #[inline]
+    fn push_null(&mut self) -> ParquetResult<()> {
+        self.buffers.data_vec.extend_from_slice(&self.null_value)?;
+        Ok(())
+    }
+
+    #[inline]
+    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
+        match count {
+            0 => Ok(()),
+            1 => self.push_null(),
+            2 => {
+                self.push_null()?;
+                self.push_null()
+            }
+            3 => {
+                self.push_null()?;
+                self.push_null()?;
+                self.push_null()
+            }
+            4 => {
+                self.push_null()?;
+                self.push_null()?;
+                self.push_null()?;
+                self.push_null()
+            }
+            _ => {
+                let base = self.buffers.data_vec.len();
+                let total_bytes = count * N;
+                debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
+
+                unsafe {
+                    let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+                    for i in 0..count {
+                        ptr::copy_nonoverlapping(self.null_value.as_ptr(), ptr.add(i * N), N);
+                    }
+                    AcVecSetLen::set_len(&mut self.buffers.data_vec, base + total_bytes);
+                }
+                Ok(())
+            }
+        }
+    }
+
+    #[inline]
+    fn skip(&mut self, count: usize) {
+        self.slicer.skip(count);
+    }
+
+    fn result(&self) -> ParquetResult<()> {
+        self.slicer.result().clone()
+    }
+}
+
+impl<'a, const N: usize, const WORDS: usize, T: DataPageSlicer>
+    WordSwapDecimalColumnSink<'a, N, WORDS, T>
+{
+    pub fn new(
+        slicer: &'a mut T,
+        buffers: &'a mut ColumnChunkBuffers,
+        null_value: [u8; N],
+    ) -> Self {
+        Self { slicer, buffers, null_value }
+    }
+}
