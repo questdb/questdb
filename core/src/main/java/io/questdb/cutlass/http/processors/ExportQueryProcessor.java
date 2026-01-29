@@ -632,9 +632,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     exporter.process();
                     return;
                 }
-                if (state.writeCallback == null) {
-                    state.initWriteCallback(this);
-                }
+                state.initWriteCallback(this);
                 int nowTimestampType = sqlExecutionContext.getNowTimestampType();
                 long now = sqlExecutionContext.getNow(nowTimestampType);
                 state.task.of(
@@ -654,7 +652,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.descending,
                         state.pageFrameCursor,
                         state.metadata,
-                        state.writeCallback
+                        state.getWriteCallback()
                 );
 
                 exporter.of(state.task);

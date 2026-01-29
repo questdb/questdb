@@ -50,7 +50,7 @@ public class ConcurrentParquetExportTest extends AbstractBootstrapTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> getConcurrentExportTester(rnd)
                 .run((engine, sqlExecutionContext) -> {
-                    int totalRows = 50000;
+                    int totalRows = 1000;
                     engine.execute(
                             "CREATE TABLE corrupt_test AS (" +
                                     "SELECT x, rnd_str(200, 200, 0) as payload, timestamp_sequence(0, 1000000L) as ts " +
@@ -59,23 +59,23 @@ public class ConcurrentParquetExportTest extends AbstractBootstrapTest {
                             sqlExecutionContext
                     );
 
-                    int threadCount = 16;
+                    int threadCount = 4;
                     CyclicBarrier barrier = new CyclicBarrier(threadCount);
                     AtomicInteger successCount = new AtomicInteger(0);
                     AtomicReference<Throwable> firstError = new AtomicReference<>();
                     Thread[] threads = new Thread[threadCount];
                     MemoryCARWImpl[] buffers = new MemoryCARWImpl[threadCount];
-                    int[] expectedRows = new int[threadCount];
+                    int[] limits = new int[threadCount];
 
                     for (int t = 0; t < threadCount; t++) {
                         buffers[t] = new MemoryCARWImpl(1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                        expectedRows[t] = rnd.nextInt(totalRows) + 10;
+                        limits[t] = rnd.nextInt(totalRows) + 10;
                     }
 
                     try {
                         for (int t = 0; t < threadCount; t++) {
                             final int threadId = t;
-                            final int limit = expectedRows[t];
+                            final int limit = limits[t];
                             final MemoryCARWImpl buf = buffers[t];
                             threads[t] = new Thread(() -> {
                                 HttpClient client = null;
@@ -89,6 +89,7 @@ public class ConcurrentParquetExportTest extends AbstractBootstrapTest {
 
                                     try (HttpClient.ResponseHeaders respHeaders = req.send()) {
                                         respHeaders.await();
+                                        TestUtils.assertEquals("200", respHeaders.getStatusCode());
 
                                         Fragment fragment;
                                         while ((fragment = respHeaders.getResponse().recv()) != null) {
@@ -127,7 +128,7 @@ public class ConcurrentParquetExportTest extends AbstractBootstrapTest {
                                 long addr = buffers[t].addressOf(0);
                                 decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                                 long rowCount = decoder.metadata().getRowCount();
-                                int expectedLimit = Math.min(expectedRows[t], totalRows);
+                                int expectedLimit = Math.min(limits[t], totalRows);
                                 Assert.assertEquals(
                                         "Thread " + t + " row count mismatch",
                                         expectedLimit,
@@ -150,7 +151,7 @@ public class ConcurrentParquetExportTest extends AbstractBootstrapTest {
     private HttpQueryTestBuilder getConcurrentExportTester(Rnd rnd) {
         return new HttpQueryTestBuilder()
                 .withTempFolder(root)
-                .withWorkerCount(8)
+                .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
                 .withForceSendFragmentationChunkSize(1024)

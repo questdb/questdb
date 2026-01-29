@@ -83,7 +83,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     private String parquetExportTableName;
     private boolean queryCacheable = false;
     private HTTPSerialParquetExporter serialParquetExporter;
-    CopyExportRequestTask.StreamWriteParquetCallBack writeCallback;
+    private final ParquetWriteCallback writeCallback = new ParquetWriteCallback();
 
     public ExportQueryProcessorState(HttpConnectionContext httpConnectionContext, CopyExportContext copyContext) {
         this.httpConnectionContext = httpConnectionContext;
@@ -130,7 +130,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         errorPosition = 0;
         serialExporterInit = false;
         task.clear();
-        writeCallback = null;
+        writeCallback.of(null, null);
     }
 
     @Override
@@ -140,7 +140,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         pageFrameCursor = Misc.free(pageFrameCursor);
         task = Misc.free(task);
         serialParquetExporter = null;
-        writeCallback = null;
+        writeCallback.of(null, null);
     }
 
     public ExportModel getExportModel() {
@@ -183,8 +183,28 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     }
 
     void initWriteCallback(ExportQueryProcessor processor) {
-        this.writeCallback = (dataPtr, dataLen) ->
-                processor.writeParquetData(this, dataPtr, dataLen);
+        this.writeCallback.of(processor, this);
+    }
+
+    CopyExportRequestTask.StreamWriteParquetCallBack getWriteCallback() {
+        return writeCallback;
+    }
+
+    private static final class ParquetWriteCallback implements CopyExportRequestTask.StreamWriteParquetCallBack {
+        private ExportQueryProcessor processor;
+        private ExportQueryProcessorState state;
+
+        void of(ExportQueryProcessor processor, ExportQueryProcessorState state) {
+            this.processor = processor;
+            this.state = state;
+        }
+
+        @Override
+        public void onWrite(long dataPtr, long dataLen) throws Exception {
+            if (processor != null && state != null) {
+                processor.writeParquetData(state, dataPtr, dataLen);
+            }
+        }
     }
 
     private void releaseExportEntry() {
