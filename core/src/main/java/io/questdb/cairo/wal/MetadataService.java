@@ -154,6 +154,8 @@ public interface MetadataService {
 
     TableToken getTableToken();
 
+    int getTtlHoursOrMonths();
+
     int getTimestampType();
 
     UpdateOperator getUpdateOperator();

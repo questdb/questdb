@@ -2160,6 +2160,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
+    public int getTtlHoursOrMonths() {
+        return metadata.getTtlHoursOrMonths();
+    }
+
+    @Override
     public int getTimestampType() {
         return timestampType;
     }
