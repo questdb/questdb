@@ -317,6 +317,40 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClearResetsAllFields() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "all";
+            TableToken tableToken = engine.verifyTableName(tableName);
+            try (
+                    Path path = new Path();
+                    TableReaderMetadata metadata = new TableReaderMetadata(configuration)
+            ) {
+                metadata.loadMetadata(path.of(root).concat(tableToken).concat(TableUtils.META_FILE_NAME).$());
+
+                // Verify fields are populated after load
+                Assert.assertTrue("partitionBy should be set", metadata.getPartitionBy() != 0 || metadata.getColumnCount() > 0);
+                Assert.assertTrue("columnCount should be > 0", metadata.getColumnCount() > 0);
+                Assert.assertNotEquals("tableId should be set", 0, metadata.getTableId());
+
+                // Now clear
+                metadata.clear();
+
+                // Verify all fields are reset
+                Assert.assertEquals("columnCount should be 0 after clear", 0, metadata.getColumnCount());
+                Assert.assertEquals("timestampIndex should be -1 after clear", -1, metadata.getTimestampIndex());
+                Assert.assertEquals("partitionBy should be 0 after clear", 0, metadata.getPartitionBy());
+                Assert.assertFalse("walEnabled should be false after clear", metadata.isWalEnabled());
+                Assert.assertEquals("metadataVersion should be 0 after clear", 0, metadata.getMetadataVersion());
+                Assert.assertEquals("tableId should be 0 after clear", 0, metadata.getTableId());
+                Assert.assertEquals("maxUncommittedRows should be 0 after clear", 0, metadata.getMaxUncommittedRows());
+                Assert.assertEquals("o3MaxLag should be 0 after clear", 0, metadata.getO3MaxLag());
+                Assert.assertEquals("ttlHoursOrMonths should be 0 after clear", 0, metadata.getTtlHoursOrMonths());
+                Assert.assertEquals("writerColumnCount should be 0 after clear", 0, metadata.getWriterColumnCount());
+            }
+        });
+    }
+
+    @Test
     public void testRemoveAllColumns() throws Exception {
         final String expected = "timestamp:" + ColumnType.nameOf(timestampType) + "\n";
         assertThat(expected, (w) -> {
