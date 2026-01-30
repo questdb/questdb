@@ -2265,7 +2265,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     .equals(new File(p2).getCanonicalPath().replace(File.separatorChar, '/'));
         } catch (IOException e) {
             log.info().$("Can't validate configuration property [key=").$(PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath())
-                    .$(", value=").$(p2).$("]");
+                    .$(", value=").$(p2).I$();
             return false;
         }
     }
