@@ -38,8 +38,7 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
             assertException(
                     "create table dest as (select * from src) like src",
                     41,
-                    "unexpected token [like]"
-            );
+                    "unexpected token [like]");
         });
     }
 
@@ -51,8 +50,7 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
             assertException(
                     "create table dest as (select * from src where v % 2 = 0 order by ts desc) timestamp(ts);",
                     13,
-                    "cannot insert rows out of order to non-partitioned table."
-            );
+                    "cannot insert rows out of order to non-partitioned table.");
         });
     }
 
@@ -120,7 +118,8 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createSrcTable();
 
-            execute("create table dest as (select * from src where v % 2 = 0 " + orderByClause + ") timestamp(ts) partition by day;");
+            execute("create table dest as (select * from src where v % 2 = 0 " + orderByClause
+                    + ") timestamp(ts) partition by day;");
 
             String expected = "ts\tv\n" +
                     "1970-01-01T00:00:00.000000Z\t0\n" +
@@ -132,12 +131,12 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
                     "dest",
                     "ts",
                     true,
-                    true
-            );
+                    true);
         });
     }
 
-    private void createPartitionedTableAsSelectWithOrderBy(String orderByClause, int batchSize, String o3MaxLag) throws Exception {
+    private void createPartitionedTableAsSelectWithOrderBy(String orderByClause, int batchSize, String o3MaxLag)
+            throws Exception {
         assertMemoryLeak(() -> {
             createSrcTable();
 
@@ -166,8 +165,7 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
                     "dest",
                     "ts",
                     true,
-                    true
-            );
+                    true);
         });
     }
 
@@ -176,7 +174,6 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
             createSrcTable();
 
             String sql = "create atomic table dest as ";
-
 
             sql += "(select * from src where v % 2 = 0 " + orderByClause + ") timestamp(ts) partition by day;";
             execute(sql);
@@ -191,8 +188,31 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
                     "dest",
                     "ts",
                     true,
-                    true
-            );
+                    true);
+        });
+    }
+
+    @Test
+    public void testCreateAsSelectWithCastLongToVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table src (l long)");
+            execute("insert into src values (1234567890L)");
+
+            execute("create table dest (s varchar) as (select l from src)");
+
+            assertQuery("s\n1234567890\n", "dest", null, true, true);
+        });
+    }
+
+    @Test
+    public void testCreateAsSelectWithCastLongToString() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table src (l long)");
+            execute("insert into src values (1234567890L)");
+
+            execute("create table dest (s string) as (select l from src)");
+
+            assertQuery("s\n1234567890\n", "dest", null, true, true);
         });
     }
 

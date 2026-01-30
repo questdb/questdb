@@ -44,7 +44,7 @@ public class CastFloatToDateFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToDateFunction {
+    public static class Func extends AbstractCastToDateFunction {
 
         public Func(Function arg) {
             super(arg);

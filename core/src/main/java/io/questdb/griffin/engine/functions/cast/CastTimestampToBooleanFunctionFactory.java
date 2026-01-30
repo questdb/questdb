@@ -44,7 +44,7 @@ public class CastTimestampToBooleanFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToBooleanFunction {
+    public static class Func extends AbstractCastToBooleanFunction {
         public Func(Function arg) {
             super(arg);
         }

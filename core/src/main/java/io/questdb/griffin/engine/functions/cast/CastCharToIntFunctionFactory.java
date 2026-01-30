@@ -46,12 +46,11 @@ public class CastCharToIntFunctionFactory implements FunctionFactory {
             ObjList<Function> args,
             IntList argPositions,
             CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) {
+            SqlExecutionContext sqlExecutionContext) {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToIntFunction {
+    public static class Func extends AbstractCastToIntFunction {
 
         public Func(Function arg) {
             super(arg);
@@ -65,6 +64,7 @@ public class CastCharToIntFunctionFactory implements FunctionFactory {
                 return v;
             }
             throw ImplicitCastException.inconvertibleValue(c, ColumnType.CHAR, ColumnType.INT);
+
         }
     }
 }

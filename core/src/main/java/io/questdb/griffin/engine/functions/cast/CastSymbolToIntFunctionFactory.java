@@ -44,7 +44,7 @@ public class CastSymbolToIntFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToIntFunction {
+    public static class Func extends AbstractCastToIntFunction {
         public Func(Function arg) {
             super(arg);
         }

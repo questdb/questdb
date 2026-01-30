@@ -63,7 +63,7 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
         };
     }
 
-    private static class Func extends AbstractCastToFloatFunction {
+    public static class Func extends AbstractCastToFloatFunction {
         private final Decimal256 decimal256 = new Decimal256();
         private final int fromPrecision;
         private final int fromScale;
@@ -100,7 +100,7 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Func128 extends AbstractCastToFloatFunction {
+    public static class Func128 extends AbstractCastToFloatFunction {
         private final Decimal128 decimal128 = new Decimal128();
         private final int fromPrecision;
         private final int fromScale;
@@ -129,7 +129,7 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Func64 extends AbstractCastToFloatFunction {
+    public static class Func64 extends AbstractCastToFloatFunction {
         private final int fromPrecision;
         private final int fromScale;
         private final StringSink sink = new StringSink();

@@ -41,7 +41,8 @@ public class CastBooleanToStrFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions,
+            CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
             return new StrConstant(func.getStrA(null));
@@ -49,7 +50,7 @@ public class CastBooleanToStrFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToStrFunction {
+    public static class Func extends AbstractCastToStrFunction {
         public Func(Function arg) {
             super(arg);
         }

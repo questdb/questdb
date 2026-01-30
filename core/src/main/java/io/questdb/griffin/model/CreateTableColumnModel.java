@@ -30,6 +30,7 @@ import io.questdb.std.ObjectFactory;
 
 public class CreateTableColumnModel implements Mutable {
     public static final ObjectFactory<CreateTableColumnModel> FACTORY = CreateTableColumnModel::new;
+    private CharSequence columnName;
     private int columnNamePos = -1;
     private int columnType = ColumnType.UNDEFINED;
     private int columnTypePos = -1;
@@ -48,6 +49,7 @@ public class CreateTableColumnModel implements Mutable {
 
     @Override
     public void clear() {
+        columnName = null;
         columnNamePos = -1;
         columnType = ColumnType.UNDEFINED;
         columnTypePos = -1;
@@ -59,6 +61,10 @@ public class CreateTableColumnModel implements Mutable {
         isCast = false;
         symbolCacheFlag = false;
         symbolCapacity = -1;
+    }
+
+    public CharSequence getColumnName() {
+        return columnName;
     }
 
     public int getColumnNamePos() {
@@ -135,5 +141,9 @@ public class CreateTableColumnModel implements Mutable {
 
     public void setSymbolCapacity(int symbolCapacity) {
         this.symbolCapacity = symbolCapacity;
+    }
+
+    public void setColumnName(CharSequence columnName) {
+        this.columnName = columnName;
     }
 }

@@ -58,7 +58,7 @@ public class CastTimestampToSymbolFunctionFactory implements FunctionFactory {
         return new Func(arg);
     }
 
-    private static class Func extends SymbolFunction implements UnaryFunction {
+    public static class Func extends SymbolFunction implements UnaryFunction {
         private final Function arg;
         private final StringSink sink = new StringSink();
         private final LongIntHashMap symbolTableShortcut = new LongIntHashMap();

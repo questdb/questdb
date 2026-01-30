@@ -67,7 +67,7 @@ public class CastFloatToDecimalFunctionFactory implements FunctionFactory {
         };
     }
 
-    private static class Func128 extends Decimal128Function implements UnaryFunction {
+    public static class Func128 extends Decimal128Function implements UnaryFunction {
         private final Function arg;
         private final int position;
         private final int precision;
@@ -114,7 +114,7 @@ public class CastFloatToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Func256 extends Decimal256Function implements UnaryFunction {
+    public static class Func256 extends Decimal256Function implements UnaryFunction {
         private final Function arg;
         private final int position;
         private final int precision;
@@ -161,7 +161,7 @@ public class CastFloatToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Func64 extends AbstractCastToDecimal64Function {
+    public static class Func64 extends AbstractCastToDecimal64Function {
         private final StringSink sink = new StringSink();
 
         public Func64(Function value, int targetType, int position) {

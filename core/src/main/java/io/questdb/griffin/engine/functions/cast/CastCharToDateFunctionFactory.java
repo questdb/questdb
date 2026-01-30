@@ -41,7 +41,8 @@ public class CastCharToDateFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions,
+            CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new CastCharToDateFunction(args.getQuick(0));
     }
 
@@ -52,10 +53,9 @@ public class CastCharToDateFunctionFactory implements FunctionFactory {
 
         @Override
         public long getDate(Record rec) {
-            char c = arg.getChar(rec);
-            final byte v = (byte) (c - '0');
-            if (v > -1 && v < 10) {
-                return v;
+            final char c = arg.getChar(rec);
+            if (c >= '0' && c <= '9') {
+                return c - '0';
             }
             throw ImplicitCastException.inconvertibleValue(c, ColumnType.CHAR, ColumnType.DATE);
         }

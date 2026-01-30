@@ -46,25 +46,23 @@ public class CastCharToTimestampFunctionFactory implements FunctionFactory {
             ObjList<Function> args,
             IntList argPositions,
             CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) {
-        return new Func(args.getQuick(0), args.getQuick(1).getType());
+            SqlExecutionContext sqlExecutionContext) {
+        return new CastCharToTimestampFunction(args.getQuick(0), args.getQuick(1).getType());
     }
 
-    private static class Func extends AbstractCastToTimestampFunction {
+    public static class CastCharToTimestampFunction extends AbstractCastToTimestampFunction {
 
-        public Func(Function arg, int timestampType) {
+        public CastCharToTimestampFunction(Function arg, int timestampType) {
             super(arg, timestampType);
         }
 
         @Override
         public long getTimestamp(Record rec) {
-            char c = arg.getChar(rec);
-            final byte v = (byte) (c - '0');
-            if (v > -1 && v < 10) {
-                return v;
+            final char c = arg.getChar(rec);
+            if (c >= '0' && c <= '9') {
+                return c - '0';
             }
-            throw ImplicitCastException.inconvertibleValue(c, ColumnType.CHAR, getType());
+            throw ImplicitCastException.inconvertibleValue(c, ColumnType.CHAR, ColumnType.TIMESTAMP);
         }
     }
 }

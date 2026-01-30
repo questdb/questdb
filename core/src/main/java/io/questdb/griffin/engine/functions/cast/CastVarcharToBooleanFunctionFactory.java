@@ -61,7 +61,7 @@ public class CastVarcharToBooleanFunctionFactory implements FunctionFactory {
         return str != null && SqlKeywords.isTrueKeyword(str);
     }
 
-    private static class Func extends AbstractCastToBooleanFunction {
+    public static class Func extends AbstractCastToBooleanFunction {
         public Func(Function arg) {
             super(arg);
         }

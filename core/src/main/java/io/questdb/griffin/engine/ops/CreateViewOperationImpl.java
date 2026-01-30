@@ -53,13 +53,12 @@ public class CreateViewOperationImpl implements CreateViewOperation {
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
     private final String sqlText;
     private final ViewDefinition viewDefinition = new ViewDefinition();
-    private CreateTableOperationImpl createTableOperation;
+    private CreateTableOperation createTableOperation;
 
     public CreateViewOperationImpl(
             @NotNull String sqlText,
-            @NotNull CreateTableOperationImpl createTableOperation,
-            @NotNull @Transient LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
-    ) {
+            @NotNull CreateTableOperation createTableOperation,
+            @NotNull @Transient LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies) {
         this.sqlText = sqlText;
         this.createTableOperation = createTableOperation;
 
@@ -73,7 +72,8 @@ public class CreateViewOperationImpl implements CreateViewOperation {
     }
 
     @Override
-    public OperationFuture execute(SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
+    public OperationFuture execute(SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq)
+            throws SqlException {
         try (SqlCompiler compiler = sqlExecutionContext.getCairoEngine().getSqlCompiler()) {
             compiler.execute(this, sqlExecutionContext);
         }
@@ -180,8 +180,7 @@ public class CreateViewOperationImpl implements CreateViewOperation {
         viewDefinition.init(
                 viewToken,
                 Chars.toString(createTableOperation.getSelectText()),
-                0L
-        );
+                0L);
     }
 
     @Override
@@ -206,7 +205,8 @@ public class CreateViewOperationImpl implements CreateViewOperation {
     }
 
     /**
-     * This is SQLCompiler side API to set table token after the operation has been executed.
+     * This is SQLCompiler side API to set table token after the operation has been
+     * executed.
      *
      * @param tableToken table token of the newly created table
      */
@@ -219,8 +219,7 @@ public class CreateViewOperationImpl implements CreateViewOperation {
     public void validateAndUpdateMetadataFromModel(
             SqlExecutionContext sqlExecutionContext,
             FunctionFactoryCache functionFactoryCache,
-            QueryModel queryModel
-    ) throws SqlException {
+            QueryModel queryModel) throws SqlException {
         // Create view columns based on query.
         final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
         assert columns.size() > 0;
@@ -228,8 +227,8 @@ public class CreateViewOperationImpl implements CreateViewOperation {
         // We do not know types of columns at this stage.
         // Compiler must put table together using query metadata.
         createColumnModelMap.clear();
-        final LowerCaseCharSequenceObjHashMap<TableColumnMetadata> augColumnMetadataMap =
-                createTableOperation.getAugmentedColumnMetadata();
+        final LowerCaseCharSequenceObjHashMap<TableColumnMetadata> augColumnMetadataMap = createTableOperation
+                .getAugmentedColumnMetadata();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
             final CharSequence columnName = qc.getName();
@@ -263,12 +262,14 @@ public class CreateViewOperationImpl implements CreateViewOperation {
             timestampModel.setIsDedupKey(); // set dedup for timestamp column
         }
 
-        // Don't forget to reset augmented columns in create table op with what we have scraped.
+        // Don't forget to reset augmented columns in create table op with what we have
+        // scraped.
         createTableOperation.initColumnMetadata(createColumnModelMap);
     }
 
     @Override
-    public void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, int scanDirection) throws SqlException {
-        createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection);
+    public void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, int scanDirection,
+            io.questdb.griffin.FunctionParser functionParser) throws SqlException {
+        createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection, functionParser);
     }
 }

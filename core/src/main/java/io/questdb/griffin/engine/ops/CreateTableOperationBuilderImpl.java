@@ -73,20 +73,21 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private boolean walEnabled;
 
     public void addColumnModel(CharSequence columnName, CreateTableColumnModel model) throws SqlException {
-        if (columnModels.get(columnName) != null) {
-            throw SqlException.duplicateColumn(model.getColumnNamePos(), columnName);
+        String name = Chars.toString(columnName);
+        if (columnModels.get(name) != null) {
+            throw SqlException.duplicateColumn(model.getColumnNamePos(), name);
         }
-        columnNameIndexMap.put(columnName, columnModels.size());
-        columnModels.put(columnName, model);
-        columnNames.add(columnName);
+        columnNameIndexMap.put(name, columnModels.size());
+        columnModels.put(name, model);
+        columnNames.add(name);
+        model.setColumnName(name);
     }
 
     @Override
     public CreateTableOperationImpl build(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
-            CharSequence sqlText
-    ) throws SqlException {
+            CharSequence sqlText) throws SqlException {
         if (selectText != null) {
             return new CreateTableOperationImpl(
                     Chars.toString(sqlText),
@@ -107,11 +108,11 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     defaultSymbolCapacity,
                     maxUncommittedRows,
                     o3MaxLag,
+                    columnNames,
                     columnModels,
                     batchSize,
                     batchO3MaxLag,
-                    tableKind
-            );
+                    tableKind);
         }
 
         if (likeTableNameExpr != null) {
@@ -129,8 +130,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     volumePosition,
                     likeTableNameToken.getTableName(),
                     likeTableNameExpr.position,
-                    ignoreIfExists
-            );
+                    ignoreIfExists);
         }
 
         return new CreateTableOperationImpl(
@@ -149,8 +149,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 maxUncommittedRows,
                 ttlHoursOrMonths,
                 ttlPosition,
-                walEnabled
-        );
+                walEnabled);
     }
 
     @Override
@@ -392,10 +391,6 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         }
     }
 
-    private static boolean isIPv4Cast(int from, int to) {
-        return (from == ColumnType.STRING && to == ColumnType.IPv4) || (from == ColumnType.VARCHAR && to == ColumnType.IPv4);
-    }
-
     private static void symbolClauseToSink(@NotNull CharSink<?> sink, CreateTableColumnModel model) {
         sink.putAscii(" capacity ");
         sink.put(model.getSymbolCapacity());
@@ -408,29 +403,5 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             sink.putAscii(" index capacity ");
             sink.put(model.getIndexValueBlockSize());
         }
-    }
-
-    static boolean isCompatibleCast(int from, int to) {
-        if (from == to || isIPv4Cast(from, to)) {
-            return true;
-        }
-        return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
-    }
-
-    static {
-        castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
-        castGroups.extendAndSet(ColumnType.BYTE, 1);
-        castGroups.extendAndSet(ColumnType.SHORT, 1);
-        castGroups.extendAndSet(ColumnType.CHAR, 1);
-        castGroups.extendAndSet(ColumnType.INT, 1);
-        castGroups.extendAndSet(ColumnType.LONG, 1);
-        castGroups.extendAndSet(ColumnType.FLOAT, 1);
-        castGroups.extendAndSet(ColumnType.DOUBLE, 1);
-        castGroups.extendAndSet(ColumnType.DATE, 1);
-        castGroups.extendAndSet(ColumnType.TIMESTAMP, 1);
-        castGroups.extendAndSet(ColumnType.STRING, 3);
-        castGroups.extendAndSet(ColumnType.VARCHAR, 3);
-        castGroups.extendAndSet(ColumnType.SYMBOL, 3);
-        castGroups.extendAndSet(ColumnType.BINARY, 4);
     }
 }

@@ -44,7 +44,7 @@ public class CastIntToCharFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToCharFunction {
+    public static class Func extends AbstractCastToCharFunction {
         public Func(Function arg) {
             super(arg);
         }
