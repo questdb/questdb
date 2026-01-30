@@ -2404,12 +2404,12 @@ public final class IntervalUtils {
             }
         }
 
-        // Find where the range expression ends (at '@' timezone marker or element end)
-        // Note: '#' (day/calendar filter) is already stripped from seq at this point
+        // Find where the range expression ends (at '@' timezone or '#' exchange/day filter marker, or element end)
+        // The global '#' is stripped from seq at the top level, but per-element '#' inside brackets is not.
         int rangeEnd = elementEnd;
         for (int j = rangeOpPos + 2; j < elementEnd; j++) {
             char ec = seq.charAt(j);
-            if (ec == '@') {
+            if (ec == '@' || ec == '#') {
                 rangeEnd = j;
                 break;
             }
@@ -2572,11 +2572,9 @@ public final class IntervalUtils {
                 }
                 effectiveElementEndForTz = elemDayFilterMarker;
             }
-            // Note: '#' (day/calendar filter) is already stripped from seq at the top level,
-            // so dateVarSink never contains '#'. Day filtering is applied via dayFilterMask parameter.
-            // Check for per-element timezone
-            int elemTzMarker = findTimezoneMarker(dateVarSink, resolvedElementStart, resolvedElementEnd);
-            int effectiveElementEnd = resolvedElementEnd;
+            // Check for per-element timezone (search only up to '#' marker, matching expandDateList)
+            int elemTzMarker = findTimezoneMarker(dateVarSink, resolvedElementStart, effectiveElementEndForTz);
+            int effectiveElementEnd = effectiveElementEndForTz;
 
             int activeTzLo = -1;
             int activeTzHi = -1;
