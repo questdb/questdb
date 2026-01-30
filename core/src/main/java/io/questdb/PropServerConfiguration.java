@@ -108,6 +108,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -140,6 +141,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final String ILP_PROTO_TRANSPORTS = "ilp.proto.transports";
     private static final String RELEASE_TYPE = "release.type";
     private static final String RELEASE_VERSION = "release.version";
+    static final String SECRET_FILE_PROPERTY_SUFFIX = ".file";
+    static final String SECRET_FILE_ENV_VAR_SUFFIX = "_FILE";
+    private static final int SECRET_FILE_MAX_SIZE = 65536; // 64KB max for secret files
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
     protected final byte httpHealthCheckAuthType;
     private final String acceptingWrites;
@@ -2449,7 +2453,91 @@ public class PropServerConfiguration implements ServerConfiguration {
         return value;
     }
 
+    /**
+     * Reads a secret value from a file. The file content is read as UTF-8 and trimmed.
+     * This is useful for Kubernetes deployments where secrets are mounted as files.
+     *
+     * @param filePath the path to the secret file
+     * @return the trimmed file content
+     * @throws CairoException if the file is too large or cannot be read
+     */
+    protected String readSecretFromFile(String filePath) {
+        long fd = -1;
+        long address = 0;
+        long size = 0;
+        try (Path path = new Path()) {
+            path.of(filePath);
+            fd = filesFacade.openRO(path.$());
+            if (fd < 0) {
+                throw CairoException.critical(filesFacade.errno())
+                        .put("cannot open secret file [path=").put(filePath).put(']');
+            }
+            size = filesFacade.length(fd);
+            if (size < 0) {
+                throw CairoException.critical(filesFacade.errno())
+                        .put("cannot get size of secret file [path=").put(filePath).put(']');
+            }
+            if (size > SECRET_FILE_MAX_SIZE) {
+                throw CairoException.critical(0)
+                        .put("secret file is too large [path=").put(filePath)
+                        .put(", size=").put(size)
+                        .put(", maxSize=").put(SECRET_FILE_MAX_SIZE).put(']');
+            }
+            if (size == 0) {
+                return "";
+            }
+            address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+            long bytesRead = filesFacade.read(fd, address, size, 0);
+            if (bytesRead != size) {
+                throw CairoException.critical(filesFacade.errno())
+                        .put("cannot read secret file [path=").put(filePath).put(']');
+            }
+            return Utf8s.stringFromUtf8Bytes(address, address + size).trim();
+        } finally {
+            if (address != 0) {
+                Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+            }
+            if (fd >= 0) {
+                filesFacade.close(fd);
+            }
+        }
+    }
+
+    /**
+     * Gets the file path for a secret property by checking the _FILE variant.
+     * Checks environment variable first (KEY_FILE), then property file (key.file).
+     *
+     * @return the file path if specified, null otherwise
+     */
+    protected String getSecretFilePath(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {
+        // Check env var: QDB_KEY_FILE
+        String envFileKey = key.getEnvVarName() + SECRET_FILE_ENV_VAR_SUFFIX;
+        String filePath = env != null ? env.get(envFileKey) : null;
+        if (filePath != null) {
+            return filePath.trim();
+        }
+        // Check property: key.file
+        String propFileKey = key.getPropertyPath() + SECRET_FILE_PROPERTY_SUFFIX;
+        filePath = properties.getProperty(propFileKey);
+        return filePath != null ? filePath.trim() : null;
+    }
+
     protected String getString(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, String defaultValue) {
+        // For sensitive properties, check if a _FILE variant is specified
+        // This supports Kubernetes secret file mounts
+        if (key.isSensitive() && filesFacade != null) {
+            String secretFilePath = getSecretFilePath(properties, env, key);
+            if (secretFilePath != null && !secretFilePath.isEmpty()) {
+                log.info().$("reading secret from file [key=").$(key.getPropertyPath()).$(", file=").$(secretFilePath).I$();
+                String result = readSecretFromFile(secretFilePath);
+                if (!key.isDebug()) {
+                    boolean dynamic = dynamicProperties != null && dynamicProperties.contains(key);
+                    allPairs.put(key, new ConfigPropertyValueImpl(result, ConfigPropertyValue.VALUE_SOURCE_FILE, dynamic));
+                }
+                return result;
+            }
+        }
+
         String envCandidate = key.getEnvVarName();
         String result = env != null ? env.get(envCandidate) : null;
         final int valueSource;

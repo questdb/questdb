@@ -1105,6 +1105,92 @@ public class ServerMainTest extends AbstractBootstrapTest {
         });
     }
 
+    @Test
+    public void testShowParametersSecretFromFileViaEnvVar() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a temporary file containing the secret password
+            final String secretsDir = root + Files.SEPARATOR + "secrets";
+            TestUtils.createTestPath(secretsDir);
+            final String secretFilePath = secretsDir + Files.SEPARATOR + "pg_password.txt";
+
+            try (java.io.PrintWriter writer = new java.io.PrintWriter(secretFilePath, CHARSET)) {
+                writer.print("  my_secret_password_from_file  "); // with whitespace to test trimming
+            }
+
+            // Start server with QDB_PG_PASSWORD_FILE environment variable pointing to the secret file
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.PG_PASSWORD.getEnvVarName() + "_FILE", secretFilePath
+            )) {
+                serverMain.start();
+
+                // Verify that the actual password value was read correctly (trimmed)
+                Assert.assertEquals(
+                        "my_secret_password_from_file",
+                        serverMain.getConfiguration().getPGWireConfiguration().getDefaultPassword()
+                );
+
+                // Verify that pg.password has value_source = 'file' in show parameters
+                serverMain.assertSql(
+                        "(show parameters) where property_path = 'pg.password'",
+                        """
+                                property_path\tenv_var_name\tvalue\tvalue_source\tsensitive\treloadable
+                                pg.password\tQDB_PG_PASSWORD\t****\tfile\ttrue\ttrue
+                                """
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testShowParametersSecretFromFileViaProperty() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a temporary file containing the secret password
+            final String secretsDir = root + Files.SEPARATOR + "secrets";
+            TestUtils.createTestPath(secretsDir);
+            final String secretFilePath = secretsDir + Files.SEPARATOR + "pg_password.txt";
+
+            try (java.io.PrintWriter writer = new java.io.PrintWriter(secretFilePath, CHARSET)) {
+                writer.print("my_secret_password_from_property_file");
+            }
+
+            // Create configuration with pg.password.file property
+            createDummyConfiguration(
+                    "pg.password.file=" + secretFilePath.replace("\\", "\\\\") // escape backslashes for properties file
+            );
+
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                serverMain.start();
+
+                // Verify that the actual password value was read correctly
+                Assert.assertEquals(
+                        "my_secret_password_from_property_file",
+                        serverMain.getConfiguration().getPGWireConfiguration().getDefaultPassword()
+                );
+
+                try (
+                        final SqlExecutionContext executionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 0);
+                        SqlCompiler compiler = serverMain.getEngine().getSqlCompiler()
+                ) {
+                    final StringSink actualSink = new StringSink();
+                    printSql(
+                            compiler,
+                            executionContext,
+                            "(show parameters) where property_path = 'pg.password'",
+                            actualSink
+                    );
+                    // Verify that pg.password has value_source = 'file' in show parameters
+                    TestUtils.assertEquals(
+                            """
+                                    property_path\tenv_var_name\tvalue\tvalue_source\tsensitive\treloadable
+                                    pg.password\tQDB_PG_PASSWORD\t****\tfile\ttrue\ttrue
+                                    """,
+                            actualSink
+                    );
+                }
+            }
+        });
+    }
+
     private static @NotNull WalWriter commitRow(TestServerMain serverMain, TableToken tableToken, int in) {
         WalWriter ww = serverMain.getEngine().getWalWriter(tableToken);
         try {
