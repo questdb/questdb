@@ -1481,7 +1481,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isPartitionEncoderParquetRawArrayEncoding() {
-        return false;
+        return true;
     }
 
     @Override

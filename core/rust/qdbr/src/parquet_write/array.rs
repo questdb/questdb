@@ -561,6 +561,93 @@ impl<'a> LevelsIterator<'a> {
         })
     }
 
+    #[inline]
+    pub fn has_lookahead(&self) -> bool {
+        self.last_rep_level > -1
+    }
+
+    #[inline]
+    pub fn take_lookahead(&mut self) -> (u32, u32) {
+        debug_assert!(self.has_lookahead());
+        let rep = self.last_rep_level as u32;
+        let def = self.last_def_level as u32;
+        self.last_rep_level = -1;
+        self.last_def_level = -1;
+        self.levels.clear();
+        self.clear_pending = false;
+        (rep, def)
+    }
+
+    #[inline]
+    pub fn set_lookahead(&mut self, rep: u32, def: u32) {
+        self.last_rep_level = rep as i64;
+        self.last_def_level = def as i64;
+    }
+
+    #[inline]
+    pub fn next_rep_def(&mut self) -> Option<ParquetResult<(u32, u32)>> {
+        let rep = self.rep_levels_iter.next();
+        let def = self.def_levels_iter.next();
+        if rep.is_none() || def.is_none() {
+            return None;
+        }
+        let rep = match rep.unwrap() {
+            Ok(v) => v,
+            Err(e) => return Some(Err(e.into())),
+        };
+        let def = match def.unwrap() {
+            Ok(v) => v,
+            Err(e) => return Some(Err(e.into())),
+        };
+        Some(Ok((rep, def)))
+    }
+
+    pub fn skip_rows(&mut self, n: usize, max_def_level: u32) -> ParquetResult<usize> {
+        if n == 0 {
+            return Ok(0);
+        }
+
+        let mut rows_skipped = 0usize;
+        let mut non_null_count = 0usize;
+        let mut has_elements = false;
+
+        if self.last_rep_level > -1 {
+            if self.last_def_level as u32 == max_def_level {
+                non_null_count += 1;
+            }
+            self.last_rep_level = -1;
+            self.last_def_level = -1;
+            has_elements = true;
+        }
+        self.levels.clear();
+        self.clear_pending = false;
+
+        loop {
+            match self.next_rep_def() {
+                None => {
+                    break;
+                }
+                Some(Err(e)) => return Err(e),
+                Some(Ok((rep, def))) => {
+                    if rep == 0 && has_elements {
+                        rows_skipped += 1;
+                        if rows_skipped >= n {
+                            self.last_rep_level = rep as i64;
+                            self.last_def_level = def as i64;
+                            break;
+                        }
+                    }
+                    has_elements = true;
+                    if def == max_def_level {
+                        non_null_count += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(non_null_count)
+    }
+
     pub fn next_levels(&mut self) -> Option<ParquetResult<&Levels>> {
         if self.clear_pending {
             self.levels.clear();
