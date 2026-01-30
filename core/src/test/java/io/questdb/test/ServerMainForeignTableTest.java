@@ -604,6 +604,137 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         }, threadName);
     }
 
+    @Test
+    public void testDropAndRecreateTableInVolume() throws Exception {
+        // Regression test for #4713: Can't recreate table in secondary volume after drop
+        Assume.assumeFalse(Os.isWindows());
+        String tableName = testName.getMethodName();
+        assertMemoryLeak(() -> {
+            try (
+                    ServerMain qdb = new ServerMain(getServerMainArgs());
+                    SqlCompiler compiler = qdb.getEngine().getSqlCompiler();
+                    SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine())
+            ) {
+                qdb.start();
+                CairoEngine engine = qdb.getEngine();
+
+                // 1. Create table in secondary volume
+                TableToken tableToken = createPopulateTable(engine, compiler, context, tableName, false, true, false);
+                assertTableExists(tableToken, false, true);
+
+                // Verify the volume directory exists
+                Assert.assertTrue(Files.exists(auxPath.of(otherVolume).concat(tableToken.getDirName()).$()));
+
+                // 2. Drop table
+                dropTable(context, tableToken);
+
+                // 3. Verify volume directory is removed
+                Assert.assertFalse("Volume directory should be removed after drop",
+                        Files.exists(auxPath.of(otherVolume).concat(tableToken.getDirName()).$()));
+
+                // 4. Create table with same name in volume - should succeed
+                tableToken = createPopulateTable(engine, compiler, context, tableName, false, true, false);
+                assertTableExists(tableToken, false, true);
+                dropTable(context, tableToken);
+            }
+        });
+    }
+
+    @Test
+    public void testDropTableInVolumeRemovesData() throws Exception {
+        // Regression test for #4714: Data left behind when dropping table in secondary volume
+        Assume.assumeFalse(Os.isWindows());
+        String tableName = testName.getMethodName();
+        assertMemoryLeak(() -> {
+            try (
+                    ServerMain qdb = new ServerMain(getServerMainArgs());
+                    SqlCompiler compiler = qdb.getEngine().getSqlCompiler();
+                    SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine())
+            ) {
+                qdb.start();
+                CairoEngine engine = qdb.getEngine();
+
+                // 1. Create table in volume with data
+                TableToken tableToken = createPopulateTable(engine, compiler, context, tableName, false, true, false);
+                assertTableExists(tableToken, false, true);
+                String dirName = tableToken.getDirName();
+
+                // Verify data exists in the volume
+                Assert.assertTrue("Volume directory should exist",
+                        Files.exists(auxPath.of(otherVolume).concat(dirName).$()));
+
+                // Verify symlink exists in db root
+                Assert.assertTrue("Symlink should exist",
+                        Files.exists(dbPath.trimTo(dbPathLen).concat(dirName).$()));
+
+                // 2. Drop table
+                dropTable(context, tableToken);
+
+                // 3. Assert: symlink no longer exists
+                Assert.assertFalse("Symlink should be removed after drop",
+                        Files.exists(dbPath.trimTo(dbPathLen).concat(dirName).$()));
+
+                // 4. Assert: volume directory no longer exists
+                Assert.assertFalse("Volume directory should be removed after drop",
+                        Files.exists(auxPath.of(otherVolume).concat(dirName).$()));
+            }
+        });
+    }
+
+    @Test
+    public void testRenameTableInVolume() throws Exception {
+        // Regression test for #4715: Rename table in secondary volume doesn't rename directory
+        Assume.assumeFalse(Os.isWindows());
+        String tableName = testName.getMethodName();
+        String newTableName = "real_data_name";
+        assertMemoryLeak(() -> {
+            try (
+                    ServerMain qdb = new ServerMain(getServerMainArgs());
+                    SqlCompiler compiler = qdb.getEngine().getSqlCompiler();
+                    SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine())
+            ) {
+                qdb.start();
+                CairoEngine engine = qdb.getEngine();
+
+                // 1. Create table in volume
+                TableToken tableToken = createPopulateTable(engine, compiler, context, tableName, false, true, false);
+                assertTableExists(tableToken, false, true);
+
+                String oldDirName = tableToken.getDirName();
+
+                // 2. Rename to new name
+                engine.execute("RENAME TABLE '" + tableName + "' TO '" + newTableName + "'", context);
+
+                // Get the new table token
+                TableToken newToken = engine.verifyTableName(newTableName);
+                String newDirName = newToken.getDirName();
+
+                // 3. Assert: symlink in db root points to new location
+                Assert.assertTrue("New symlink should exist",
+                        Files.exists(dbPath.trimTo(dbPathLen).concat(newDirName).$()));
+
+                // 4. Assert: symlink points to new volume directory
+                Assert.assertTrue("New volume directory should exist",
+                        Files.exists(auxPath.of(otherVolume).concat(newDirName).$()));
+
+                // 5. Assert: old volume directory no longer exists
+                Assert.assertFalse("Old volume directory should not exist",
+                        Files.exists(auxPath.of(otherVolume).concat(oldDirName).$()));
+
+                // 6. Query table and verify data is accessible
+                assertSql(
+                        compiler,
+                        context,
+                        "SELECT min(ts), max(ts), count() FROM " + newTableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
+                        new StringSink(),
+                        TABLE_START_CONTENT
+                );
+
+                dropTable(context, newToken);
+            }
+        });
+    }
+
     private TableToken createPopulateTable(
             CairoEngine engine,
             SqlCompiler compiler,

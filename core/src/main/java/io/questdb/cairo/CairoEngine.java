@@ -134,6 +134,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.AbstractTelemetryTask;
 import io.questdb.tasks.TelemetryMatViewTask;
 import io.questdb.tasks.TelemetryTask;
@@ -2104,17 +2105,24 @@ public class CairoEngine implements Closeable, WriterSource {
         }
 
         try {
-            if (ff.rename(fromPath.$(), toPath.$()) != Files.FILES_RENAME_OK) {
-                final int error = ff.errno();
-                LOG.error()
-                        .$("could not rename [from='").$(fromPath)
-                        .$("', to='").$(toPath)
-                        .$("', error=").$(error)
-                        .I$();
-                throw CairoException.critical(error)
-                        .put("could not rename [from='").put(fromPath)
-                        .put("', to='").put(toPath)
-                        .put(']');
+            // Check if this is a soft link (table in secondary volume)
+            if (ff.isSoftLink(fromPath.$())) {
+                renameTableInVolume(ff, fromPath, toPath, root, toTableToken);
+            } else {
+                // Regular table, use standard rename
+                toPath.of(root).concat(toTableToken).$();
+                if (ff.rename(fromPath.$(), toPath.$()) != Files.FILES_RENAME_OK) {
+                    final int error = ff.errno();
+                    LOG.error()
+                            .$("could not rename [from='").$(fromPath)
+                            .$("', to='").$(toPath)
+                            .$("', error=").$(error)
+                            .I$();
+                    throw CairoException.critical(error)
+                            .put("could not rename [from='").put(fromPath)
+                            .put("', to='").put(toPath)
+                            .put(']');
+                }
             }
             tableNameRegistry.registerName(toTableToken);
             return toTableToken;
@@ -2122,6 +2130,63 @@ public class CairoEngine implements Closeable, WriterSource {
             tableNameRegistry.unlockTableName(toTableToken);
             unlockTableCreate(toTableToken);
         }
+    }
+
+    private void renameTableInVolume(FilesFacade ff, Path fromPath, Path toPath, CharSequence root, TableToken toTableToken) {
+        // Read the symlink target (e.g., /volume/oldTableName)
+        Path volumePath = Path.getThreadLocal2("");
+        if (!ff.readLink(fromPath, volumePath)) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not read symlink target [path=").put(fromPath).put(']');
+        }
+
+        // Calculate new volume path by replacing table name
+        // volumePath = /volume/oldTableName -> /volume/newTableName
+        int lastSlash = Utf8s.lastIndexOfAscii(volumePath, '/');
+        if (lastSlash < 0) {
+            throw CairoException.critical(0)
+                    .put("invalid symlink target [path=").put(volumePath).put(']');
+        }
+
+        // Build the new volume path: take volume root + new table dir name
+        // First save the volume path size, trim it, copy the root portion, then restore
+        int volumePathSize = volumePath.size();
+        volumePath.trimTo(lastSlash + 1);
+        Path newVolumePath = Path.PATH.get();
+        newVolumePath.of(volumePath).concat(toTableToken.getDirName()).$();
+        // Restore volumePath for later use
+        volumePath.trimTo(volumePathSize);
+
+        // 1. Remove old symlink first
+        if (ff.unlink(fromPath.$()) != 0) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not remove symlink [path=").put(fromPath).put(']');
+        }
+
+        // 2. Rename directory in volume
+        if (ff.rename(volumePath.$(), newVolumePath.$()) != Files.FILES_RENAME_OK) {
+            // Try to restore symlink on failure
+            ff.softLink(volumePath.$(), fromPath.$());
+            throw CairoException.critical(ff.errno())
+                    .put("could not rename volume directory [from=").put(volumePath)
+                    .put(", to=").put(newVolumePath).put(']');
+        }
+
+        // 3. Create new symlink pointing to the renamed volume directory
+        toPath.of(root).concat(toTableToken).$();
+        if (ff.softLink(newVolumePath.$(), toPath.$()) != 0) {
+            // Try to restore on failure
+            ff.rename(newVolumePath.$(), volumePath.$());
+            ff.softLink(volumePath.$(), fromPath.$());
+            throw CairoException.critical(ff.errno())
+                    .put("could not create new symlink [path=").put(toPath).put(']');
+        }
+
+        LOG.info().$("renamed table in volume [from=").$(fromPath)
+                .$(", to=").$(toPath)
+                .$(", volumeFrom=").$(volumePath)
+                .$(", volumeTo=").$(newVolumePath)
+                .I$();
     }
 
     private void tryRepairTable(TableToken tableToken, CairoException rethrow) {

@@ -519,9 +519,28 @@ public class FilesFacadeImpl implements FilesFacade {
             // in Windows ^ ^ will return DT_DIR, but that is ok as the behaviour
             // is to delete the link, not the contents of the target. in *nix
             // systems we can simply unlink, which deletes the link and leaves
-            // the contents of the target intact
+            // the contents of the target intact.
+            // For tables in secondary volumes, we also need to remove the actual
+            // data directory in the volume after unlinking the symlink.
+
+            // Read the symlink target BEFORE unlinking
+            Path targetPath = Path.getThreadLocal2("");
+            boolean hasTarget = readLink(path, targetPath);
+
             if (unlink(path.$()) == 0) {
                 LOG.debug().$("removed by unlink [path=").$(path).I$();
+
+                // Now remove the actual directory in the volume
+                if (hasTarget) {
+                    if (rmdir(targetPath)) {
+                        LOG.debug().$("removed volume directory [path=").$(targetPath).I$();
+                    } else {
+                        // Note: symlink is already removed. Log the error but return true
+                        // since the symlink removal succeeded and that's the primary operation.
+                        LOG.error().$("failed to remove volume directory [path=").$(targetPath)
+                                .$(", errno=").$(errno()).I$();
+                    }
+                }
                 return true;
             } else {
                 LOG.debug().$("failed to unlink, will remove [path=").$(path).I$();
