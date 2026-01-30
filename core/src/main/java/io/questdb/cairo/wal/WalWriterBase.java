@@ -111,7 +111,6 @@ abstract class WalWriterBase implements AutoCloseable {
         path.trimTo(pathSize);
         path.slash().put(segmentId);
         final int segmentPathLen = path.size();
-        minSegmentLocked = segmentId;
         if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
         }
