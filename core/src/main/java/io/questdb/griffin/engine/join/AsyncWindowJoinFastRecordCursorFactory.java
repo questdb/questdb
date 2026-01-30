@@ -108,8 +108,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
     public AsyncWindowJoinFastRecordCursorFactory(
             @NotNull CairoEngine engine,
-            @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
+            @Transient @NotNull BytecodeAssembler asm,
             @NotNull MessageBus messageBus,
             @NotNull JoinRecordMetadata joinMetadata,
             @NotNull RecordMetadata outMetadata,

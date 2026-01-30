@@ -59,6 +59,7 @@ import io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.HorizonJoinContext;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.griffin.model.PivotForColumn;
 import io.questdb.griffin.model.QueryColumn;
@@ -109,9 +110,10 @@ public class SqlOptimiser implements Mutable {
     public static final int REWRITE_STATUS_OUTER_VIRTUAL_IS_SELECT_CHOOSE = 32;
     public static final int REWRITE_STATUS_USE_DISTINCT_MODEL = 16;
     public static final int REWRITE_STATUS_USE_GROUP_BY_MODEL = 4;
+    public static final int REWRITE_STATUS_USE_HORIZON_JOIN_MODE = 256;
     public static final int REWRITE_STATUS_USE_INNER_MODEL = 1;
     public static final int REWRITE_STATUS_USE_OUTER_MODEL = 8;
-    public static final int REWRITE_STATUS_USE_WINDOWS_JOIN_MODE = 128;
+    public static final int REWRITE_STATUS_USE_WINDOW_JOIN_MODE = 128;
     public static final int REWRITE_STATUS_USE_WINDOW_MODEL = 2;
     private static final int JOIN_OP_AND = 2;
     private static final int JOIN_OP_EQUAL = 1;
@@ -137,6 +139,8 @@ public class SqlOptimiser implements Mutable {
     private static final IntHashSet flexColumnModelTypes = new IntHashSet();
     // list of join types that don't support all optimisations (e.g., pushing table-specific predicates to both left and right table)
     private static final IntHashSet joinBarriers;
+    // list of join types where transitive filters should not be pushed to slave (would break time frame cursor support)
+    private static final IntHashSet joinFilterBarriers;
     private static final CharSequenceIntHashMap joinOps = new CharSequenceIntHashMap();
     private static final IntHashSet limitTypes = new IntHashSet();
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
@@ -409,6 +413,19 @@ public class SqlOptimiser implements Mutable {
         return countDistinctExpr.rhs.type == LITERAL
                 && nested.getAliasToColumnMap().get(countDistinctExpr.rhs.token) != null
                 && nested.getAliasToColumnMap().get(countDistinctExpr.rhs.token).getColumnType() == ColumnType.SYMBOL;
+    }
+
+    /**
+     * Checks if the token is a time function that returns the current time.
+     * These functions cannot be pushed through dateadd transformations because
+     * their values are not constant relative to the timestamp column.
+     * Uses SqlKeywords methods for efficient case-insensitive matching.
+     */
+    private static boolean isTimeFunctionKeyword(CharSequence token) {
+        return isNowKeyword(token)
+                || isSysdateKeyword(token)
+                || isSystimestampKeyword(token)
+                || isCurrentTimestampKeyword(token);
     }
 
     private static void linkDependencies(QueryModel model, int parent, int child) {
@@ -1265,12 +1282,19 @@ public class SqlOptimiser implements Mutable {
     private void addTransitiveFilters(QueryModel model) {
         ObjList<QueryModel> joinModels = model.getJoinModels();
         for (int i = 0, n = joinModels.size(); i < n; i++) {
-            JoinContext jc = joinModels.getQuick(i).getJoinContext();
+            QueryModel joinModel = joinModels.getQuick(i);
+            // Do not push transitive filters for joins in joinFilterBarriers (e.g., HORIZON JOIN)
+            // as this would cause a filtered factory to be created for the slave, breaking time frame cursor support.
+            if (joinFilterBarriers.contains(joinModel.getJoinType())) {
+                continue;
+            }
+            JoinContext jc = joinModel.getJoinContext();
             if (jc != null) {
                 for (int k = 0, kn = jc.bNames.size(); k < kn; k++) {
                     CharSequence name = jc.bNames.getQuick(k);
                     if (constNameToIndex.get(name) == jc.bIndexes.getQuick(k)) {
-                        OperatorExpression op = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition(constNameToToken.get(name));
+                        OperatorExpression op = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence())
+                                .getOperatorDefinition(constNameToToken.get(name));
                         ExpressionNode node = expressionNodePool.next().of(OPERATION, op.operator.token, op.precedence, 0);
                         node.lhs = jc.aNodes.getQuick(k);
                         node.rhs = constNameToNode.get(name);
@@ -1836,13 +1860,14 @@ public class SqlOptimiser implements Mutable {
             boolean useGroupByModel,
             boolean useWindowModel,
             boolean useWindowJoinModel,
+            boolean useHorizonJoinModel,
             boolean forceTranslatingModel,
             boolean checkTranslatingModel,
             QueryModel translatingModel
     ) {
         // check if the translating model is redundant, e.g.
         // that it neither chooses between tables nor renames columns
-        boolean translationIsRedundant = (useInnerModel || useGroupByModel || useWindowModel || useWindowJoinModel) && !forceTranslatingModel;
+        boolean translationIsRedundant = (useInnerModel || useGroupByModel || useWindowModel || useWindowJoinModel || useHorizonJoinModel) && !forceTranslatingModel;
         if (translationIsRedundant && checkTranslatingModel) {
             for (int i = 0, n = translatingModel.getBottomUpColumns().size(); i < n; i++) {
                 QueryColumn column = translatingModel.getBottomUpColumns().getQuick(i);
@@ -2019,16 +2044,39 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Checks if the token is a time function that returns the current time.
-     * These functions cannot be pushed through dateadd transformations because
-     * their values are not constant relative to the timestamp column.
-     * Uses SqlKeywords methods for efficient case-insensitive matching.
+     * Checks if the expression contains disallowed functions for timestamp offset pushdown.
+     * Disallowed functions:
+     * - now(), sysdate (time functions)
+     * - dateadd that doesn't reference the timestamp column
      */
-    private static boolean isTimeFunctionKeyword(CharSequence token) {
-        return isNowKeyword(token)
-                || isSysdateKeyword(token)
-                || isSystimestampKeyword(token)
-                || isCurrentTimestampKeyword(token);
+    private boolean containsDisallowedFunction(ExpressionNode node, CharSequence timestampColumn) {
+        if (node == null) {
+            return false;
+        }
+
+        if (node.type == FUNCTION) {
+            // Check for time functions like now(), sysdate
+            if (isTimeFunctionKeyword(node.token)) {
+                return true;
+            }
+            // Check for dateadd that doesn't reference the timestamp
+            if (Chars.equalsLowerCaseAscii(node.token, "dateadd")) {
+                if (!isDateaddWithTimestamp(node, timestampColumn)) {
+                    return true;
+                }
+            }
+        }
+
+        // Check children
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (containsDisallowedFunction(node.args.getQuick(i), timestampColumn)) {
+                return true;
+            }
+        }
+        if (containsDisallowedFunction(node.lhs, timestampColumn)) {
+            return true;
+        }
+        return containsDisallowedFunction(node.rhs, timestampColumn);
     }
 
     private void copyColumnTypesFromMetadata(QueryModel model, TableRecordMetadata m) {
@@ -2472,42 +2520,6 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Checks if the expression contains disallowed functions for timestamp offset pushdown.
-     * Disallowed functions:
-     * - now(), sysdate (time functions)
-     * - dateadd that doesn't reference the timestamp column
-     */
-    private boolean containsDisallowedFunction(ExpressionNode node, CharSequence timestampColumn) {
-        if (node == null) {
-            return false;
-        }
-
-        if (node.type == FUNCTION) {
-            // Check for time functions like now(), sysdate
-            if (isTimeFunctionKeyword(node.token)) {
-                return true;
-            }
-            // Check for dateadd that doesn't reference the timestamp
-            if (Chars.equalsLowerCaseAscii(node.token, "dateadd")) {
-                if (!isDateaddWithTimestamp(node, timestampColumn)) {
-                    return true;
-                }
-            }
-        }
-
-        // Check children
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (containsDisallowedFunction(node.args.getQuick(i), timestampColumn)) {
-                return true;
-            }
-        }
-        if (containsDisallowedFunction(node.lhs, timestampColumn)) {
-            return true;
-        }
-        return containsDisallowedFunction(node.rhs, timestampColumn);
-    }
-
-    /**
      * Detects if the model's timestamp column is derived from a dateadd expression
      * on the nested model's timestamp. If so, stores the offset information on the model
      * for use during predicate pushdown.
@@ -2611,6 +2623,148 @@ public class SqlOptimiser implements Mutable {
             }
         } catch (NumericException e) {
             // Cannot parse stride, don't set offset
+        }
+    }
+
+    /**
+     * Recursively walks the model tree and detects dateadd patterns on timestamp columns.
+     * For virtual models that have a dateadd expression on the nested model's timestamp,
+     * this sets the timestampColumnIndex so SqlCodeGenerator can use it as the virtual model's timestamp.
+     * This enables the timestamp(ts) clause to be optional when using dateadd on the designated timestamp.
+     *
+     * @throws SqlException if a dateadd offset exceeds the allowed int range
+     */
+    private void detectTimestampOffsetsRecursive(QueryModel model) throws SqlException {
+        if (model == null) {
+            return;
+        }
+
+        // Process joins first
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            detectTimestampOffsetsRecursive(joinModels.getQuick(i));
+        }
+
+        // Process union models
+        detectTimestampOffsetsRecursive(model.getUnionModel());
+
+        // Process nested model
+        QueryModel nested = model.getNestedModel();
+        detectTimestampOffsetsRecursive(nested);
+
+        // Now process this model - only for virtual models
+        if (model.getSelectModelType() != SELECT_MODEL_VIRTUAL) {
+            return;
+        }
+
+        // Skip if timestamp column index is already set
+        if (model.getTimestampColumnIndex() >= 0) {
+            return;
+        }
+
+        // Skip if no nested model
+        if (nested == null) {
+            return;
+        }
+
+        // Skip if nested model doesn't preserve row ordering
+        int nestedType = nested.getSelectModelType();
+        if (nestedType == SELECT_MODEL_GROUP_BY
+                || nestedType == SELECT_MODEL_DISTINCT
+                || nestedType == SELECT_MODEL_WINDOW) {
+            return;
+        }
+
+        // Find the source of the timestamp - traverse down through nested models
+        // We look for a model that has either:
+        // 1. A designated timestamp (getTimestamp() != null)
+        // 2. A timestampColumnIndex set (from a previous dateadd detection)
+        // 3. A timestampOffsetAlias set
+        QueryModel timestampSourceModel = nested.getNestedModel();
+        if (timestampSourceModel == null) {
+            timestampSourceModel = nested;
+        }
+        // Keep traversing until we find a model with timestamp info
+        while (timestampSourceModel != null && lacksTimestampInfo(timestampSourceModel)) {
+            timestampSourceModel = timestampSourceModel.getNestedModel();
+        }
+
+        // If no timestamp info found, we can't detect offset
+        if (timestampSourceModel == null) {
+            return;
+        }
+
+        // Get the source timestamp column name
+        CharSequence sourceTimestampName = null;
+        if (timestampSourceModel.getTimestamp() != null) {
+            sourceTimestampName = timestampSourceModel.getTimestamp().token;
+        } else if (timestampSourceModel.getTimestampOffsetAlias() != null) {
+            sourceTimestampName = timestampSourceModel.getTimestampOffsetAlias();
+        }
+
+        // Look for a column that is dateadd on the nested timestamp
+        ObjList<QueryColumn> columns = model.getBottomUpColumns();
+
+        // First, check if the original timestamp column is in the projection as a literal.
+        // If so, skip ts_offset detection - the original timestamp should be the designated one.
+        if (sourceTimestampName != null) {
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                QueryColumn col = columns.getQuick(i);
+                ExpressionNode ast = col.getAst();
+                if (ast != null && ast.type == LITERAL && isLiteralTimestampReference(ast, nested, sourceTimestampName)) {
+                    // Original timestamp is in projection - it takes precedence over dateadd columns
+                    return;
+                }
+            }
+        }
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QueryColumn col = columns.getQuick(i);
+            ExpressionNode ast = col.getAst();
+
+            if (isDateaddTimestampExpression(ast, timestampSourceModel)) {
+                // Found a dateadd on the timestamp - set this as the timestamp column
+                model.setTimestampColumnIndex(i);
+
+                // Also set the offset info for predicate pushdown
+                ObjList<ExpressionNode> args = ast.args;
+                ExpressionNode unitArg = args.getQuick(2);
+                ExpressionNode strideArg = args.getQuick(1);
+                ExpressionNode timestampArg = args.getQuick(0);
+
+                // Parse the unit character
+                char unit = parseUnitCharacter(unitArg.token);
+                if (unit == 0) {
+                    break;  // Invalid unit format, just use index without offset
+                }
+
+                try {
+                    long stride = extractInvertedConstantLong(strideArg);
+
+                    // Validate that offset fits in int range.
+                    // The offset must match dateadd's signature: dateadd(char, int, timestamp).
+                    // See TimestampAddFunctionFactory for the function definition.
+                    long inverseOffset = -stride;
+                    if (inverseOffset < Integer.MIN_VALUE || inverseOffset > Integer.MAX_VALUE) {
+                        throw SqlException.position(strideArg.position)
+                                .put("timestamp offset value ")
+                                .put(inverseOffset)
+                                .put(" exceeds maximum allowed range for dateadd function (must be between ")
+                                .put(Integer.MIN_VALUE)
+                                .put(" and ")
+                                .put(Integer.MAX_VALUE)
+                                .put(")");
+                    }
+
+                    // Store INVERSE offset (negate stride) for pushdown
+                    model.setTimestampOffsetUnit(unit);
+                    model.setTimestampOffsetValue((int) inverseOffset);
+                    model.setTimestampSourceColumn(timestampArg.token);
+                    model.setTimestampOffsetAlias(col.getAlias());
+                } catch (NumericException e) {
+                    // Cannot parse stride, just set the index without offset info
+                }
+                break; // Only handle first dateadd column
+            }
         }
     }
 
@@ -3305,145 +3459,18 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Recursively walks the model tree and detects dateadd patterns on timestamp columns.
-     * For virtual models that have a dateadd expression on the nested model's timestamp,
-     * this sets the timestampColumnIndex so SqlCodeGenerator can use it as the virtual model's timestamp.
-     * This enables the timestamp(ts) clause to be optional when using dateadd on the designated timestamp.
-     *
-     * @throws SqlException if a dateadd offset exceeds the allowed int range
+     * Extracts a constant long value from an expression node.
+     * Handles both positive constants and unary minus expressions.
      */
-    private void detectTimestampOffsetsRecursive(QueryModel model) throws SqlException {
-        if (model == null) {
-            return;
+    private long extractInvertedConstantLong(ExpressionNode node) throws NumericException {
+        if (node.type == CONSTANT) {
+            return Numbers.parseLong(node.token);
         }
-
-        // Process joins first
-        ObjList<QueryModel> joinModels = model.getJoinModels();
-        for (int i = 1, n = joinModels.size(); i < n; i++) {
-            detectTimestampOffsetsRecursive(joinModels.getQuick(i));
+        // Handle unary minus: -(constant)
+        if (node.type == OPERATION && Chars.equals(node.token, "-") && node.paramCount == 1) {
+            return -Numbers.parseLong(node.rhs.token);
         }
-
-        // Process union models
-        detectTimestampOffsetsRecursive(model.getUnionModel());
-
-        // Process nested model
-        QueryModel nested = model.getNestedModel();
-        detectTimestampOffsetsRecursive(nested);
-
-        // Now process this model - only for virtual models
-        if (model.getSelectModelType() != SELECT_MODEL_VIRTUAL) {
-            return;
-        }
-
-        // Skip if timestamp column index is already set
-        if (model.getTimestampColumnIndex() >= 0) {
-            return;
-        }
-
-        // Skip if no nested model
-        if (nested == null) {
-            return;
-        }
-
-        // Skip if nested model doesn't preserve row ordering
-        int nestedType = nested.getSelectModelType();
-        if (nestedType == SELECT_MODEL_GROUP_BY
-                || nestedType == SELECT_MODEL_DISTINCT
-                || nestedType == SELECT_MODEL_WINDOW) {
-            return;
-        }
-
-        // Find the source of the timestamp - traverse down through nested models
-        // We look for a model that has either:
-        // 1. A designated timestamp (getTimestamp() != null)
-        // 2. A timestampColumnIndex set (from a previous dateadd detection)
-        // 3. A timestampOffsetAlias set
-        QueryModel timestampSourceModel = nested.getNestedModel();
-        if (timestampSourceModel == null) {
-            timestampSourceModel = nested;
-        }
-        // Keep traversing until we find a model with timestamp info
-        while (timestampSourceModel != null && lacksTimestampInfo(timestampSourceModel)) {
-            timestampSourceModel = timestampSourceModel.getNestedModel();
-        }
-
-        // If no timestamp info found, we can't detect offset
-        if (timestampSourceModel == null) {
-            return;
-        }
-
-        // Get the source timestamp column name
-        CharSequence sourceTimestampName = null;
-        if (timestampSourceModel.getTimestamp() != null) {
-            sourceTimestampName = timestampSourceModel.getTimestamp().token;
-        } else if (timestampSourceModel.getTimestampOffsetAlias() != null) {
-            sourceTimestampName = timestampSourceModel.getTimestampOffsetAlias();
-        }
-
-        // Look for a column that is dateadd on the nested timestamp
-        ObjList<QueryColumn> columns = model.getBottomUpColumns();
-
-        // First, check if the original timestamp column is in the projection as a literal.
-        // If so, skip ts_offset detection - the original timestamp should be the designated one.
-        if (sourceTimestampName != null) {
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                QueryColumn col = columns.getQuick(i);
-                ExpressionNode ast = col.getAst();
-                if (ast != null && ast.type == LITERAL && isLiteralTimestampReference(ast, nested, sourceTimestampName)) {
-                    // Original timestamp is in projection - it takes precedence over dateadd columns
-                    return;
-                }
-            }
-        }
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            QueryColumn col = columns.getQuick(i);
-            ExpressionNode ast = col.getAst();
-
-            if (isDateaddTimestampExpression(ast, timestampSourceModel)) {
-                // Found a dateadd on the timestamp - set this as the timestamp column
-                model.setTimestampColumnIndex(i);
-
-                // Also set the offset info for predicate pushdown
-                ObjList<ExpressionNode> args = ast.args;
-                ExpressionNode unitArg = args.getQuick(2);
-                ExpressionNode strideArg = args.getQuick(1);
-                ExpressionNode timestampArg = args.getQuick(0);
-
-                // Parse the unit character
-                char unit = parseUnitCharacter(unitArg.token);
-                if (unit == 0) {
-                    break;  // Invalid unit format, just use index without offset
-                }
-
-                try {
-                    long stride = extractInvertedConstantLong(strideArg);
-
-                    // Validate that offset fits in int range.
-                    // The offset must match dateadd's signature: dateadd(char, int, timestamp).
-                    // See TimestampAddFunctionFactory for the function definition.
-                    long inverseOffset = -stride;
-                    if (inverseOffset < Integer.MIN_VALUE || inverseOffset > Integer.MAX_VALUE) {
-                        throw SqlException.position(strideArg.position)
-                                .put("timestamp offset value ")
-                                .put(inverseOffset)
-                                .put(" exceeds maximum allowed range for dateadd function (must be between ")
-                                .put(Integer.MIN_VALUE)
-                                .put(" and ")
-                                .put(Integer.MAX_VALUE)
-                                .put(")");
-                    }
-
-                    // Store INVERSE offset (negate stride) for pushdown
-                    model.setTimestampOffsetUnit(unit);
-                    model.setTimestampOffsetValue((int) inverseOffset);
-                    model.setTimestampSourceColumn(timestampArg.token);
-                    model.setTimestampOffsetAlias(col.getAlias());
-                } catch (NumericException e) {
-                    // Cannot parse stride, just set the index without offset info
-                }
-                break; // Only handle first dateadd column
-            }
-        }
+        throw NumericException.INSTANCE;
     }
 
     /**
@@ -3759,18 +3786,19 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Extracts a constant long value from an expression node.
-     * Handles both positive constants and unary minus expressions.
+     * Gets the timestamp column name for pushdown validation.
+     * Returns the timestamp alias or designated timestamp token.
      */
-    private long extractInvertedConstantLong(ExpressionNode node) throws NumericException {
-        if (node.type == CONSTANT) {
-            return Numbers.parseLong(node.token);
+    private CharSequence getTimestampColumnForPushdown(QueryModel model) {
+        CharSequence alias = model.getTimestampOffsetAlias();
+        if (alias != null) {
+            return alias;
         }
-        // Handle unary minus: -(constant)
-        if (node.type == OPERATION && Chars.equals(node.token, "-") && node.paramCount == 1) {
-            return -Numbers.parseLong(node.rhs.token);
+        ExpressionNode ts = model.getTimestamp();
+        if (ts != null) {
+            return ts.token;
         }
-        throw NumericException.INSTANCE;
+        return null;
     }
 
     private CharSequence getTranslatedColumnAlias(QueryModel model, QueryModel stopModel, CharSequence token) {
@@ -3971,19 +3999,30 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Gets the timestamp column name for pushdown validation.
-     * Returns the timestamp alias or designated timestamp token.
+     * Checks if the expression is dateadd(constant, constant, timestamp).
      */
-    private CharSequence getTimestampColumnForPushdown(QueryModel model) {
-        CharSequence alias = model.getTimestampOffsetAlias();
-        if (alias != null) {
-            return alias;
+    private boolean isDateaddWithTimestamp(ExpressionNode node, CharSequence timestampColumn) {
+        if (node == null || node.type != FUNCTION) {
+            return false;
         }
-        ExpressionNode ts = model.getTimestamp();
-        if (ts != null) {
-            return ts.token;
+        if (!Chars.equalsLowerCaseAscii(node.token, "dateadd")) {
+            return false;
         }
-        return null;
+        // dateadd has 3 arguments: unit, amount, timestamp
+        if (node.args.size() != 3) {
+            return false;
+        }
+        // args are in reverse order: [timestamp, amount, unit]
+        ExpressionNode timestampArg = node.args.getQuick(0);
+        ExpressionNode amountArg = node.args.getQuick(1);
+        ExpressionNode unitArg = node.args.getQuick(2);
+
+        // unit and amount must be constants
+        if (!isSimpleConstant(unitArg) || !isSimpleConstant(amountArg)) {
+            return false;
+        }
+        // timestamp argument must reference the timestamp column
+        return isTimestampLiteral(timestampArg, timestampColumn);
     }
 
     private boolean isEffectivelyConstantExpression(ExpressionNode node) {
@@ -4049,37 +4088,6 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Checks if the expression is dateadd(constant, constant, timestamp).
-     */
-    private boolean isDateaddWithTimestamp(ExpressionNode node, CharSequence timestampColumn) {
-        if (node == null || node.type != FUNCTION) {
-            return false;
-        }
-        if (!Chars.equalsLowerCaseAscii(node.token, "dateadd")) {
-            return false;
-        }
-        // dateadd has 3 arguments: unit, amount, timestamp
-        if (node.args.size() != 3) {
-            return false;
-        }
-        // args are in reverse order: [timestamp, amount, unit]
-        ExpressionNode timestampArg = node.args.getQuick(0);
-        ExpressionNode amountArg = node.args.getQuick(1);
-        ExpressionNode unitArg = node.args.getQuick(2);
-
-        // unit and amount must be constants
-        if (!isSimpleConstant(unitArg) || !isSimpleConstant(amountArg)) {
-            return false;
-        }
-        // timestamp argument must reference the timestamp column
-        return isTimestampLiteral(timestampArg, timestampColumn);
-    }
-
-    private boolean isSimpleIntegerColumn(ExpressionNode column, QueryModel model) {
-        return checkSimpleIntegerColumn(column, model) != null;
-    }
-
-    /**
      * Checks if the expression is a simple constant value (not a function).
      * CONSTANT and LITERAL types are allowed (string/numeric constants).
      * FUNCTION types are rejected (like now(), sysdate, etc.).
@@ -4100,6 +4108,10 @@ public class SqlOptimiser implements Mutable {
                 // Reject FUNCTION (like now()), etc.
                     false;
         };
+    }
+
+    private boolean isSimpleIntegerColumn(ExpressionNode column, QueryModel model) {
+        return checkSimpleIntegerColumn(column, model) != null;
     }
 
     private boolean isTimestampLiteral(ExpressionNode node, CharSequence timestampColumn) {
@@ -7128,6 +7140,10 @@ public class SqlOptimiser implements Mutable {
                 throw SqlException.$(sampleBy.position, "SAMPLE BY cannot be used with WINDOW JOIN");
             }
 
+            if (sampleBy != null && isHorizonJoin(nested)) {
+                throw SqlException.$(sampleBy.position, "SAMPLE BY cannot be used with HORIZON JOIN");
+            }
+
             if (
                     sampleBy != null
                             && timestamp != null
@@ -7679,7 +7695,9 @@ public class SqlOptimiser implements Mutable {
             ExpressionNode sampleBy,
             QueryModel cursorModel,
             QueryModel windowJoinModel,
-            boolean isWindowJoin
+            QueryModel horizonJoinModel,
+            boolean isWindowJoin,
+            boolean isHorizonJoin
     ) throws SqlException {
         // when column is direct call to aggregation function, such as
         // select sum(x) ...
@@ -7735,7 +7753,7 @@ public class SqlOptimiser implements Mutable {
                     return null;
                 }
             }
-            QueryModel aggModel = isWindowJoin ? windowJoinModel : groupByModel;
+            QueryModel aggModel = isWindowJoin ? windowJoinModel : (isHorizonJoin ? horizonJoinModel : groupByModel);
 
             qc = ensureAliasUniqueness(aggModel, qc);
             aggModel.addBottomUpColumn(qc);
@@ -7752,7 +7770,7 @@ public class SqlOptimiser implements Mutable {
             ref.setIncludeIntoWildcard(qc.isIncludeIntoWildcard());
             outerVirtualModel.addBottomUpColumn(ref);
             distinctModel.addBottomUpColumn(ref);
-            if (!isWindowJoin) {
+            if (!isWindowJoin && !isHorizonJoin) {
                 // sample-by implementation requires innerVirtualModel
                 emitLiterals(ast, translatingModel, innerVirtualModel, sampleBy != null, baseModel, false);
             }
@@ -7765,7 +7783,7 @@ public class SqlOptimiser implements Mutable {
                     qc.getAlias(),
                     cursorModel,
                     innerVirtualModel,
-                    isWindowJoin ? windowJoinModel : translatingModel,
+                    isWindowJoin ? windowJoinModel : (isHorizonJoin ? horizonJoinModel : translatingModel),
                     baseModel,
                     sqlExecutionContext,
                     sqlParserCallback
@@ -7791,9 +7809,11 @@ public class SqlOptimiser implements Mutable {
             QueryModel cursorModel,
             QueryModel translatingModel,
             QueryModel windowJoinModel,
+            QueryModel horizonJoinModel,
             ExpressionNode sampleBy,
             QueryModel windowModel,
-            boolean isWindowJoin
+            boolean isWindowJoin,
+            boolean isHorizonJoin
     ) throws SqlException {
         // dealing with OPERATIONs here (and FUNCTIONS that have not bailed out yet)
         if (explicitGroupBy) {
@@ -7891,7 +7911,7 @@ public class SqlOptimiser implements Mutable {
             return rewriteStatus;
         }
 
-        QueryModel aggModel = isWindowJoin ? windowJoinModel : groupByModel;
+        QueryModel aggModel = isWindowJoin ? windowJoinModel : (isHorizonJoin ? horizonJoinModel : groupByModel);
         final int beforeSplit = aggModel.getBottomUpColumns().size();
         if (checkForChildAggregates(qc.getAst()) || (sampleBy != null && nonAggregateFunctionDependsOn(qc.getAst(), baseModel.getTimestamp()))) {
             // push aggregates and literals outside aggregate functions
@@ -7917,7 +7937,7 @@ public class SqlOptimiser implements Mutable {
             qc = ensureAliasUniqueness(outerVirtualModel, qc);
             outerVirtualModel.addBottomUpColumn(qc);
             distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
-            if (!isWindowJoin) {
+            if (!isWindowJoin && !isHorizonJoin) {
                 for (int j = beforeSplit, n = groupByModel.getBottomUpColumns().size(); j < n; j++) {
                     emitLiterals(
                             groupByModel.getBottomUpColumns().getQuick(j).getAst(),
@@ -7978,7 +7998,7 @@ public class SqlOptimiser implements Mutable {
                 // self-referencing and passing validation
                 innerVirtualModel.addBottomUpColumn(qc);
                 return rewriteStatus;
-            } else if ((rewriteStatus & REWRITE_STATUS_USE_WINDOWS_JOIN_MODE) != 0) {
+            } else if ((rewriteStatus & REWRITE_STATUS_USE_WINDOW_JOIN_MODE) != 0) {
                 qc = ensureAliasUniqueness(outerVirtualModel, qc);
                 outerVirtualModel.addBottomUpColumn(qc);
                 QueryColumn ref = nextColumn(qc.getAlias());
@@ -7986,6 +8006,20 @@ public class SqlOptimiser implements Mutable {
                 emitLiterals(
                         qc.getAst(),
                         windowJoinModel,
+                        innerVirtualModel,
+                        false,
+                        baseModel,
+                        false
+                );
+                return rewriteStatus;
+            } else if ((rewriteStatus & REWRITE_STATUS_USE_HORIZON_JOIN_MODE) != 0) {
+                qc = ensureAliasUniqueness(outerVirtualModel, qc);
+                outerVirtualModel.addBottomUpColumn(qc);
+                QueryColumn ref = nextColumn(qc.getAlias());
+                distinctModel.addBottomUpColumn(ref);
+                emitLiterals(
+                        qc.getAst(),
+                        horizonJoinModel,
                         innerVirtualModel,
                         false,
                         baseModel,
@@ -8081,6 +8115,8 @@ public class SqlOptimiser implements Mutable {
         translatingModel.setSelectModelType(SELECT_MODEL_CHOOSE);
         final QueryModel windowJoinModel = queryModelPool.next();
         windowJoinModel.setSelectModelType(SELECT_MODEL_WINDOW_JOIN);
+        final QueryModel horizonJoinModel = queryModelPool.next();
+        horizonJoinModel.setSelectModelType(SELECT_MODEL_HORIZON_JOIN);
         // this is a dangling model, which isn't chained with any other
         // we use it to ensure expression and alias uniqueness
         final QueryModel cursorModel = queryModelPool.next();
@@ -8094,7 +8130,11 @@ public class SqlOptimiser implements Mutable {
 
         final boolean isWindowJoin = isWindowJoin(baseModel);
         if (isWindowJoin) {
-            rewriteStatus |= REWRITE_STATUS_USE_WINDOWS_JOIN_MODE;
+            rewriteStatus |= REWRITE_STATUS_USE_WINDOW_JOIN_MODE;
+        }
+        final boolean isHorizonJoin = isHorizonJoin(baseModel);
+        if (isHorizonJoin) {
+            rewriteStatus |= REWRITE_STATUS_USE_HORIZON_JOIN_MODE;
         }
         // sample by clause should be promoted to all the models as well as validated
         final ExpressionNode sampleBy = baseModel.getSampleBy();
@@ -8106,6 +8146,10 @@ public class SqlOptimiser implements Mutable {
         if (baseModel.getGroupBy().size() > 0) {
             if (isWindowJoin) {
                 throw SqlException.$(baseModel.getGroupBy().getQuick(0).position, "GROUP BY cannot be used with WINDOW JOIN");
+            }
+            // TODO(puzpuzpuz): support explicit GROUP BY with HORIZON JOIN
+            if (isHorizonJoin) {
+                throw SqlException.$(baseModel.getGroupBy().getQuick(0).position, "GROUP BY cannot be used with HORIZON JOIN");
             }
             groupByModel.moveGroupByFrom(baseModel);
             // group by should be implemented even if there are no aggregate functions
@@ -8134,6 +8178,9 @@ public class SqlOptimiser implements Mutable {
             if (isWindowExpr && isWindowJoin) {
                 throw SqlException.$(qc.getAst().position, "WINDOW functions are not allowed in WINDOW JOIN queries");
             }
+            if (isWindowExpr && isHorizonJoin) {
+                throw SqlException.$(qc.getAst().position, "WINDOW functions are not allowed in HORIZON JOIN queries");
+            }
 
             if (qc.getAst().type == BIND_VARIABLE) {
                 rewriteStatus |= REWRITE_STATUS_USE_INNER_MODEL;
@@ -8143,7 +8190,7 @@ public class SqlOptimiser implements Mutable {
                         rewriteStatus |= REWRITE_STATUS_USE_WINDOW_MODEL;
                         continue;
                     } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
-                        if (!isWindowJoin) {
+                        if (!isWindowJoin && !isHorizonJoin) {
                             rewriteStatus |= REWRITE_STATUS_USE_GROUP_BY_MODEL;
                         }
 
@@ -8168,12 +8215,12 @@ public class SqlOptimiser implements Mutable {
                         continue;
                     }
                 }
-                if (isWindowJoin) {
+                if (isWindowJoin || isHorizonJoin) {
                     rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
                 }
 
                 if (checkForChildAggregates(qc.getAst())) {
-                    if (!isWindowJoin) {
+                    if (!isWindowJoin && !isHorizonJoin) {
                         rewriteStatus |= REWRITE_STATUS_USE_GROUP_BY_MODEL;
                     }
                     rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
@@ -8186,7 +8233,9 @@ public class SqlOptimiser implements Mutable {
         // group-by generator can cope with virtual columns, it does not require virtual model to be its base
         // however, sample-by single-threaded implementation still relies on the innerVirtualModel, hence the fork
         boolean forceNotUseInnerModel = false;
-        if ((rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0 && sampleBy == null || ((rewriteStatus & REWRITE_STATUS_USE_WINDOWS_JOIN_MODE) != 0)) {
+        if ((rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0 && sampleBy == null
+                || ((rewriteStatus & REWRITE_STATUS_USE_WINDOW_JOIN_MODE) != 0)
+                || ((rewriteStatus & REWRITE_STATUS_USE_HORIZON_JOIN_MODE) != 0)) {
             rewriteStatus &= ~REWRITE_STATUS_USE_INNER_MODEL;
             forceNotUseInnerModel = true;
         }
@@ -8292,6 +8341,7 @@ public class SqlOptimiser implements Mutable {
         // create virtual columns from select list
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
+            QueryModel translatingModel0 = isWindowJoin ? windowJoinModel : (isHorizonJoin ? horizonJoinModel : translatingModel);
             switch (qc.getAst().type) {
                 case LITERAL:
                     if (Chars.endsWith(qc.getAst().token, '*')) {
@@ -8303,7 +8353,7 @@ public class SqlOptimiser implements Mutable {
                                 hasJoins,
                                 (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0,
                                 baseModel,
-                                isWindowJoin ? windowJoinModel : translatingModel,
+                                translatingModel0,
                                 innerVirtualModel,
                                 windowModel,
                                 groupByModel,
@@ -8353,7 +8403,7 @@ public class SqlOptimiser implements Mutable {
                                 addFunction(
                                         qc,
                                         baseModel,
-                                        isWindowJoin ? windowJoinModel : translatingModel,
+                                        translatingModel0,
                                         innerVirtualModel,
                                         windowModel,
                                         groupByModel,
@@ -8368,7 +8418,7 @@ public class SqlOptimiser implements Mutable {
                                         qc.getAst(),
                                         (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0,
                                         baseModel,
-                                        isWindowJoin ? windowJoinModel : translatingModel,
+                                        translatingModel0,
                                         innerVirtualModel,
                                         windowModel,
                                         groupByModel,
@@ -8390,7 +8440,7 @@ public class SqlOptimiser implements Mutable {
                         addFunction(
                                 qc,
                                 baseModel,
-                                isWindowJoin ? windowJoinModel : translatingModel,
+                                translatingModel0,
                                 innerVirtualModel,
                                 windowModel,
                                 groupByModel,
@@ -8408,7 +8458,7 @@ public class SqlOptimiser implements Mutable {
                             windowModel,
                             outerVirtualModel,
                             distinctModel,
-                            isWindowJoin ? windowJoinModel : translatingModel,
+                            translatingModel0,
                             innerVirtualModel,
                             baseModel,
                             (rewriteStatus & REWRITE_STATUS_USE_OUTER_MODEL) != 0,
@@ -8416,7 +8466,9 @@ public class SqlOptimiser implements Mutable {
                             sampleBy,
                             cursorModel,
                             windowJoinModel,
-                            isWindowJoin
+                            horizonJoinModel,
+                            isWindowJoin,
+                            isHorizonJoin
                     );
                     if (qc == null) continue;
                     // fall through and do the same thing as for OPERATIONS (default)
@@ -8435,11 +8487,13 @@ public class SqlOptimiser implements Mutable {
                             innerVirtualModel,
                             i,
                             cursorModel,
-                            isWindowJoin ? windowJoinModel : translatingModel,
+                            translatingModel0,
                             windowJoinModel,
+                            horizonJoinModel,
                             sampleBy,
                             windowModel,
-                            isWindowJoin
+                            isWindowJoin,
+                            isHorizonJoin
                     );
                     break;
             }
@@ -8537,7 +8591,8 @@ public class SqlOptimiser implements Mutable {
                 (rewriteStatus & REWRITE_STATUS_USE_INNER_MODEL) != 0,
                 (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0,
                 (rewriteStatus & REWRITE_STATUS_USE_WINDOW_MODEL) != 0,
-                (rewriteStatus & REWRITE_STATUS_USE_WINDOWS_JOIN_MODE) != 0,
+                (rewriteStatus & REWRITE_STATUS_USE_WINDOW_JOIN_MODE) != 0,
+                (rewriteStatus & REWRITE_STATUS_USE_HORIZON_JOIN_MODE) != 0,
                 forceTranslatingModel,
                 true,
                 translatingModel
@@ -8565,6 +8620,7 @@ public class SqlOptimiser implements Mutable {
                 translationIsRedundant = checkIfTranslatingModelIsRedundant(
                         (rewriteStatus & REWRITE_STATUS_USE_INNER_MODEL) != 0,
                         true,
+                        false,
                         false,
                         false,
                         false,
@@ -8740,7 +8796,7 @@ public class SqlOptimiser implements Mutable {
             groupByModel.copyHints(model.getHints());
             root = groupByModel;
             limitSource = groupByModel;
-        } else if ((rewriteStatus & REWRITE_STATUS_USE_WINDOWS_JOIN_MODE) != 0) {
+        } else if ((rewriteStatus & REWRITE_STATUS_USE_WINDOW_JOIN_MODE) != 0) {
             final ObjList<QueryModel> jms = root.getJoinModels();
             for (int i = 1, n = jms.size(); i < n; i++) {
                 QueryModel jm = jms.getQuick(i);
@@ -8756,6 +8812,26 @@ public class SqlOptimiser implements Mutable {
             windowJoinModel.copyHints(model.getHints());
             root = windowJoinModel;
             limitSource = windowJoinModel;
+        } else if ((rewriteStatus & REWRITE_STATUS_USE_HORIZON_JOIN_MODE) != 0) {
+            // Set parent model on HorizonJoinContext for the code generator to access GROUP BY columns
+            // The synthetic offset model with MODE_RANGE/MODE_LIST is in baseModel's join models
+            // Note: The synthetic offset model has JOIN_CROSS type, not JOIN_HORIZON
+            // We identify it by having a non-NONE HorizonJoinContext mode
+            final ObjList<QueryModel> jms = baseModel.getJoinModels();
+            for (int i = 0, n = jms.size(); i < n; i++) {
+                QueryModel jm = jms.getQuick(i);
+                HorizonJoinContext ctx = jm.getHorizonJoinContext();
+                if (ctx.getMode() != HorizonJoinContext.MODE_NONE) {
+                    ctx.setParentModel(horizonJoinModel);
+                }
+            }
+            // Horizon join model wraps root so columns propagate to nested join models
+            horizonJoinModel.setNestedModel(root);
+            horizonJoinModel.moveLimitFrom(limitSource);
+            horizonJoinModel.moveJoinAliasFrom(limitSource);
+            horizonJoinModel.copyHints(model.getHints());
+            root = horizonJoinModel;
+            limitSource = horizonJoinModel;
         }
 
         if ((rewriteStatus & REWRITE_STATUS_USE_OUTER_MODEL) != 0) {
@@ -10342,6 +10418,11 @@ public class SqlOptimiser implements Mutable {
         joinBarriers.add(JOIN_SPLICE);
         joinBarriers.add(JOIN_LT);
         joinBarriers.add(JOIN_WINDOW);
+        joinBarriers.add(JOIN_HORIZON);
+
+        joinFilterBarriers = new IntHashSet();
+        joinFilterBarriers.add(JOIN_WINDOW);
+        joinFilterBarriers.add(JOIN_HORIZON);
 
         nullConstants.add("null");
         nullConstants.add("NaN");
@@ -10358,6 +10439,7 @@ public class SqlOptimiser implements Mutable {
         flexColumnModelTypes.add(SELECT_MODEL_WINDOW);
         flexColumnModelTypes.add(SELECT_MODEL_GROUP_BY);
         flexColumnModelTypes.add(SELECT_MODEL_WINDOW_JOIN);
+        flexColumnModelTypes.add(SELECT_MODEL_HORIZON_JOIN);
     }
 
     static {
