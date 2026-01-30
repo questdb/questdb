@@ -181,26 +181,17 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             return false;
         }
 
-        switch (unit) {
-            case 'M':
-            case 'y':
-            case 'w':
-            case 'd':
-            case 'h':
-                return true;
-            case 'm':
+        return switch (unit) {
+            case 'M', 'y', 'w', 'd', 'h' -> true;
+            case 'm' ->
                 // min DST gap is 15m, and it starts at the beginning of an hour
-                return MIN_GAP_MINUTES % stride == 0 || stride % MIN_GAP_MINUTES == 0;
-            case 's':
-                return MIN_GAP_SECONDS % stride == 0 || stride % MIN_GAP_SECONDS == 0;
-            case 'T':
-                return MIN_GAP_MILLIS % stride == 0 || stride % MIN_GAP_MILLIS == 0;
-            case 'U':
-                return MIN_GAP_MICROS % stride == 0 || stride % MIN_GAP_MICROS == 0;
-            case 'n':
-                return MIN_GAP_NANOS % stride == 0 || stride % MIN_GAP_NANOS == 0;
-        }
-        return false;
+                    MIN_GAP_MINUTES % stride == 0 || stride % MIN_GAP_MINUTES == 0;
+            case 's' -> MIN_GAP_SECONDS % stride == 0 || stride % MIN_GAP_SECONDS == 0;
+            case 'T' -> MIN_GAP_MILLIS % stride == 0 || stride % MIN_GAP_MILLIS == 0;
+            case 'U' -> MIN_GAP_MICROS % stride == 0 || stride % MIN_GAP_MICROS == 0;
+            case 'n' -> MIN_GAP_NANOS % stride == 0 || stride % MIN_GAP_NANOS == 0;
+            default -> false;
+        };
     }
 
     private static @NotNull Function createAllConstFunc(

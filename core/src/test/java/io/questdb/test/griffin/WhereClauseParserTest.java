@@ -760,6 +760,284 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Test bracket expansion with duplicate values - duplicates should be merged.
+     */
+    @Test
+    public void testBracketIntervalDuplicateValues() throws Exception {
+        // Duplicate values should be merged into a single interval
+        String singleDay = "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}]";
+
+        runWhereIntervalTest0(
+                "timestamp IN '2018-01-[10,10]'",
+                singleDay
+        );
+
+        runWhereIntervalTest0(
+                "timestamp IN '2018-01-[10,10,10]'",
+                singleDay
+        );
+
+        // Mixed duplicates and unique values
+        runWhereIntervalTest0(
+                "timestamp IN '2018-01-[10,15,10,15,20]'",
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}," +
+                        "{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}," +
+                        "{lo=2018-01-20T00:00:00.000000Z, hi=2018-01-20T23:59:59.999999Z}]"
+        );
+    }
+
+    /**
+     * Test nested bracket expansion (cartesian product) with dynamic intervals.
+     * '2018-[01,06]-[10,15]' expands to 4 intervals: Jan 10, Jan 15, Jun 10, Jun 15
+     */
+    @Test
+    public void testBracketIntervalNestedWithDynamicInterval() throws Exception {
+        String expected = "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}," +
+                "{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}," +
+                "{lo=2018-06-10T00:00:00.000000Z, hi=2018-06-10T23:59:59.999999Z}," +
+                "{lo=2018-06-15T00:00:00.000000Z, hi=2018-06-15T23:59:59.999999Z}]";
+
+        // Static mode
+        runWhereIntervalTest0(
+                "timestamp IN '2018-[01,06]-[10,15]'",
+                expected
+        );
+
+        // Dynamic mode - both orderings
+        runWhereIntervalTest0(
+                "timestamp < dateadd('y', 100, now()) and timestamp IN '2018-[01,06]-[10,15]'",
+                expected
+        );
+
+        runWhereIntervalTest0(
+                "timestamp IN '2018-[01,06]-[10,15]' and timestamp < dateadd('y', 100, now())",
+                expected
+        );
+    }
+
+    /**
+     * Test bracket expansion with UNSORTED values in the bracket.
+     * Values should be properly unioned regardless of order.
+     */
+    @Test
+    public void testBracketIntervalUnsortedValues() throws Exception {
+        // Unsorted bracket values: [20,10,15] should produce same result as [10,15,20]
+        String expected = "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}," +
+                "{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}," +
+                "{lo=2018-01-20T00:00:00.000000Z, hi=2018-01-20T23:59:59.999999Z}]";
+
+        runWhereIntervalTest0(
+                "timestamp IN '2018-01-[20,10,15]'",
+                expected
+        );
+
+        // With restrictive constraint
+        runWhereIntervalTest0(
+                "timestamp >= '2018-01-01' and timestamp < '2018-01-16' and timestamp IN '2018-01-[20,10,15]'",
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}," +
+                        "{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}]"
+        );
+    }
+
+    /**
+     * Test that bracket expansion syntax (e.g., '2018-01-[10,15]') works correctly
+     * when combined with dynamic intervals, regardless of WHERE clause order.
+     * Bracket expansion produces multiple intervals that are UNIONed together before
+     * being intersected with other constraints.
+     */
+    @Test
+    public void testBracketIntervalWithDynamicInterval() throws Exception {
+        // Bracket expansion '2018-01-[10,15]' expands to 2 intervals (Jan 10 and Jan 15)
+        // Both orderings should produce the same result
+
+        // Order 1: dynamic first in WHERE clause (bracket on RHS, processed first)
+        runWhereIntervalTest0(
+                "timestamp < dateadd('y', 100, now()) and timestamp IN '2018-01-[10,15]'",
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}," +
+                        "{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}]"
+        );
+
+        // Order 2: bracket first in WHERE clause (dynamic on RHS, processed first)
+        // This now works because bracket-expanded intervals use UNION operation
+        runWhereIntervalTest0(
+                "timestamp IN '2018-01-[10,15]' and timestamp < dateadd('y', 100, now())",
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}," +
+                        "{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}]"
+        );
+    }
+
+    /**
+     * Test that NOT IN with bracket expansion works correctly with dynamic intervals.
+     * For SUBTRACT, each bracket-expanded interval is processed individually (inverted and intersected),
+     * achieving NOT A AND NOT B semantics.
+     */
+    @Test
+    public void testBracketIntervalWithDynamicIntervalNotIn() throws Exception {
+        // NOT IN bracket expansion subtracts the bracket-expanded intervals
+        // Test with a constrained date range so we can verify subtraction
+        String expected = "[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-09T23:59:59.999999Z}," +
+                "{lo=2018-01-11T00:00:00.000000Z, hi=2018-01-14T23:59:59.999999Z}," +
+                "{lo=2018-01-16T00:00:00.000000Z, hi=2018-01-19T23:59:59.999999Z}]";
+
+        // Static mode (no dynamic intervals)
+        runWhereIntervalTest0(
+                "timestamp >= '2018-01-01' and timestamp < '2018-01-20' and timestamp NOT IN '2018-01-[10,15]'",
+                expected
+        );
+
+        // Dynamic mode - dynamic interval first in WHERE clause
+        runWhereIntervalTest0(
+                "timestamp < dateadd('y', 100, now()) and timestamp >= '2018-01-01' and timestamp < '2018-01-20' and timestamp NOT IN '2018-01-[10,15]'",
+                expected
+        );
+
+        // Dynamic mode - bracket NOT IN first in WHERE clause
+        runWhereIntervalTest0(
+                "timestamp NOT IN '2018-01-[10,15]' and timestamp >= '2018-01-01' and timestamp < '2018-01-20' and timestamp < dateadd('y', 100, now())",
+                expected
+        );
+    }
+
+    @Test
+    public void testDayFilterDateListWithDynamicInterval() throws Exception {
+        // Date list (comma-separated in brackets) with day filter in dynamic mode
+        // 2024-01-01 is Monday, 2024-01-02 is Tuesday, 2024-01-03 is Wednesday
+        // #Mon should filter to only Monday (2024-01-01)
+        String expected = "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}]";
+
+        // Static only - date list with day filter
+        runWhereIntervalTest0(
+                "timestamp IN '[2024-01-01,2024-01-02,2024-01-03]#Mon'",
+                expected
+        );
+
+        // Dynamic: now() forces dynamic mode for the date list path
+        runWhereIntervalTest0(
+                "timestamp < dateadd('y', 100, now()) and timestamp IN '[2024-01-01,2024-01-02,2024-01-03]#Mon'",
+                expected
+        );
+    }
+
+    /**
+     * Test weekend filter with dynamic intervals.
+     */
+    @Test
+    public void testDayFilterWeekendWithDynamicInterval() throws Exception {
+        // 2024-01-01 is Monday, 2024-01-07 is Sunday
+        // #weekend should filter to Sat-Sun (06-07)
+        String expected = "[{lo=2024-01-06T00:00:00.000000Z, hi=2024-01-07T23:59:59.999999Z}]";
+
+        // Static only
+        runWhereIntervalTest0(
+                "timestamp IN '2024-01-[01..07]#weekend'",
+                expected
+        );
+
+        // Dynamic
+        runWhereIntervalTest0(
+                "timestamp < dateadd('y', 100, now()) and timestamp IN '2024-01-[01..07]#weekend'",
+                expected
+        );
+    }
+
+    /**
+     * Test day filter with dynamic intervals (now()).
+     * Day filter should be applied at runtime after the dynamic timestamp is resolved.
+     */
+    @Test
+    public void testDayFilterWithDynamicInterval() throws Exception {
+        // 2024-01-01 is Monday, 2024-01-02 is Tuesday
+        // #Mon should filter to only Monday
+        // Combined with now() makes it dynamic
+        String expected = "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}]";
+
+        // Static only
+        runWhereIntervalTest0(
+                "timestamp IN '2024-01-[01..02]#Mon'",
+                expected
+        );
+
+        // Dynamic: now() first
+        runWhereIntervalTest0(
+                "timestamp < dateadd('y', 100, now()) and timestamp IN '2024-01-[01..02]#Mon'",
+                expected
+        );
+
+        // Dynamic: day filter first
+        runWhereIntervalTest0(
+                "timestamp IN '2024-01-[01..02]#Mon' and timestamp < dateadd('y', 100, now())",
+                expected
+        );
+    }
+
+    /**
+     * Test day filter with timezone and dynamic intervals.
+     */
+    @Test
+    public void testDayFilterWithTimezoneAndDynamicInterval() throws Exception {
+        // 2024-01-01 is Monday in +12:00 timezone
+        // After conversion: 2023-12-31 12:00 UTC to 2024-01-01 11:59 UTC
+        String expected = "[{lo=2023-12-31T12:00:00.000000Z, hi=2024-01-01T11:59:59.999999Z}]";
+
+        // Static only
+        runWhereIntervalTest0(
+                "timestamp IN '2024-01-[01..02]@+12:00#Mon'",
+                expected
+        );
+
+        // Dynamic
+        runWhereIntervalTest0(
+                "timestamp < dateadd('y', 100, now()) and timestamp IN '2024-01-[01..02]@+12:00#Mon'",
+                expected
+        );
+    }
+
+    /**
+     * Test workday filter with dynamic intervals.
+     */
+    @Test
+    public void testDayFilterWorkdayWithDynamicInterval() throws Exception {
+        // 2024-01-01 is Monday, 2024-01-07 is Sunday
+        // #workday should filter Mon-Fri (01-05)
+        String expected = "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z}]";
+
+        // Static only
+        runWhereIntervalTest0(
+                "timestamp IN '2024-01-[01..07]#workday'",
+                expected
+        );
+
+        // Dynamic
+        runWhereIntervalTest0(
+                "timestamp < dateadd('y', 100, now()) and timestamp IN '2024-01-[01..07]#workday'",
+                expected
+        );
+    }
+
+    /**
+     * Test bracket expansion with a RESTRICTIVE interval that filters out some results.
+     * This verifies that bracket-expanded intervals are properly intersected with other constraints.
+     */
+    @Test
+    public void testBracketIntervalWithRestrictiveInterval() throws Exception {
+        // timestamp IN '2018-01-[10,15,20]' expands to Jan 10, Jan 15, Jan 20
+        // Adding upper bound timestamp < '2018-01-16' should filter out Jan 20
+        // Expected: only Jan 10 and Jan 15
+        runWhereIntervalTest0(
+                "timestamp >= '2018-01-01' and timestamp < '2018-01-16' and timestamp IN '2018-01-[10,15,20]'",
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}," +
+                        "{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}]"
+        );
+
+        // Reverse order should produce same result
+        runWhereIntervalTest0(
+                "timestamp IN '2018-01-[10,15,20]' and timestamp >= '2018-01-01' and timestamp < '2018-01-16'",
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}," +
+                        "{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}]"
+        );
+    }
+
     @Test
     public void testComplexInterval1() throws Exception {
         runWhereTest("timestamp in '2015-02-23T10:00;2d'", "[{lo=2015-02-23T10:00:00.000000Z, hi=2015-02-25T10:00:59.999999Z}]");
@@ -3262,6 +3540,19 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampEqualsOrDynamic() throws Exception {
+        // Using = instead of IN with dynamic timestamp
+        setCurrentMicros(MicrosTimestampDriver.floor("2018-01-02T12:00:00.000000Z"));
+        IntrinsicModel m = modelOf("timestamp = '2018-01-01T10:00:00.000000Z' or timestamp = now()");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=2018-01-01T10:00:00.000000Z, hi=2018-01-01T10:00:00.000000Z},{lo=2018-01-02T12:00:00.000000Z, hi=2018-01-02T12:00:00.000000Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
     public void testTimestampEqualsOrSingleValues() throws Exception {
         // timestamp = 'value' OR timestamp = 'value2' should use interval scan
         // Values are parsed as point intervals [ts, ts]
@@ -3270,74 +3561,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         assertFilter(m, null);
         TestUtils.assertEquals(
                 replaceTimestampSuffix("[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-01T00:00:00.000000Z},{lo=2018-01-02T00:00:00.000000Z, hi=2018-01-02T00:00:00.000000Z}]"),
-                intervalToString(m)
-        );
-    }
-
-    @Test
-    public void testTimestampMixedInAndEqualsOr() throws Exception {
-        // Mixed: timestamp IN 'value' OR timestamp = 'value2'
-        // IN 'value' gives full-day interval, = 'value' gives point interval
-        IntrinsicModel m = modelOf("timestamp in '2018-01-01' or timestamp = '2018-01-02'");
-        Assert.assertTrue(m.hasIntervalFilters());
-        assertFilter(m, null);
-        TestUtils.assertEquals(
-                replaceTimestampSuffix("[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-01T23:59:59.999999Z},{lo=2018-01-02T00:00:00.000000Z, hi=2018-01-02T00:00:00.000000Z}]"),
-                intervalToString(m)
-        );
-    }
-
-    @Test
-    public void testTimestampOrWithRangeFilter() throws Exception {
-        // OR is processed first (before the > filter), so both are extracted as intrinsics
-        // The > filter is then intersected with the OR intervals
-        IntrinsicModel m = modelOf("timestamp > '2020-01-01' and (timestamp in '2020-06-01' or timestamp in '2020-07-01')");
-        Assert.assertTrue(m.hasIntervalFilters());
-        assertFilter(m, null);
-        // Both intervals from OR are kept (both are after 2020-01-01)
-        TestUtils.assertEquals(
-                replaceTimestampSuffix("[{lo=2020-06-01T00:00:00.000000Z, hi=2020-06-01T23:59:59.999999Z},{lo=2020-07-01T00:00:00.000000Z, hi=2020-07-01T23:59:59.999999Z}]"),
-                intervalToString(m)
-        );
-    }
-
-    @Test
-    public void testTimestampOrWithBetweenAndCondition() throws Exception {
-        // OR in rhs is processed first, then BETWEEN in lhs intersects with the OR intervals
-        IntrinsicModel m = modelOf("timestamp between '2020-01-01' and '2020-12-31' and (timestamp in '2020-06-01' or timestamp in '2020-07-01')");
-        Assert.assertTrue(m.hasIntervalFilters());
-        assertFilter(m, null);
-        // Both OR intervals are extracted and intersected with the BETWEEN range
-        TestUtils.assertEquals(
-                replaceTimestampSuffix("[{lo=2020-06-01T00:00:00.000000Z, hi=2020-06-01T23:59:59.999999Z},{lo=2020-07-01T00:00:00.000000Z, hi=2020-07-01T23:59:59.999999Z}]"),
-                intervalToString(m)
-        );
-    }
-
-    @Test
-    public void testTimestampOrWithBindVariables() throws SqlException {
-        // OR with bind variables is not extracted as intrinsic (only constants supported)
-        // Falls back to filter for row-by-row evaluation
-        long day1 = 24L * 3600 * 1000 * 1000;
-        long day2 = 2 * day1;
-        bindVariableService.clear();
-        bindVariableService.setTimestamp(0, day1);
-        bindVariableService.setTimestamp(1, day2);
-        IntrinsicModel m = modelOf("timestamp in $1 or timestamp in $2");
-        Assert.assertFalse(m.hasIntervalFilters());
-        assertFilter(m, "$2 timestamp in $1 timestamp in or");
-    }
-
-    @Test
-    public void testTimestampOrWithPeriodicIntervals() throws Exception {
-        // OR with periodic intervals - each IN produces multiple interval pairs
-        // '2020-01-01;1d;1M;3' = 3 monthly intervals, each spanning 1 day
-        IntrinsicModel m = modelOf("timestamp in '2020-01-01;1d;1M;3' or timestamp in '2020-06-01'");
-        Assert.assertTrue(m.hasIntervalFilters());
-        assertFilter(m, null);
-        // Should have 4 intervals: 3 from periodic + 1 from simple date
-        TestUtils.assertEquals(
-                replaceTimestampSuffix("[{lo=2020-01-01T00:00:00.000000Z, hi=2020-01-02T23:59:59.999999Z},{lo=2020-02-01T00:00:00.000000Z, hi=2020-02-02T23:59:59.999999Z},{lo=2020-03-01T00:00:00.000000Z, hi=2020-03-02T23:59:59.999999Z},{lo=2020-06-01T00:00:00.000000Z, hi=2020-06-01T23:59:59.999999Z}]"),
                 intervalToString(m)
         );
     }
@@ -3435,6 +3658,58 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampInOrDynamicOnLeft() throws Exception {
+        // Dynamic timestamp on the left side of OR
+        setCurrentMicros(MicrosTimestampDriver.floor("2018-01-02T12:00:00.000000Z"));
+        IntrinsicModel m = modelOf("timestamp in now() or timestamp in '2018-01-01'");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-01T23:59:59.999999Z},{lo=2018-01-02T12:00:00.000000Z, hi=2018-01-02T12:00:00.000000Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
+    public void testTimestampInOrMultipleDynamic() throws Exception {
+        // Multiple dynamic timestamps in OR (now() and dateadd)
+        setCurrentMicros(MicrosTimestampDriver.floor("2018-01-02T12:00:00.000000Z"));
+        IntrinsicModel m = modelOf("timestamp in now() or timestamp in dateadd('d', 1, now())");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=2018-01-02T12:00:00.000000Z, hi=2018-01-02T12:00:00.000000Z},{lo=2018-01-03T12:00:00.000000Z, hi=2018-01-03T12:00:00.000000Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
+    public void testTimestampInOrMultipleDynamicAndStatic() throws Exception {
+        // Multiple ORs with multiple dynamic and static timestamps
+        setCurrentMicros(MicrosTimestampDriver.floor("2018-01-02T12:00:00.000000Z"));
+        IntrinsicModel m = modelOf("timestamp in now() or timestamp in '2018-01-01' or timestamp in dateadd('d', 5, now()) or timestamp in '2018-01-10'");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-01T23:59:59.999999Z},{lo=2018-01-02T12:00:00.000000Z, hi=2018-01-02T12:00:00.000000Z},{lo=2018-01-07T12:00:00.000000Z, hi=2018-01-07T12:00:00.000000Z},{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
+    public void testTimestampInOrMultipleOrs() throws Exception {
+        // Multiple ORs with mix of static and dynamic timestamps
+        setCurrentMicros(MicrosTimestampDriver.floor("2018-01-02T12:00:00.000000Z"));
+        IntrinsicModel m = modelOf("timestamp in '2018-01-01' or timestamp in now() or timestamp in '2018-01-05'");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-01T23:59:59.999999Z},{lo=2018-01-02T12:00:00.000000Z, hi=2018-01-02T12:00:00.000000Z},{lo=2018-01-05T00:00:00.000000Z, hi=2018-01-05T23:59:59.999999Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
     public void testTimestampInOrSingleValues() throws Exception {
         // Issue #6668: timestamp IN 'value' OR timestamp IN 'value2' should use interval scan
         // Single-value IN treats values as intervals (e.g., '2018-01-01' spans full day)
@@ -3444,6 +3719,20 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         assertFilter(m, null);
         TestUtils.assertEquals(
                 replaceTimestampSuffix("[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-01T23:59:59.999999Z},{lo=2018-01-02T00:00:00.000000Z, hi=2018-01-02T23:59:59.999999Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
+    public void testTimestampInOrSingleValuesDynamic() throws Exception {
+        // Similar to testTimestampInOrSingleValues but with dynamic timestamp (now())
+        // Tests that OR'd interval conditions work with runtime-evaluated timestamps
+        setCurrentMicros(MicrosTimestampDriver.floor("2018-01-02T12:00:00.000000Z"));
+        IntrinsicModel m = modelOf("timestamp in '2018-01-01' or timestamp in now()");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-01T23:59:59.999999Z},{lo=2018-01-02T12:00:00.000000Z, hi=2018-01-02T12:00:00.000000Z}]"),
                 intervalToString(m)
         );
     }
@@ -3472,6 +3761,19 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testTimestampLessConstFunctionVarchar() throws SqlException {
         runWhereIntervalTest0("timestamp <= to_date('2015-02-22'::varchar, 'yyyy-MM-dd'::varchar)", "[{lo=, hi=2015-02-22T00:00:00.000000Z}]");
+    }
+
+    @Test
+    public void testTimestampMixedInAndEqualsOr() throws Exception {
+        // Mixed: timestamp IN 'value' OR timestamp = 'value2'
+        // IN 'value' gives full-day interval, = 'value' gives point interval
+        IntrinsicModel m = modelOf("timestamp in '2018-01-01' or timestamp = '2018-01-02'");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-01T23:59:59.999999Z},{lo=2018-01-02T00:00:00.000000Z, hi=2018-01-02T00:00:00.000000Z}]"),
+                intervalToString(m)
+        );
     }
 
     @Test
@@ -3524,6 +3826,64 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         bindVariableService.clear();
         bindVariableService.setTimestamp(0, day);
         runWhereIntervalTest0("timestamp != dateadd('y',1,timestamp)", "");
+    }
+
+    @Test
+    public void testTimestampOrWithBetweenAndCondition() throws Exception {
+        // OR in rhs is processed first, then BETWEEN in lhs intersects with the OR intervals
+        IntrinsicModel m = modelOf("timestamp between '2020-01-01' and '2020-12-31' and (timestamp in '2020-06-01' or timestamp in '2020-07-01')");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        // Both OR intervals are extracted and intersected with the BETWEEN range
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=2020-06-01T00:00:00.000000Z, hi=2020-06-01T23:59:59.999999Z},{lo=2020-07-01T00:00:00.000000Z, hi=2020-07-01T23:59:59.999999Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
+    public void testTimestampOrWithBindVariables() throws Exception {
+        // OR with bind variables - extracted as interval filters with runtime evaluation
+        long day1 = 24L * 3600 * 1000 * 1000;  // 1970-01-02T00:00:00.000000Z
+        long day2 = 2 * day1;                   // 1970-01-03T00:00:00.000000Z
+        bindVariableService.clear();
+        bindVariableService.setTimestamp(0, day1);
+        bindVariableService.setTimestamp(1, day2);
+        IntrinsicModel m = modelOf("timestamp in $1 or timestamp in $2");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z},{lo=1970-01-03T00:00:00.000000Z, hi=1970-01-03T00:00:00.000000Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
+    public void testTimestampOrWithPeriodicIntervals() throws Exception {
+        // OR with periodic intervals - each IN produces multiple interval pairs
+        // '2020-01-01;1d;1M;3' = 3 monthly intervals, each spanning 1 day
+        IntrinsicModel m = modelOf("timestamp in '2020-01-01;1d;1M;3' or timestamp in '2020-06-01'");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        // Should have 4 intervals: 3 from periodic + 1 from simple date
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=2020-01-01T00:00:00.000000Z, hi=2020-01-02T23:59:59.999999Z},{lo=2020-02-01T00:00:00.000000Z, hi=2020-02-02T23:59:59.999999Z},{lo=2020-03-01T00:00:00.000000Z, hi=2020-03-02T23:59:59.999999Z},{lo=2020-06-01T00:00:00.000000Z, hi=2020-06-01T23:59:59.999999Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
+    public void testTimestampOrWithRangeFilter() throws Exception {
+        // OR is processed first (before the > filter), so both are extracted as intrinsics
+        // The > filter is then intersected with the OR intervals
+        IntrinsicModel m = modelOf("timestamp > '2020-01-01' and (timestamp in '2020-06-01' or timestamp in '2020-07-01')");
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        // Both intervals from OR are kept (both are after 2020-01-01)
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=2020-06-01T00:00:00.000000Z, hi=2020-06-01T23:59:59.999999Z},{lo=2020-07-01T00:00:00.000000Z, hi=2020-07-01T23:59:59.999999Z}]"),
+                intervalToString(m)
+        );
     }
 
     @Test

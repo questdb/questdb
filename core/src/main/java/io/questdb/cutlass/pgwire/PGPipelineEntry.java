@@ -579,7 +579,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // result set. They are only applicable to the result set and SQLs that compile into a factory.
         msgBindSelectFormatCodes.clear();
         msgBindSelectFormatCodeCount = selectFormatCodeCount;
-        if (factory != null && selectFormatCodeCount > 0) {
+        // Note: use hasResultSet() instead of "factory != null" because when a prepared statement
+        // is reused via copyIfExecuted(), the new entry has factory=null (copyOf doesn't copy it),
+        // but sqlType is copied correctly. The factory will be set later during execution.
+        if (hasResultSet() && selectFormatCodeCount > 0) {
             for (int i = 0; i < selectFormatCodeCount; i++) {
                 if (getShortUnsafe(lo) == 1) {
                     msgBindSelectFormatCodes.set(i);
@@ -1309,6 +1312,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             return (msgBindSelectFormatCodeCount > 1 ? msgBindSelectFormatCodes.get(columnIndex) : msgBindSelectFormatCodes.get(0)) ? (short) 1 : 0;
         }
         return 1;
+    }
+
+    private boolean hasResultSet() {
+        return sqlType == CompiledQuery.SELECT
+                || sqlType == CompiledQuery.EXPLAIN
+                || sqlType == CompiledQuery.PSEUDO_SELECT;
     }
 
     private boolean isTextFormat() {
@@ -3576,7 +3585,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         //    See: https://github.com/questdb/questdb/issues/6123 and CheckBindVarsInBatchedQueriesAreConsistent C# test in the Compat module
 
         // INSERTs, UPDATE, ALTER, etc. use binding variables at the EXEC time only -> we don't have to populate it before SYNC
-        if (cursor == null || isError()) {
+        if (!hasResultSet() || isError()) {
             return false;
         }
         copyParameterValuesToBindVariableService(

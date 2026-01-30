@@ -250,6 +250,8 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     public void reopen() {
         if (impl == 0) {
             inflate();
+        } else {
+            clear();
         }
     }
 
