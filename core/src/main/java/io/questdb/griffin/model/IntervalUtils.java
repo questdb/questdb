@@ -63,9 +63,9 @@ public final class IntervalUtils {
     // Day filter bitmask constants (bit 0 = Monday, bit 6 = Sunday)
     private static final int DAY_FILTER_WORKDAY = (1 << (MONDAY - 1)) | (1 << (TUESDAY - 1)) | (1 << (WEDNESDAY - 1))
             | (1 << (THURSDAY - 1)) | (1 << (FRIDAY - 1)); // Mon-Fri
+    private static final ThreadLocal<StringSink> tlDateVarSink = ThreadLocal.withInitial(StringSink::new);
     private static final ThreadLocal<FlyweightCharSequence> tlExchangeCs = ThreadLocal.withInitial(FlyweightCharSequence::new);
     private static final ThreadLocal<LongList> tlExchangeFilterTemp = ThreadLocal.withInitial(LongList::new);
-    private static final ThreadLocal<StringSink> tlDateVarSink = ThreadLocal.withInitial(StringSink::new);
     // Thread-local sinks for bracket expansion, isolated to avoid conflicts with other code.
     // Two sinks are needed for nested usage scenarios:
     //   1. parseTickExpr -> expandBracketsRecursive (uses tlSink1)
@@ -1372,40 +1372,6 @@ public final class IntervalUtils {
     }
 
     /**
-     * Applies exchange calendar filter and optional duration extension.
-     * The filter intersects query intervals with the exchange's trading schedule,
-     * then extends each interval's hi bound by the duration if present.
-     */
-    private static void applyExchangeFilterAndDuration(
-            TimestampDriver timestampDriver,
-            LongList exchangeSchedule,
-            LongList out,
-            int startIndex,
-            CharSequence durationSeq,
-            int durationLo,
-            int durationLim,
-            int position
-    ) throws SqlException {
-        applyExchangeCalendarFilter(timestampDriver, exchangeSchedule, out, startIndex);
-        if (durationLo >= 0) {
-            applyDurationToIntervals(timestampDriver, out, startIndex, durationSeq, durationLo, durationLim, position);
-        }
-    }
-
-    /**
-     * Looks up an exchange calendar schedule for the token between {@code lo} (inclusive) and
-     * {@code hi} (exclusive) in {@code seq}. Returns the schedule {@link LongList} if the
-     * token identifies a known exchange, or {@code null} otherwise.
-     */
-    @Nullable
-    private static LongList getExchangeSchedule(CairoConfiguration configuration, CharSequence seq, int lo, int hi) {
-        return configuration.getFactoryProvider()
-                .getExchangeCalendarServiceFactory()
-                .getInstance()
-                .getSchedule(tlExchangeCs.get().of(seq, lo, hi - lo));
-    }
-
-    /**
      * Applies exchange calendar filter by intersecting query intervals with trading schedule.
      * The trading schedule is obtained from {@link ExchangeCalendarService} and contains
      * [lo, hi] pairs representing trading sessions in microseconds.
@@ -1534,6 +1500,27 @@ public final class IntervalUtils {
             for (int i = 0; i < temp.size(); i++) {
                 out.add(temp.getQuick(i));
             }
+        }
+    }
+
+    /**
+     * Applies exchange calendar filter and optional duration extension.
+     * The filter intersects query intervals with the exchange's trading schedule,
+     * then extends each interval's hi bound by the duration if present.
+     */
+    private static void applyExchangeFilterAndDuration(
+            TimestampDriver timestampDriver,
+            LongList exchangeSchedule,
+            LongList out,
+            int startIndex,
+            CharSequence durationSeq,
+            int durationLo,
+            int durationLim,
+            int position
+    ) throws SqlException {
+        applyExchangeCalendarFilter(timestampDriver, exchangeSchedule, out, startIndex);
+        if (durationLo >= 0) {
+            applyDurationToIntervals(timestampDriver, out, startIndex, durationSeq, durationLo, durationLim, position);
         }
     }
 
@@ -2853,28 +2840,6 @@ public final class IntervalUtils {
         }
     }
 
-    /**
-     * Finds the position of '#' day filter marker in the string, respecting brackets.
-     * The '#' must be outside brackets and before ';' (duration suffix).
-     * Timezone is optional: both "2024-01-01#Mon" and "2024-01-01@+05:00#Mon" are valid.
-     *
-     * @param seq the input string
-     * @param lo  start index
-     * @param lim end index
-     * @return position of '#' or -1 if not found
-     */
-    /**
-     * Returns the index of the first ';' in seq[lo, lim), or -1 if none.
-     */
-    private static int findDurationSemicolon(CharSequence seq, int lo, int lim) {
-        for (int i = lo; i < lim; i++) {
-            if (seq.charAt(i) == ';') {
-                return i;
-            }
-        }
-        return -1;
-    }
-
     private static int findDayFilterMarker(CharSequence seq, int lo, int lim) {
         int depth = 0;
         for (int i = lo; i < lim; i++) {
@@ -2891,6 +2856,29 @@ public final class IntervalUtils {
                 if (c == ';') {
                     return -1;
                 }
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Finds the position of '#' day filter marker in the string, respecting brackets.
+     * The '#' must be outside brackets and before ';' (duration suffix).
+     * Timezone is optional: both "2024-01-01#Mon" and "2024-01-01@+05:00#Mon" are valid.
+     *
+     * @param seq the input string
+     * @param lo  start index
+     * @param lim end index
+     * @return position of '#' or -1 if not found
+     */
+
+    /**
+     * Returns the index of the first ';' in seq[lo, lim), or -1 if none.
+     */
+    private static int findDurationSemicolon(CharSequence seq, int lo, int lim) {
+        for (int i = lo; i < lim; i++) {
+            if (seq.charAt(i) == ';') {
+                return i;
             }
         }
         return -1;
@@ -2990,6 +2978,19 @@ public final class IntervalUtils {
             effectiveOp = isFirstInterval ? operation : IntervalOperation.UNION;
         }
         return effectiveOp;
+    }
+
+    /**
+     * Looks up an exchange calendar schedule for the token between {@code lo} (inclusive) and
+     * {@code hi} (exclusive) in {@code seq}. Returns the schedule {@link LongList} if the
+     * token identifies a known exchange, or {@code null} otherwise.
+     */
+    @Nullable
+    private static LongList getExchangeSchedule(CairoConfiguration configuration, CharSequence seq, int lo, int hi) {
+        return configuration.getFactoryProvider()
+                .getExchangeCalendarServiceFactory()
+                .getInstance()
+                .getSchedule(tlExchangeCs.get().of(seq, lo, hi - lo));
     }
 
     /**
