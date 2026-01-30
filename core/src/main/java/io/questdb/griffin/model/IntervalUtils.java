@@ -2840,6 +2840,17 @@ public final class IntervalUtils {
         }
     }
 
+
+    /**
+     * Finds the position of '#' day filter marker in the string, respecting brackets.
+     * The '#' must be outside brackets and before ';' (duration suffix).
+     * Timezone is optional: both "2024-01-01#Mon" and "2024-01-01@+05:00#Mon" are valid.
+     *
+     * @param seq the input string
+     * @param lo  start index
+     * @param lim end index
+     * @return position of '#' or -1 if not found
+     */
     private static int findDayFilterMarker(CharSequence seq, int lo, int lim) {
         int depth = 0;
         for (int i = lo; i < lim; i++) {
@@ -2860,17 +2871,6 @@ public final class IntervalUtils {
         }
         return -1;
     }
-
-    /**
-     * Finds the position of '#' day filter marker in the string, respecting brackets.
-     * The '#' must be outside brackets and before ';' (duration suffix).
-     * Timezone is optional: both "2024-01-01#Mon" and "2024-01-01@+05:00#Mon" are valid.
-     *
-     * @param seq the input string
-     * @param lo  start index
-     * @param lim end index
-     * @return position of '#' or -1 if not found
-     */
 
     /**
      * Returns the index of the first ';' in seq[lo, lim), or -1 if none.
