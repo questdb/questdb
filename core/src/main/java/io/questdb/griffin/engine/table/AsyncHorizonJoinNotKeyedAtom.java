@@ -24,17 +24,15 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.LongList;
@@ -45,29 +43,27 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Atom for keyed HORIZON JOIN GROUP BY that uses Maps for aggregation.
+ * Atom for non-keyed HORIZON JOIN GROUP BY that uses SimpleMapValue for aggregation.
  * <p>
  * This class extends {@link BaseAsyncHorizonJoinAtom} and adds:
- * - Per-worker aggregation Maps (key -> value)
- * - GROUP BY key copier for populating map keys
+ * - Per-worker SimpleMapValue instances (single aggregation slot, no keys)
+ * <p>
+ * Used when there are no GROUP BY keys, producing a single output row.
  */
-public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
-    private final RecordSink groupByKeyCopier;
-    private final Map ownerMap;
-    private final ObjList<Map> perWorkerMaps;
+public class AsyncHorizonJoinNotKeyedAtom extends BaseAsyncHorizonJoinAtom {
+    private final SimpleMapValue ownerMapValue;
+    private final ObjList<SimpleMapValue> perWorkerMapValues;
 
-    public AsyncHorizonJoinAtom(
+    public AsyncHorizonJoinNotKeyedAtom(
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
             @NotNull RecordCursorFactory slaveFactory,
             int masterTimestampColumnIndex,
             @NotNull LongList offsets,
-            @Transient @NotNull ArrayColumnTypes keyTypes,
-            @Transient @NotNull ArrayColumnTypes valueTypes,
+            int valueCount,
             @Nullable ColumnTypes asOfJoinKeyTypes,
             @Nullable RecordSink masterKeyCopier,
             @Nullable RecordSink slaveKeyCopier,
-            @NotNull RecordSink groupByKeyCopier,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
@@ -105,71 +101,68 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
         );
 
         try {
-            // GROUP BY key copier for MarkoutRecord
-            this.groupByKeyCopier = groupByKeyCopier;
-
-            // Per-worker aggregation maps
-            this.perWorkerMaps = new ObjList<>(slotCount);
+            // Per-worker SimpleMapValue instances for aggregation
+            this.ownerMapValue = new SimpleMapValue(valueCount);
+            this.perWorkerMapValues = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerMaps.add(MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes));
+                perWorkerMapValues.add(new SimpleMapValue(valueCount));
             }
-            this.ownerMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
+
+            // Initialize values to empty state
+            resetMapValues();
         } catch (Throwable th) {
             close();
             throw th;
         }
     }
 
-    public RecordSink getGroupByKeyCopier() {
-        return groupByKeyCopier;
-    }
-
-    public Map getMap(int slotId) {
-        Map map;
+    /**
+     * Get the map value for the given slot.
+     */
+    public SimpleMapValue getMapValue(int slotId) {
         if (slotId == -1) {
-            map = ownerMap;
-        } else {
-            map = perWorkerMaps.getQuick(slotId);
+            return ownerMapValue;
         }
-        if (!map.isOpen()) {
-            map.reopen();
-        }
-        return map;
+        return perWorkerMapValues.getQuick(slotId);
     }
 
     /**
-     * Merge all per-worker maps into the owner map.
+     * Get the owner map value. Thread-unsafe, should be used by query owner thread only.
      */
-    public Map mergeOwnerMap() {
-        if (!ownerMap.isOpen()) {
-            ownerMap.reopen();
-        }
+    public SimpleMapValue getOwnerMapValue() {
+        return ownerMapValue;
+    }
 
-        for (int i = 0, n = perWorkerMaps.size(); i < n; i++) {
-            Map workerMap = perWorkerMaps.getQuick(i);
-            if (workerMap.isOpen() && workerMap.size() > 0) {
-                ownerMap.merge(workerMap, ownerFunctionUpdater);
-                workerMap.close();
-            }
-        }
-
-        return ownerMap;
+    /**
+     * Get all per-worker map values. Thread-unsafe, should be used by query owner thread only.
+     */
+    public ObjList<SimpleMapValue> getPerWorkerMapValues() {
+        return perWorkerMapValues;
     }
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val("AsyncHorizonGroupByAtom");
+        sink.val("AsyncHorizonGroupByNotKeyedAtom");
     }
 
     @Override
     protected void clearAggregationState() {
-        Misc.free(ownerMap);
-        Misc.freeObjListAndKeepObjects(perWorkerMaps);
+        resetMapValues();
     }
 
     @Override
     protected void closeAggregationState() {
-        Misc.free(ownerMap);
-        Misc.freeObjList(perWorkerMaps);
+        Misc.free(ownerMapValue);
+        Misc.freeObjList(perWorkerMapValues);
+    }
+
+    private void resetMapValues() {
+        ownerFunctionUpdater.updateEmpty(ownerMapValue);
+        ownerMapValue.setNew(true);
+        for (int i = 0, n = perWorkerMapValues.size(); i < n; i++) {
+            SimpleMapValue value = perWorkerMapValues.getQuick(i);
+            ownerFunctionUpdater.updateEmpty(value);
+            value.setNew(true);
+        }
     }
 }

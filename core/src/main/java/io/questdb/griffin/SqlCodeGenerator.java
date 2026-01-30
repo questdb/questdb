@@ -265,6 +265,7 @@ import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
@@ -1294,7 +1295,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
-    private @Nullable ObjList<Function> compileWorkerFilterConditionally(
+    private @Nullable ObjList<Function> compileWorkerFiltersConditionally(
             SqlExecutionContext executionContext,
             @Nullable Function filter,
             int sharedQueryWorkerCount,
@@ -3054,7 +3055,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             compiledCountOnlyFilter,
                             filter,
                             reduceTaskFactory,
-                            compileWorkerFilterConditionally(
+                            compileWorkerFiltersConditionally(
                                     executionContext,
                                     filter,
                                     executionContext.getSharedQueryWorkerCount(),
@@ -3101,7 +3102,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         factory,
                         filter,
                         reduceTaskFactory,
-                        compileWorkerFilterConditionally(
+                        compileWorkerFiltersConditionally(
                                 executionContext,
                                 filter,
                                 executionContext.getSharedQueryWorkerCount(),
@@ -3343,8 +3344,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw SqlException.$(0, "failed to resolve column: ").put(fullName);
         }
 
-        // Create keyCopier for GROUP BY key population
-        final RecordSink groupByKeyCopier = RecordSinkFactory.getInstance(configuration, asm, innerMetadata, listColumnFilterA);
+        // Save GROUP BY column filter before ASOF join processing overwrites it
+        final ListColumnFilter groupByColumnFilter = listColumnFilterA.copy();
 
         // Process ASOF join key information for the join lookup
         ArrayColumnTypes asofJoinKeyTypes = null;
@@ -3416,6 +3417,49 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             );
         }
 
+        final ObjList<Function> perWorkerFilters = compileWorkerFiltersConditionally(
+                executionContext,
+                filter,
+                workerCount,
+                filterExpr,
+                masterMetadata
+        );
+
+        // Choose factory based on whether there are GROUP BY keys
+        if (keyTypesCopy.getColumnCount() == 0) {
+            // Non-keyed GROUP BY: produces a single output row
+            return new AsyncHorizonJoinNotKeyedRecordCursorFactory(
+                    configuration,
+                    executionContext.getCairoEngine(),
+                    executionContext.getMessageBus(),
+                    outerProjectionMetadata,
+                    innerMetadata,
+                    masterFactory,
+                    slaveFactory,
+                    offsets,
+                    masterTimestampColumnIndex,
+                    groupByFunctions,
+                    perWorkerGroupByFunctions,
+                    valueTypesCopy.getColumnCount(),
+                    asofJoinKeyTypes,
+                    masterKeyCopier,
+                    slaveKeyCopier,
+                    columnSources,
+                    columnIndices,
+                    compiledFilter,
+                    bindVarMemory,
+                    bindVarFunctions,
+                    filter,
+                    perWorkerFilters,
+                    workerCount,
+                    asm,
+                    reduceTaskFactory
+            );
+        }
+
+        // Keyed GROUP BY: create keyCopier for GROUP BY key population
+        final RecordSink groupByKeyCopier = RecordSinkFactory.getInstance(configuration, asm, innerMetadata, groupByColumnFilter);
+
         return new AsyncHorizonJoinRecordCursorFactory(
                 configuration,
                 executionContext.getCairoEngine(),
@@ -3441,13 +3485,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 bindVarMemory,
                 bindVarFunctions,
                 filter,
-                compileWorkerFilterConditionally(
-                        executionContext,
-                        filter,
-                        workerCount,
-                        filterExpr,
-                        masterMetadata
-                ),
+                perWorkerFilters,
                 workerCount,
                 asm,
                 reduceTaskFactory
@@ -4393,7 +4431,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 master,
                                                 slave,
                                                 joinFilter,
-                                                compileWorkerFilterConditionally(
+                                                compileWorkerFiltersConditionally(
                                                         executionContext,
                                                         joinFilter,
                                                         executionContext.getSharedQueryWorkerCount(),
@@ -4418,7 +4456,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 bindVarMemory,
                                                 bindVarFunctions,
                                                 masterFilter,
-                                                compileWorkerFilterConditionally(
+                                                compileWorkerFiltersConditionally(
                                                         executionContext,
                                                         masterFilter,
                                                         executionContext.getSharedQueryWorkerCount(),
@@ -4442,7 +4480,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 slave,
                                                 context.isIncludePrevailing(),
                                                 joinFilter,
-                                                compileWorkerFilterConditionally(
+                                                compileWorkerFiltersConditionally(
                                                         executionContext,
                                                         joinFilter,
                                                         executionContext.getSharedQueryWorkerCount(),
@@ -4464,7 +4502,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 bindVarMemory,
                                                 bindVarFunctions,
                                                 masterFilter,
-                                                compileWorkerFilterConditionally(
+                                                compileWorkerFiltersConditionally(
                                                         executionContext,
                                                         masterFilter,
                                                         executionContext.getSharedQueryWorkerCount(),
@@ -4621,7 +4659,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 master,
                                 filter,
                                 reduceTaskFactory,
-                                compileWorkerFilterConditionally(
+                                compileWorkerFiltersConditionally(
                                         executionContext,
                                         filter,
                                         executionContext.getSharedQueryWorkerCount(),
@@ -4680,7 +4718,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 master,
                                 filter,
                                 reduceTaskFactory,
-                                compileWorkerFilterConditionally(
+                                compileWorkerFiltersConditionally(
                                         executionContext,
                                         filter,
                                         executionContext.getSharedQueryWorkerCount(),
@@ -5236,7 +5274,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             baseFactory,
                                             reduceTaskFactory,
                                             filter,
-                                            compileWorkerFilterConditionally(
+                                            compileWorkerFiltersConditionally(
                                                     executionContext,
                                                     filter,
                                                     executionContext.getSharedQueryWorkerCount(),
@@ -6387,7 +6425,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 bindVarFunctions,
                                 filter,
                                 reduceTaskFactory,
-                                compileWorkerFilterConditionally(
+                                compileWorkerFiltersConditionally(
                                         executionContext,
                                         filter,
                                         executionContext.getSharedQueryWorkerCount(),
@@ -6439,7 +6477,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     bindVarMemory,
                                     bindVarFunctions,
                                     filter,
-                                    compileWorkerFilterConditionally(
+                                    compileWorkerFiltersConditionally(
                                             executionContext,
                                             filter,
                                             executionContext.getSharedQueryWorkerCount(),

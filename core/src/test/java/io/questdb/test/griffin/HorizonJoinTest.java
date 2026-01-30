@@ -114,11 +114,310 @@ public class HorizonJoinTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Test parallel execution of HORIZON JOIN GROUP BY with larger dataset.
-     */
+    @Test
+    public void testHorizonJoinNotKeyedBasic() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:00.000000Z', 'BX', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 20),
+                                ('1970-01-01T00:00:01.000000Z', 'BX', 200),
+                                ('1970-01-01T00:00:02.000000Z', 'AX', 30)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:01.000000Z', 'BX', 20)
+                            """
+            );
+
+            // Non-keyed query: no GROUP BY keys, only aggregates
+            // For AX trade at 1s with offset 0: ASOF to AX price at 1s -> 20
+            // For BX trade at 1s with offset 0: ASOF to BX price at 1s -> 200
+            // avg price: (20+200)/2 = 110, sum qty: 10+20 = 30
+            String sql = """
+                    SELECT avg(p.price), sum(t.qty)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    """;
+
+            assertQueryNoLeakCheck(
+                    """
+                            avg\tsum
+                            110.0\t30.0
+                            """,
+                    sql,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinNotKeyedFirstLastSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE orders (order_sym SYMBOL, ts #TIMESTAMP, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (price_sym SYMBOL, exchange SYMBOL, ts #TIMESTAMP, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('AAPL', '2000-01-01T00:00:01.000000Z', 100),
+                                ('GOOG', '2000-01-01T00:00:02.000000Z', 200)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('AAPL', 'NYSE', '2000-01-01T00:00:00.500000Z', 100.0),
+                                ('GOOG', 'NASDAQ', '2000-01-01T00:00:01.500000Z', 200.0)
+                            """
+            );
+
+            // Order at 1s matches NYSE, order at 2s matches NASDAQ
+            String sql = """
+                    SELECT first(p.exchange), last(p.exchange), sum(t.qty)
+                    FROM orders AS t
+                    HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    """;
+
+            assertQueryNoLeakCheck(
+                    """
+                            first\tlast\tsum
+                            NYSE\tNASDAQ\t300
+                            """,
+                    sql,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinNotKeyedMultipleAggregates() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 20),
+                                ('1970-01-01T00:00:02.000000Z', 'AX', 30)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 100),
+                                ('1970-01-01T00:00:02.000000Z', 'AX', 200)
+                            """
+            );
+
+            // For trade at 1s with offset 0: price = 20
+            // For trade at 2s with offset 0: price = 30
+            String sql = """
+                    SELECT min(p.price), max(p.price), avg(p.price), sum(p.price), count(*)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    """;
+
+            assertQueryNoLeakCheck(
+                    """
+                            min\tmax\tavg\tsum\tcount
+                            20.0\t30.0\t25.0\t50.0\t2
+                            """,
+                    sql,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinNotKeyedMultipleOffsets() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 20),
+                                ('1970-01-01T00:00:02.000000Z', 'AX', 30),
+                                ('1970-01-01T00:00:03.000000Z', 'AX', 40)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 100)
+                            """
+            );
+
+            // For trade at 1s: offset=0 -> 20, offset=1s -> 30, offset=2s -> 40
+            // sum: 90, avg: 30, count: 3
+            String sql = """
+                    SELECT sum(p.price), avg(p.price), count(*)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                    RANGE FROM 0s TO 2s STEP 1s AS h
+                    """;
+
+            assertQueryNoLeakCheck(
+                    """
+                            sum\tavg\tcount
+                            90.0\t30.0\t3
+                            """,
+                    sql,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinNotKeyedQueryPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertPlanNoLeakCheck(
+                    """
+                            SELECT avg(p.price), sum(t.qty)
+                            FROM trades AS t
+                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                            RANGE FROM 0s TO 1s STEP 1s AS h
+                            """,
+                    "Async Horizon Join workers: 1 offsets: 2\n" +
+                            "  values: [avg(p.price),sum(t.qty)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trades\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: prices\n"
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinNotKeyedWithFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 20),
+                                ('1970-01-01T00:00:02.000000Z', 'BX', 100),
+                                ('1970-01-01T00:00:03.000000Z', 'BX', 200)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:02.000000Z', 'AX', 20),
+                                ('1970-01-01T00:00:03.000000Z', 'BX', 30)
+                            """
+            );
+
+            // Filter to only AX trades
+            String sql = """
+                    SELECT avg(p.price), sum(t.qty)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    WHERE t.sym = 'AX'
+                    """;
+
+            assertQueryNoLeakCheck(
+                    """
+                            avg\tsum
+                            20.0\t30.0
+                            """,
+                    sql,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinNotKeyedWithoutOnClause() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 10),
+                                ('1970-01-01T00:00:01.000000Z', 20),
+                                ('1970-01-01T00:00:02.000000Z', 30),
+                                ('1970-01-01T00:00:03.000000Z', 40)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 100),
+                                ('1970-01-01T00:00:02.000000Z', 200)
+                            """
+            );
+
+            // For trade at 1s: offset 0 -> 20, offset 1s -> 30
+            // For trade at 2s: offset 0 -> 30, offset 1s -> 40
+            // sum prices: 120, avg: 30, sum qty: 600
+            String sql = """
+                    SELECT sum(p.price), avg(p.price), sum(t.qty)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p
+                    RANGE FROM 0s TO 1s STEP 1s AS h
+                    """;
+
+            assertQueryNoLeakCheck(
+                    """
+                            sum\tavg\tsum1
+                            120.0\t30.0\t600.0
+                            """,
+                    sql,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
     @Test
     public void testHorizonJoinParallelExecution() throws Exception {
+        // Test parallel execution of HORIZON JOIN GROUP BY with larger dataset
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 10);
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10);
 
@@ -1031,18 +1330,10 @@ public class HorizonJoinTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Returns the divisor to convert offset values to minutes.
-     */
     private long getMinutesDivisor() {
         return leftTableTimestampType == TestTimestampType.MICRO ? 60_000_000L : 60_000_000_000L;
     }
 
-    /**
-     * Returns the divisor to convert offset values to seconds.
-     * For MICRO timestamps, offset is in microseconds (divide by 1_000_000).
-     * For NANO timestamps, offset is in nanoseconds (divide by 1_000_000_000).
-     */
     private long getSecondsDivisor() {
         return leftTableTimestampType == TestTimestampType.MICRO ? 1_000_000L : 1_000_000_000L;
     }
