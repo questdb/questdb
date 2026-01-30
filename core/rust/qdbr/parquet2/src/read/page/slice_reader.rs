@@ -115,9 +115,6 @@ impl<'a> SlicePageReader<'a> {
 
         let type_: PageType = page_header.type_.try_into()?;
         let uncompressed_page_size: usize = page_header.uncompressed_page_size.try_into()?;
-        if uncompressed_page_size > self.max_page_size {
-            return Err(Error::WouldOverAllocate);
-        }
 
         match type_ {
             PageType::DictionaryPage => {
