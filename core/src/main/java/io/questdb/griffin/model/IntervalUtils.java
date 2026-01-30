@@ -1506,18 +1506,18 @@ public final class IntervalUtils {
             return;
         }
 
-        // Append only the overlapping portion of the trading schedule
-        // Convert microseconds to nanoseconds if needed
-        // Adjust hi bounds (odd indices) to be exclusive (subtract 1 unit)
+        // Append the overlapping portion of the trading schedule.
+        // Schedule intervals are [lo, hi] inclusive, matching the IntervalUtils convention.
+        // Convert microseconds to nanoseconds if needed: hi bounds get +999 to cover
+        // the full sub-microsecond range of the last inclusive microsecond.
         int dividerIndex = out.size();
         for (int i = schedStart; i < schedEnd; i++) {
             long ts = schedule.getQuick(i);
             if (isNanos) {
                 ts = ts * 1000L;
-            }
-            // Odd indices are hi bounds - make them exclusive
-            if ((i & 1) == 1) {
-                ts--;
+                if ((i & 1) == 1) {
+                    ts += 999L;
+                }
             }
             out.add(ts);
         }
