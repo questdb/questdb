@@ -421,7 +421,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         long horizonTs0 = scaleTimestamp(masterTimestamp + offset, masterTsScale);
 
         long match0RowId = Long.MIN_VALUE;
-        long asOfRowId0 = Long.MIN_VALUE;  // Track first offset's ASOF position for bookmark optimization
+        long asOfRowId0; // first offset's ASOF position for bookmark optimization
         if (asOfJoinMap != null && masterKeyCopier != null) {
             // Keyed ASOF JOIN: navigate to ASOF position, then backward scan for key match
             asOfRowId0 = slaveTimeFrameHelper.findAsOfRow(horizonTs0);
