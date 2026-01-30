@@ -902,7 +902,11 @@ public class PropServerConfiguration implements ServerConfiguration {
                     || pathEquals(this.dbRoot, this.cairoSqlCopyWorkRoot)
                     || pathEquals(this.confRoot, this.cairoSqlCopyWorkRoot)
                     || pathEquals(this.checkpointRoot, this.cairoSqlCopyWorkRoot)) {
-                throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + " can't point to root, data, conf or snapshot dirs. ");
+                throw new ServerConfigurationException(
+                        "Configuration value for "
+                                + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath()
+                                + " can't point to root, data, conf or snapshot dirs. "
+                );
             }
         } else {
             this.cairoSqlCopyRoot = null;
