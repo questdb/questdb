@@ -1594,11 +1594,12 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             if (isParquetFrame) {
                 atom.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
             }
-            if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
-                record.init(frameMemory);
-            }
 
             if (filteredRowCount > 0 && !atom.isSkipAggregation()) {
+                if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
+                    record.init(frameMemory);
+                }
+
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();
                 final long joinWindowLo = atom.getJoinWindowLo();
                 final long joinWindowHi = atom.getJoinWindowHi();

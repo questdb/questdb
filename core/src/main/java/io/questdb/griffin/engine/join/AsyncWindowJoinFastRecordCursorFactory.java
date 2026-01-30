@@ -54,6 +54,7 @@ import io.questdb.griffin.engine.groupby.FlyweightMapValue;
 import io.questdb.griffin.engine.groupby.GroupByColumnSink;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByLongList;
+import io.questdb.griffin.engine.table.AsyncFilterUtils;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
@@ -76,7 +77,6 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 import static io.questdb.griffin.engine.join.AsyncWindowJoinFastAtom.toSymbolMapKey;
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
-import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
 /**
  * Multi-threaded WINDOW JOIN factory with symbol-based join key optimization.
@@ -1210,6 +1210,44 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         }
     }
 
+    private static long applyFilter(
+            @NotNull PageFrameMemoryRecord record,
+            @NotNull PageFrameReduceTask task,
+            @NotNull AsyncWindowJoinFastAtom atom,
+            int slotId,
+            long frameRowCount
+    ) {
+        final boolean isParquetFrame = task.isParquetFrame();
+        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
+        final PageFrameMemory frameMemory;
+        if (useLateMaterialization) {
+            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+        } else {
+            frameMemory = task.populateFrameMemory();
+        }
+        record.init(frameMemory);
+        final DirectLongList rows = task.getFilteredRows();
+        rows.clear();
+
+        final Function filter = atom.getMasterFilter(slotId);
+        final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
+        if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
+        } else {
+            applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
+        }
+
+        final long filteredRowCount = rows.size();
+        task.setFilteredRowCount(filteredRowCount);
+        if (isParquetFrame) {
+            atom.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
+        }
+        if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
+            record.init(frameMemory);
+        }
+        return filteredRowCount;
+    }
+
     /**
      * Aggregate with master filter (no join filter).
      */
@@ -1226,33 +1264,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         try {
-            final PageFrameMemory frameMemory;
-            final boolean isParquetFrame = task.isParquetFrame();
-            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
-            if (useLateMaterialization) {
-                frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
-            } else {
-                frameMemory = task.populateFrameMemory();
-            }
-            record.init(frameMemory);
+            final long filteredRowCount = applyFilter(record, task, atom, slotId, frameRowCount);
             final DirectLongList rows = task.getFilteredRows();
-            rows.clear();
-            final Function filter = atom.getMasterFilter(slotId);
-            final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
-                applyFilter(filter, rows, record, frameRowCount);
-            } else {
-                applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
-            }
-
-            final long filteredRowCount = rows.size();
-            task.setFilteredRowCount(filteredRowCount);
-            if (isParquetFrame) {
-                atom.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
-            }
-            if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
-                record.init(frameMemory);
-            }
 
             if (filteredRowCount > 0 && !atom.isSkipAggregation()) {
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();
@@ -1391,35 +1404,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         try {
-            final PageFrameMemory frameMemory;
-            final boolean isParquetFrame = task.isParquetFrame();
-            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
-            if (useLateMaterialization) {
-                frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
-            } else {
-                frameMemory = task.populateFrameMemory();
-            }
-            record.init(frameMemory);
+            final long filteredRowCount = applyFilter(record, task, atom, slotId, frameRowCount);
             final DirectLongList rows = task.getFilteredRows();
-            rows.clear();
-
-            final Function filter = atom.getMasterFilter(slotId);
-            final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
-
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
-                applyFilter(filter, rows, record, frameRowCount);
-            } else {
-                applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
-            }
-
-            final long filteredRowCount = rows.size();
-            task.setFilteredRowCount(filteredRowCount);
-            if (isParquetFrame) {
-                atom.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
-            }
-            if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
-                record.init(frameMemory);
-            }
 
             if (filteredRowCount > 0 && !atom.isSkipAggregation()) {
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();
@@ -1559,35 +1545,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         try {
-            final PageFrameMemory frameMemory;
-            final boolean isParquetFrame = task.isParquetFrame();
-            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
-            if (useLateMaterialization) {
-                frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
-            } else {
-                frameMemory = task.populateFrameMemory();
-            }
-            record.init(frameMemory);
+            final long filteredRowCount = applyFilter(record, task, atom, slotId, frameRowCount);
             final DirectLongList rows = task.getFilteredRows();
-            rows.clear();
-
-            final Function filter = atom.getMasterFilter(slotId);
-            final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
-
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
-                applyFilter(filter, rows, record, frameRowCount);
-            } else {
-                applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
-            }
-
-            final long filteredRowCount = rows.size();
-            task.setFilteredRowCount(filteredRowCount);
-            if (isParquetFrame) {
-                atom.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
-            }
-            if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
-                record.init(frameMemory);
-            }
 
             if (filteredRowCount > 0 && !atom.isSkipAggregation()) {
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();
@@ -1789,35 +1748,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         try {
-            final PageFrameMemory frameMemory;
-            final boolean isParquetFrame = task.isParquetFrame();
-            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
-            if (useLateMaterialization) {
-                frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
-            } else {
-                frameMemory = task.populateFrameMemory();
-            }
-            record.init(frameMemory);
+            final long filteredRowCount = applyFilter(record, task, atom, slotId, frameRowCount);
             final DirectLongList rows = task.getFilteredRows();
-            rows.clear();
-
-            final Function filter = atom.getMasterFilter(slotId);
-            final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
-
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
-                applyFilter(filter, rows, record, frameRowCount);
-            } else {
-                applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
-            }
-
-            final long filteredRowCount = rows.size();
-            task.setFilteredRowCount(filteredRowCount);
-            if (isParquetFrame) {
-                atom.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
-            }
-            if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
-                record.init(frameMemory);
-            }
 
             if (filteredRowCount > 0 && !atom.isSkipAggregation()) {
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();
@@ -1994,34 +1926,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         try {
-            final PageFrameMemory frameMemory;
-            final boolean isParquetFrame = task.isParquetFrame();
-            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
-            if (useLateMaterialization) {
-                frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
-            } else {
-                frameMemory = task.populateFrameMemory();
-            }
-            record.init(frameMemory);
+            final long filteredRowCount = applyFilter(record, task, atom, slotId, frameRowCount);
             final DirectLongList rows = task.getFilteredRows();
-            rows.clear();
-
-            final Function filter = atom.getMasterFilter(slotId);
-            final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
-                applyFilter(filter, rows, record, frameRowCount);
-            } else {
-                applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
-            }
-
-            final long filteredRowCount = rows.size();
-            task.setFilteredRowCount(filteredRowCount);
-            if (isParquetFrame) {
-                atom.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
-            }
-            if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
-                record.init(frameMemory);
-            }
 
             if (filteredRowCount > 0 && !atom.isSkipAggregation()) {
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();

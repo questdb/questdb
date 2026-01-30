@@ -44,6 +44,7 @@ pub enum SlicedPage<'a> {
 pub struct SlicePageReader<'a> {
     data: &'a [u8],
     offset: usize,
+    end: usize,
     compression: Compression,
     descriptor: Descriptor,
     seen_num_values: i64,
@@ -57,18 +58,21 @@ impl<'a> SlicePageReader<'a> {
         column: &ColumnChunkMetaData,
         max_page_size: usize,
     ) -> Result<Self> {
-        let (col_start, _) = column.byte_range();
+        let (col_start, col_len) = column.byte_range();
         let col_start = col_start as usize;
-        if col_start > data.len() {
+        let col_end = col_start + col_len as usize;
+        if col_end > data.len() {
             return Err(Error::oos(format!(
-                "Column chunk start {} exceeds data length {}",
+                "Column chunk range {}..{} exceeds data length {}",
                 col_start,
+                col_end,
                 data.len()
             )));
         }
         Ok(Self {
             data,
             offset: col_start,
+            end: col_end,
             compression: column.compression(),
             descriptor: column.descriptor().descriptor.clone(),
             seen_num_values: 0,
@@ -82,7 +86,7 @@ impl<'a> SlicePageReader<'a> {
             return Ok(None);
         }
 
-        let remaining = &self.data[self.offset..];
+        let remaining = &self.data[self.offset..self.end];
         let mut cursor = Cursor::new(remaining);
         let page_header = {
             let mut prot = TCompactInputProtocol::new(&mut cursor, self.max_page_size);
@@ -100,7 +104,7 @@ impl<'a> SlicePageReader<'a> {
             return Err(Error::WouldOverAllocate);
         }
 
-        if self.offset + read_size > self.data.len() {
+        if self.offset + read_size > self.end {
             return Err(Error::oos(
                 "The page header reported the wrong page size".to_string(),
             ));
@@ -110,7 +114,10 @@ impl<'a> SlicePageReader<'a> {
         self.offset += read_size;
 
         let type_: PageType = page_header.type_.try_into()?;
-        let uncompressed_page_size = page_header.uncompressed_page_size.try_into()?;
+        let uncompressed_page_size: usize = page_header.uncompressed_page_size.try_into()?;
+        if uncompressed_page_size > self.max_page_size {
+            return Err(Error::WouldOverAllocate);
+        }
 
         match type_ {
             PageType::DictionaryPage => {
