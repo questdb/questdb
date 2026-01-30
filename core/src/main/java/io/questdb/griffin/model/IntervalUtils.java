@@ -676,14 +676,9 @@ public final class IntervalUtils {
                 );
                 // Apply exchange calendar filter if specified
                 if (exchangeSchedule != null) {
-                    int durationLo = -1;
-                    for (int j = effectiveSeqLo; j < effectiveSeqLim; j++) {
-                        if (effectiveSeq.charAt(j) == ';') {
-                            durationLo = j + 1;
-                            break;
-                        }
-                    }
-                    applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, effectiveSeq, durationLo, effectiveSeqLim, position);
+                    int semicolon = findDurationSemicolon(effectiveSeq, effectiveSeqLo, effectiveSeqLim);
+                    applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, effectiveSeq,
+                            semicolon >= 0 ? semicolon + 1 : -1, effectiveSeqLim, position);
                 }
                 // In static mode, union all bracket-expanded intervals and validate count
                 if (applyEncoded) {
@@ -757,14 +752,9 @@ public final class IntervalUtils {
                 );
                 // Apply exchange calendar filter if specified
                 if (exchangeSchedule != null) {
-                    int durationLo = -1;
-                    for (int j = 0; j < wrappedSink.length(); j++) {
-                        if (wrappedSink.charAt(j) == ';') {
-                            durationLo = j + 1;
-                            break;
-                        }
-                    }
-                    applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, wrappedSink, durationLo, wrappedSink.length(), position);
+                    int semicolon = findDurationSemicolon(wrappedSink, 0, wrappedSink.length());
+                    applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, wrappedSink,
+                            semicolon >= 0 ? semicolon + 1 : -1, wrappedSink.length(), position);
                 }
                 if (applyEncoded) {
                     mergeAndValidateIntervals(configuration, out, outSize, position);
@@ -2043,13 +2033,7 @@ public final class IntervalUtils {
         int globalTzHi = -1;
 
         // Find duration semicolon in suffix (for applying duration after exchange calendar filter)
-        int globalDurationSemicolon = -1;
-        for (int j = suffixStart; j < lim; j++) {
-            if (seq.charAt(j) == ';') {
-                globalDurationSemicolon = j;
-                break;
-            }
-        }
+        int globalDurationSemicolon = findDurationSemicolon(seq, suffixStart, lim);
 
         if (globalTzMarker >= 0) {
             globalTzLo = globalTzMarker + 1;
@@ -2396,13 +2380,7 @@ public final class IntervalUtils {
             int outSizeBeforeExpansion
     ) throws SqlException {
         // Find duration semicolon in suffix (for applying duration after exchange calendar filter)
-        int durationSemicolon = -1;
-        for (int j = suffixStart; j < lim; j++) {
-            if (seq.charAt(j) == ';') {
-                durationSemicolon = j;
-                break;
-            }
-        }
+        int durationSemicolon = findDurationSemicolon(seq, suffixStart, lim);
 
         // Find where the range expression ends (at '@' timezone or '#' exchange/day filter marker, or element end)
         // The global '#' is stripped from seq at the top level, but per-element '#' inside brackets is not.
@@ -2885,6 +2863,18 @@ public final class IntervalUtils {
      * @param lim end index
      * @return position of '#' or -1 if not found
      */
+    /**
+     * Returns the index of the first ';' in seq[lo, lim), or -1 if none.
+     */
+    private static int findDurationSemicolon(CharSequence seq, int lo, int lim) {
+        for (int i = lo; i < lim; i++) {
+            if (seq.charAt(i) == ';') {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     private static int findDayFilterMarker(CharSequence seq, int lo, int lim) {
         int depth = 0;
         for (int i = lo; i < lim; i++) {
