@@ -47,7 +47,5 @@ public interface CreateTableOperationBuilder extends ExecutionModel, Sinkable {
         return CREATE_TABLE;
     }
 
-    int getTtlHoursOrMonths();
-
     void setSelectModel(QueryModel selectModel);
 }

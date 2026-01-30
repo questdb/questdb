@@ -39,8 +39,6 @@ public interface CreateMatViewOperationBuilder extends ExecutionModel, Sinkable 
             CharSequence sqlText
     ) throws SqlException;
 
-    CreateTableOperationBuilder getCreateTableOperationBuilder();
-
     @Override
     default int getModelType() {
         return CREATE_MAT_VIEW;
