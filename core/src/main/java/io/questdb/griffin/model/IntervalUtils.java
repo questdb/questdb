@@ -40,6 +40,7 @@ import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.FlyweightCharSequence;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
@@ -62,6 +63,7 @@ public final class IntervalUtils {
     // Day filter bitmask constants (bit 0 = Monday, bit 6 = Sunday)
     private static final int DAY_FILTER_WORKDAY = (1 << (MONDAY - 1)) | (1 << (TUESDAY - 1)) | (1 << (WEDNESDAY - 1))
             | (1 << (THURSDAY - 1)) | (1 << (FRIDAY - 1)); // Mon-Fri
+    private static final ThreadLocal<FlyweightCharSequence> tlExchangeCs = ThreadLocal.withInitial(FlyweightCharSequence::new);
     private static final ThreadLocal<LongList> tlExchangeFilterTemp = ThreadLocal.withInitial(LongList::new);
     private static final ThreadLocal<StringSink> tlDateVarSink = ThreadLocal.withInitial(StringSink::new);
     // Thread-local sinks for bracket expansion, isolated to avoid conflicts with other code.
@@ -1399,7 +1401,7 @@ public final class IntervalUtils {
         return configuration.getFactoryProvider()
                 .getExchangeCalendarServiceFactory()
                 .getInstance()
-                .getSchedule(seq.subSequence(lo, hi));
+                .getSchedule(tlExchangeCs.get().of(seq, lo, hi - lo));
     }
 
     /**
