@@ -52,7 +52,6 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.wal.MetadataService;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
@@ -2949,7 +2948,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
 
                 Assert.assertEquals(5, txWriter.getPartitionCount());
-                Assert.assertEquals(0, ((MetadataService) writer).getTtlHoursOrMonths());
+                Assert.assertEquals(0, writer.getTtlHoursOrMonths());
             }
         });
     }
