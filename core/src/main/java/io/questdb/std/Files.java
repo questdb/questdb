@@ -62,6 +62,7 @@ public final class Files {
     // wasted disk read ops.
     public static final int POSIX_MADV_RANDOM;
     public static final int POSIX_MADV_SEQUENTIAL;
+    public static final int POSIX_MADV_DONTNEED;
     public static final char SEPARATOR;
     // https://github.com/torvalds/linux/blob/e2f48c48090dea172c0c571101041de64634dae5/include/uapi/linux/magic.h#L18
     public static final int TMPFS_MAGIC = 0x01021994;
@@ -631,6 +632,8 @@ public final class Files {
 
     private native static int getPosixMadvSequential();
 
+    private native static int getPosixMadvDontneed();
+
     private native static int getStdOutFd();
 
     private native static boolean isDir(long pUtf8PathZ);
@@ -795,11 +798,13 @@ public final class Files {
             POSIX_FADV_SEQUENTIAL = getPosixFadvSequential();
             POSIX_MADV_RANDOM = getPosixMadvRandom();
             POSIX_MADV_SEQUENTIAL = getPosixMadvSequential();
+            POSIX_MADV_DONTNEED = getPosixMadvDontneed();
         } else {
             POSIX_FADV_SEQUENTIAL = -1;
             POSIX_FADV_RANDOM = -1;
             POSIX_MADV_SEQUENTIAL = -1;
             POSIX_MADV_RANDOM = -1;
+            POSIX_MADV_DONTNEED = -1;
         }
     }
 }

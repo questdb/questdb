@@ -63,9 +63,6 @@ import static io.questdb.griffin.engine.table.parquet.PartitionEncoder.*;
  * - 1 TIMESTAMP column (designated timestamp)
  */
 public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
-    private static final int COMPRESSION_CODEC = ParquetCompression.COMPRESSION_UNCOMPRESSED
-            ;
-    private static final int COMPRESSION_LEVEL = 0;
     private static final int DATA_PAGE_SIZE = 1024 * 1024;  // 1MB
     private static final Log LOG = LogFactory.getLog(StreamingParquetBenchmarkTest.class);
     private static final int PARQUET_VERSION = ParquetVersion.PARQUET_VERSION_V2;
@@ -74,6 +71,7 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
     private static final long ROW_COUNT = 140_000_000;  // 10M rows for quick test, use 140M for full benchmark
     private static final int ROW_GROUP_SIZE = 220_000;
     private static final boolean STATISTICS_ENABLED = true;
+    private static final String TABLE_NAME = "benchmark_table";
 
     /**
      * Pure read benchmark - reads all data without Parquet encoding.
@@ -82,109 +80,112 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
     @Test
     public void testPureReadBenchmark() throws Exception {
         assertMemoryLeak(() -> {
-            // Create table if it doesn't exist
-            createBenchmarkTableIfNotExists();
+            ensureTableExists();
+            // Get table disk size
+            long tableDiskSize = getTableDiskSize(TABLE_NAME);
+            LOG.info().$("Table disk size: ").$(tableDiskSize / (1024 * 1024)).$(" MB").$();
 
             engine.releaseInactive();
+            flushDiskCache();
 
-            // Get table disk size
-            long tableDiskSize = getTableDiskSize("benchmark_table");
-            LOG.info().$("Table disk size: ").$(tableDiskSize / (1024 * 1024)).$(" MB").$();
+            // Run the streaming export benchmark
+            runStreamingExportBenchmark(tableDiskSize, ParquetCompression.COMPRESSION_LZ4_RAW, "LZ4RAW", 0);
+
+            engine.releaseInactive();
+            flushDiskCache();
+
+            // Run the streaming export benchmark
+            runStreamingExportBenchmark(tableDiskSize, ParquetCompression.COMPRESSION_UNCOMPRESSED, "UNCOMPRESSED", 0);
+
+
+            engine.releaseInactive();
+            flushDiskCache();
+
+            // Run the streaming export benchmark
+            runStreamingExportBenchmark(tableDiskSize, ParquetCompression.COMPRESSION_ZSTD, "ZSTD", 9);
+
+            engine.releaseInactive();
+            flushDiskCache();
 
             // Run pure read benchmark
             runPureReadBenchmark(tableDiskSize);
         });
     }
 
-    @Test
-    public void testParquetExportBenchmark() throws Exception {
-        assertMemoryLeak(() -> {
-            // Create table if it doesn't exist
-            createBenchmarkTableIfNotExists();
+    private void ensureTableExists() throws Exception {
+        // Table doesn't exist and no backup, create it
+        LOG.info().$("Creating table with ").$(ROW_COUNT).$(" rows...").$();
 
-            engine.releaseInactive();
+        execute("CREATE TABLE " + TABLE_NAME + " (" +
+                "publisher SYMBOL," +
+                "exch SYMBOL," +
+                "symbol SYMBOL," +
+                "event_id LONG," +
+                "ccy LONG," +
+                "incr_pnl DOUBLE," +
+                "real_pnl DOUBLE," +
+                "est_pnl DOUBLE," +
+                "incr_fee DOUBLE," +
+                "fee_amt DOUBLE," +
+                "rebate_amt DOUBLE," +
+                "net_traded_qty DOUBLE," +
+                "excess_qty DOUBLE," +
+                "expected_qty DOUBLE," +
+                "pnl_ccy_usd_rate DOUBLE," +
+                "fee_ccy_usd_rate DOUBLE," +
+                "last_seen_md_id LONG," +
+                "timestamp TIMESTAMP" +
+                ") TIMESTAMP(timestamp) PARTITION BY DAY");
 
-            // Get table disk size
-            long tableDiskSize = getTableDiskSize("benchmark_table");
-            LOG.info().$("Table disk size: ").$(tableDiskSize / (1024 * 1024)).$(" MB (")
-                    .$(String.format("%.2f", tableDiskSize / (1024.0 * 1024.0 * 1024.0))).$(" GB)").$();
+        execute("INSERT INTO " + TABLE_NAME + " " +
+                "SELECT " +
+                "rnd_symbol('PUB_A', 'PUB_B', 'PUB_C', 'PUB_D', 'PUB_E') as publisher," +
+                "rnd_symbol('NYSE', 'NASDAQ', 'CME', 'EUREX', 'LSE') as exch," +
+                "rnd_symbol('AAPL', 'GOOG', 'MSFT', 'AMZN', 'META', 'NVDA', 'TSLA', 'JPM', 'BAC', 'WFC') as symbol," +
+                "x as event_id," +
+                "rnd_long(1, 100, 0) as ccy," +
+                "rnd_double() * 10000 - 5000 as incr_pnl," +
+                "rnd_double() * 100000 - 50000 as real_pnl," +
+                "rnd_double() * 100000 - 50000 as est_pnl," +
+                "rnd_double() * 100 as incr_fee," +
+                "rnd_double() * 1000 as fee_amt," +
+                "rnd_double() * 500 as rebate_amt," +
+                "rnd_double() * 10000 as net_traded_qty," +
+                "rnd_double() * 100 as excess_qty," +
+                "rnd_double() * 10000 as expected_qty," +
+                "rnd_double() * 2 as pnl_ccy_usd_rate," +
+                "rnd_double() * 2 as fee_ccy_usd_rate," +
+                "rnd_long(1, 1000000000, 0) as last_seen_md_id," +
+                "'2025-01-01'::timestamp + x * 10000L as timestamp " +
+                "FROM long_sequence(" + ROW_COUNT + ")");
 
-            // Run the streaming export benchmark
-            runStreamingExportBenchmark(tableDiskSize);
-        });
+        engine.releaseInactive();
+        LOG.info().$("Table created successfully").$();
     }
 
-    /**
-     * Pure read benchmark using 64-bit reads - reads all data as longs and sums them.
-     * This measures disk/mmap read speed with per-value processing overhead.
-     */
-    @Test
-    public void testPureReadBenchmark64bit() throws Exception {
-        assertMemoryLeak(() -> {
-            // Create table if it doesn't exist
-            createBenchmarkTableIfNotExists();
-
-            engine.releaseInactive();
-
-            // Get table disk size
-            long tableDiskSize = getTableDiskSize("benchmark_table");
-            LOG.info().$("Table disk size: ").$(tableDiskSize / (1024 * 1024)).$(" MB").$();
-
-            // Run pure read benchmark with 64-bit reads
-            runPureReadBenchmark64bit(tableDiskSize);
-        });
-    }
-
-    private void createBenchmarkTableIfNotExists() throws Exception {
-        try {
-            execute("SELECT count() FROM benchmark_table");
-            LOG.info().$("Using existing benchmark_table").$();
-        } catch (Exception e) {
-            LOG.info().$("Creating table with ").$(ROW_COUNT).$(" rows...").$();
-
-            execute("CREATE TABLE benchmark_table (" +
-                    "publisher SYMBOL," +
-                    "exch SYMBOL," +
-                    "symbol SYMBOL," +
-                    "event_id LONG," +
-                    "ccy LONG," +
-                    "incr_pnl DOUBLE," +
-                    "real_pnl DOUBLE," +
-                    "est_pnl DOUBLE," +
-                    "incr_fee DOUBLE," +
-                    "fee_amt DOUBLE," +
-                    "rebate_amt DOUBLE," +
-                    "net_traded_qty DOUBLE," +
-                    "excess_qty DOUBLE," +
-                    "expected_qty DOUBLE," +
-                    "pnl_ccy_usd_rate DOUBLE," +
-                    "fee_ccy_usd_rate DOUBLE," +
-                    "last_seen_md_id LONG," +
-                    "timestamp TIMESTAMP" +
-                    ") TIMESTAMP(timestamp) PARTITION BY DAY");
-
-            execute("INSERT INTO benchmark_table " +
-                    "SELECT " +
-                    "rnd_symbol('PUB_A', 'PUB_B', 'PUB_C', 'PUB_D', 'PUB_E') as publisher," +
-                    "rnd_symbol('NYSE', 'NASDAQ', 'CME', 'EUREX', 'LSE') as exch," +
-                    "rnd_symbol('AAPL', 'GOOG', 'MSFT', 'AMZN', 'META', 'NVDA', 'TSLA', 'JPM', 'BAC', 'WFC') as symbol," +
-                    "x as event_id," +
-                    "rnd_long(1, 100, 0) as ccy," +
-                    "rnd_double() * 10000 - 5000 as incr_pnl," +
-                    "rnd_double() * 100000 - 50000 as real_pnl," +
-                    "rnd_double() * 100000 - 50000 as est_pnl," +
-                    "rnd_double() * 100 as incr_fee," +
-                    "rnd_double() * 1000 as fee_amt," +
-                    "rnd_double() * 500 as rebate_amt," +
-                    "rnd_double() * 10000 as net_traded_qty," +
-                    "rnd_double() * 100 as excess_qty," +
-                    "rnd_double() * 10000 as expected_qty," +
-                    "rnd_double() * 2 as pnl_ccy_usd_rate," +
-                    "rnd_double() * 2 as fee_ccy_usd_rate," +
-                    "rnd_long(1, 1000000000, 0) as last_seen_md_id," +
-                    "'2025-01-01'::timestamp + x * 10000L as timestamp " +
-                    "FROM long_sequence(" + ROW_COUNT + ")");
+    private void flushDiskCache() throws Exception {
+        String osName = System.getProperty("os.name").toLowerCase();
+        if (!osName.contains("linux")) {
+            throw new UnsupportedOperationException("Disk cache flush only supported on Linux");
         }
+
+        LOG.info().$("Flushing disk cache...").$();
+
+        // First sync to flush pending writes
+        Process syncProcess = new ProcessBuilder("sync").start();
+        int syncExit = syncProcess.waitFor();
+        if (syncExit != 0) {
+            throw new RuntimeException("sync failed with exit code " + syncExit);
+        }
+
+        // Drop pagecache, dentries, and inodes
+        Process dropProcess = new ProcessBuilder("sh", "-c", "echo 3 > /proc/sys/vm/drop_caches").start();
+        int dropExit = dropProcess.waitFor();
+        if (dropExit != 0) {
+            throw new RuntimeException("drop_caches failed with exit code " + dropExit + " (requires root)");
+        }
+
+        LOG.info().$("Disk cache flushed successfully").$();
     }
 
     private long getTableDiskSize(String tableName) throws Exception {
@@ -200,7 +201,7 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
     }
 
     private void runPureReadBenchmark(long tableDiskSize) throws Exception {
-        try (RecordCursorFactory factory = select("SELECT * FROM benchmark_table")) {
+        try (RecordCursorFactory factory = select("SELECT * FROM " + TABLE_NAME)) {
             RecordMetadata metadata = factory.getMetadata();
             int columnCount = metadata.getColumnCount();
 
@@ -296,7 +297,7 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
     }
 
     private void runPureReadBenchmark64bit(long tableDiskSize) throws Exception {
-        try (RecordCursorFactory factory = select("SELECT * FROM benchmark_table")) {
+        try (RecordCursorFactory factory = select("SELECT * FROM " + TABLE_NAME)) {
             RecordMetadata metadata = factory.getMetadata();
             int columnCount = metadata.getColumnCount();
 
@@ -380,8 +381,8 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
         }
     }
 
-    private void runStreamingExportBenchmark(long tableDiskSize) throws Exception {
-        try (RecordCursorFactory factory = select("SELECT * FROM benchmark_table")) {
+    private void runStreamingExportBenchmark(long tableDiskSize, int compressionLz4Raw, String codecName, int compressionLevel) throws Exception {
+        try (RecordCursorFactory factory = select("SELECT * FROM " + TABLE_NAME)) {
             RecordMetadata metadata = factory.getMetadata();
 
             try (PageFrameCursor pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
@@ -424,7 +425,7 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                         columnMetadata.getAddress(),
                         metadata.getTimestampIndex(),
                         false,  // not descending
-                        ParquetCompression.packCompressionCodecLevel(COMPRESSION_CODEC, COMPRESSION_LEVEL),
+                        ParquetCompression.packCompressionCodecLevel(compressionLz4Raw, compressionLevel),
                         STATISTICS_ENABLED,
                         RAW_ARRAY_ENCODING,
                         ROW_GROUP_SIZE,
@@ -439,7 +440,9 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                     int frameCount = 0;
                     int rowGroupCount = 0;
 
-                    LOG.info().$("Starting streaming export benchmark...").$();
+                    LOG.info().$("Starting streaming export benchmark compression codec=").$(codecName)
+                            .$(" level=").$(compressionLevel)
+                            .$("...").$();
 
                     // CPU time measurement
                     ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();

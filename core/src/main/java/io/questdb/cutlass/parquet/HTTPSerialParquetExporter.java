@@ -224,6 +224,7 @@ public class HTTPSerialParquetExporter {
         } else {
             copyExportContext.updateStatus(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
         }
+
         PageFrame frame;
         while ((frame = pageFrameCursor.next()) != null) {
             if (circuitBreaker.checkIfTripped()) {
@@ -232,6 +233,7 @@ public class HTTPSerialParquetExporter {
             }
             long rowsInFrame = frame.getPartitionHi() - frame.getPartitionLo();
             int partitionIndex = frame.getPartitionIndex();
+
             exporter.setCurrentPartitionIndex(partitionIndex, rowsInFrame);
             exporter.writePageFrame(pageFrameCursor, frame);
             LOG.info().$("stream export progress [id=").$hexPadded(task.getCopyID())
@@ -240,6 +242,7 @@ public class HTTPSerialParquetExporter {
                     .$(", partitionIndex=").$(partitionIndex)
                     .$(']').$();
         }
+
         long totalRows = exporter.getTotalRows();
         exporter.finishExport();
         copyExportContext.updateStatus(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());

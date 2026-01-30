@@ -9,7 +9,7 @@ set -e
 # Configuration
 TABLE_NAME="${1:-Alc.Binlogs.PnlRecord}"
 QUESTDB_URL="${2:-http://localhost:9000}"
-OUTPUT_FILE="/tmp/parquet_export.parquet"
+OUTPUT_FILE="/dev/null"
 CODEC="lz4_raw"
 ROW_COUNT=140000000
 
@@ -141,7 +141,17 @@ TABLE_DISK_SIZE=$(curl -s -G "$QUESTDB_URL/exec" \
 TABLE_DISK_SIZE_GB=$(python3 -c "print(round($TABLE_DISK_SIZE / 1073741824, 2))")
 echo "Table disk size: ${TABLE_DISK_SIZE_GB} GB"
 
-rm -f "$OUTPUT_FILE"
+# Don't delete /dev/null!
+if [ "$OUTPUT_FILE" != "/dev/null" ]; then
+    rm -f "$OUTPUT_FILE"
+fi
+
+# Flush page cache to ensure cold read (requires root)
+echo "Flushing page cache..."
+sync
+if ! sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null; then
+    echo "WARNING: Could not flush page cache (requires root). Results may be affected by warm cache."
+fi
 
 # Record start time
 START_TIME=$(python3 -c 'import time; print(time.time())')
