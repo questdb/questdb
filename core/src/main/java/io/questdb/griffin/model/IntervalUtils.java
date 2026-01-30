@@ -755,6 +755,17 @@ public final class IntervalUtils {
                         dayFilterMask,
                         nowTimestamp
                 );
+                // Apply exchange calendar filter if specified
+                if (exchangeSchedule != null) {
+                    int durationLo = -1;
+                    for (int j = 0; j < wrappedSink.length(); j++) {
+                        if (wrappedSink.charAt(j) == ';') {
+                            durationLo = j + 1;
+                            break;
+                        }
+                    }
+                    applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, wrappedSink, durationLo, wrappedSink.length(), position);
+                }
                 if (applyEncoded) {
                     mergeAndValidateIntervals(configuration, out, outSize, position);
                 }
