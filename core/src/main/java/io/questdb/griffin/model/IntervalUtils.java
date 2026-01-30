@@ -622,10 +622,7 @@ public final class IntervalUtils {
                 }
             }
             // First try to look up as exchange calendar
-            ExchangeCalendarService calendarService = configuration.getFactoryProvider()
-                    .getExchangeCalendarServiceFactory()
-                    .getInstance();
-            exchangeSchedule = calendarService.getSchedule(seq.subSequence(dayFilterMarkerPos + 1, dayFilterHi));
+            exchangeSchedule = getExchangeSchedule(configuration, seq, dayFilterMarkerPos + 1, dayFilterHi);
             if (exchangeSchedule == null) {
                 // Not an exchange calendar, parse as day filter
                 dayFilterMask = parseDayFilter(seq, dayFilterMarkerPos + 1, dayFilterHi, position);
@@ -1379,6 +1376,19 @@ public final class IntervalUtils {
     }
 
     /**
+     * Looks up an exchange calendar schedule for the token between {@code lo} (inclusive) and
+     * {@code hi} (exclusive) in {@code seq}. Returns the schedule {@link LongList} if the
+     * token identifies a known exchange, or {@code null} otherwise.
+     */
+    @Nullable
+    private static LongList getExchangeSchedule(CairoConfiguration configuration, CharSequence seq, int lo, int hi) {
+        return configuration.getFactoryProvider()
+                .getExchangeCalendarServiceFactory()
+                .getInstance()
+                .getSchedule(seq.subSequence(lo, hi));
+    }
+
+    /**
      * Applies exchange calendar filter by intersecting query intervals with trading schedule.
      * The trading schedule is obtained from {@link ExchangeCalendarService} and contains
      * [lo, hi] pairs representing trading sessions in microseconds.
@@ -2096,10 +2106,7 @@ public final class IntervalUtils {
                 int effectiveElementEndForTz = resolvedElementEnd;
                 if (elemDayFilterMarker >= 0) {
                     // First try to look up as exchange calendar
-                    ExchangeCalendarService calendarService = configuration.getFactoryProvider()
-                            .getExchangeCalendarServiceFactory()
-                            .getInstance();
-                    elemExchangeSchedule = calendarService.getSchedule(elementSeq.subSequence(elemDayFilterMarker + 1, resolvedElementEnd));
+                    elemExchangeSchedule = getExchangeSchedule(configuration, elementSeq, elemDayFilterMarker + 1, resolvedElementEnd);
                     if (elemExchangeSchedule == null) {
                         // Not an exchange calendar, parse as day filter
                         elemDayFilterMask = parseDayFilter(elementSeq, elemDayFilterMarker + 1, resolvedElementEnd, errorPos);
@@ -2484,10 +2491,7 @@ public final class IntervalUtils {
             int effectiveElementEndForTz = resolvedElementEnd;
             if (elemDayFilterMarker >= 0) {
                 // First try to look up as exchange calendar
-                ExchangeCalendarService calendarService = configuration.getFactoryProvider()
-                        .getExchangeCalendarServiceFactory()
-                        .getInstance();
-                elemExchangeSchedule = calendarService.getSchedule(dateVarSink.subSequence(elemDayFilterMarker + 1, resolvedElementEnd));
+                elemExchangeSchedule = getExchangeSchedule(configuration, dateVarSink, elemDayFilterMarker + 1, resolvedElementEnd);
                 if (elemExchangeSchedule == null) {
                     // Not an exchange calendar, parse as day filter
                     elemDayFilterMask = parseDayFilter(dateVarSink, elemDayFilterMarker + 1, resolvedElementEnd, errorPos);
