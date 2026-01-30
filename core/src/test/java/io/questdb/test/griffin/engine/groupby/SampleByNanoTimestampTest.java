@@ -57,7 +57,6 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.text.SimpleDateFormat;
@@ -5308,9 +5307,6 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
         );
     }
 
-    // TODO: SAMPLE BY with negative timestamps (before 1970) needs investigation.
-    // The bucket boundaries and aggregation are not working correctly.
-    @Ignore("SAMPLE BY with negative timestamps not yet fully supported")
     @Test
     public void testSampleByNegativeTimestampEdgeCase() throws Exception {
         execute("create table test ( ts TIMESTAMP_NS, value float );");
@@ -5321,17 +5317,21 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     ('1970-01-01T01:00:00.0Z', 15),
                     ('1970-01-01T02:00:00.0Z', 20),\
                     ('1970-01-01T03:00:00.0Z', 25);""");
-        // ALIGN TO CALENDAR produces midnight-aligned buckets
+        // Without ALIGN TO CALENDAR, buckets align to midnight (calendar-aligned by default now)
+        // First bucket: Dec 31 midnight to Jan 1 midnight -> only contains 23:00 value = 5
+        // Second bucket: Jan 1 midnight to Jan 2 midnight -> contains 00:00, 01:00, 02:00, 03:00 = avg 17.5
         assertQueryNoLeakCheck(
                 """
                         ts\tavg
                         1969-12-31T00:00:00.000000000Z\t5.0
                         1970-01-01T00:00:00.000000000Z\t17.5
                         """,
-                "SELECT ts, avg(value) FROM(select ts, value from test order by ts asc) sample BY 1d FILL(NULL) ALIGN TO CALENDAR;",
+                "SELECT ts, avg(value) FROM(select ts, value from test order by ts asc) sample BY 1d FILL(NULL);",
                 "ts"
         );
         // ALIGN TO CALENDAR WITH OFFSET '02:00' produces 02:00-aligned buckets
+        // First bucket: Dec 31 02:00 to Jan 1 02:00 -> contains 23:00, 00:00, 01:00 = avg 10
+        // Second bucket: Jan 1 02:00 to Jan 2 02:00 -> contains 02:00, 03:00 = avg 22.5
         assertQueryNoLeakCheck(
                 """
                         ts\tavg
