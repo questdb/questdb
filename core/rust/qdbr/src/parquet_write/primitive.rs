@@ -147,6 +147,7 @@ where
         primitive_type,
         options,
         encoding,
+        true,
     )
 }
 
@@ -208,6 +209,7 @@ where
         primitive_type,
         options,
         encoding,
+        false,
     )
 }
 

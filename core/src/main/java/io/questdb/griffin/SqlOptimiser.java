@@ -6905,7 +6905,8 @@ public class SqlOptimiser implements Mutable {
                 case SELECT_MODEL_VIRTUAL:
                 case SELECT_MODEL_CHOOSE:
                     QueryModel nested = base.getNestedModel();
-                    if (nested != null && nested.getSelectModelType() == SELECT_MODEL_GROUP_BY) {
+                    if (nested != null && (nested.getSelectModelType() == SELECT_MODEL_GROUP_BY
+                            || nested.getSelectModelType() == SELECT_MODEL_WINDOW)) {
                         baseOuter = base;
                     }
                     break;
