@@ -31,16 +31,13 @@ use parquet2::encoding::hybrid_rle::BitmapIter;
 use parquet2::encoding::hybrid_rle::HybridRleDecoder;
 use parquet2::encoding::{hybrid_rle, Encoding};
 use parquet2::page::DataPageHeader;
-use parquet2::page::{
-    split_buffer, CompressedDataPage, CompressedDictPage, CompressedPage, DataPage, DictPage, Page,
-};
+use parquet2::page::{split_buffer, DataPage, DictPage};
 use parquet2::read::levels::get_bit_width;
-use parquet2::read::{decompress, get_page_iterator};
+use parquet2::read::{SlicePageReader, SlicedDataPage, SlicedDictPage, SlicedPage};
 use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use std::cmp;
 use std::cmp::min;
-use std::io::Cursor;
 use std::ptr;
 use std::slice;
 
@@ -381,10 +378,7 @@ impl ParquetDecoder {
             .map_err(|_| fmt_err!(Layout, "column chunk size overflow, size: {chunk_size}"))?;
 
         let buf = unsafe { slice::from_raw_parts(ctx.file_ptr, ctx.file_size as usize) };
-        let mut reader: Cursor<&[u8]> = Cursor::new(buf);
-
-        let page_reader =
-            get_page_iterator(column_metadata, &mut reader, None, vec![], chunk_size)?;
+        let page_reader = SlicePageReader::new(buf, column_metadata, chunk_size)?;
 
         match self.metadata.version {
             1 | 2 => Ok(()),
@@ -400,16 +394,16 @@ impl ParquetDecoder {
         column_chunk_bufs.data_vec.clear();
 
         for maybe_page in page_reader {
-            let compressed_page = maybe_page?;
+            let sliced_page = maybe_page?;
 
-            match compressed_page {
-                CompressedPage::Dict(dict_page) => {
-                    let page = decompress_dict(dict_page, &mut ctx.decompress_buffer)?;
+            match sliced_page {
+                SlicedPage::Dict(dict_page) => {
+                    let page = decompress_sliced_dict(dict_page, &mut ctx.decompress_buffer)?;
                     dict = Some(page);
                 }
-                CompressedPage::Data(data_page) => {
+                SlicedPage::Data(data_page) => {
                     let page_row_count_opt =
-                        compressed_page_row_count(&data_page, col_info.column_type);
+                        sliced_page_row_count(&data_page, col_info.column_type);
 
                     if let Some(page_row_count) = page_row_count_opt {
                         let page_end = page_row_start + page_row_count;
@@ -436,7 +430,8 @@ impl ParquetDecoder {
                         if FILL_NULLS {
                             let row_lo = row_group_lo.saturating_sub(page_row_start);
                             let row_hi = (row_group_hi - page_row_start).min(page_row_count);
-                            let page = decompress_data(data_page, &mut ctx.decompress_buffer)?;
+                            let mut page =
+                                decompress_sliced_data(&data_page, &mut ctx.decompress_buffer)?;
                             decode_page_filtered::<true>(
                                 &page,
                                 dict.as_ref(),
@@ -460,8 +455,10 @@ impl ParquetDecoder {
                                     row_group_index,
                                 )
                             })?;
+                            ctx.decompress_buffer = std::mem::take(page.buffer_mut());
                         } else if page_filter_start < filter_idx {
-                            let page = decompress_data(data_page, &mut ctx.decompress_buffer)?;
+                            let mut page =
+                                decompress_sliced_data(&data_page, &mut ctx.decompress_buffer)?;
                             decode_page_filtered::<false>(
                                 &page,
                                 dict.as_ref(),
@@ -485,6 +482,7 @@ impl ParquetDecoder {
                                     row_group_index,
                                 )
                             })?;
+                            ctx.decompress_buffer = std::mem::take(page.buffer_mut());
                         }
                         page_row_start = page_end;
                     } else {
@@ -492,11 +490,13 @@ impl ParquetDecoder {
                             break;
                         }
 
-                        let page = decompress_data(data_page, &mut ctx.decompress_buffer)?;
+                        let mut page =
+                            decompress_sliced_data(&data_page, &mut ctx.decompress_buffer)?;
                         let page_row_count = page_row_count(&page, col_info.column_type)?;
                         let page_end = page_row_start + page_row_count;
 
                         if page_end <= row_group_lo {
+                            ctx.decompress_buffer = std::mem::take(page.buffer_mut());
                             page_row_start = page_end;
                             continue;
                         }
@@ -565,6 +565,7 @@ impl ParquetDecoder {
                                 )
                             })?;
                         }
+                        ctx.decompress_buffer = std::mem::take(page.buffer_mut());
                         page_row_start = page_end;
                     }
                 }
@@ -599,10 +600,7 @@ impl ParquetDecoder {
             .map_err(|_| fmt_err!(Layout, "column chunk size overflow, size: {chunk_size}"))?;
 
         let buf = unsafe { slice::from_raw_parts(ctx.file_ptr, ctx.file_size as usize) };
-        let mut reader: Cursor<&[u8]> = Cursor::new(buf);
-
-        let page_reader =
-            get_page_iterator(column_metadata, &mut reader, None, vec![], chunk_size)?;
+        let page_reader = SlicePageReader::new(buf, column_metadata, chunk_size)?;
 
         match self.metadata.version {
             1 | 2 => Ok(()),
@@ -614,20 +612,21 @@ impl ParquetDecoder {
         column_chunk_bufs.aux_vec.clear();
         column_chunk_bufs.data_vec.clear();
         for maybe_page in page_reader {
-            let compressed_page = maybe_page?;
+            let sliced_page = maybe_page?;
 
-            match compressed_page {
-                CompressedPage::Dict(dict_page) => {
-                    let page = decompress_dict(dict_page, &mut ctx.decompress_buffer)?;
+            match sliced_page {
+                SlicedPage::Dict(dict_page) => {
+                    let page = decompress_sliced_dict(dict_page, &mut ctx.decompress_buffer)?;
                     dict = Some(page);
                 }
-                CompressedPage::Data(data_page) => {
+                SlicedPage::Data(data_page) => {
                     let page_row_count_opt =
-                        compressed_page_row_count(&data_page, col_info.column_type);
+                        sliced_page_row_count(&data_page, col_info.column_type);
 
                     if let Some(page_row_count) = page_row_count_opt {
                         if row_group_lo < row_count + page_row_count && row_group_hi > row_count {
-                            let page = decompress_data(data_page, &mut ctx.decompress_buffer)?;
+                            let mut page =
+                                decompress_sliced_data(&data_page, &mut ctx.decompress_buffer)?;
                             decode_page(
                                 &page,
                                 dict.as_ref(),
@@ -647,10 +646,12 @@ impl ParquetDecoder {
                                     row_group_index,
                                 )
                             })?;
+                            ctx.decompress_buffer = std::mem::take(page.buffer_mut());
                         }
                         row_count += page_row_count;
                     } else {
-                        let page = decompress_data(data_page, &mut ctx.decompress_buffer)?;
+                        let mut page =
+                            decompress_sliced_data(&data_page, &mut ctx.decompress_buffer)?;
                         let page_row_count = page_row_count(&page, col_info.column_type)?;
 
                         if row_group_lo < row_count + page_row_count && row_group_hi > row_count {
@@ -674,6 +675,7 @@ impl ParquetDecoder {
                                 )
                             })?;
                         }
+                        ctx.decompress_buffer = std::mem::take(page.buffer_mut());
                         row_count += page_row_count;
                     }
                 }
@@ -3078,16 +3080,43 @@ fn decode_array_page_filtered<T: DataPageSlicer, const FILL_NULLS: bool>(
 
     match max_rep_level {
         1 => decode_array_filtered_loop::<T, FILL_NULLS, 1>(
-            &mut levels_iter, max_rep_level, max_def_level, page_row_start,
-            page_row_count, row_group_lo, row_lo, row_hi, rows_filter, slicer, buffers,
+            &mut levels_iter,
+            max_rep_level,
+            max_def_level,
+            page_row_start,
+            page_row_count,
+            row_group_lo,
+            row_lo,
+            row_hi,
+            rows_filter,
+            slicer,
+            buffers,
         ),
         2 => decode_array_filtered_loop::<T, FILL_NULLS, 2>(
-            &mut levels_iter, max_rep_level, max_def_level, page_row_start,
-            page_row_count, row_group_lo, row_lo, row_hi, rows_filter, slicer, buffers,
+            &mut levels_iter,
+            max_rep_level,
+            max_def_level,
+            page_row_start,
+            page_row_count,
+            row_group_lo,
+            row_lo,
+            row_hi,
+            rows_filter,
+            slicer,
+            buffers,
         ),
         _ => decode_array_filtered_loop::<T, FILL_NULLS, 0>(
-            &mut levels_iter, max_rep_level, max_def_level, page_row_start,
-            page_row_count, row_group_lo, row_lo, row_hi, rows_filter, slicer, buffers,
+            &mut levels_iter,
+            max_rep_level,
+            max_def_level,
+            page_row_start,
+            page_row_count,
+            row_group_lo,
+            row_lo,
+            row_hi,
+            rows_filter,
+            slicer,
+            buffers,
         ),
     }
 }
@@ -3126,8 +3155,8 @@ fn decode_array_filtered_loop<T: DataPageSlicer, const FILL_NULLS: bool, const R
         }
 
         let row_pos = page_row_start + current_row;
-        let in_filter = filter_idx < filter_len
-            && (rows_filter[filter_idx] as usize + row_group_lo) == row_pos;
+        let in_filter =
+            filter_idx < filter_len && (rows_filter[filter_idx] as usize + row_group_lo) == row_pos;
 
         if in_filter {
             let result = if REP_LEVEL == 1 {
@@ -3163,9 +3192,7 @@ fn decode_array_filtered_loop<T: DataPageSlicer, const FILL_NULLS: bool, const R
             current_row += 1;
             if filter_idx == 1 && first_vs > 0 && filter_len > 1 {
                 // estimate total size
-                buffers
-                    .data_vec
-                    .reserve(first_vs * (filter_len - 1))?;
+                buffers.data_vec.reserve(first_vs * (filter_len - 1))?;
             }
         } else {
             let next_match_row = if filter_idx < filter_len {
@@ -3178,15 +3205,10 @@ fn decode_array_filtered_loop<T: DataPageSlicer, const FILL_NULLS: bool, const R
             let skip_count = next_match_row.saturating_sub(current_row);
 
             if skip_count > 0 {
-                let non_null_skipped =
-                    levels_iter.skip_rows(skip_count, max_def_level as u32)?;
+                let non_null_skipped = levels_iter.skip_rows(skip_count, max_def_level as u32)?;
                 slicer.skip(non_null_skipped);
                 if FILL_NULLS {
-                    append_array_nulls(
-                        &mut buffers.aux_vec,
-                        &buffers.data_vec,
-                        skip_count,
-                    )?;
+                    append_array_nulls(&mut buffers.aux_vec, &buffers.data_vec, skip_count)?;
                 }
                 current_row += skip_count;
             }
@@ -3281,7 +3303,14 @@ fn decode_array_rows_1d<T: DataPageSlicer>(
 
     let mut def_scratch = Vec::new();
 
-    let Some(first_vs) = read_and_append_one_row_1d(levels_iter, max_def_level, slicer, buffers, &mut def_scratch)? else {
+    let Some(first_vs) = read_and_append_one_row_1d(
+        levels_iter,
+        max_def_level,
+        slicer,
+        buffers,
+        &mut def_scratch,
+    )?
+    else {
         return Ok(());
     };
     if target_rows > 1 && first_vs > 0 {
@@ -3289,7 +3318,15 @@ fn decode_array_rows_1d<T: DataPageSlicer>(
         buffers.data_vec.reserve(first_vs * (target_rows - 1))?;
     }
     for _ in 1..target_rows {
-        if read_and_append_one_row_1d(levels_iter, max_def_level, slicer, buffers, &mut def_scratch)?.is_none() {
+        if read_and_append_one_row_1d(
+            levels_iter,
+            max_def_level,
+            slicer,
+            buffers,
+            &mut def_scratch,
+        )?
+        .is_none()
+        {
             break;
         }
     }
@@ -3316,7 +3353,14 @@ fn decode_array_rows_2d<T: DataPageSlicer>(
 
     let mut def_scratch = Vec::new();
 
-    let Some(first_vs) = read_and_append_one_row_2d(levels_iter, max_def_level, slicer, buffers, &mut def_scratch)? else {
+    let Some(first_vs) = read_and_append_one_row_2d(
+        levels_iter,
+        max_def_level,
+        slicer,
+        buffers,
+        &mut def_scratch,
+    )?
+    else {
         return Ok(());
     };
     if target_rows > 1 && first_vs > 0 {
@@ -3324,7 +3368,15 @@ fn decode_array_rows_2d<T: DataPageSlicer>(
         buffers.data_vec.reserve(first_vs * (target_rows - 1))?;
     }
     for _ in 1..target_rows {
-        if read_and_append_one_row_2d(levels_iter, max_def_level, slicer, buffers, &mut def_scratch)?.is_none() {
+        if read_and_append_one_row_2d(
+            levels_iter,
+            max_def_level,
+            slicer,
+            buffers,
+            &mut def_scratch,
+        )?
+        .is_none()
+        {
             break;
         }
     }
@@ -3512,9 +3564,7 @@ fn read_and_append_one_row_2d<T: DataPageSlicer>(
         .aux_vec
         .extend_from_slice(&value_size.to_le_bytes())?;
 
-    buffers
-        .data_vec
-        .extend_from_slice(&dim0.to_le_bytes())?;
+    buffers.data_vec.extend_from_slice(&dim0.to_le_bytes())?;
     buffers
         .data_vec
         .extend_from_slice(&max_dim1.to_le_bytes())?;
@@ -3582,8 +3632,13 @@ fn decode_array_rows_generic<T: DataPageSlicer>(
     }
 
     let Some(first_vs) = read_and_append_one_row_generic(
-        levels_iter, max_rep_level, max_def_level, slicer, buffers,
-    )? else {
+        levels_iter,
+        max_rep_level,
+        max_def_level,
+        slicer,
+        buffers,
+    )?
+    else {
         return Ok(());
     };
     if target_rows > 1 && first_vs > 0 {
@@ -3591,8 +3646,14 @@ fn decode_array_rows_generic<T: DataPageSlicer>(
     }
     for _ in 1..target_rows {
         if read_and_append_one_row_generic(
-            levels_iter, max_rep_level, max_def_level, slicer, buffers,
-        )?.is_none() {
+            levels_iter,
+            max_rep_level,
+            max_def_level,
+            slicer,
+            buffers,
+        )?
+        .is_none()
+        {
             break;
         }
     }
@@ -3658,29 +3719,81 @@ fn append_array<T: DataPageSlicer>(
     Ok(value_size)
 }
 
-
-fn decompress_dict(page: CompressedDictPage, buffer: &mut Vec<u8>) -> ParquetResult<DictPage> {
-    let compressed = CompressedPage::Dict(page);
-    match decompress(compressed, buffer)? {
-        Page::Dict(dict_page) => Ok(dict_page),
-        _ => unreachable!(),
-    }
+fn decompress_sliced_dict(page: SlicedDictPage, buffer: &mut Vec<u8>) -> ParquetResult<DictPage> {
+    let buf = if page.compression != parquet2::compression::Compression::Uncompressed {
+        let read_size = page.uncompressed_size;
+        buffer.resize(read_size, 0);
+        parquet2::compression::decompress(page.compression, page.buffer, buffer)?;
+        std::mem::take(buffer)
+    } else {
+        page.buffer.to_vec()
+    };
+    Ok(DictPage::new(buf, page.num_values, page.is_sorted))
 }
 
-fn decompress_data(page: CompressedDataPage, buffer: &mut Vec<u8>) -> ParquetResult<DataPage> {
-    let compressed = CompressedPage::Data(page);
-    match decompress(compressed, buffer)? {
-        Page::Data(data_page) => Ok(data_page),
-        _ => unreachable!(),
+fn decompress_sliced_data(
+    page: &SlicedDataPage<'_>,
+    decompress_buffer: &mut Vec<u8>,
+) -> ParquetResult<DataPage> {
+    if page.compression != parquet2::compression::Compression::Uncompressed {
+        match &page.header {
+            DataPageHeader::V1(_) => {
+                let read_size = page.uncompressed_size;
+                decompress_buffer.resize(read_size, 0);
+                parquet2::compression::decompress(
+                    page.compression,
+                    page.buffer,
+                    decompress_buffer,
+                )?;
+            }
+            DataPageHeader::V2(header) => {
+                let read_size = page.uncompressed_size;
+                decompress_buffer.resize(read_size, 0);
+                let offset = (header.definition_levels_byte_length
+                    + header.repetition_levels_byte_length) as usize;
+                let can_decompress = header.is_compressed.unwrap_or(true);
+                if can_decompress {
+                    if offset > decompress_buffer.len() || offset > page.buffer.len() {
+                        return Err(fmt_err!(
+                            Layout,
+                            "V2 Page Header reported incorrect offset to compressed data"
+                        ));
+                    }
+                    decompress_buffer[..offset].copy_from_slice(&page.buffer[..offset]);
+                    parquet2::compression::decompress(
+                        page.compression,
+                        &page.buffer[offset..],
+                        &mut decompress_buffer[offset..],
+                    )?;
+                } else {
+                    if decompress_buffer.len() != page.buffer.len() {
+                        return Err(fmt_err!(
+                            Layout,
+                            "V2 Page Header reported incorrect decompressed size"
+                        ));
+                    }
+                    decompress_buffer.copy_from_slice(page.buffer);
+                }
+            }
+        }
+    } else {
+        decompress_buffer.clear();
+        decompress_buffer.extend_from_slice(page.buffer);
     }
+    Ok(DataPage::new(
+        page.header.clone(),
+        std::mem::take(decompress_buffer),
+        page.descriptor.clone(),
+        None,
+    ))
 }
 
-fn compressed_page_row_count(page: &CompressedDataPage, column_type: ColumnType) -> Option<usize> {
-    match page.header() {
+fn sliced_page_row_count(page: &SlicedDataPage, column_type: ColumnType) -> Option<usize> {
+    match &page.header {
         DataPageHeader::V2(header) => Some(header.num_rows as usize),
         DataPageHeader::V1(header) => match column_type.tag() {
             ColumnTypeTag::Array => {
-                if page.descriptor().primitive_type.physical_type == PhysicalType::ByteArray {
+                if page.descriptor.primitive_type.physical_type == PhysicalType::ByteArray {
                     Some(header.num_values as usize)
                 } else {
                     None
