@@ -79,13 +79,13 @@ public final class Vect {
     public static native long countLong(long pLong, long count);
 
     public static native long dedupMergeArrayColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr,
-            long srcOooFixAddr);
+                                                        long srcOooFixAddr);
 
     public static native long dedupMergeStrBinColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr,
-            long srcOooFixAddr);
+                                                         long srcOooFixAddr);
 
     public static native long dedupMergeVarcharColumnSize(long mergeIndexAddr, long mergeIndexCount,
-            long srcDataFixAddr, long srcOooFixAddr);
+                                                          long srcDataFixAddr, long srcOooFixAddr);
 
     public static native long dedupSortedTimestampIndex(
             long inIndexAddr,
@@ -242,8 +242,8 @@ public final class Vect {
     public static native void mergeShuffle8Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
     public static native long mergeShuffleArrayColumnFromManyAddresses(long indexFormat, long primaryAddressList,
-            long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndexAddr,
-            long destVarOffset, long destDataSize);
+                                                                       long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndexAddr,
+                                                                       long destVarOffset, long destDataSize);
 
     public static native long mergeShuffleFixedColumnFromManyAddresses(
             int columnSizeBytes,
@@ -255,19 +255,19 @@ public final class Vect {
             long segmentCount);
 
     public static native long mergeShuffleStringColumnFromManyAddresses(long indexFormat, int dataLengthBytes,
-            long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress,
-            long mergeIndexAddr, long destVarOffset, long destDataSize);
+                                                                        long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress,
+                                                                        long mergeIndexAddr, long destVarOffset, long destDataSize);
 
     public static native long mergeShuffleSymbolColumnFromManyAddresses(long indexFormat, long srcAddresses,
-            long dstAddress, long mergeIndexAddr, long txnInfo, long txnCount, long symbolMapAddress,
-            long symbolMapSize);
+                                                                        long dstAddress, long mergeIndexAddr, long txnInfo, long txnCount, long symbolMapAddress,
+                                                                        long symbolMapSize);
 
     public static native long mergeShuffleVarcharColumnFromManyAddresses(long indexFormat, long primaryAddressList,
-            long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndexAddr,
-            long destVarOffset, long destDataSize);
+                                                                         long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndexAddr,
+                                                                         long destVarOffset, long destDataSize);
 
     public static native long mergeTwoLongIndexesAsc(long pTs, long tsIndexLo, long tsCount, long pIndex2,
-            long index2Count, long pIndexDest);
+                                                     long index2Count, long pIndexDest);
 
     public static native double minDouble(long pDouble, long count);
 
@@ -363,7 +363,7 @@ public final class Vect {
     }
 
     public static native long remapSymbolColumnFromManyAddresses(long srcAddresses, long dstAddress, long txnInfo,
-            long txnCount, long symbolMapAddress);
+                                                                 long txnCount, long symbolMapAddress);
 
     public static native void resetPerformanceCounters();
 
@@ -392,7 +392,7 @@ public final class Vect {
     public static native void shiftCopyArrayColumnAux(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr);
 
     public static native void shiftCopyFixedSizeColumnData(long shift, long srcAddr, long srcLo, long srcHi,
-            long dstAddr);
+                                                           long dstAddr);
 
     public static native void shiftCopyVarcharColumnAux(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr);
 

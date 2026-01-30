@@ -42,12 +42,199 @@ import org.junit.Test;
  */
 public class NegativeTimestampFuzzTest extends AbstractFuzzTest {
 
-    // Key timestamp constants
-    private static final long EPOCH_MICROS = 0L;
-    private static final long ONE_DAY_BEFORE_EPOCH = -Micros.DAY_MICROS;  // 1969-12-31
-    private static final long ONE_HOUR_BEFORE_EPOCH = -Micros.HOUR_MICROS;  // 1969-12-31T23:00
-    private static final long YEAR_1900_MICROS = -2208988800000000L;  // 1900-01-01
     private static final long YEAR_1800_MICROS = -5364662400000000L;  // 1800-01-01
+    private static final long YEAR_1900_MICROS = -2208988800000000L;  // 1900-01-01
+
+    /**
+     * Test that binary search works correctly with mixed positive/negative timestamps.
+     */
+    @Test
+    public void testBinarySearchAcrossEpoch() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = getTestName();
+
+            // Create partitioned table with WAL
+            execute("create table " + tableName + " (" +
+                    "ts timestamp, " +
+                    "val long" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            // Insert ordered data spanning epoch
+            execute("insert into " + tableName + " values " +
+                    "('1969-12-31T00:00:00Z', 1), " +
+                    "('1969-12-31T12:00:00Z', 2), " +
+                    "('1970-01-01T00:00:00Z', 3), " +
+                    "('1970-01-01T12:00:00Z', 4)");
+
+            drainWalQueue();
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                // Point query at epoch boundary
+                sink.clear();
+                TestUtils.printSql(compiler, sqlExecutionContext,
+                        "select val from " + tableName + " where ts = '1970-01-01T00:00:00Z'", sink);
+                Assert.assertTrue("Should find epoch row", sink.toString().contains("3"));
+
+                // Range query spanning epoch
+                sink.clear();
+                TestUtils.printSql(compiler, sqlExecutionContext,
+                        "select count() from " + tableName +
+                                " where ts >= '1969-12-31T06:00:00Z' and ts < '1970-01-01T06:00:00Z'", sink);
+                Assert.assertTrue("Should find 2 rows in range", sink.toString().contains("2"));
+
+                // Query only negative timestamps
+                sink.clear();
+                TestUtils.printSql(compiler, sqlExecutionContext,
+                        "select count() from " + tableName + " where ts < '1970-01-01'", sink);
+                Assert.assertTrue("Should find 2 rows before epoch", sink.toString().contains("2"));
+            }
+        });
+    }
+
+    /**
+     * Test column add operations on tables with negative timestamps.
+     * Only tests column add (not remove/rename) to reduce test flakiness.
+     */
+    @Test
+    public void testColumnOperationsWithNegativeTimestamps() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = getTestName();
+
+            // Create table with negative timestamps
+            execute("create table " + tableName + " (" +
+                    "ts timestamp, " +
+                    "val long, " +
+                    "sym symbol" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            // Insert initial data with negative timestamps
+            execute("insert into " + tableName +
+                    " select timestamp_sequence('1900-01-01', 86400000000L), x, rnd_symbol('A','B','C') " +
+                    " from long_sequence(30)");
+
+            drainWalQueue();
+
+            // Add a new column
+            execute("alter table " + tableName + " add column new_val double");
+
+            // Insert more data with the new column
+            execute("insert into " + tableName +
+                    " select timestamp_sequence('1900-02-01', 86400000000L), x + 100, rnd_symbol('D','E','F'), rnd_double() " +
+                    " from long_sequence(30)");
+
+            drainWalQueue();
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                // Verify total count
+                sink.clear();
+                TestUtils.printSql(compiler, sqlExecutionContext,
+                        "select count() from " + tableName, sink);
+                Assert.assertTrue("Should have 60 rows", sink.toString().contains("60"));
+
+                // Verify new column exists and has values
+                sink.clear();
+                TestUtils.printSql(compiler, sqlExecutionContext,
+                        "select count() from " + tableName + " where new_val is not null", sink);
+                Assert.assertTrue("Should have 30 rows with new_val", sink.toString().contains("30"));
+
+                // Verify data order
+                sink.clear();
+                TestUtils.printSql(compiler, sqlExecutionContext,
+                        "select ts from " + tableName + " limit 1", sink);
+                Assert.assertTrue("First row should be from 1900", sink.toString().contains("1900-01-01"));
+            }
+        });
+    }
+
+    /**
+     * Test deduplication with negative timestamps.
+     * Insert duplicate rows with same negative timestamp and verify dedup works.
+     */
+    @Test
+    public void testDedupWithNegativeTimestamps() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = getTestName();
+
+            // Create table with dedup enabled
+            execute("create table " + tableName + " (" +
+                    "ts timestamp, " +
+                    "val long, " +
+                    "key symbol" +
+                    ") timestamp(ts) partition by DAY WAL DEDUP UPSERT KEYS(ts, key)");
+
+            // Insert initial data with negative timestamps
+            execute("insert into " + tableName + " values " +
+                    "('1969-12-31T12:00:00Z', 1, 'A'), " +
+                    "('1969-12-31T12:00:00Z', 2, 'B'), " +
+                    "('1969-12-31T18:00:00Z', 3, 'A')");
+
+            drainWalQueue();
+
+            // Insert duplicates - should update existing rows
+            execute("insert into " + tableName + " values " +
+                    "('1969-12-31T12:00:00Z', 100, 'A'), " +  // Update A
+                    "('1969-12-31T12:00:00Z', 200, 'B')");    // Update B
+
+            drainWalQueue();
+
+            // Verify dedup - should have 3 rows with updated values
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                sink.clear();
+                TestUtils.printSql(compiler, sqlExecutionContext,
+                        "select ts, val, key from " + tableName + " order by ts, key", sink);
+
+                // Should have: A=100, B=200 at 12:00 and A=3 at 18:00
+                String result = sink.toString();
+                Assert.assertTrue("Should contain updated value 100", result.contains("100"));
+                Assert.assertTrue("Should contain updated value 200", result.contains("200"));
+                Assert.assertTrue("Should contain original value 3", result.contains("\t3\t"));
+            }
+        });
+    }
+
+    /**
+     * Test mixed O3 inserts with both column operations and partition drops.
+     */
+    @Test
+    public void testMixedOperationsWithNegativeTimestamps() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+
+        fuzzer.setFuzzCounts(
+                true,   // isO3
+                300,
+                15,
+                10,
+                10,
+                5,
+                30,
+                4);
+
+        // Enable mixed operations
+        fuzzer.setFuzzProbabilities(
+                0.0,   // cancelRowsProb
+                0.05,  // notSetProb
+                0.05,  // nullSetProb
+                0.02,  // rollbackProb
+                0.05,  // colAddProb
+                0.02,  // colRemoveProb
+                0.0,   // colRenameProb
+                0.0,   // colTypeChangeProb
+                0.7,   // dataAddProb
+                0.05,  // equalTsRowsProb
+                0.03,  // partitionDropProb
+                0.0,   // truncateProb
+                0.0,   // tableDropProb
+                0.0,   // setTtlProb
+                0.0,   // replaceInsertProb
+                0.0,   // symbolAccessValidationProb
+                0.03); // queryProb
+
+        // Span across epoch boundary
+        long startMicro = -30L * Micros.DAY_MICROS;
+        long duration = 60L * Micros.DAY_MICROS;
+
+        runFuzzWithNegativeTimestamps(rnd, startMicro, duration);
+    }
 
     /**
      * Test basic O3 operations with negative timestamps.
@@ -161,52 +348,6 @@ public class NegativeTimestampFuzzTest extends AbstractFuzzTest {
     }
 
     /**
-     * Test deduplication with negative timestamps.
-     * Insert duplicate rows with same negative timestamp and verify dedup works.
-     */
-    @Test
-    public void testDedupWithNegativeTimestamps() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = getTestName();
-
-            // Create table with dedup enabled
-            execute("create table " + tableName + " (" +
-                    "ts timestamp, " +
-                    "val long, " +
-                    "key symbol" +
-                    ") timestamp(ts) partition by DAY WAL DEDUP UPSERT KEYS(ts, key)");
-
-            // Insert initial data with negative timestamps
-            execute("insert into " + tableName + " values " +
-                    "('1969-12-31T12:00:00Z', 1, 'A'), " +
-                    "('1969-12-31T12:00:00Z', 2, 'B'), " +
-                    "('1969-12-31T18:00:00Z', 3, 'A')");
-
-            drainWalQueue();
-
-            // Insert duplicates - should update existing rows
-            execute("insert into " + tableName + " values " +
-                    "('1969-12-31T12:00:00Z', 100, 'A'), " +  // Update A
-                    "('1969-12-31T12:00:00Z', 200, 'B')");    // Update B
-
-            drainWalQueue();
-
-            // Verify dedup - should have 3 rows with updated values
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                sink.clear();
-                TestUtils.printSql(compiler, sqlExecutionContext,
-                        "select ts, val, key from " + tableName + " order by ts, key", sink);
-
-                // Should have: A=100, B=200 at 12:00 and A=3 at 18:00
-                String result = sink.toString();
-                Assert.assertTrue("Should contain updated value 100", result.contains("100"));
-                Assert.assertTrue("Should contain updated value 200", result.contains("200"));
-                Assert.assertTrue("Should contain original value 3", result.contains("\t3\t"));
-            }
-        });
-    }
-
-    /**
      * Test partition operations (drop, truncate) with negative timestamp partitions.
      */
     @Test
@@ -248,7 +389,7 @@ public class NegativeTimestampFuzzTest extends AbstractFuzzTest {
                 TestUtils.printSql(compiler, sqlExecutionContext,
                         "select count() from " + tableName, sink);
                 int rowCount = Integer.parseInt(sink.toString().trim().split("\n")[1]);
-                Assert.assertTrue("Should have 10 rows after drop, got " + rowCount, rowCount == 10);
+                Assert.assertEquals("Should have 10 rows after drop, got " + rowCount, 10, rowCount);
             }
 
             // Truncate table
@@ -262,133 +403,6 @@ public class NegativeTimestampFuzzTest extends AbstractFuzzTest {
                 Assert.assertTrue("Should be empty after truncate", sink.toString().contains("0"));
             }
         });
-    }
-
-    /**
-     * Test with very old timestamps (year 1800).
-     * This tests extreme negative values near the limits of timestamp range.
-     */
-    @Test
-    public void testVeryOldTimestamps() throws Exception {
-        Rnd rnd = generateRandom(LOG);
-
-        fuzzer.setFuzzCounts(
-                false,
-                500,
-                5,
-                10,
-                10,
-                5,
-                50,
-                3);
-
-        fuzzer.setFuzzProbabilities(
-                0.0, 0.0, 0.0, 0.0,
-                0.0, 0.0, 0.0, 0.0,
-                1.0,
-                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
-
-        // Start from year 1800
-        runFuzzWithNegativeTimestamps(rnd, YEAR_1800_MICROS, 365L * Micros.DAY_MICROS);
-    }
-
-    /**
-     * Test column add operations on tables with negative timestamps.
-     * Only tests column add (not remove/rename) to reduce test flakiness.
-     */
-    @Test
-    public void testColumnOperationsWithNegativeTimestamps() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = getTestName();
-
-            // Create table with negative timestamps
-            execute("create table " + tableName + " (" +
-                    "ts timestamp, " +
-                    "val long, " +
-                    "sym symbol" +
-                    ") timestamp(ts) partition by DAY WAL");
-
-            // Insert initial data with negative timestamps
-            execute("insert into " + tableName +
-                    " select timestamp_sequence('1900-01-01', 86400000000L), x, rnd_symbol('A','B','C') " +
-                    " from long_sequence(30)");
-
-            drainWalQueue();
-
-            // Add a new column
-            execute("alter table " + tableName + " add column new_val double");
-
-            // Insert more data with the new column
-            execute("insert into " + tableName +
-                    " select timestamp_sequence('1900-02-01', 86400000000L), x + 100, rnd_symbol('D','E','F'), rnd_double() " +
-                    " from long_sequence(30)");
-
-            drainWalQueue();
-
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                // Verify total count
-                sink.clear();
-                TestUtils.printSql(compiler, sqlExecutionContext,
-                        "select count() from " + tableName, sink);
-                Assert.assertTrue("Should have 60 rows", sink.toString().contains("60"));
-
-                // Verify new column exists and has values
-                sink.clear();
-                TestUtils.printSql(compiler, sqlExecutionContext,
-                        "select count() from " + tableName + " where new_val is not null", sink);
-                Assert.assertTrue("Should have 30 rows with new_val", sink.toString().contains("30"));
-
-                // Verify data order
-                sink.clear();
-                TestUtils.printSql(compiler, sqlExecutionContext,
-                        "select ts from " + tableName + " limit 1", sink);
-                Assert.assertTrue("First row should be from 1900", sink.toString().contains("1900-01-01"));
-            }
-        });
-    }
-
-    /**
-     * Test mixed O3 inserts with both column operations and partition drops.
-     */
-    @Test
-    public void testMixedOperationsWithNegativeTimestamps() throws Exception {
-        Rnd rnd = generateRandom(LOG);
-
-        fuzzer.setFuzzCounts(
-                true,   // isO3
-                300,
-                15,
-                10,
-                10,
-                5,
-                30,
-                4);
-
-        // Enable mixed operations
-        fuzzer.setFuzzProbabilities(
-                0.0,   // cancelRowsProb
-                0.05,  // notSetProb
-                0.05,  // nullSetProb
-                0.02,  // rollbackProb
-                0.05,  // colAddProb
-                0.02,  // colRemoveProb
-                0.0,   // colRenameProb
-                0.0,   // colTypeChangeProb
-                0.7,   // dataAddProb
-                0.05,  // equalTsRowsProb
-                0.03,  // partitionDropProb
-                0.0,   // truncateProb
-                0.0,   // tableDropProb
-                0.0,   // setTtlProb
-                0.0,   // replaceInsertProb
-                0.0,   // symbolAccessValidationProb
-                0.03); // queryProb
-
-        // Span across epoch boundary
-        long startMicro = -30L * Micros.DAY_MICROS;
-        long duration = 60L * Micros.DAY_MICROS;
-
-        runFuzzWithNegativeTimestamps(rnd, startMicro, duration);
     }
 
     /**
@@ -427,7 +441,7 @@ public class NegativeTimestampFuzzTest extends AbstractFuzzTest {
                 TestUtils.printSql(compiler, sqlExecutionContext,
                         "select count() as bucket_count from (select ts, count() from " + tableName + " sample by 6h)", sink);
                 int bucketCount = Integer.parseInt(sink.toString().trim().split("\n")[1]);
-                Assert.assertTrue("Should have 8 buckets, got " + bucketCount, bucketCount == 8);
+                Assert.assertEquals("Should have 8 buckets, got " + bucketCount, 8, bucketCount);
 
                 // SAMPLE BY with FILL
                 sink.clear();
@@ -439,49 +453,31 @@ public class NegativeTimestampFuzzTest extends AbstractFuzzTest {
     }
 
     /**
-     * Test that binary search works correctly with mixed positive/negative timestamps.
+     * Test with very old timestamps (year 1800).
+     * This tests extreme negative values near the limits of timestamp range.
      */
     @Test
-    public void testBinarySearchAcrossEpoch() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = getTestName();
+    public void testVeryOldTimestamps() throws Exception {
+        Rnd rnd = generateRandom(LOG);
 
-            // Create partitioned table with WAL
-            execute("create table " + tableName + " (" +
-                    "ts timestamp, " +
-                    "val long" +
-                    ") timestamp(ts) partition by DAY WAL");
+        fuzzer.setFuzzCounts(
+                false,
+                500,
+                5,
+                10,
+                10,
+                5,
+                50,
+                3);
 
-            // Insert ordered data spanning epoch
-            execute("insert into " + tableName + " values " +
-                    "('1969-12-31T00:00:00Z', 1), " +
-                    "('1969-12-31T12:00:00Z', 2), " +
-                    "('1970-01-01T00:00:00Z', 3), " +
-                    "('1970-01-01T12:00:00Z', 4)");
+        fuzzer.setFuzzProbabilities(
+                0.0, 0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0, 0.0,
+                1.0,
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
 
-            drainWalQueue();
-
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                // Point query at epoch boundary
-                sink.clear();
-                TestUtils.printSql(compiler, sqlExecutionContext,
-                        "select val from " + tableName + " where ts = '1970-01-01T00:00:00Z'", sink);
-                Assert.assertTrue("Should find epoch row", sink.toString().contains("3"));
-
-                // Range query spanning epoch
-                sink.clear();
-                TestUtils.printSql(compiler, sqlExecutionContext,
-                        "select count() from " + tableName +
-                                " where ts >= '1969-12-31T06:00:00Z' and ts < '1970-01-01T06:00:00Z'", sink);
-                Assert.assertTrue("Should find 2 rows in range", sink.toString().contains("2"));
-
-                // Query only negative timestamps
-                sink.clear();
-                TestUtils.printSql(compiler, sqlExecutionContext,
-                        "select count() from " + tableName + " where ts < '1970-01-01'", sink);
-                Assert.assertTrue("Should find 2 rows before epoch", sink.toString().contains("2"));
-            }
-        });
+        // Start from year 1800
+        runFuzzWithNegativeTimestamps(rnd, YEAR_1800_MICROS, 365L * Micros.DAY_MICROS);
     }
 
     /**
@@ -533,57 +529,29 @@ public class NegativeTimestampFuzzTest extends AbstractFuzzTest {
                         "select count() from table_partitions('" + tableName + "')", sink);
                 // Should have partitions for hours 20-23 on Dec 31 and 00-03 on Jan 1 = 8 partitions
                 int partitionCount = Integer.parseInt(sink.toString().trim().split("\n")[1]);
-                Assert.assertTrue("Should have 8 hour partitions, got " + partitionCount, partitionCount == 8);
+                Assert.assertEquals("Should have 8 hour partitions, got " + partitionCount, 8, partitionCount);
             }
         });
     }
 
     // ==================== Helper methods ====================
 
-    private void runFuzzWithNegativeTimestamps(Rnd rnd, long startMicro, long duration) throws Exception {
-        String tableName = getTestName();
-        String tableNameWal = tableName + "_wal";
-        String tableNameNoWal = tableName + "_nonwal";
+    private void assertTableHasNegativeData(SqlCompiler compiler, String tableName) throws Exception {
+        TableToken tt = engine.verifyTableName(tableName);
 
-        createInitialTableNegative(tableNameWal, true, startMicro);
-        createInitialTableNegative(tableNameNoWal, false, startMicro);
+        sink.clear();
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from " + tableName, sink);
+        Assert.assertFalse("Table " + tableName + " should have data", sink.toString().contains("count\n0\n"));
 
-        long endMicro = startMicro + duration;
-
-        ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameWal, rnd, startMicro, endMicro);
-
-        try {
-            // Apply to non-WAL table
-            fuzzer.applyNonWal(transactions, tableNameNoWal, rnd);
-
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                assertTableHasNegativeData(compiler, tableNameNoWal);
-            }
-
-            // Apply to WAL table
-            TableToken walToken = engine.verifyTableName(tableNameWal);
-            try {
-                fuzzer.applyWal(transactions, tableNameWal, 1, rnd);
-            } catch (AssertionError e) {
-                SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(walToken);
-                if (tracker.isSuspended()) {
-                    String errorMsg = tracker.getErrorMessage();
-                    throw new AssertionError("WAL table suspended with error: " + errorMsg, e);
-                }
-                throw e;
-            }
-
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                assertTableHasNegativeData(compiler, tableNameWal);
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
-            }
-
-            Assert.assertEquals("expected 0 errors in partition mutation control", 0,
-                    engine.getPartitionOverwriteControl().getErrorCount());
-
-        } finally {
-            io.questdb.std.Misc.freeObjListAndClear(transactions);
+        try (var reader = engine.getReader(tt)) {
+            long minTs = reader.getMinTimestamp();
+            Assert.assertTrue("Min timestamp should be negative (before 1970), got: " + minTs, minTs < 0);
         }
+
+        sink.clear();
+        TestUtils.printSql(compiler, sqlExecutionContext,
+                "select ts from " + tableName + " order by ts limit 1", sink);
+        Assert.assertTrue("Query should return data", sink.length() > "ts\n".length());
     }
 
     private void createInitialTableNegative(String tableName, boolean isWal, long startMicro) throws Exception {
@@ -630,21 +598,49 @@ public class NegativeTimestampFuzzTest extends AbstractFuzzTest {
         return instant.toString().replace("Z", "");
     }
 
-    private void assertTableHasNegativeData(SqlCompiler compiler, String tableName) throws Exception {
-        TableToken tt = engine.verifyTableName(tableName);
+    private void runFuzzWithNegativeTimestamps(Rnd rnd, long startMicro, long duration) throws Exception {
+        String tableName = getTestName();
+        String tableNameWal = tableName + "_wal";
+        String tableNameNoWal = tableName + "_nonwal";
 
-        sink.clear();
-        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from " + tableName, sink);
-        Assert.assertFalse("Table " + tableName + " should have data", sink.toString().contains("count\n0\n"));
+        createInitialTableNegative(tableNameWal, true, startMicro);
+        createInitialTableNegative(tableNameNoWal, false, startMicro);
 
-        try (var reader = engine.getReader(tt)) {
-            long minTs = reader.getMinTimestamp();
-            Assert.assertTrue("Min timestamp should be negative (before 1970), got: " + minTs, minTs < 0);
+        long endMicro = startMicro + duration;
+
+        ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameWal, rnd, startMicro, endMicro);
+
+        try {
+            // Apply to non-WAL table
+            fuzzer.applyNonWal(transactions, tableNameNoWal, rnd);
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                assertTableHasNegativeData(compiler, tableNameNoWal);
+            }
+
+            // Apply to WAL table
+            TableToken walToken = engine.verifyTableName(tableNameWal);
+            try {
+                fuzzer.applyWal(transactions, tableNameWal, 1, rnd);
+            } catch (AssertionError e) {
+                SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(walToken);
+                if (tracker.isSuspended()) {
+                    String errorMsg = tracker.getErrorMessage();
+                    throw new AssertionError("WAL table suspended with error: " + errorMsg, e);
+                }
+                throw e;
+            }
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                assertTableHasNegativeData(compiler, tableNameWal);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
+            }
+
+            Assert.assertEquals("expected 0 errors in partition mutation control", 0,
+                    engine.getPartitionOverwriteControl().getErrorCount());
+
+        } finally {
+            io.questdb.std.Misc.freeObjListAndClear(transactions);
         }
-
-        sink.clear();
-        TestUtils.printSql(compiler, sqlExecutionContext,
-                "select ts from " + tableName + " order by ts limit 1", sink);
-        Assert.assertTrue("Query should return data", sink.length() > "ts\n".length());
     }
 }

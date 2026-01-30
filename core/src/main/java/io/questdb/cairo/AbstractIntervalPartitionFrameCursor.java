@@ -194,8 +194,8 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         long intervalLo;
         // Handle Long.MIN_VALUE or any interval lo that's before the table's min timestamp
         // This includes Long.MIN_VALUE + 1 which represents "all non-NULL timestamps"
-        if (lo == Long.MIN_VALUE || lo <= minTs) {
-            intervalLo = reader.floorToPartitionTimestamp(minTs);
+        if (lo <= minTs) {
+            reader.floorToPartitionTimestamp(minTs);
             this.initialPartitionLo = 0;
         } else {
             intervalLo = reader.floorToPartitionTimestamp(lo);

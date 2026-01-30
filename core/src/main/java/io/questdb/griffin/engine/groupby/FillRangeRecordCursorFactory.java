@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
@@ -309,10 +308,10 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         private void initTimestamps(Function fromFunc, Function toFunc) {
             minTimestamp = fromFunc == timestampDriver.getTimestampConstantNull() ? Long.MAX_VALUE
                     : timestampDriver.from(fromFunc.getTimestamp(null),
-                            ColumnType.getTimestampType(fromFunc.getType()));
+                    ColumnType.getTimestampType(fromFunc.getType()));
             maxTimestamp = toFunc == timestampDriver.getTimestampConstantNull() ? Long.MIN_VALUE
                     : timestampDriver.from(toFunc.getTimestamp(null),
-                            ColumnType.getTimestampType(toFunc.getType()));
+                    ColumnType.getTimestampType(toFunc.getType()));
         }
 
         private void initValueFuncs(ObjList<Function> valueFuncs) {
