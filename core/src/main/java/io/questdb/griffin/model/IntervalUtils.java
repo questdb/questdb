@@ -674,15 +674,14 @@ public final class IntervalUtils {
                 );
                 // Apply exchange calendar filter if specified
                 if (exchangeSchedule != null) {
-                    applyExchangeCalendarFilter(timestampDriver, exchangeSchedule, out, outSize);
-                    // Apply duration AFTER exchange calendar filter to extend trading hours
-                    // Duration is in effectiveSeq after the ';'
+                    int durationLo = -1;
                     for (int j = effectiveSeqLo; j < effectiveSeqLim; j++) {
                         if (effectiveSeq.charAt(j) == ';') {
-                            applyDurationToIntervals(timestampDriver, out, outSize, effectiveSeq, j + 1, effectiveSeqLim, position);
+                            durationLo = j + 1;
                             break;
                         }
                     }
+                    applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, effectiveSeq, durationLo, effectiveSeqLim, position);
                 }
                 // In static mode, union all bracket-expanded intervals and validate count
                 if (applyEncoded) {
@@ -853,11 +852,8 @@ public final class IntervalUtils {
             }
             // Exchange calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
             if (exchangeSchedule != null) {
-                applyExchangeCalendarFilter(timestampDriver, exchangeSchedule, out, outSize);
-                // Apply duration AFTER exchange calendar filter to extend trading hours
-                if (semicolonPos >= 0) {
-                    applyDurationToIntervals(timestampDriver, out, outSize, effectiveSeq, semicolonPos + 1, effectiveSeqLim, position);
-                }
+                applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, effectiveSeq,
+                        semicolonPos >= 0 ? semicolonPos + 1 : -1, effectiveSeqLim, position);
             }
             return;
         }
@@ -926,11 +922,8 @@ public final class IntervalUtils {
             }
             // Exchange calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
             if (exchangeSchedule != null) {
-                applyExchangeCalendarFilter(timestampDriver, exchangeSchedule, out, outSize);
-                // Apply duration AFTER exchange calendar filter to extend trading hours
-                if (semicolonPos >= 0) {
-                    applyDurationToIntervals(timestampDriver, out, outSize, effectiveSeq, semicolonPos + 1, effectiveSeqLim, position);
-                }
+                applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, effectiveSeq,
+                        semicolonPos >= 0 ? semicolonPos + 1 : -1, effectiveSeqLim, position);
             }
             // In static mode, union all bracket-expanded intervals with each other
             // (they were added without union during expansion)
@@ -1372,6 +1365,27 @@ public final class IntervalUtils {
             long hi = out.getQuick(i);
             long extendedHi = addDuration(timestampDriver, hi, seq, lo, lim, position);
             out.setQuick(i, extendedHi);
+        }
+    }
+
+    /**
+     * Applies exchange calendar filter and optional duration extension.
+     * The filter intersects query intervals with the exchange's trading schedule,
+     * then extends each interval's hi bound by the duration if present.
+     */
+    private static void applyExchangeFilterAndDuration(
+            TimestampDriver timestampDriver,
+            LongList exchangeSchedule,
+            LongList out,
+            int startIndex,
+            CharSequence durationSeq,
+            int durationLo,
+            int durationLim,
+            int position
+    ) throws SqlException {
+        applyExchangeCalendarFilter(timestampDriver, exchangeSchedule, out, startIndex);
+        if (durationLo >= 0) {
+            applyDurationToIntervals(timestampDriver, out, startIndex, durationSeq, durationLo, durationLim, position);
         }
     }
 
@@ -2276,11 +2290,8 @@ public final class IntervalUtils {
 
                 // Exchange calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
                 if (activeExchangeSchedule != null) {
-                    applyExchangeCalendarFilter(timestampDriver, activeExchangeSchedule, out, outSizeBeforeElement);
-                    // Apply duration AFTER exchange calendar filter to extend trading hours
-                    if (globalDurationSemicolon >= 0) {
-                        applyDurationToIntervals(timestampDriver, out, outSizeBeforeElement, seq, globalDurationSemicolon + 1, lim, errorPos);
-                    }
+                    applyExchangeFilterAndDuration(timestampDriver, activeExchangeSchedule, out, outSizeBeforeElement, seq,
+                            globalDurationSemicolon >= 0 ? globalDurationSemicolon + 1 : -1, lim, errorPos);
                 }
 
                 elementStart = i + 1;
@@ -2612,11 +2623,8 @@ public final class IntervalUtils {
 
             // Exchange calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
             if (activeExchangeSchedule != null) {
-                applyExchangeCalendarFilter(timestampDriver, activeExchangeSchedule, out, outSizeBeforeElement);
-                // Apply duration AFTER exchange calendar filter to extend trading hours
-                if (durationSemicolon >= 0) {
-                    applyDurationToIntervals(timestampDriver, out, outSizeBeforeElement, seq, durationSemicolon + 1, lim, errorPos);
-                }
+                applyExchangeFilterAndDuration(timestampDriver, activeExchangeSchedule, out, outSizeBeforeElement, seq,
+                        durationSemicolon >= 0 ? durationSemicolon + 1 : -1, lim, errorPos);
             }
 
             // Incremental merge: when interval count exceeds threshold, merge to bound memory
