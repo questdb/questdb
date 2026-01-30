@@ -664,3 +664,205 @@ impl<'a, const N: usize, const WORDS: usize, T: DataPageSlicer>
         Self { slicer, buffers, null_value }
     }
 }
+
+/// A sink for decimal types that sign-extends from a smaller source size to a larger target size.
+/// Parquet stores decimals as big-endian byte arrays, and QuestDB stores them as little-endian.
+///
+/// N is the target size in bytes (1, 2, 4, 8, 16, or 32).
+/// R is the source size in bytes from the Parquet file (must be <= N).
+///
+/// For simple decimals (N <= 8): sign-extend and reverse all bytes.
+/// For multi-word decimals (N = 16 or 32): sign-extend and swap bytes within each 8-byte word.
+pub struct SignExtendDecimalColumnSink<'a, const N: usize, const R: usize, T: DataPageSlicer> {
+    slicer: &'a mut T,
+    buffers: &'a mut ColumnChunkBuffers,
+    null_value: [u8; N],
+}
+
+impl<const N: usize, const R: usize, T: DataPageSlicer> Pushable
+    for SignExtendDecimalColumnSink<'_, N, R, T>
+{
+    fn reserve(&mut self) -> ParquetResult<()> {
+        self.buffers.data_vec.reserve(self.slicer.count() * N)?;
+        Ok(())
+    }
+
+    #[inline]
+    fn push(&mut self) -> ParquetResult<()> {
+        let slice = self.slicer.next();
+        let base = self.buffers.data_vec.len();
+        debug_assert!(base + N <= self.buffers.data_vec.capacity());
+
+        unsafe {
+            let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+            Self::sign_extend_and_convert(slice, ptr);
+            AcVecSetLen::set_len(&mut self.buffers.data_vec, base + N);
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
+        match count {
+            0 => Ok(()),
+            1 => self.push(),
+            2 => {
+                self.push()?;
+                self.push()
+            }
+            3 => {
+                self.push()?;
+                self.push()?;
+                self.push()
+            }
+            4 => {
+                self.push()?;
+                self.push()?;
+                self.push()?;
+                self.push()
+            }
+            _ => {
+                let base = self.buffers.data_vec.len();
+                let total_bytes = count * N;
+                debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
+
+                unsafe {
+                    let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+                    for c in 0..count {
+                        let slice = self.slicer.next();
+                        let dest = ptr.add(c * N);
+                        Self::sign_extend_and_convert(slice, dest);
+                    }
+                    AcVecSetLen::set_len(&mut self.buffers.data_vec, base + total_bytes);
+                }
+                Ok(())
+            }
+        }
+    }
+
+    #[inline]
+    fn push_null(&mut self) -> ParquetResult<()> {
+        self.buffers.data_vec.extend_from_slice(&self.null_value)?;
+        Ok(())
+    }
+
+    #[inline]
+    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
+        match count {
+            0 => Ok(()),
+            1 => self.push_null(),
+            2 => {
+                self.push_null()?;
+                self.push_null()
+            }
+            3 => {
+                self.push_null()?;
+                self.push_null()?;
+                self.push_null()
+            }
+            4 => {
+                self.push_null()?;
+                self.push_null()?;
+                self.push_null()?;
+                self.push_null()
+            }
+            _ => {
+                let base = self.buffers.data_vec.len();
+                let total_bytes = count * N;
+                debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
+
+                unsafe {
+                    let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+                    for i in 0..count {
+                        ptr::copy_nonoverlapping(self.null_value.as_ptr(), ptr.add(i * N), N);
+                    }
+                    AcVecSetLen::set_len(&mut self.buffers.data_vec, base + total_bytes);
+                }
+                Ok(())
+            }
+        }
+    }
+
+    #[inline]
+    fn skip(&mut self, count: usize) {
+        self.slicer.skip(count);
+    }
+
+    fn result(&self) -> ParquetResult<()> {
+        self.slicer.result().clone()
+    }
+}
+
+impl<'a, const N: usize, const R: usize, T: DataPageSlicer>
+    SignExtendDecimalColumnSink<'a, N, R, T>
+{
+    pub fn new(
+        slicer: &'a mut T,
+        buffers: &'a mut ColumnChunkBuffers,
+        null_value: [u8; N],
+    ) -> Self {
+        Self { slicer, buffers, null_value }
+    }
+
+    /// Sign-extend the source bytes to target size and convert from BE to LE.
+    ///
+    /// The source is in big-endian (most significant byte first).
+    /// For N <= 8: we simply reverse bytes while sign-extending.
+    /// For N = 16 or 32 (multi-word): we swap bytes within each 8-byte word.
+    #[inline]
+    unsafe fn sign_extend_and_convert(src: &[u8], dest: *mut u8) {
+        // Determine sign byte from the most significant byte of source
+        let sign_byte = if src[0] & 0x80 != 0 { 0xFF } else { 0x00 };
+
+        if N <= 8 {
+            // Simple case: reverse all bytes while sign-extending
+            // Output is little-endian, so we write from least significant to most significant
+            // The source bytes (big-endian) are at indices 0..R where 0 is MSB
+            // After reversal, source[R-1] becomes output[0], source[R-2] becomes output[1], etc.
+            // Sign extension bytes fill the remaining positions (R..N)
+
+            // Write source bytes in reverse order (LE output)
+            for i in 0..R {
+                *dest.add(i) = src[R - 1 - i];
+            }
+            // Fill remaining bytes with sign extension
+            for i in R..N {
+                *dest.add(i) = sign_byte;
+            }
+        } else {
+            // Multi-word case (N = 16 or 32)
+            // QuestDB stores Decimal128/256 as multiple i64 words in a specific layout.
+            // Each 8-byte word is little-endian internally.
+            //
+            // For Parquet big-endian source of R bytes, we need to:
+            // 1. Sign-extend to N bytes (prepend N-R sign bytes)
+            // 2. Swap bytes within each 8-byte word
+            //
+            // The extended big-endian representation looks like:
+            // [sign_byte × (N-R)] [src[0]] [src[1]] ... [src[R-1]]
+            //
+            // Then we swap bytes within each 8-byte word.
+
+            let words = N / 8;
+
+            for w in 0..words {
+                let word_start_in_extended = w * 8;
+                let word_dest = dest.add(w * 8);
+
+                // For each byte position in the output word (0..8),
+                // we need the byte at position (word_start_in_extended + 7 - i) in the extended BE array
+                for i in 0..8 {
+                    let extended_pos = word_start_in_extended + 7 - i;
+                    let byte = if extended_pos < N - R {
+                        // This position is in the sign-extension prefix
+                        sign_byte
+                    } else {
+                        // This position maps to source byte at (extended_pos - (N - R))
+                        src[extended_pos - (N - R)]
+                    };
+                    *word_dest.add(i) = byte;
+                }
+            }
+        }
+    }
+}

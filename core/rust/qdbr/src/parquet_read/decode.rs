@@ -3,10 +3,10 @@ use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
 use crate::parquet::util::{align8b, ARRAY_NDIMS_LIMIT};
 use crate::parquet_read::column_sink::fixed::{
-    FixedBooleanColumnSink, FixedDoubleColumnSink, FixedFloatColumnSink, FixedInt2ByteColumnSink,
-    FixedInt2ShortColumnSink, FixedIntColumnSink, FixedLong128ColumnSink, FixedLong256ColumnSink,
-    FixedLongColumnSink, IntDecimalColumnSink, NanoTimestampColumnSink, ReverseFixedColumnSink,
-    WordSwapDecimalColumnSink,
+    FixedBooleanColumnSink, FixedColumnSink, FixedDoubleColumnSink, FixedFloatColumnSink,
+    FixedInt2ByteColumnSink, FixedInt2ShortColumnSink, FixedIntColumnSink, FixedLong128ColumnSink,
+    FixedLong256ColumnSink, FixedLongColumnSink, IntDecimalColumnSink, NanoTimestampColumnSink,
+    ReverseFixedColumnSink, SignExtendDecimalColumnSink, WordSwapDecimalColumnSink,
 };
 use crate::parquet_read::column_sink::var::ARRAY_AUX_SIZE;
 use crate::parquet_read::column_sink::var::{
@@ -25,6 +25,9 @@ use crate::parquet_read::{
     RowGroupStatBuffers,
 };
 use crate::parquet_write::array::{append_array_null, calculate_array_shape, LevelsIterator};
+use crate::parquet_write::decimal::{
+    DECIMAL128_NULL, DECIMAL16_NULL, DECIMAL256_NULL, DECIMAL32_NULL, DECIMAL64_NULL, DECIMAL8_NULL,
+};
 use parquet2::deserialize::{HybridDecoderBitmapIter, HybridEncoded};
 use parquet2::encoding::hybrid_rle::BitmapIter;
 use parquet2::encoding::hybrid_rle::HybridRleDecoder;
@@ -115,8 +118,6 @@ impl ColumnChunkStats {
 
 const UUID_NULL: [u8; 16] = unsafe { std::mem::transmute([i64::MIN; 2]) };
 const LONG256_NULL: [u8; 32] = unsafe { std::mem::transmute([i64::MIN; 4]) };
-const DECIMAL128_NULL: [u8; 16] = unsafe { std::mem::transmute((i64::MIN, 0i64)) };
-const DECIMAL256_NULL: [u8; 32] = unsafe { std::mem::transmute((i64::MIN, 0i64, 0i64, 0i64)) };
 const BYTE_NULL: [u8; 1] = [0u8];
 const INT_NULL: [u8; 4] = i32::MIN.to_le_bytes();
 const SHORT_NULL: [u8; 2] = 0i16.to_le_bytes();
@@ -716,6 +717,62 @@ pub fn decode_page(
                     )?;
                     Ok(())
                 }
+                // INT32 with Decimal logical type -> Decimal8, Decimal16, Decimal32
+                // INT32 is already little-endian, so we just truncate to the target size
+                (
+                    Encoding::Plain,
+                    _,
+                    Some(PrimitiveLogicalType::Decimal(_, _)),
+                    ColumnTypeTag::Decimal8,
+                ) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut FixedColumnSink::<1, 4, _>::new(
+                            &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
+                            bufs,
+                            &DECIMAL8_NULL,
+                        ),
+                    )?;
+                    Ok(())
+                }
+                (
+                    Encoding::Plain,
+                    _,
+                    Some(PrimitiveLogicalType::Decimal(_, _)),
+                    ColumnTypeTag::Decimal16,
+                ) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut FixedColumnSink::<2, 4, _>::new(
+                            &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
+                            bufs,
+                            &DECIMAL16_NULL,
+                        ),
+                    )?;
+                    Ok(())
+                }
+                (
+                    Encoding::Plain,
+                    _,
+                    Some(PrimitiveLogicalType::Decimal(_, _)),
+                    ColumnTypeTag::Decimal32,
+                ) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut FixedColumnSink::<4, 4, _>::new(
+                            &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
+                            bufs,
+                            &DECIMAL32_NULL,
+                        ),
+                    )?;
+                    Ok(())
+                }
                 _ => Err(encoding_error),
             }
         }
@@ -788,6 +845,26 @@ pub fn decode_page(
                     )?;
                     Ok(())
                 }
+                // INT64 with Decimal logical type -> Decimal64
+                // INT64 is already little-endian, so we just copy directly
+                (
+                    Encoding::Plain,
+                    _,
+                    Some(PrimitiveLogicalType::Decimal(_, _)),
+                    ColumnTypeTag::Decimal64,
+                ) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut FixedLongColumnSink::new(
+                            &mut DataPageFixedSlicer::<8>::new(values_buffer, row_count),
+                            bufs,
+                            &DECIMAL64_NULL,
+                        ),
+                    )?;
+                    Ok(())
+                }
                 _ => Err(encoding_error),
             }
         }
@@ -809,78 +886,33 @@ pub fn decode_page(
                 _ => Err(encoding_error),
             }
         }
-        (PhysicalType::FixedLenByteArray(1), Some(PrimitiveLogicalType::Decimal(_, _)), _) => {
-            match (page.encoding(), column_type.tag()) {
-                (Encoding::Plain, ColumnTypeTag::Decimal8) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut ReverseFixedColumnSink::new(
-                            &mut DataPageFixedSlicer::<1>::new(values_buffer, row_count),
-                            bufs,
-                            i8::MIN.to_le_bytes(),
-                        ),
-                    )?;
-                    Ok(())
-                }
-                _ => Err(encoding_error),
+        // Handle FixedLenByteArray with Decimal logical type
+        // This supports all source sizes 1-32 and all decimal target types
+        (
+            PhysicalType::FixedLenByteArray(src_len),
+            Some(PrimitiveLogicalType::Decimal(_, _)),
+            _,
+        ) => {
+            if page.encoding() != Encoding::Plain {
+                return Err(fmt_err!(
+                    Unsupported,
+                    "only Plain encoding supported for FixedLenByteArray decimals, got {:?}",
+                    page.encoding()
+                ));
             }
+            decode_fixed_decimal(
+                page,
+                bufs,
+                values_buffer,
+                row_lo,
+                row_hi,
+                row_count,
+                src_len,
+                column_type.tag(),
+            )?;
+            Ok(())
         }
-        (PhysicalType::FixedLenByteArray(2), Some(PrimitiveLogicalType::Decimal(_, _)), _) => {
-            match (page.encoding(), column_type.tag()) {
-                (Encoding::Plain, ColumnTypeTag::Decimal16) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut ReverseFixedColumnSink::new(
-                            &mut DataPageFixedSlicer::<2>::new(values_buffer, row_count),
-                            bufs,
-                            i16::MIN.to_le_bytes(),
-                        ),
-                    )?;
-                    Ok(())
-                }
-                _ => Err(encoding_error),
-            }
-        }
-        (PhysicalType::FixedLenByteArray(4), Some(PrimitiveLogicalType::Decimal(_, _)), _) => {
-            match (page.encoding(), column_type.tag()) {
-                (Encoding::Plain, ColumnTypeTag::Decimal32) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut ReverseFixedColumnSink::new(
-                            &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
-                            bufs,
-                            i32::MIN.to_le_bytes(),
-                        ),
-                    )?;
-                    Ok(())
-                }
-                _ => Err(encoding_error),
-            }
-        }
-        (PhysicalType::FixedLenByteArray(8), Some(PrimitiveLogicalType::Decimal(_, _)), _) => {
-            match (page.encoding(), column_type.tag()) {
-                (Encoding::Plain, ColumnTypeTag::Decimal64) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut ReverseFixedColumnSink::new(
-                            &mut DataPageFixedSlicer::<8>::new(values_buffer, row_count),
-                            bufs,
-                            i64::MIN.to_le_bytes(),
-                        ),
-                    )?;
-                    Ok(())
-                }
-                _ => Err(encoding_error),
-            }
-        }
+        // Handle FixedLenByteArray(16) for non-decimal types (Long128)
         (PhysicalType::FixedLenByteArray(16), _logical_type, _) => {
             match (page.encoding(), column_type.tag()) {
                 (Encoding::Plain, ColumnTypeTag::Long128) => {
@@ -896,22 +928,10 @@ pub fn decode_page(
                     )?;
                     Ok(())
                 }
-                (Encoding::Plain, ColumnTypeTag::Decimal128) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut WordSwapDecimalColumnSink::<16, 2, _>::new(
-                            &mut DataPageFixedSlicer::<16>::new(values_buffer, row_count),
-                            bufs,
-                            DECIMAL128_NULL,
-                        ),
-                    )?;
-                    Ok(())
-                }
                 _ => Err(encoding_error),
             }
         }
+        // Handle FixedLenByteArray(32) for non-decimal types (Long256)
         (PhysicalType::FixedLenByteArray(32), _logical_type, _) => {
             match (page.encoding(), column_type.tag()) {
                 (Encoding::Plain, ColumnTypeTag::Long256) => {
@@ -923,19 +943,6 @@ pub fn decode_page(
                             &mut DataPageFixedSlicer::<32>::new(values_buffer, row_count),
                             bufs,
                             &LONG256_NULL,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, ColumnTypeTag::Decimal256) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut WordSwapDecimalColumnSink::<32, 4, _>::new(
-                            &mut DataPageFixedSlicer::<32>::new(values_buffer, row_count),
-                            bufs,
-                            DECIMAL256_NULL,
                         ),
                     )?;
                     Ok(())
@@ -1577,6 +1584,242 @@ fn long_stat_value(value: &Option<Vec<u8>>) -> ParquetResult<i64> {
         value[0..8].try_into().expect("unexpected vec length"),
     ))
 }
+
+/// Decode a FixedLenByteArray with Decimal logical type to a QuestDB decimal column.
+/// Handles all source sizes (1-32 bytes) and target decimal types (Decimal8-Decimal256).
+/// Supports sign extension when source is smaller than target.
+#[allow(clippy::too_many_arguments)]
+fn decode_fixed_decimal(
+    page: &DataPage,
+    bufs: &mut ColumnChunkBuffers,
+    values_buffer: &[u8],
+    row_lo: usize,
+    row_hi: usize,
+    row_count: usize,
+    src_len: usize,
+    target_tag: ColumnTypeTag,
+) -> ParquetResult<()> {
+    // Get target size based on column type tag
+    let target_size = match target_tag {
+        ColumnTypeTag::Decimal8 => 1,
+        ColumnTypeTag::Decimal16 => 2,
+        ColumnTypeTag::Decimal32 => 4,
+        ColumnTypeTag::Decimal64 => 8,
+        ColumnTypeTag::Decimal128 => 16,
+        ColumnTypeTag::Decimal256 => 32,
+        _ => {
+            return Err(fmt_err!(
+                Unsupported,
+                "unsupported target column type {:?} for FixedLenByteArray decimal",
+                target_tag
+            ))
+        }
+    };
+
+    // Validate: source cannot be larger than target (would truncate significant digits)
+    if src_len > target_size {
+        return Err(fmt_err!(
+            Unsupported,
+            "FixedLenByteArray({}) decimal cannot be decoded to {:?} (target size {} bytes): \
+             source is larger than target, would truncate significant digits",
+            src_len,
+            target_tag,
+            target_size
+        ));
+    }
+
+    // Dispatch based on target type and source size
+    // For same-size: use ReverseFixedColumnSink (simple reversal) or WordSwapDecimalColumnSink for 128/256
+    // For smaller source: use SignExtendDecimalColumnSink
+    match target_tag {
+        ColumnTypeTag::Decimal8 => decode_fixed_decimal_1(
+            page,
+            bufs,
+            values_buffer,
+            row_lo,
+            row_hi,
+            row_count,
+            src_len,
+        ),
+        ColumnTypeTag::Decimal16 => decode_fixed_decimal_2(
+            page,
+            bufs,
+            values_buffer,
+            row_lo,
+            row_hi,
+            row_count,
+            src_len,
+        ),
+        ColumnTypeTag::Decimal32 => decode_fixed_decimal_4(
+            page,
+            bufs,
+            values_buffer,
+            row_lo,
+            row_hi,
+            row_count,
+            src_len,
+        ),
+        ColumnTypeTag::Decimal64 => decode_fixed_decimal_8(
+            page,
+            bufs,
+            values_buffer,
+            row_lo,
+            row_hi,
+            row_count,
+            src_len,
+        ),
+        ColumnTypeTag::Decimal128 => decode_fixed_decimal_16(
+            page,
+            bufs,
+            values_buffer,
+            row_lo,
+            row_hi,
+            row_count,
+            src_len,
+        ),
+        ColumnTypeTag::Decimal256 => decode_fixed_decimal_32(
+            page,
+            bufs,
+            values_buffer,
+            row_lo,
+            row_hi,
+            row_count,
+            src_len,
+        ),
+        _ => Err(fmt_err!(
+            Unsupported,
+            "unsupported target column type {:?} for FixedLenByteArray decimal",
+            target_tag
+        )),
+    }
+}
+
+/// Macro to generate decode functions for each target decimal size.
+/// This handles all valid source sizes for each target.
+macro_rules! decode_fixed_decimal_impl {
+    // For simple decimals (target <= 8 bytes)
+    (simple $fn_name:ident, $target_size:expr, $null_value:expr, $target_name:expr, [$($src_size:expr),+]) => {
+        fn $fn_name(
+            page: &DataPage,
+            bufs: &mut ColumnChunkBuffers,
+            values_buffer: &[u8],
+            row_lo: usize,
+            row_hi: usize,
+            row_count: usize,
+            src_len: usize,
+        ) -> ParquetResult<()> {
+            match src_len {
+                $(
+                    $src_size => {
+                        if $src_size == $target_size {
+                            // Same size: simple reversal
+                            decode_page0(
+                                page,
+                                row_lo,
+                                row_hi,
+                                &mut ReverseFixedColumnSink::<$target_size, _>::new(
+                                    &mut DataPageFixedSlicer::<$src_size>::new(values_buffer, row_count),
+                                    bufs,
+                                    $null_value,
+                                ),
+                            )?;
+                        } else {
+                            // Sign extend from smaller source
+                            decode_page0(
+                                page,
+                                row_lo,
+                                row_hi,
+                                &mut SignExtendDecimalColumnSink::<$target_size, $src_size, _>::new(
+                                    &mut DataPageFixedSlicer::<$src_size>::new(values_buffer, row_count),
+                                    bufs,
+                                    $null_value,
+                                ),
+                            )?;
+                        }
+                        Ok(())
+                    }
+                )+
+                _ => Err(fmt_err!(
+                    Unsupported,
+                    "unsupported FixedLenByteArray({}) source size for {}, valid sizes are 1-{}",
+                    src_len,
+                    $target_name,
+                    $target_size
+                )),
+            }
+        }
+    };
+    // For multi-word decimals (128/256 bits)
+    (multiword $fn_name:ident, $target_size:expr, $words:expr, $null_value:expr, $target_name:expr, [$($src_size:expr),+]) => {
+        fn $fn_name(
+            page: &DataPage,
+            bufs: &mut ColumnChunkBuffers,
+            values_buffer: &[u8],
+            row_lo: usize,
+            row_hi: usize,
+            row_count: usize,
+            src_len: usize,
+        ) -> ParquetResult<()> {
+            match src_len {
+                $(
+                    $src_size => {
+                        if $src_size == $target_size {
+                            // Same size: word swap only
+                            decode_page0(
+                                page,
+                                row_lo,
+                                row_hi,
+                                &mut WordSwapDecimalColumnSink::<$target_size, $words, _>::new(
+                                    &mut DataPageFixedSlicer::<$src_size>::new(values_buffer, row_count),
+                                    bufs,
+                                    $null_value,
+                                ),
+                            )?;
+                        } else {
+                            // Sign extend from smaller source
+                            decode_page0(
+                                page,
+                                row_lo,
+                                row_hi,
+                                &mut SignExtendDecimalColumnSink::<$target_size, $src_size, _>::new(
+                                    &mut DataPageFixedSlicer::<$src_size>::new(values_buffer, row_count),
+                                    bufs,
+                                    $null_value,
+                                ),
+                            )?;
+                        }
+                        Ok(())
+                    }
+                )+
+                _ => Err(fmt_err!(
+                    Unsupported,
+                    "unsupported FixedLenByteArray({}) source size for {}, valid sizes are 1-{}",
+                    src_len,
+                    $target_name,
+                    $target_size
+                )),
+            }
+        }
+    };
+}
+
+// Decimal8: target size 1, only source size 1 is valid
+decode_fixed_decimal_impl!(simple decode_fixed_decimal_1, 1, DECIMAL8_NULL, "Decimal8", [1]);
+
+// Decimal16: target size 2, source sizes 1-2 are valid
+decode_fixed_decimal_impl!(simple decode_fixed_decimal_2, 2, DECIMAL16_NULL, "Decimal16", [1, 2]);
+
+// Decimal32: target size 4, source sizes 1-4 are valid
+decode_fixed_decimal_impl!(simple decode_fixed_decimal_4, 4, DECIMAL32_NULL, "Decimal32", [1, 2, 3, 4]);
+
+// Decimal64: target size 8, source sizes 1-8 are valid
+decode_fixed_decimal_impl!(simple decode_fixed_decimal_8, 8, DECIMAL64_NULL, "Decimal64", [1, 2, 3, 4, 5, 6, 7, 8]);
+
+// Decimal128: target size 16 (2 words), source sizes 1-16 are valid
+decode_fixed_decimal_impl!(multiword decode_fixed_decimal_16, 16, 2, DECIMAL128_NULL, "Decimal128", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+
+// Decimal256: target size 32 (4 words), source sizes 1-32 are valid
+decode_fixed_decimal_impl!(multiword decode_fixed_decimal_32, 32, 4, DECIMAL256_NULL, "Decimal256", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]);
 
 #[cfg(test)]
 mod tests {
