@@ -1444,12 +1444,62 @@ public final class IntervalUtils {
             out.setQuick(insertIdx + 1, hi);
         }
 
-        // Append trading schedule to out for intersection
+        // Determine the query time range to narrow the schedule scan.
+        // Query intervals are sorted by lo at this point.
+        long queryLo = out.getQuick(startIndex);
+        long queryHi = out.getQuick(out.size() - 1);
+
+        // Find the sub-range of the schedule that overlaps with [queryLo, queryHi].
+        // Schedule is sorted chronologically as [lo0, hi0, lo1, hi1, ...] in microseconds.
+        // We need the first interval whose hi >= queryLo (after conversion) and
+        // the last interval whose lo <= queryHi (after conversion).
+        boolean isNanos = timestampDriver == NanosTimestampDriver.INSTANCE;
+        // Convert query bounds to microseconds for comparison with the schedule.
+        // queryLo: round down (floor) so we don't miss an overlapping schedule interval.
+        // queryHi: round up (ceil) so we don't miss a schedule interval that starts
+        //          within the last sub-microsecond of the query range.
+        long queryLoMicros = isNanos ? (queryLo / 1000L) : queryLo;
+        long queryHiMicros = isNanos ? ((queryHi + 999L) / 1000L) : queryHi;
+
+        int scheduleIntervalCount = schedule.size() / 2;
+
+        // Binary search for first schedule interval with hi >= queryLoMicros
+        int lo = 0;
+        int hi = scheduleIntervalCount;
+        while (lo < hi) {
+            int mid = (lo + hi) >>> 1;
+            if (schedule.getQuick(mid * 2 + 1) < queryLoMicros) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        int schedStart = lo * 2;
+
+        // Binary search for last schedule interval with lo <= queryHiMicros
+        lo = schedStart / 2;
+        hi = scheduleIntervalCount;
+        while (lo < hi) {
+            int mid = (lo + hi) >>> 1;
+            if (schedule.getQuick(mid * 2) <= queryHiMicros) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        int schedEnd = lo * 2; // exclusive
+
+        if (schedStart >= schedEnd) {
+            // No overlap - remove all query intervals
+            out.setPos(startIndex);
+            return;
+        }
+
+        // Append only the overlapping portion of the trading schedule
         // Convert microseconds to nanoseconds if needed
         // Adjust hi bounds (odd indices) to be exclusive (subtract 1 unit)
         int dividerIndex = out.size();
-        boolean isNanos = timestampDriver == NanosTimestampDriver.INSTANCE;
-        for (int i = 0, n = schedule.size(); i < n; i++) {
+        for (int i = schedStart; i < schedEnd; i++) {
             long ts = schedule.getQuick(i);
             if (isNanos) {
                 ts = ts * 1000L;
