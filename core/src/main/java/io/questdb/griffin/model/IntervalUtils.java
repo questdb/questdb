@@ -62,6 +62,7 @@ public final class IntervalUtils {
     // Day filter bitmask constants (bit 0 = Monday, bit 6 = Sunday)
     private static final int DAY_FILTER_WORKDAY = (1 << (MONDAY - 1)) | (1 << (TUESDAY - 1)) | (1 << (WEDNESDAY - 1))
             | (1 << (THURSDAY - 1)) | (1 << (FRIDAY - 1)); // Mon-Fri
+    private static final ThreadLocal<LongList> tlExchangeFilterTemp = ThreadLocal.withInitial(LongList::new);
     private static final ThreadLocal<StringSink> tlDateVarSink = ThreadLocal.withInitial(StringSink::new);
     // Thread-local sinks for bracket expansion, isolated to avoid conflicts with other code.
     // Two sinks are needed for nested usage scenarios:
@@ -1439,8 +1440,9 @@ public final class IntervalUtils {
         if (startIndex == 0) {
             intersectInPlace(out, dividerIndex);
         } else {
-            // Create a temporary list for the intersection
-            LongList temp = new LongList();
+            // Use thread-local temporary list for the intersection to avoid heap allocation
+            LongList temp = tlExchangeFilterTemp.get();
+            temp.clear();
             for (int i = startIndex; i < dividerIndex; i++) {
                 temp.add(out.getQuick(i));
             }
