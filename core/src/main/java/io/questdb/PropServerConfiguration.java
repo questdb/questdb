@@ -905,7 +905,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 throw new ServerConfigurationException(
                         "Configuration value for "
                                 + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath()
-                                + " can't point to root, data, conf or snapshot dirs. "
+                                + " can't point to root, data, conf or snapshot dirs."
                 );
             }
         } else {
