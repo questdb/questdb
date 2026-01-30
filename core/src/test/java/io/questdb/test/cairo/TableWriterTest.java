@@ -43,6 +43,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
@@ -62,6 +63,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -73,6 +75,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -2874,6 +2877,78 @@ public class TableWriterTest extends AbstractCairoTest {
                     );
                 }
         );
+    }
+
+    @Test
+    public void testConvertPartitionToParquet() throws Exception {
+        assertMemoryLeak(() -> {
+            int N = 10000;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            // Populate data spanning multiple day partitions
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+            }
+
+            // Prepare the first partition for parquet conversion
+            long partitionTimestamp;
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                partitionTimestamp = writer.preparePartitionForParquetConversion(
+                        timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z")
+                );
+                Assert.assertTrue(partitionTimestamp > -1L);
+            }
+
+            // Produce parquet file from native partition
+            try (
+                    TableReader reader = newOffPoolReader(configuration, PRODUCT);
+                    Path path = new Path();
+                    Path other = new Path()
+            ) {
+                path.of(root).concat(PRODUCT_FS);
+                other.of(root).concat(PRODUCT_FS);
+                int pathSize = path.size();
+
+                int partitionIndex = reader.getPartitionIndexByTimestamp(partitionTimestamp);
+                Assert.assertTrue(partitionIndex >= 0);
+
+                TableUtils.produceParquetFromNative(
+                        reader, path, other, pathSize, partitionTimestamp,
+                        PRODUCT, partitionIndex, configuration
+                );
+            }
+
+            // Mark parquet ready and switch native partition with parquet
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                Assert.assertTrue(writer.markPartitionParquetReady(partitionTimestamp));
+                Assert.assertTrue(writer.switchNativePartitionWithParquet(partitionTimestamp));
+
+                TxWriter txWriter = writer.getTxWriter();
+                int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+
+                Assert.assertTrue(partitionIndex >= 0);
+                Assert.assertTrue(txWriter.isPartitionParquetGenerated(partitionIndex));
+                Assert.assertTrue(txWriter.isPartitionParquet(partitionIndex));
+
+                Assert.assertEquals(7, txWriter.getPartitionCount());
+                Assert.assertEquals(1, txWriter.getFirstNativePartitionIndex());
+                Assert.assertEquals(1, txWriter.getFirstNativePartitionWithoutParquetGenerated());
+
+                long dayInterval = timestampDriver.fromMicros(Micros.DAY_MICROS);
+
+                LongList dropList = new LongList();
+                dropList.add(partitionTimestamp + dayInterval, partitionTimestamp + 2 * dayInterval);
+                writer.dropPartitions(dropList);
+                writer.commit();
+
+                Assert.assertEquals(5, txWriter.getPartitionCount());
+            }
+        });
     }
 
     @Test
