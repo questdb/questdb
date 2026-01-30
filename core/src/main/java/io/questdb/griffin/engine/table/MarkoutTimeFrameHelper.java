@@ -26,6 +26,9 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleRecordSink;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
@@ -65,14 +68,22 @@ public class MarkoutTimeFrameHelper {
     }
 
     /**
-     * Backward scan from current position to find a row matching the given key.
+     * Backward scan from current position to find a row matching the given key,
+     * with drive-by caching of all symbols encountered during the scan.
      * <p>
      * The scan starts from the current position (set by findAsOfRow) and moves
      * backward until a row with matching key is found or stopRowId is reached.
+     * <p>
+     * Drive-by caching: While scanning for the target symbol, this method caches
+     * the positions of ALL other symbols encountered. This optimization significantly
+     * improves performance when symbols are sparsely distributed, as future lookups
+     * for those symbols can use the cached positions as stop points instead of
+     * scanning from scratch.
      *
      * @param masterSinkTarget sink containing serialized master key (already populated)
      * @param slaveSinkTarget  sink for serializing slave key for comparison
      * @param slaveKeyCopier   copier for slave's join key columns
+     * @param driveByCacheMap  map for drive-by caching (key -> rowId)
      * @param stopRowId        don't scan past this rowId (exclusive), or Long.MIN_VALUE for no limit
      * @return matched rowId, or Long.MIN_VALUE if no match found
      */
@@ -80,6 +91,7 @@ public class MarkoutTimeFrameHelper {
             SingleRecordSink masterSinkTarget,
             SingleRecordSink slaveSinkTarget,
             RecordSink slaveKeyCopier,
+            Map driveByCacheMap,
             long stopRowId
     ) {
         if (currentFrameIndex < 0 || currentRowIndex < 0) {
@@ -111,6 +123,17 @@ public class MarkoutTimeFrameHelper {
                 // Found a match!
                 setCurrentPosition(frameIndex, rowIndex);
                 return currentRowId;
+            }
+
+            // Drive-by caching: cache this symbol's position for future lookups.
+            // Only cache if the key is new (first occurrence during backward scan is most recent).
+            if (driveByCacheMap != null) {
+                MapKey cacheKey = driveByCacheMap.withKey();
+                cacheKey.put(record, slaveKeyCopier);
+                MapValue cacheValue = cacheKey.createValue();
+                if (cacheValue.isNew()) {
+                    cacheValue.putLong(0, currentRowId);
+                }
             }
 
             // Move backward

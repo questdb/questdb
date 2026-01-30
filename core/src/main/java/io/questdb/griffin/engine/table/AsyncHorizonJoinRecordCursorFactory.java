@@ -428,11 +428,13 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             prevAsOfRowId = asOfRowId0;
 
             if (asOfRowId0 != Long.MIN_VALUE) {
-                // Backward scan for key match using memeq comparison, stop at cached position
+                // Backward scan for key match using memeq comparison, stop at cached position.
+                // Drive-by caching: cache all symbols encountered during the scan.
                 match0RowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
                         masterSinkTarget,
                         slaveSinkTarget,
                         slaveKeyCopier,
+                        asOfJoinMap,
                         cachedRowId
                 );
 
@@ -484,11 +486,13 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                         stopRowId = prevAsOfRowId;
                     }
 
-                    // Backward scan for key match using memeq comparison
+                    // Backward scan for key match using memeq comparison.
+                    // Drive-by caching: cache all symbols encountered during the scan.
                     matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
                             masterSinkTarget,
                             slaveSinkTarget,
                             slaveKeyCopier,
+                            asOfJoinMap,
                             stopRowId
                     );
 
