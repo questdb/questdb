@@ -1143,9 +1143,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             freeSymbolMapReaders();
             freeColumns(truncate);
 
-            if (segmentLocked > -1) {
-                releaseSegmentLock(segmentLocked, lastSegmentTxn, -1);
-                segmentLocked = -1;
+            if (minSegmentLocked > -1) {
+                notifySegmentClosure(lastSegmentTxn, minSegmentLocked);
+                minSegmentLocked = -1;
             }
 
             try {
@@ -1304,10 +1304,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private void openNewSegment() {
-        final int oldSegmentLocked = segmentLocked;
         final int newSegmentId = segmentId + 1;
         final long oldLastSegmentTxn = lastSegmentTxn;
-        segmentLocked = -1;
         try {
             totalSegmentsRowCount += Math.max(0, segmentRowCount);
             currentTxnStartRowNum = 0;
@@ -1356,8 +1354,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             lastSegmentTxn = -1;
             LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path.parent()).I$();
         } finally {
-            if (oldSegmentLocked > -1) {
-                releaseSegmentLock(oldSegmentLocked, oldLastSegmentTxn, newSegmentId);
+            int oldMinSegmentLocked = minSegmentLocked;
+            if (moveMinSegmentLock(newSegmentId)) {
+                notifySegmentClosure(oldLastSegmentTxn, oldMinSegmentLocked);
             }
             path.trimTo(pathSize);
         }
@@ -1495,7 +1494,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         if (uncommittedRows > 0) {
             final int oldSegmentId = segmentId;
-            final int oldSegmentLocked = segmentLocked;
             final int newSegmentId = segmentId + 1;
             if (newSegmentId > WalUtils.SEG_MAX_ID) {
                 throw CairoException.critical(0)
@@ -1503,7 +1501,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         .put(", walId=").put(walId)
                         .put(", segmentId=").put(newSegmentId).put(']');
             }
-            segmentLocked = -1;
             try {
                 createSegmentDir(newSegmentId);
                 path.trimTo(pathSize);
@@ -1593,9 +1590,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 segmentRowCount = uncommittedRows;
                 currentTxnStartRowNum = 0;
             } finally {
-                // oldSegmentLocked might be -1 if we previously failed to lock the new segment
-                if (oldSegmentLocked > -1) {
-                    releaseSegmentLock(oldSegmentLocked, oldLastSegmentTxn, newSegmentId);
+                int oldMinSegmentLocked = minSegmentLocked;
+                if (moveMinSegmentLock(newSegmentId)) {
+                    notifySegmentClosure(oldLastSegmentTxn, oldMinSegmentLocked);
                 }
             }
         } else if (segmentRowCount > 0 && uncommittedRows == 0) {

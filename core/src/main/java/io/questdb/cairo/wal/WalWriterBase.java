@@ -55,10 +55,10 @@ abstract class WalWriterBase implements AutoCloseable {
     boolean distressed;
     int lastSegmentTxn = -1;
     long lastSeqTxn = NO_TXN;
+    int minSegmentLocked = -1;
     boolean open;
     boolean rollSegmentOnNextRow = false;
     int segmentId = -1;
-    int segmentLocked = -1;
     TableToken tableToken;
 
     WalWriterBase(
@@ -111,7 +111,7 @@ abstract class WalWriterBase implements AutoCloseable {
         path.trimTo(pathSize);
         path.slash().put(segmentId);
         final int segmentPathLen = path.size();
-        segmentLocked = segmentId;
+        minSegmentLocked = segmentId;
         if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
         }
@@ -122,6 +122,7 @@ abstract class WalWriterBase implements AutoCloseable {
 
     void lockWal() {
         walLocker.lockWriter(tableToken, walId, 0);
+        minSegmentLocked = 0;
         LOG.debug().$("locked WAL [walId=").$(walId).I$();
     }
 
@@ -133,14 +134,25 @@ abstract class WalWriterBase implements AutoCloseable {
         path.trimTo(walDirLength);
     }
 
-    void releaseSegmentLock(int segmentId, long segmentTxn, int newSegmentId) {
-        if (newSegmentId > -1) {
-            walLocker.setWalSegmentMinId(tableToken, walId, newSegmentId);
+    /**
+     * Move the minimum segment lock forward.
+     *
+     * @return true if the lock was moved, false if the newMinSegmentId is not greater than the current minSegmentLocked
+     */
+    boolean moveMinSegmentLock(int newSegmentId) {
+        if (newSegmentId <= minSegmentLocked) {
+            return false;
         }
-        // if events file has some transactions
-        if (segmentTxn >= 0) {
+
+        walLocker.setWalSegmentMinId(tableToken, walId, newSegmentId);
+        minSegmentLocked = newSegmentId;
+        return true;
+    }
+
+    void notifySegmentClosure(long oldLastSegmentTxn, int segmentId) {
+        if (oldLastSegmentTxn >= 0) {
             sequencer.notifySegmentClosed(tableToken, lastSeqTxn, walId, segmentId);
-            LOG.debug().$("released segment lock [walId=").$(walId)
+            LOG.debug().$("notified segment closed [walId=").$(walId)
                     .$(", segmentId=").$(segmentId)
                     .I$();
         } else {
