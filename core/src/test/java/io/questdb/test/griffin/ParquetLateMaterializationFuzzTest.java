@@ -857,7 +857,75 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                                       select
                                         x id,
                                         cast(x as int) filter_col,
-                                        array[x * 1.0, x * 2.0, x * 3.0] an_array,
+                                        -- 1D with nulls and varying shapes
+                                        case
+                                          when x % 7 = 0 then null::double[]
+                                          when x % 7 = 1 then array[x * 1.0]
+                                          when x % 7 = 2 then array[x * 1.0, x * 2.0]
+                                          when x % 7 = 3 then array[x * 1.0, x * 2.0, x * 3.0]
+                                          when x % 7 = 4 then array[x * 1.0, x * 2.0, x * 3.0, x * 4.0]
+                                          when x % 7 = 5 then array[x * 1.0, x * 2.0, x * 3.0, x * 4.0, x * 5.0]
+                                          else array[x * 1.0, x * 2.0]
+                                        end arr_1d_nulls,
+                                        -- 1D without nulls and varying shapes
+                                        case
+                                          when x % 4 = 0 then array[x * 1.0]
+                                          when x % 4 = 1 then array[x * 1.0, x * 2.0]
+                                          when x % 4 = 2 then array[x * 1.0, x * 2.0, x * 3.0]
+                                          else array[x * 1.0, x * 2.0, x * 3.0, x * 4.0]
+                                        end arr_1d,
+                                        -- 1D with NaN elements, nulls, and varying shapes
+                                        case
+                                          when x % 7 = 0 then null::double[]
+                                          when x % 7 = 1 then array[NaN]
+                                          when x % 7 = 2 then array[x * 1.0, NaN]
+                                          when x % 7 = 3 then array[NaN, x * 2.0, x * 3.0]
+                                          when x % 7 = 4 then array[x * 1.0, NaN, x * 3.0, NaN]
+                                          when x % 7 = 5 then array[x * 1.0, x * 2.0, NaN, x * 4.0, x * 5.0]
+                                          else array[NaN, NaN]
+                                        end arr_1d_nan,
+                                        -- 2D with nulls and varying shapes
+                                        case
+                                          when x % 5 = 0 then null::double[][]
+                                          when x % 5 = 1 then array[[x * 1.0, x * 2.0]]
+                                          when x % 5 = 2 then array[[x * 1.0, x * 2.0], [x * 3.0, x * 4.0]]
+                                          when x % 5 = 3 then array[[x * 1.0], [x * 2.0], [x * 3.0]]
+                                          else array[[x * 1.0, x * 2.0, x * 3.0]]
+                                        end arr_2d_nulls,
+                                        -- 2D without nulls and varying shapes
+                                        case
+                                          when x % 3 = 0 then array[[x * 1.0, x * 2.0]]
+                                          when x % 3 = 1 then array[[x * 1.0, x * 2.0], [x * 3.0, x * 4.0]]
+                                          else array[[x * 1.0], [x * 2.0], [x * 3.0]]
+                                        end arr_2d,
+                                        -- 2D with NaN elements, nulls, and varying shapes
+                                        case
+                                          when x % 5 = 0 then null::double[][]
+                                          when x % 5 = 1 then array[[NaN, x * 2.0]]
+                                          when x % 5 = 2 then array[[x * 1.0, NaN], [NaN, x * 4.0]]
+                                          when x % 5 = 3 then array[[NaN], [x * 2.0], [NaN]]
+                                          else array[[x * 1.0, NaN, x * 3.0]]
+                                        end arr_2d_nan,
+                                        -- 3D with nulls and varying shapes
+                                        case
+                                          when x % 4 = 0 then null::double[][][]
+                                          when x % 4 = 1 then array[[[x * 1.0, x * 2.0]]]
+                                          when x % 4 = 2 then array[[[x * 1.0], [x * 2.0]], [[x * 3.0], [x * 4.0]]]
+                                          else array[[[x * 1.0, x * 2.0], [x * 3.0, x * 4.0]]]
+                                        end arr_3d_nulls,
+                                        -- 3D without nulls
+                                        case
+                                          when x % 3 = 0 then array[[[x * 1.0, x * 2.0]]]
+                                          when x % 3 = 1 then array[[[x * 1.0], [x * 2.0]], [[x * 3.0], [x * 4.0]]]
+                                          else array[[[x * 1.0, x * 2.0], [x * 3.0, x * 4.0]]]
+                                        end arr_3d,
+                                        -- 3D with NaN elements, nulls, and varying shapes
+                                        case
+                                          when x % 4 = 0 then null::double[][][]
+                                          when x % 4 = 1 then array[[[NaN, x * 2.0]]]
+                                          when x % 4 = 2 then array[[[x * 1.0], [NaN]], [[NaN], [x * 4.0]]]
+                                          else array[[[NaN, x * 2.0], [x * 3.0, NaN]]]
+                                        end arr_3d_nan,
                                         rnd_int() an_int,
                                         rnd_str('a','b') a_string,
                                         timestamp_sequence(0,60000000) as ts
@@ -866,15 +934,63 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                             sqlExecutionContext
                     );
 
-                    final StringSink expected = new StringSink();
-                    final CharSequence query = generateRndInListSql("filter_col");
+                    // No filter: aggregates on all array columns
+                    final StringSink expected0 = new StringSink();
+                    final CharSequence query0 = "select first(arr_1d_nulls), last(arr_1d_nulls), first(arr_1d), last(arr_1d),"
+                            + " first(arr_1d_nan), last(arr_1d_nan),"
+                            + " first(arr_2d_nulls), last(arr_2d_nulls), first(arr_2d), last(arr_2d),"
+                            + " first(arr_2d_nan), last(arr_2d_nan),"
+                            + " first(arr_3d_nulls), last(arr_3d_nulls), first(arr_3d), last(arr_3d),"
+                            + " first(arr_3d_nan), last(arr_3d_nan) from x";
+                    engine.print(query0, expected0, sqlExecutionContext);
+
+                    // Random IN-list filter (mixed null/non-null rows)
                     final StringSink expected1 = new StringSink();
-                    final CharSequence query1 = ("select first(an_array), last(an_array) from x where filter_col%13=7 group by a_string order by a_string");
-                    engine.print(query, expected, sqlExecutionContext);
+                    final CharSequence query1 = generateRndInListSql("filter_col");
                     engine.print(query1, expected1, sqlExecutionContext);
+
+                    // Aggregate with filter and group by on nullable/NaN arrays
+                    final StringSink expected2 = new StringSink();
+                    final CharSequence query2 = "select first(arr_1d_nulls), last(arr_1d_nulls),"
+                            + " first(arr_1d_nan), last(arr_1d_nan),"
+                            + " first(arr_2d_nulls), last(arr_2d_nulls),"
+                            + " first(arr_2d_nan), last(arr_2d_nan),"
+                            + " first(arr_3d_nulls), last(arr_3d_nulls),"
+                            + " first(arr_3d_nan), last(arr_3d_nan)"
+                            + " from x where filter_col%13=7 group by a_string order by a_string";
+                    engine.print(query2, expected2, sqlExecutionContext);
+
+                    // Aggregate with filter and group by on non-nullable arrays
+                    final StringSink expected3 = new StringSink();
+                    final CharSequence query3 = "select first(arr_1d), last(arr_1d),"
+                            + " first(arr_2d), last(arr_2d),"
+                            + " first(arr_3d), last(arr_3d)"
+                            + " from x where filter_col%11=3 group by a_string order by a_string";
+                    engine.print(query3, expected3, sqlExecutionContext);
+
+                    // Select arrays with modulo filter (tests late materialization of array columns)
+                    final StringSink expected4 = new StringSink();
+                    final CharSequence query4 = "select arr_1d_nulls, arr_1d, arr_1d_nan,"
+                            + " arr_2d_nulls, arr_2d, arr_2d_nan,"
+                            + " arr_3d_nulls, arr_3d, arr_3d_nan"
+                            + " from x where filter_col % 17 = 5";
+                    engine.print(query4, expected4, sqlExecutionContext);
+
+                    // No filter: select all array columns directly
+                    final StringSink expected5 = new StringSink();
+                    final CharSequence query5 = "select arr_1d_nulls, arr_1d, arr_1d_nan,"
+                            + " arr_2d_nulls, arr_2d, arr_2d_nan,"
+                            + " arr_3d_nulls, arr_3d, arr_3d_nan from x";
+                    engine.print(query5, expected5, sqlExecutionContext);
+
                     engine.execute("alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
-                    TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected);
+
+                    TestUtils.assertSql(engine, sqlExecutionContext, query0, sink, expected0);
                     TestUtils.assertSql(engine, sqlExecutionContext, query1, sink, expected1);
+                    TestUtils.assertSql(engine, sqlExecutionContext, query2, sink, expected2);
+                    TestUtils.assertSql(engine, sqlExecutionContext, query3, sink, expected3);
+                    TestUtils.assertSql(engine, sqlExecutionContext, query4, sink, expected4);
+                    TestUtils.assertSql(engine, sqlExecutionContext, query5, sink, expected5);
                 },
                 configuration,
                 LOG

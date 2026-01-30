@@ -3155,12 +3155,18 @@ fn decode_array_filtered_loop<T: DataPageSlicer, const FILL_NULLS: bool, const R
                     buffers,
                 )?
             };
-            if result.is_none() {
+            let Some(first_vs) = result else {
                 break;
-            }
+            };
 
             filter_idx += 1;
             current_row += 1;
+            if filter_idx == 1 && first_vs > 0 && filter_len > 1 {
+                // estimate total size
+                buffers
+                    .data_vec
+                    .reserve(first_vs * (filter_len - 1))?;
+            }
         } else {
             let next_match_row = if filter_idx < filter_len {
                 let abs_row = rows_filter[filter_idx] as usize + row_group_lo;
@@ -3279,6 +3285,7 @@ fn decode_array_rows_1d<T: DataPageSlicer>(
         return Ok(());
     };
     if target_rows > 1 && first_vs > 0 {
+        // estimate total size
         buffers.data_vec.reserve(first_vs * (target_rows - 1))?;
     }
     for _ in 1..target_rows {
@@ -3313,6 +3320,7 @@ fn decode_array_rows_2d<T: DataPageSlicer>(
         return Ok(());
     };
     if target_rows > 1 && first_vs > 0 {
+        // estimate total size
         buffers.data_vec.reserve(first_vs * (target_rows - 1))?;
     }
     for _ in 1..target_rows {
@@ -3372,7 +3380,6 @@ fn read_and_append_one_row_1d<T: DataPageSlicer>(
                 if def == max_def_level {
                     non_null_count += 1;
                 } else if !has_nulls {
-                    // First null encountered: backfill previous elements.
                     has_nulls = true;
                     def_scratch.reserve(element_count + 1);
                     def_scratch.resize(element_count, max_def_level);
@@ -3385,6 +3392,8 @@ fn read_and_append_one_row_1d<T: DataPageSlicer>(
         }
     }
 
+    // 8 bytes shape ([element_count: u32, pad: u32]) + 8 bytes per f64 element.
+    // Currently arrays only support f64 elements.
     let value_size = 8 + 8 * element_count;
     let data_start = buffers.data_vec.len();
     buffers.data_vec.reserve(value_size)?;
@@ -3490,6 +3499,8 @@ fn read_and_append_one_row_2d<T: DataPageSlicer>(
     }
     max_dim1 = max_dim1.max(cur_dim1);
 
+    // 8 bytes shape ([dim0: u32, max_dim1: u32]) + 8 bytes per f64 element.
+    // Currently arrays only support f64 elements.
     let value_size = 8 + 8 * total_elements;
     let data_start = buffers.data_vec.len();
     buffers.data_vec.reserve(value_size)?;
