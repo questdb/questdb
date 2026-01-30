@@ -186,8 +186,14 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             onDiskWalIDSet.clear();
 
             boolean tableDropped = false;
-            boolean hasPendingTasks = discoverWalSegments();
-            hasPendingTasks |= discoverSequencerParts();
+            boolean hasPendingTasks;
+            try {
+                hasPendingTasks = discoverWalSegments();
+                hasPendingTasks |= discoverSequencerParts();
+            } catch (Throwable th) {
+                logic.releaseLocks();
+                throw th;
+            }
 
             if (logic.hasOnDiskSegments()) {
                 try {
