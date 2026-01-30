@@ -7768,13 +7768,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 if (needsOrdering || needsDedup) {
                     if (needsOrdering) {
-                        LOG.info().$("sorting WAL [table=").$(tableToken)
+                        LOG.debug().$("sorting WAL [table=").$(tableToken)
                                 .$(", ordered=").$(ordered)
                                 .$(", lagRowCount=").$(walLagRowCount)
                                 .$(", walRowLo=").$(rowLo)
                                 .$(", walRowHi=").$(rowHi)
-                                .$(", lagMinTs=").$ts(timestampDriver, txWriter.getLagMinTimestamp())
-                                .$(", lagMaxTs=").$ts(timestampDriver, txWriter.getLagMaxTimestamp())
                                 .I$();
 
                         final long timestampMemorySize = totalUncommitted << 4;

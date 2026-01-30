@@ -90,7 +90,8 @@ int64_t merge_dedup_long_index_int_keys(
             index_pos++;
         } else {
             // index_ts == src_ts
-            const uint64_t conflict_ts = src[src_pos];
+            // Cast to int64_t for proper signed timestamp comparison
+            const int64_t conflict_ts = static_cast<int64_t>(src[src_pos]);
             const index_t *conflict_index_start = &index[index_pos];
 
             // Find end of the conflict in index
@@ -909,7 +910,8 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexAsc(
             index_pos++;
         } else {
             // index_ts == src_ts
-            const uint64_t conflict_ts = src[src_pos];
+            // Cast to int64_t for proper signed timestamp comparison
+            const int64_t conflict_ts = static_cast<int64_t>(src[src_pos]);
             while (index_pos <= index_hi_inc && index[index_pos].ts == conflict_ts) {
                 index_pos++;
             }
