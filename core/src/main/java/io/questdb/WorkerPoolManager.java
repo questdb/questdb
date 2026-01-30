@@ -181,8 +181,6 @@ public abstract class WorkerPoolManager implements Target {
     );
 
     public interface RequesterName {
-        String name();
-
         String toString();
     }
 

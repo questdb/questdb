@@ -2917,10 +2917,11 @@ public class TableWriterTest extends AbstractCairoTest {
                 int partitionIndex = reader.getPartitionIndexByTimestamp(partitionTimestamp);
                 Assert.assertTrue(partitionIndex >= 0);
 
-                TableUtils.produceParquetFromNative(
+                long fileLength = TableUtils.produceParquetFromNative(
                         reader, path, other, pathSize, partitionTimestamp,
                         PRODUCT, partitionIndex, configuration
                 );
+                Assert.assertTrue(fileLength > 0);
             }
 
             // Mark parquet ready and switch native partition with parquet

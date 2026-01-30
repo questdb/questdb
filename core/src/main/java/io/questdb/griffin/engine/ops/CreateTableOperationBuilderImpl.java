@@ -231,11 +231,6 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         return ttlHoursOrMonths;
     }
 
-    @Override
-    public int getTtlPosition() {
-        return ttlPosition;
-    }
-
     public CharSequence getVolumeAlias() {
         return volumeAlias;
     }
