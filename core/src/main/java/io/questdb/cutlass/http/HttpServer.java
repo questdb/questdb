@@ -397,6 +397,8 @@ public class HttpServer implements Closeable {
 
     private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {
 
+        // Non-owning index for O(1) lookup by handler ID. Lifecycle is owned by
+        // requestHandlerMap (URL-mapped handlers) and defaultRequestProcessor (default handler).
         private final ObjList<HttpRequestHandler> handlersByIdList = new ObjList<>();
         private final Utf8SequenceObjHashMap<IndexedHandler> requestHandlerMap = new Utf8SequenceObjHashMap<>();
         private int defaultProcessorId = REJECT_PROCESSOR_ID;
