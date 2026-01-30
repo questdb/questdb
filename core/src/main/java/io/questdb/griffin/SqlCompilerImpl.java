@@ -4766,6 +4766,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     protected void compileAlterMatViewExt(CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {
+        LOG.debug().$("'alter' or 'resume' or 'suspend' expected [matViewToken=").$(matViewToken)
+                .$(", matViewNamePosition=").$(matViewNamePosition)
+                .$(']').$();
         if (tok == null) {
             throw SqlException.$(lexer.getPosition(), "'alter' or 'resume' or 'suspend' expected");
         }
@@ -4773,6 +4776,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     protected void compileAlterMatViewSetExt(CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {
+        LOG.debug().$("'ttl' or 'refresh' expected [matViewToken=").$(matViewToken)
+                .$(", matViewNamePosition=").$(matViewNamePosition)
+                .$(']').$();
         if (tok == null) {
             throw SqlException.$(lexer.getPosition(), "'ttl' or 'refresh' expected");
         }
@@ -4780,6 +4786,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     protected void compileAlterTableDropExt(CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+        LOG.debug().$("'column' or 'partition' expected [tableToken=").$(tableToken)
+                .$(", tableNamePosition=").$(tableNamePosition)
+                .$(']').$();
         if (tok == null) {
             throw SqlException.$(lexer.getPosition(), "'column' or 'partition' expected");
         }
@@ -4787,6 +4796,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     protected void compileAlterTableSetExt(CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+        LOG.debug().$("'param', 'ttl' or 'type' expected [tableToken=").$(tableToken)
+                .$(", tableNamePosition=").$(tableNamePosition)
+                .$(']').$();
         if (tok == null) {
             throw SqlException.$(lexer.getPosition(), "'param', 'ttl' or 'type' expected");
         }
