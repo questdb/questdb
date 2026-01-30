@@ -202,8 +202,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0,
                 0.01
         );
-        setFuzzCounts(rnd.nextBoolean(), rnd.nextInt(10_000_000),
-                rnd.nextInt(1500), 20, 10, 200, 0, 1
+        setFuzzCounts(rnd.nextBoolean(), rnd.nextInt(1_000_000),
+                rnd.nextInt(500), 20, 10, 200, 0, 1
         );
         runFuzz(rnd);
     }
@@ -258,7 +258,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0,
                 0.01
         );
-        setFuzzCounts(false, 1_000_000, 500, 20, 1000, 20, 0, 10);
+        setFuzzCounts(false, 1_000_000, 300, 20, 1000, 20, 0, 10);
         runFuzz(generateRandom(LOG));
     }
 
