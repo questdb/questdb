@@ -2583,7 +2583,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                     // Get new writer when type changes to support different index types per column
                     byte indexType = tableWriterMetadata.getColumnIndexType(columnIndex);
-                    if (currentWriterType != indexType) {
+                    if (currentWriterType != indexType || indexWriter == null) {
                         indexWriter = o3Basket.nextIndexer(indexType);
                         currentWriterType = indexType;
                     }
