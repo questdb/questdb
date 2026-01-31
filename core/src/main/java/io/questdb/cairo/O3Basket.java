@@ -24,25 +24,31 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.idx.BitmapIndexWriter;
+import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.idx.IndexWriter;
+import io.questdb.std.ByteList;
+import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3Basket implements Mutable {
-    private final ObjList<BitmapIndexWriter> indexers = new ObjList<>();
+    private final ObjList<IndexWriter> indexers = new ObjList<>();
+    private final ByteList indexerTypes = new ByteList();
     private final ObjList<AtomicInteger> partCounters = new ObjList<>();
+    private CairoConfiguration configuration;
     private int columnCount;
     private int indexCount;
     private int indexerPointer;
     private int partCounterPointer;
 
     public void checkCapacity(CairoConfiguration configuration, int columnCount, int indexCount) {
+        this.configuration = configuration;
         if (this.columnCount == columnCount && this.indexCount == indexCount) {
             return;
         }
-        checkCapacity0(configuration, columnCount, indexCount);
+        checkCapacity0(columnCount, indexCount);
     }
 
     @Override
@@ -51,15 +57,34 @@ public class O3Basket implements Mutable {
         partCounterPointer = 0;
     }
 
-    public BitmapIndexWriter nextIndexer() {
-        return indexers.getQuick(indexerPointer++);
+    /**
+     * Returns the next index writer, ensuring it matches the requested index type.
+     * If the existing writer at the current position has a different type, it will
+     * be recreated with the correct type.
+     *
+     * @param indexType the type of index writer required (from IndexType constants)
+     * @return an IndexWriter of the requested type
+     */
+    public IndexWriter nextIndexer(byte indexType) {
+        int pos = indexerPointer++;
+        byte currentType = indexerTypes.getQuick(pos);
+        IndexWriter writer = indexers.getQuick(pos);
+
+        // If type doesn't match, recreate the writer with the correct type
+        if (currentType != indexType) {
+            Misc.free(writer);
+            writer = IndexFactory.createWriter(indexType, configuration);
+            indexers.setQuick(pos, writer);
+            indexerTypes.setQuick(pos, indexType);
+        }
+        return writer;
     }
 
     public AtomicInteger nextPartCounter() {
         return partCounters.getQuick(partCounterPointer++);
     }
 
-    private void checkCapacity0(CairoConfiguration configuration, int columnCount, int indexCount) {
+    private void checkCapacity0(int columnCount, int indexCount) {
         if (this.columnCount < columnCount) {
             for (int i = this.columnCount; i < columnCount; i++) {
                 partCounters.add(new O3MutableAtomicInteger());
@@ -74,13 +99,16 @@ public class O3Basket implements Mutable {
 
         if (this.indexCount < indexCount) {
             for (int i = this.indexCount; i < indexCount; i++) {
-                indexers.add(new BitmapIndexWriter(configuration));
+                // Initially create with default SYMBOL type; nextIndexer() will recreate if needed
+                indexers.add(IndexFactory.createWriter(IndexType.SYMBOL, configuration));
+                indexerTypes.add(IndexType.SYMBOL);
             }
         } else {
             for (int i = indexCount; i < this.indexCount; i++) {
                 indexers.setQuick(i, null);
             }
             indexers.setPos(indexCount);
+            indexerTypes.setPos(indexCount);
         }
         this.indexCount = indexCount;
     }

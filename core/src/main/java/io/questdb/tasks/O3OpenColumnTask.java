@@ -24,7 +24,7 @@
 
 package io.questdb.tasks;
 
-import io.questdb.cairo.idx.BitmapIndexWriter;
+import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.str.Path;
 
@@ -39,7 +39,7 @@ public class O3OpenColumnTask {
     private long columnNameTxn;
     private int columnType;
     private int indexBlockCapacity;
-    private BitmapIndexWriter indexWriter;
+    private IndexWriter indexWriter;
     private long mergeDataHi;
     private long mergeDataLo;
     private long mergeOOOHi;
@@ -109,7 +109,7 @@ public class O3OpenColumnTask {
         return indexBlockCapacity;
     }
 
-    public BitmapIndexWriter getIndexWriter() {
+    public IndexWriter getIndexWriter() {
         return indexWriter;
     }
 
@@ -299,7 +299,7 @@ public class O3OpenColumnTask {
             long srcDataOldPartitionSize,
             long o3NewPartitionSize,
             TableWriter tableWriter,
-            BitmapIndexWriter indexWriter,
+            IndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
             long columnNameTxn
