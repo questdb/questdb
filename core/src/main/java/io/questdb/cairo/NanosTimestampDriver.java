@@ -850,6 +850,10 @@ public class NanosTimestampDriver implements TimestampDriver {
         }
         int p = lo;
         int year = Numbers.parseInt(str, p, p += 4);
+        // Check for year overflow - nanosecond timestamps max out at year 2261
+        if (year > MAX_NANO_YEAR) {
+            throw NumericException.instance();
+        }
         boolean l = CommonUtils.isLeapYear(year);
         if (CommonUtils.checkLen3(p, hi)) {
             CommonUtils.checkChar(str, p++, hi, '-');
@@ -952,6 +956,10 @@ public class NanosTimestampDriver implements TimestampDriver {
         }
         int p = lo;
         int year = Numbers.parseInt(str, p, p += 4);
+        // Check for year overflow - nanosecond timestamps max out at year 2261
+        if (year > MAX_NANO_YEAR) {
+            throw NumericException.instance();
+        }
         boolean l = CommonUtils.isLeapYear(year);
         if (CommonUtils.checkLen3(p, hi)) {
             CommonUtils.checkChar(str, p++, hi, '-');
@@ -1621,9 +1629,7 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public void validateBounds(long timestamp) {
-        if (timestamp < 0) {
-            validateBounds0(timestamp);
-        }
+        validateBounds0(timestamp);
     }
 
     private static long checkTimezoneTail(CharSequence seq, int p, int lim) throws NumericException {
@@ -1689,61 +1695,51 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     private static long partitionCeilDD(long nanos) {
-        // Designated timestamp can't be negative.
-        return Nanos.ceilDD(Math.max(nanos, 0));
+        return Nanos.ceilDD(nanos);
     }
 
     private static long partitionCeilHH(long nanos) {
-        // Designated timestamp can't be negative.
-        return Nanos.ceilHH(Math.max(nanos, 0));
+        return Nanos.ceilHH(nanos);
     }
 
     private static long partitionCeilMM(long nanos) {
-        // Designated timestamp can't be negative.
-        return Nanos.ceilMM(Math.max(nanos, 0));
+        return Nanos.ceilMM(nanos);
     }
 
     private static long partitionCeilWW(long nanos) {
-        // Designated timestamp can't be negative.
-        return Nanos.ceilWW(Math.max(nanos, 0));
+        return Nanos.ceilWW(nanos);
     }
 
     private static long partitionCeilYYYY(long nanos) {
-        // Designated timestamp can't be negative.
-        return Nanos.ceilYYYY(Math.max(nanos, 0));
+        return Nanos.ceilYYYY(nanos);
     }
 
     private static long partitionFloorDD(long nanos) {
-        // Designated timestamp can't be negative.
-        return Nanos.floorDD(Math.max(nanos, 0));
+        return Nanos.floorDD(nanos);
     }
 
     private static long partitionFloorHH(long nanos) {
-        // Designated timestamp can't be negative.
-        return Nanos.floorHH(Math.max(nanos, 0));
+        return Nanos.floorHH(nanos);
     }
 
     private static long partitionFloorMM(long nanos) {
-        // Designated timestamp can't be negative.
-        return Nanos.floorMM(Math.max(nanos, 0));
+        return Nanos.floorMM(nanos);
     }
 
     private static long partitionFloorWW(long nanos) {
-        // Designated timestamp can't be negative.
-        return Nanos.floorWW(Math.max(nanos, 0));
+        return Nanos.floorWW(nanos);
     }
 
     private static long partitionFloorYYYY(long nanos) {
-        // Designated timestamp can't be negative.
-        return Nanos.floorYYYY(Math.max(nanos, 0));
+        return Nanos.floorYYYY(nanos);
     }
 
     private static void validateBounds0(long timestamp) {
         if (timestamp == Long.MIN_VALUE) {
             throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
         }
-        if (timestamp < TableWriter.TIMESTAMP_EPOCH || timestamp > CommonUtils.TIMESTAMP_UNIT_NANOS) {
-            throw CairoException.nonCritical().put("designated timestamp_ns before 1970-01-01 and beyond ").put(MAX_NANO_TIMESTAMP_STR).put(" is not allowed");
+        if (timestamp > CommonUtils.MAX_TIMESTAMP) {
+            throw CairoException.nonCritical().put("designated timestamp_ns beyond ").put(MAX_NANO_TIMESTAMP_STR).put(" is not allowed");
         }
     }
 

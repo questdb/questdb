@@ -190,9 +190,9 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
         // first, copy all values to the buffer
         while (baseCursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            // later sort assumes unsigned 64-bit integers,
-            // so we flip the highest bit to get the correct order
-            valueRowIdMem.add(recordAdapter.getLong(baseRecord, columnIndex) ^ Long.MIN_VALUE);
+            // Note: the native radix sort implementation handles signed-to-unsigned
+            // conversion internally via XOR with the sign bit in index_t operators
+            valueRowIdMem.add(recordAdapter.getLong(baseRecord, columnIndex));
             valueRowIdMem.add(baseRecord.getRowId());
         }
         // now do the actual sort

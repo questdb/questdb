@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
@@ -56,12 +55,14 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-
 /**
- * Fills missing rows in a result set range based on histogram buckets calculated using time intervals.
- * Currently only generated as a parent node to a group by, to support parallel SAMPLE BY with fills.
+ * Fills missing rows in a result set range based on histogram buckets
+ * calculated using time intervals.
+ * Currently only generated as a parent node to a group by, to support parallel
+ * SAMPLE BY with fills.
  * Intended to support FILL(VALUE), FILL(NULL).
- * Cannot be generated standalone (there's no syntax just to generate this, it is only generated
+ * Cannot be generated standalone (there's no syntax just to generate this, it
+ * is only generated
  * via the above optimisation).
  */
 public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -86,8 +87,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             TimestampSampler timestampSampler,
             ObjList<Function> fillValues,
             int timestampIndex,
-            int timestampType
-    ) {
+            int timestampType) {
         super(metadata);
         this.base = base;
         this.fromFunc = fromFunc;
@@ -99,7 +99,8 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         this.timestampIndex = timestampIndex;
         this.fillValues = fillValues;
         this.timestampType = timestampType;
-        this.cursor = new FillRangeRecordCursor(timestampSampler, fromFunc, toFunc, fillValues, timestampIndex, timestampType);
+        this.cursor = new FillRangeRecordCursor(timestampSampler, fromFunc, toFunc, fillValues, timestampIndex,
+                timestampType);
     }
 
     @Override
@@ -207,8 +208,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 @NotNull Function toFunc,
                 ObjList<Function> fillValues,
                 int timestampIndex,
-                int timestampType
-        ) {
+                int timestampType) {
             this.timestampSampler = timestampSampler;
             this.fromFunc = fromFunc;
             this.toFunc = toFunc;
@@ -237,7 +237,8 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public boolean hasNext() {
             // We rely on the fact this cursor is allowed to return result set
-            // that is not ordered on time. For that reason all the filling is done at the end
+            // that is not ordered on time. For that reason all the filling is done at the
+            // end
             if (gapFilling) {
                 nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
                 return foundGapToFill();
@@ -248,9 +249,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 long timestamp = baseRecord.getTimestamp(timestampIndex);
                 needsSorting |= lastTimestamp > timestamp;
                 hasNegative = hasNegative || timestamp < 0;
-                if (hasNegative && needsSorting) {
-                    throw CairoException.nonCritical().put("cannot FILL for the timestamps before 1970");
-                }
+
                 // Start saving timestamps to determine the gaps
                 presentTimestamps.add(lastTimestamp = timestamp);
                 return true;
@@ -277,6 +276,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             presentTimestamps.clear();
             gapFilling = false;
             needsSorting = false;
+            hasNegative = false;
             lastTimestamp = Long.MIN_VALUE;
         }
 
@@ -306,9 +306,11 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void initTimestamps(Function fromFunc, Function toFunc) {
-            minTimestamp = fromFunc == timestampDriver.getTimestampConstantNull() ? Long.MAX_VALUE : timestampDriver.from(fromFunc.getTimestamp(null),
+            minTimestamp = fromFunc == timestampDriver.getTimestampConstantNull() ? Long.MAX_VALUE
+                    : timestampDriver.from(fromFunc.getTimestamp(null),
                     ColumnType.getTimestampType(fromFunc.getType()));
-            maxTimestamp = toFunc == timestampDriver.getTimestampConstantNull() ? Long.MIN_VALUE : timestampDriver.from(toFunc.getTimestamp(null),
+            maxTimestamp = toFunc == timestampDriver.getTimestampConstantNull() ? Long.MIN_VALUE
+                    : timestampDriver.from(toFunc.getTimestamp(null),
                     ColumnType.getTimestampType(toFunc.getType()));
         }
 
@@ -332,8 +334,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
 
         private void of(
                 RecordCursor baseCursor,
-                SqlExecutionContext executionContext
-        ) throws SqlException {
+                SqlExecutionContext executionContext) throws SqlException {
             this.baseCursor = baseCursor;
             Function.init(fillValues, baseCursor, executionContext, null);
             fromFunc.init(baseCursor, executionContext);
@@ -357,7 +358,12 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             presentTimestampsSize = presentTimestamps.size();
 
             if (needsSorting && presentTimestampsSize > 1) {
-                presentTimestamps.sortAsUnsigned();
+                // Use signed sort when there are negative timestamps to ensure correct ordering
+                if (hasNegative) {
+                    presentTimestamps.sortAsSigned();
+                } else {
+                    presentTimestamps.sortAsUnsigned();
+                }
             }
 
             if (presentTimestampsSize > 0) {
@@ -604,7 +610,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                     return baseRecord.getShort(col);
                 }
             }
-
 
             @Override
             public @Nullable CharSequence getStrA(int col) {
