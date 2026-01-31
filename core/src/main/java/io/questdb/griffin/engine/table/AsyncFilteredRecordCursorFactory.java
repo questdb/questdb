@@ -46,6 +46,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -76,6 +77,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             @NotNull MessageBus messageBus,
             @NotNull RecordCursorFactory base,
             @NotNull Function filter,
+            @NotNull IntHashSet filterUsedColumnIndexes,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @Nullable ObjList<Function> perWorkerFilters,
             @NotNull ExpressionNode filterExpr,
@@ -100,6 +102,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         final AsyncFilterAtom atom = new AsyncFilterAtom(
                 configuration,
                 filter,
+                filterUsedColumnIndexes,
                 perWorkerFilters,
                 columnTypes,
                 enablePreTouch
@@ -260,14 +263,22 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         final long frameRowCount = task.getFrameRowCount();
         final AsyncFilterAtom atom = task.getFrameSequence(AsyncFilterAtom.class).getAtom();
 
-        final PageFrameMemory frameMemory = task.populateFrameMemory();
+        final boolean isParquetFrame = task.isParquetFrame();
+        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
+        final int filterId = atom.maybeAcquireFilter(workerId, owner, circuitBreaker);
+        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, isParquetFrame, task.isCountOnly());
+
+        final PageFrameMemory frameMemory;
+        if (useLateMaterialization) {
+            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+        } else {
+            frameMemory = task.populateFrameMemory();
+        }
         record.init(frameMemory);
 
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
 
-        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
-        final int filterId = atom.maybeAcquireFilter(workerId, owner, circuitBreaker);
         final Function filter = atom.getFilter(filterId);
         try {
             if (task.isCountOnly()) {
@@ -287,6 +298,12 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                     }
                 }
 
+                if (isParquetFrame) {
+                    atom.getSelectivityStats(filterId).update(rows.size(), frameRowCount);
+                }
+                if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
+                    record.init(frameMemory);
+                }
                 task.setFilteredRowCount(rows.size());
 
                 // Pre-touch native columns, if asked.

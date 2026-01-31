@@ -995,7 +995,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "log.sql.query.progress.exe\tQDB_LOG_SQL_QUERY_PROGRESS_EXE\ttrue\tdefault\tfalse\tfalse\n" +
                                     "log.level.verbose\tQDB_LOG_LEVEL_VERBOSE\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.statistics.enabled\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
-                                    "cairo.partition.encoder.parquet.raw.array.encoding.enabled\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.encoder.parquet.raw.array.encoding.enabled\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.version\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_VERSION\t1\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.row.group.size\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.data.page.size\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE\t1048576\tdefault\tfalse\tfalse\n" +

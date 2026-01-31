@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 
 /**
  * Represents page frame as a set of per column contiguous memory.
@@ -32,6 +33,17 @@ import io.questdb.std.DirectLongList;
  * For Parquet partitions, it's a deserialized in-memory native format.
  */
 public interface PageFrameMemory {
+
+    /**
+     * Populates remaining columns (those not in filterColumnIndexes) for filtered rows.
+     * Used for late materialization in Parquet partitions.
+     *
+     * @param filterColumnIndexes columns already loaded (filter columns)
+     * @param filteredRows        rows that passed the filter
+     * @param fillWithNulls       whether to fill missing columns with nulls
+     * @return true if columns were populated, false if no action was needed
+     */
+    boolean populateRemainingColumns(IntHashSet filterColumnIndexes, DirectLongList filteredRows, boolean fillWithNulls);
 
     /**
      * Returns aux (index) vector address for a var-size column.

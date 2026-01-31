@@ -29,9 +29,11 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
@@ -175,6 +177,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         return isOutOfMemory;
     }
 
+    public boolean isParquetFrame() {
+        return frameSequence.getPageFrameAddressCache().getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
+    }
+
     public void of(PageFrameSequence<?> frameSequence, int frameIndex, boolean countOnly) {
         this.frameSequence = frameSequence;
         final boolean sameQueryExecution = frameSequenceId == frameSequence.getId();
@@ -198,6 +204,12 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     public PageFrameMemory populateFrameMemory() {
         assert taskType != TYPE_TOP_K;
         frameMemory = frameMemoryPool.navigateTo(frameIndex);
+        return frameMemory;
+    }
+
+    public PageFrameMemory populateFrameMemory(IntHashSet columnIndexes) {
+        assert taskType != TYPE_TOP_K;
+        frameMemory = frameMemoryPool.navigateTo(frameIndex, columnIndexes);
         return frameMemory;
     }
 
@@ -233,6 +245,14 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
                 filteredRows.setCapacity(rowCount);
             }
         }
+    }
+
+    public boolean populateRemainingColumns(IntHashSet filterColumnIndexes, DirectLongList filteredRows, boolean fillWithNulls) {
+        assert frameMemory != null;
+        if (frameMemory.getFrameFormat() == PartitionFormat.PARQUET) {
+            return frameMemory.populateRemainingColumns(filterColumnIndexes, filteredRows, fillWithNulls);
+        }
+        return false;
     }
 
     public void releaseFrameMemory() {
