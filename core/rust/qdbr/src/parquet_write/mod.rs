@@ -3,6 +3,7 @@ use num_traits::AsPrimitive;
 pub mod array;
 mod binary;
 mod boolean;
+pub(crate) mod decimal;
 pub(crate) mod file;
 mod fixed_len_bytes;
 mod jni;
