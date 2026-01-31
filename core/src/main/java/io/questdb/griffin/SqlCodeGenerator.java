@@ -2885,13 +2885,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // - if `true`, the join is a self-join for sure
                                 // - if `false`, the join may or may not be self-join
                                 boolean isSelfJoin = isSameTable(master, slave);
-<<<<<<< HEAD
                                 processJoinContext(index == 1, isSelfJoin, slaveModel.getJoinContext(), masterMetadata,
                                         slaveMetadata);
-=======
-                                processJoinContext(index == 1, isSelfJoin, slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 validateTimestampNotInJoinKeys(slaveModel, masterMetadata, slaveMetadata);
->>>>>>> cc2a1e258d628ec66fd789c9696b21e00ba5ea0d
                                 master = joinType == JOIN_ASOF
                                         ? generateJoinAsof(isSelfJoin, model, slaveModel, master, masterMetadata,
                                                 masterAlias, slave, slaveMetadata)
@@ -3075,12 +3071,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         isLastWindowJoin ? columns : aggregateCols);
 
                                 if (!isLastWindowJoin) {
-<<<<<<< HEAD
-                                    final GenericRecordMetadata metadata = GenericRecordMetadata.copyOf(joinMetadata,
+                                    final GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(joinMetadata,
                                             splitIndex);
-=======
-                                    final GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(joinMetadata, splitIndex);
->>>>>>> cc2a1e258d628ec66fd789c9696b21e00ba5ea0d
                                     for (int j = 0, m = outerProjectionMetadata.getColumnCount(); j < m; j++) {
                                         metadata.add(outerProjectionMetadata.getColumnMetadata(j));
                                     }
@@ -3177,12 +3169,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 factory = new ExtraNullColumnCursorFactory(outerProjectionMetadata,
                                                         masterMetadata.getColumnCount(), master);
                                             } else {
-<<<<<<< HEAD
                                                 GenericRecordMetadata metadata = GenericRecordMetadata
-                                                        .copyOf(masterMetadata);
-=======
-                                                GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(masterMetadata);
->>>>>>> cc2a1e258d628ec66fd789c9696b21e00ba5ea0d
+                                                        .copyOfNew(masterMetadata);
                                                 for (int k = 0, m = aggregateCols.size(); k < m; k++) {
                                                     metadata.add(new TableColumnMetadata(
                                                             aggregateCols.get(k).getAlias().toString(),
@@ -5325,7 +5313,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 timestampColumn = null;
             }
 
-            // Check if the model has a detected timestamp offset - if so, use that column as timestamp
+            // Check if the model has a detected timestamp offset - if so, use that column
+            // as timestamp
             int modelTimestampIndex = model.getTimestampColumnIndex();
 
             for (int i = 0; i < columnCount; i++) {
@@ -5334,7 +5323,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (modelTimestampIndex == i) {
                     // Model explicitly indicates this column should be the timestamp
                     virtualMetadata.setTimestampIndex(i);
-                } else if (modelTimestampIndex < 0 && node.type == LITERAL && Chars.equalsNc(node.token, timestampColumn)) {
+                } else if (modelTimestampIndex < 0 && node.type == LITERAL
+                        && Chars.equalsNc(node.token, timestampColumn)) {
                     // Only use literal match if model hasn't specified a timestamp index
                     virtualMetadata.setTimestampIndex(i);
                 }
@@ -6311,13 +6301,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             } else {
                 intrinsicModel = whereClauseParser.getEmpty(
                         reader.getMetadata().getTimestampType(),
-<<<<<<< HEAD
-                        reader.getPartitionedBy());
-=======
                         reader.getPartitionedBy(),
-                        executionContext.getCairoEngine().getConfiguration()
-                );
->>>>>>> cc2a1e258d628ec66fd789c9696b21e00ba5ea0d
+                        executionContext.getCairoEngine().getConfiguration());
             }
 
             // When we run materialized view refresh we want to restrict queries to the base
@@ -7328,15 +7313,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    private void validateTimestampNotInJoinKeys(QueryModel slaveModel, RecordMetadata masterMetadata, RecordMetadata slaveMetadata) throws SqlException {
-        // When timestamp is the ONLY join key, isKeyedTemporalJoin() will return false and simplify
-        // "ASOF JOIN ON (ts)" to a non-keyed join, which is harmless. But when timestamp is combined
-        // with other keys like "ON (sym, ts)", it causes problems in the join implementation.
+    private void validateTimestampNotInJoinKeys(QueryModel slaveModel, RecordMetadata masterMetadata,
+            RecordMetadata slaveMetadata) throws SqlException {
+        // When timestamp is the ONLY join key, isKeyedTemporalJoin() will return false
+        // and simplify
+        // "ASOF JOIN ON (ts)" to a non-keyed join, which is harmless. But when
+        // timestamp is combined
+        // with other keys like "ON (sym, ts)", it causes problems in the join
+        // implementation.
         int keyCount = listColumnFilterA.getColumnCount();
         if (keyCount <= 1) {
             return; // Single key (or no key) is fine - handled by isKeyedTemporalJoin()
         }
-        // listColumnFilterA contains slave column indices, listColumnFilterB contains master column indices
+        // listColumnFilterA contains slave column indices, listColumnFilterB contains
+        // master column indices
         int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
         int masterTimestampIndex = masterMetadata.getTimestampIndex();
         for (int i = 0; i < keyCount; i++) {

@@ -453,39 +453,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCastDateByte() throws Exception {
-        String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\""
-                + ColumnType.nameOf(ColumnType.BYTE) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
                 "select * from (select cast(rnd_byte() as date) a from long_sequence(20))" +
                 "), cast(a as " + ColumnType.nameOf(ColumnType.BYTE) + ")";
 
-        assertCast(
-                """
-                        a
-                        76
-                        102
-                        27
-                        87
-                        79
-                        79
-                        122
-                        83
-                        90
-                        76
-                        84
-                        84
-                        74
-                        55
-                        83
-                        88
-                        32
-                        21
-                        91
-                        74
-                        """,
-                expectedMeta,
-                sql);
+        assertException(sql, 99, "unsupported cast");
     }
 
     @Test
@@ -522,65 +495,38 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastDate(
                 """
                         a
-                        1.4262972E12
+                        1.42629719E12
                         null
-                        1.4460811E12
-                        1.4348342E12
+                        1.44608107E12
+                        1.43483417E12
                         null
-                        1.4397398E12
-                        1.4439578E12
-                        1.4402802E12
+                        1.43973981E12
+                        1.44395783E12
+                        1.44028022E12
                         null
-                        1.4431839E12
+                        1.44318385E12
                         null
-                        1.4352986E12
+                        1.43529856E12
                         null
-                        1.4471817E12
-                        1.4423615E12
-                        1.4281652E12
+                        1.44718168E12
+                        1.44236151E12
+                        1.42816523E12
                         null
-                        1.4349996E12
+                        1.43499959E12
                         1.4237367E12
-                        1.4265664E12
+                        1.42656641E12
                         """,
                 ColumnType.FLOAT);
     }
 
     @Test
     public void testCastDateInt() throws Exception {
-        String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\""
-                + ColumnType.nameOf(ColumnType.INT) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
                 "select * from (select cast(rnd_int() as date) a from long_sequence(20))" +
                 "), cast(a as " + ColumnType.nameOf(ColumnType.INT) + ")";
 
-        assertCast(
-                """
-                        a
-                        -1148479920
-                        315515118
-                        1548800833
-                        -727724771
-                        73575701
-                        -948263339
-                        1326447242
-                        592859671
-                        1868723706
-                        -847531048
-                        -1191262516
-                        -2041844972
-                        -1436881714
-                        -1575378703
-                        806715481
-                        1545253512
-                        1569490116
-                        1573662097
-                        -409854405
-                        339631474
-                        """,
-                expectedMeta,
-                sql);
+        assertException(sql, 98, "unsupported cast");
     }
 
     @Test
@@ -614,39 +560,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCastDateShort() throws Exception {
-        String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\""
-                + ColumnType.nameOf(ColumnType.SHORT) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
                 "select * from (select cast(rnd_short() as date) a from long_sequence(20))" +
                 "), cast(a as " + ColumnType.nameOf(ColumnType.SHORT) + ")";
 
-        assertCast(
-                """
-                        a
-                        -27056
-                        24814
-                        -11455
-                        -13027
-                        -21227
-                        -22955
-                        -1398
-                        21015
-                        30202
-                        -19496
-                        -14644
-                        -5356
-                        -4914
-                        -24335
-                        -32679
-                        -19832
-                        -31548
-                        11665
-                        7739
-                        23922
-                        """,
-                expectedMeta,
-                sql);
+        assertException(sql, 100, "unsupported cast");
     }
 
     @Test
@@ -680,263 +599,47 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCastDoubleByte() throws Exception {
-        assertCastDouble(
-                """
-                        a
-                        80
-                        8
-                        8
-                        65
-                        79
-                        22
-                        34
-                        76
-                        42
-                        0
-                        72
-                        42
-                        70
-                        38
-                        0
-                        32
-                        0
-                        97
-                        24
-                        63
-                        """,
-                ColumnType.BYTE);
+        assertCastDoubleFail(ColumnType.BYTE);
     }
 
     @Test
     public void testCastDoubleDate() throws Exception {
-        assertCastDouble(
-                """
-                        a
-                        1970-01-01T00:00:00.080Z
-                        1970-01-01T00:00:00.008Z
-                        1970-01-01T00:00:00.008Z
-                        1970-01-01T00:00:00.065Z
-                        1970-01-01T00:00:00.079Z
-                        1970-01-01T00:00:00.022Z
-                        1970-01-01T00:00:00.034Z
-                        1970-01-01T00:00:00.076Z
-                        1970-01-01T00:00:00.042Z
-
-                        1970-01-01T00:00:00.072Z
-                        1970-01-01T00:00:00.042Z
-                        1970-01-01T00:00:00.070Z
-                        1970-01-01T00:00:00.038Z
-                        1970-01-01T00:00:00.000Z
-                        1970-01-01T00:00:00.032Z
-
-                        1970-01-01T00:00:00.097Z
-                        1970-01-01T00:00:00.024Z
-                        1970-01-01T00:00:00.063Z
-                        """,
-                ColumnType.DATE);
+        assertCastDoubleFail(ColumnType.DATE);
     }
 
     @Test
     public void testCastDoubleFloat() throws Exception {
-        assertCastDouble(
-                """
-                        a
-                        80.43224
-                        8.486964
-                        8.438321
-                        65.08594
-                        79.056755
-                        22.452341
-                        34.9107
-                        76.1103
-                        42.17769
-                        null
-                        72.61136
-                        42.24357
-                        70.9436
-                        38.539948
-                        0.35983673
-                        32.881767
-                        null
-                        97.71103
-                        24.808813
-                        63.816074
-                        """,
-                ColumnType.FLOAT);
+        assertCastDoubleFail(ColumnType.FLOAT);
     }
 
     @Test
     public void testCastDoubleInt() throws Exception {
-        assertCastDouble(
-                """
-                        a
-                        80
-                        8
-                        8
-                        65
-                        79
-                        22
-                        34
-                        76
-                        42
-                        null
-                        72
-                        42
-                        70
-                        38
-                        0
-                        32
-                        null
-                        97
-                        24
-                        63
-                        """,
-                ColumnType.INT);
+        assertCastDoubleFail(ColumnType.INT);
     }
 
     @Test
     public void testCastDoubleLong() throws Exception {
-        assertCastDouble(
-                """
-                        a
-                        80
-                        8
-                        8
-                        65
-                        79
-                        22
-                        34
-                        76
-                        42
-                        null
-                        72
-                        42
-                        70
-                        38
-                        0
-                        32
-                        null
-                        97
-                        24
-                        63
-                        """,
-                ColumnType.LONG);
+        assertCastDoubleFail(ColumnType.LONG);
     }
 
     @Test
     public void testCastDoubleShort() throws Exception {
-        assertCastDouble(
-                """
-                        a
-                        80
-                        8
-                        8
-                        65
-                        79
-                        22
-                        34
-                        76
-                        42
-                        0
-                        72
-                        42
-                        70
-                        38
-                        0
-                        32
-                        0
-                        97
-                        24
-                        63
-                        """,
-                ColumnType.SHORT);
+        assertCastDoubleFail(ColumnType.SHORT);
     }
 
     @Test
     public void testCastDoubleTimestamp() throws Exception {
-        assertCastDouble(
-                """
-                        a
-                        1970-01-01T00:00:00.000080Z
-                        1970-01-01T00:00:00.000008Z
-                        1970-01-01T00:00:00.000008Z
-                        1970-01-01T00:00:00.000065Z
-                        1970-01-01T00:00:00.000079Z
-                        1970-01-01T00:00:00.000022Z
-                        1970-01-01T00:00:00.000034Z
-                        1970-01-01T00:00:00.000076Z
-                        1970-01-01T00:00:00.000042Z
-
-                        1970-01-01T00:00:00.000072Z
-                        1970-01-01T00:00:00.000042Z
-                        1970-01-01T00:00:00.000070Z
-                        1970-01-01T00:00:00.000038Z
-                        1970-01-01T00:00:00.000000Z
-                        1970-01-01T00:00:00.000032Z
-
-                        1970-01-01T00:00:00.000097Z
-                        1970-01-01T00:00:00.000024Z
-                        1970-01-01T00:00:00.000063Z
-                        """,
-                ColumnType.TIMESTAMP);
+        assertCastDoubleFail(ColumnType.TIMESTAMP);
     }
 
     @Test
     public void testCastFloatByte() throws Exception {
-        assertCastFloat(
-                """
-                        a
-                        80
-                        0
-                        8
-                        29
-                        0
-                        93
-                        13
-                        79
-                        0
-                        22
-                        0
-                        34
-                        0
-                        76
-                        52
-                        55
-                        0
-                        72
-                        62
-                        66
-                        """,
-                ColumnType.BYTE);
+        assertCastFloatFail(ColumnType.BYTE);
     }
 
     @Test
     public void testCastFloatDate() throws Exception {
-        assertCastFloat(
-                """
-                        a
-                        1970-01-01T00:00:00.080Z
-
-                        1970-01-01T00:00:00.008Z
-                        1970-01-01T00:00:00.029Z
-
-                        1970-01-01T00:00:00.093Z
-                        1970-01-01T00:00:00.013Z
-                        1970-01-01T00:00:00.079Z
-
-                        1970-01-01T00:00:00.022Z
-
-                        1970-01-01T00:00:00.034Z
-
-                        1970-01-01T00:00:00.076Z
-                        1970-01-01T00:00:00.052Z
-                        1970-01-01T00:00:00.055Z
-
-                        1970-01-01T00:00:00.072Z
-                        1970-01-01T00:00:00.062Z
-                        1970-01-01T00:00:00.066Z
-                        """,
-                ColumnType.DATE);
+        assertCastFloatFail(ColumnType.DATE);
     }
 
     @Test
@@ -970,148 +673,27 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCastFloatInt() throws Exception {
-        assertCastFloat(
-                """
-                        a
-                        80
-                        null
-                        8
-                        29
-                        null
-                        93
-                        13
-                        79
-                        null
-                        22
-                        null
-                        34
-                        null
-                        76
-                        52
-                        55
-                        null
-                        72
-                        62
-                        66
-                        """,
-                ColumnType.INT);
+        assertCastFloatFail(ColumnType.INT);
     }
 
     @Test
     public void testCastFloatLong() throws Exception {
-        assertCastFloat(
-                """
-                        a
-                        80
-                        null
-                        8
-                        29
-                        null
-                        93
-                        13
-                        79
-                        null
-                        22
-                        null
-                        34
-                        null
-                        76
-                        52
-                        55
-                        null
-                        72
-                        62
-                        66
-                        """,
-                ColumnType.LONG);
+        assertCastFloatFail(ColumnType.LONG);
     }
 
     @Test
     public void testCastFloatShort() throws Exception {
-        assertCastFloat(
-                """
-                        a
-                        80
-                        0
-                        8
-                        29
-                        0
-                        93
-                        13
-                        79
-                        0
-                        22
-                        0
-                        34
-                        0
-                        76
-                        52
-                        55
-                        0
-                        72
-                        62
-                        66
-                        """,
-                ColumnType.SHORT);
+        assertCastFloatFail(ColumnType.SHORT);
     }
 
     @Test
     public void testCastFloatTimestamp() throws Exception {
-        assertCastFloat(
-                """
-                        a
-                        1970-01-01T00:00:00.000080Z
-
-                        1970-01-01T00:00:00.000008Z
-                        1970-01-01T00:00:00.000029Z
-
-                        1970-01-01T00:00:00.000093Z
-                        1970-01-01T00:00:00.000013Z
-                        1970-01-01T00:00:00.000079Z
-
-                        1970-01-01T00:00:00.000022Z
-
-                        1970-01-01T00:00:00.000034Z
-
-                        1970-01-01T00:00:00.000076Z
-                        1970-01-01T00:00:00.000052Z
-                        1970-01-01T00:00:00.000055Z
-
-                        1970-01-01T00:00:00.000072Z
-                        1970-01-01T00:00:00.000062Z
-                        1970-01-01T00:00:00.000066Z
-                        """,
-                ColumnType.TIMESTAMP);
+        assertCastFloatFail(ColumnType.TIMESTAMP);
     }
 
     @Test
     public void testCastIntByte() throws Exception {
-        assertCastInt(
-                """
-                        a
-                        1
-                        19
-                        30
-                        16
-                        7
-                        26
-                        26
-                        15
-                        14
-                        0
-                        21
-                        15
-                        3
-                        4
-                        6
-                        19
-                        7
-                        13
-                        17
-                        25
-                        """,
-                ColumnType.BYTE,
-                0);
+        assertCastIntFail(ColumnType.BYTE);
     }
 
     @Test
@@ -1232,32 +814,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCastIntShort() throws Exception {
-        assertCastInt(
-                """
-                        a
-                        1
-                        19
-                        30
-                        16
-                        7
-                        26
-                        26
-                        15
-                        14
-                        0
-                        21
-                        15
-                        3
-                        4
-                        6
-                        19
-                        7
-                        13
-                        17
-                        25
-                        """,
-                ColumnType.SHORT,
-                0);
+        assertCastIntFail(ColumnType.SHORT);
     }
 
     @Test
@@ -1290,32 +847,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCastLongByte() throws Exception {
-        assertCastLong(
-                """
-                        a
-                        22
-                        11
-                        6
-                        26
-                        21
-                        1
-                        20
-                        15
-                        9
-                        26
-                        30
-                        8
-                        0
-                        4
-                        16
-                        10
-                        6
-                        3
-                        8
-                        12
-                        """,
-                ColumnType.BYTE,
-                0);
+        assertCastLongFail(ColumnType.BYTE);
     }
 
     @Test
@@ -1407,60 +939,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCastLongInt() throws Exception {
-        assertCastLong(
-                """
-                        a
-                        22
-                        11
-                        6
-                        26
-                        21
-                        1
-                        20
-                        15
-                        9
-                        26
-                        30
-                        8
-                        0
-                        4
-                        16
-                        10
-                        6
-                        3
-                        8
-                        12
-                        """,
-                ColumnType.INT, 0);
+        assertCastLongFail(ColumnType.INT);
     }
 
     @Test
     public void testCastLongShort() throws Exception {
-        assertCastLong(
-                """
-                        a
-                        22
-                        11
-                        6
-                        26
-                        21
-                        1
-                        20
-                        15
-                        9
-                        26
-                        30
-                        8
-                        0
-                        4
-                        16
-                        10
-                        6
-                        3
-                        8
-                        12
-                        """,
-                ColumnType.SHORT, 0);
+        assertCastLongFail(ColumnType.SHORT);
     }
 
     @Test
@@ -1513,61 +997,21 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExplicitCasts() throws Exception {
-        // These casts are explicitly supported via the cast() function,
-        // even if they might be restricted in implicit contexts.
+    public void testCastNumberFail() throws Exception {
+        assertCastDoubleFail(ColumnType.SYMBOL);
 
-        // Rule 3: GeoHash -> String
-        assertSql("cast\n1\n", "select cast(cast('1' as geohash(1c)) as string)");
+        assertCastIntFail(ColumnType.BINARY);
+        assertCastLongFail(ColumnType.BINARY);
+        assertCastByteFail(ColumnType.BINARY);
+        assertCastShortFail(ColumnType.BINARY);
+        assertCastFloatFail(ColumnType.BINARY);
+        assertCastDoubleFail(ColumnType.BINARY);
 
-        // Rule 4: Decimal -> String
-        // (Decimal support varies, checking basic existance)
-        // assertSql("cast\n1\n", "select cast(cast(1 as decimal(10,2)) as string)");
-
-        // Rule 8: Char -> Numeric
-        // '1' char is ascii 49, but explicit cast to float/double parses the char
-        // value.
-        assertSql("cast\n1.0\n", "select cast('1'::char as float)");
-        assertSql("cast\n1.0\n", "select cast('1'::char as double)");
-
-        // Char -> Date/Timestamp might depend on the char value '1' (ascii 49) or
-        // literal '1'.
-        // It seems casting parses the char as a digit string.
-        assertSql("cast\n1\n", "select cast('1'::char as int)");
-
-        // So '1'::char as float should be 49.0
-        // I will verify this with the actual values.
     }
 
     @Test
     public void testCastShortByte() throws Exception {
-        assertCastShort(
-                """
-                        a
-                        48
-                        110
-                        63
-                        99
-                        107
-                        43
-                        -10
-                        -105
-                        122
-                        -88
-                        -76
-                        108
-                        -78
-                        -113
-                        39
-                        -8
-                        -68
-                        17
-                        -69
-                        -14
-                        """,
-                ColumnType.BYTE,
-                -128,
-                127);
+        assertCastShortFail(ColumnType.BYTE);
     }
 
     @Test
@@ -1781,39 +1225,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCastTimestampByte() throws Exception {
-        String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\""
-                + ColumnType.nameOf(ColumnType.BYTE) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
                 "select * from (select rnd_byte()::timestamp a from long_sequence(20))" +
                 "), cast(a as " + ColumnType.nameOf(ColumnType.BYTE) + ")";
 
-        assertCast(
-                """
-                        a
-                        76
-                        102
-                        27
-                        87
-                        79
-                        79
-                        122
-                        83
-                        90
-                        76
-                        84
-                        84
-                        74
-                        55
-                        83
-                        88
-                        32
-                        21
-                        91
-                        74
-                        """,
-                expectedMeta,
-                sql);
+        assertException(sql, 96, "unsupported cast");
     }
 
     @Test
@@ -1879,65 +1296,38 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastTimestamp(
                 """
                         a
-                        1.4512026E15
+                        1.45120261E15
                         null
-                        1.4472177E15
-                        1.4508645E15
+                        1.44721768E15
+                        1.45086451E15
                         null
-                        1.4252305E15
-                        1.4392682E15
-                        1.4466757E15
+                        1.42523054E15
+                        1.43926824E15
+                        1.44667571E15
                         null
-                        1.4327081E15
+                        1.43270808E15
                         null
-                        1.4467968E15
+                        1.44679678E15
                         null
-                        1.4368749E15
-                        1.440812E15
-                        1.4408925E15
+                        1.43687487E15
+                        1.44081201E15
+                        1.44089254E15
                         null
-                        1.4405838E15
-                        1.4439155E15
-                        1.4483964E15
+                        1.44058384E15
+                        1.44391553E15
+                        1.44839638E15
                         """,
                 ColumnType.FLOAT);
     }
 
     @Test
     public void testCastTimestampInt() throws Exception {
-        String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\""
-                + ColumnType.nameOf(ColumnType.INT) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
                 "select * from (select rnd_int()::timestamp a from long_sequence(20))" +
                 "), cast(a as " + ColumnType.nameOf(ColumnType.INT) + ")";
 
-        assertCast(
-                """
-                        a
-                        -1148479920
-                        315515118
-                        1548800833
-                        -727724771
-                        73575701
-                        -948263339
-                        1326447242
-                        592859671
-                        1868723706
-                        -847531048
-                        -1191262516
-                        -2041844972
-                        -1436881714
-                        -1575378703
-                        806715481
-                        1545253512
-                        1569490116
-                        1573662097
-                        -409854405
-                        339631474
-                        """,
-                expectedMeta,
-                sql);
+        assertException(sql, 95, "unsupported cast");
     }
 
     @Test
@@ -1971,39 +1361,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCastTimestampShort() throws Exception {
-        String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\""
-                + ColumnType.nameOf(ColumnType.SHORT) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
                 "select * from (select rnd_short()::timestamp a from long_sequence(20))" +
                 "), cast(a as " + ColumnType.nameOf(ColumnType.SHORT) + ")";
 
-        assertCast(
-                """
-                        a
-                        -27056
-                        24814
-                        -11455
-                        -13027
-                        -21227
-                        -22955
-                        -1398
-                        21015
-                        30202
-                        -19496
-                        -14644
-                        -5356
-                        -4914
-                        -24335
-                        -32679
-                        -19832
-                        -31548
-                        11665
-                        7739
-                        23922
-                        """,
-                expectedMeta,
-                sql);
+        assertException(sql, 97, "unsupported cast");
     }
 
     @Test
@@ -2633,26 +1996,26 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testCreateAsSelectCastSymbol() throws Exception {
         final String expectedData = """
                 a
-                GPGW
-                SXUX
-                RXGZ
+                CPSW
+                HYRX
+
+                VTJW
+                PEHN
+
+                VTJW
+
+                CPSW
+
+                PEHN
+                CPSW
+                VTJW
 
 
-                SXUX
+                CPSW
 
 
 
-                GPGW
-                GPGW
-                RXGZ
-                SXUX
-
-
-
-                GPGW
-                RXGZ
-                RXGZ
-                IBBT
+                PEHN
                 """;
 
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"}],\"timestampIndex\":-1}";
@@ -3844,13 +3207,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             assertExceptionNoLeakCheck(
                     "SELECT test.time AS ref0, test.symbol AS ref1 FROM test GROUP BY test.time, test.symbol ORDER BY SUM(1, -1)",
-<<<<<<< HEAD
-                    97, "there is no matching function `SUM` with the argument types: (INT, INT)");
-=======
                     97,
-                    "there is no matching function `SUM` with the argument types: (INT, INT)"
-            );
->>>>>>> cc2a1e258d628ec66fd789c9696b21e00ba5ea0d
+                    "there is no matching function `SUM` with the argument types: (INT, INT)");
         });
     }
 
@@ -7393,26 +6751,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 Assert.fail();
             }
         }
-    }
-
-    private void assertCastFail(int fromType, int toType) throws Exception {
-        assertException(
-                "insert into x select cast(x as " + ColumnType.nameOf(toType) + ") from x",
-                "create table x (x " + ColumnType.nameOf(fromType) + ")",
-                21,
-                "inconvertible types: " + ColumnType.nameOf(fromType) + " -> " + ColumnType.nameOf(toType));
-    }
-
-    private void assertCastGeoHashFail(int toType) throws Exception {
-        assertException(
-                "insert into x select cast(x as " + ColumnType.nameOf(toType) + ") from x",
-                "create table x (x geohash(1c))",
-                21,
-                "inconvertible types: GEOHASH(1c) -> " + ColumnType.nameOf(toType));
-    }
-
-    private void assertCastCharFail(int toType) throws Exception {
-        assertCastFail(ColumnType.CHAR, toType);
     }
 
     private interface Fiddler {

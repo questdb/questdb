@@ -147,8 +147,7 @@ public class SqlParser {
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> topLevelWithModel = new LowerCaseCharSequenceObjHashMap<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final ObjectPool<GenericLexer> viewLexers;
-    private final SqlParserCallback viewSqlParserCallback = new SqlParserCallback() {
-    };
+    private final SqlParserCallback viewSqlParserCallback=new SqlParserCallback(){};
     // Track views currently being compiled to detect cycles during query parsing
     private final LowerCaseCharSequenceHashSet viewsBeingCompiled = new LowerCaseCharSequenceHashSet();
     private final ObjectPool<WindowExpression> windowExpressionPool;
@@ -581,13 +580,8 @@ public class SqlParser {
                 unquote(token),
                 Chars.indexOfLastUnquoted(token, '.'),
                 aliasToColumnMap,
-<<<<<<< HEAD
-                type != ExpressionNode.LITERAL);
-=======
                 aliasSequenceMap,
-                type != ExpressionNode.LITERAL
-        );
->>>>>>> cc2a1e258d628ec66fd789c9696b21e00ba5ea0d
+                type != ExpressionNode.LITERAL);
     }
 
     private CharSequence createConstColumnAlias(LowerCaseCharSequenceHashSet aliasToColumnMap) {
@@ -807,15 +801,10 @@ public class SqlParser {
                 alias = createConstColumnAlias(aliasMap);
             } else {
                 CharSequence tokenAlias = qc.getAst().token;
-<<<<<<< HEAD
-                if (qc.isWindowColumn() && ((WindowExpression) qc).isIgnoreNulls()) {
+                if (qc.isWindowExpression() && ((WindowExpression) qc).isIgnoreNulls()) {
                     CharacterStoreEntry entry = characterStore.newEntry();
                     entry.put(tokenAlias).put("_ignore_nulls");
                     tokenAlias = entry.toImmutable();
-=======
-                if (qc.isWindowExpression() && ((WindowExpression) qc).isIgnoreNulls()) {
-                    tokenAlias += "_ignore_nulls";
->>>>>>> cc2a1e258d628ec66fd789c9696b21e00ba5ea0d
                 }
                 alias = createColumnAlias(tokenAlias, qc.getAst().type, aliasMap);
             }
@@ -3892,14 +3881,9 @@ public class SqlParser {
             GenericLexer lexer,
             QueryModel model,
             LowerCaseCharSequenceObjHashMap<WithClauseModel> masterModel,
-<<<<<<< HEAD
-            SqlParserCallback sqlParserCallback) throws SqlException {
-        ExpressionNode expr = expr(lexer, model, sqlParserCallback);
-=======
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
         ExpressionNode expr = expr(lexer, model, sqlParserCallback, model.getDecls());
->>>>>>> cc2a1e258d628ec66fd789c9696b21e00ba5ea0d
         if (expr == null) {
             throw SqlException.position(lexer.lastTokenPosition()).put("table name expected");
         }

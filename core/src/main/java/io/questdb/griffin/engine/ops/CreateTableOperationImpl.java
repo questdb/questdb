@@ -698,17 +698,20 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.columnNames.clear();
         boolean hasDedup = false;
         boolean isTimestampDeduped = false;
+        boolean usePositionalMapping = orderedCreateColumns.size() > 0;
+        if (usePositionalMapping && orderedCreateColumns.size() != metadata.getColumnCount()) {
+            throw SqlException.position(tableNamePosition)
+                    .put("column count mismatch [explicit=")
+                    .put(orderedCreateColumns.size())
+                    .put(", select=")
+                    .put(metadata.getColumnCount())
+                    .put(']');
+        }
+
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            final String columnName = metadata.getColumnName(i);
-            final TableColumnMetadata augMeta = this.augmentedColumnMetadata.get(columnName);
-            if (!TableUtils.isValidColumnName(columnName, 255)) {
-                throw SqlException.position(this.tableNamePosition)
-                        .put("invalid column name [name=")
-                        .put(columnName)
-                        .put(", position=")
-                        .put(i)
-                        .put(']');
-            }
+            final String selectColumnName = metadata.getColumnName(i);
+            String targetColumnName = selectColumnName;
+            TableColumnMetadata augMeta = this.augmentedColumnMetadata.get(selectColumnName);
 
             int columnType;
             int symbolCapacity;
@@ -716,6 +719,38 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             boolean symbolIndexed;
             boolean isDedupKey;
             int indexBlockCapacity;
+
+            if (usePositionalMapping) {
+                CreateTableColumnModel model = orderedCreateColumns.get(i);
+                targetColumnName = Chars.toString(model.getColumnName());
+                // augMeta works for CAST overrides or index definitions on the EXPLICIT column
+                // name
+                // But wait, if I have `create table x (a int), index(a) ...`
+                // augMeta is keyed by 'a'.
+                // If I have `create table x (a int) as select b ...`
+                // selectColumnName is 'b'.
+                // I should look up augMeta by targetColumnName 'a'.
+                augMeta = this.augmentedColumnMetadata.get(targetColumnName);
+
+                // If explicit definition provides type, use it.
+                // model.getColumnType() returns the explicit type.
+                // WE MUST USE IT.
+                // augMeta is derived from model in initColumnMetadata.
+                // So augMeta should match model?
+                // Yes, initColumnMetadata iterates columnNames/models and puts into augMeta.
+                // So if usePositionalMapping is true, augMeta MUST be present for
+                // targetColumnName.
+            }
+
+            if (!TableUtils.isValidColumnName(targetColumnName, 255)) {
+                throw SqlException.position(this.tableNamePosition)
+                        .put("invalid column name [name=")
+                        .put(targetColumnName)
+                        .put(", position=")
+                        .put(i)
+                        .put(']');
+            }
+
             if (augMeta != null) {
                 final int fromType = metadata.getColumnType(i);
                 columnType = augMeta.getColumnType();
@@ -724,7 +759,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 }
                 if (fromType != columnType) {
                     io.questdb.cairo.sql.Function sourceCol = io.questdb.griffin.FunctionParser.createColumn(0,
-                            columnName, metadata);
+                            selectColumnName, metadata);
                     try {
                         io.questdb.cairo.sql.Function cast = functionParser.createImplicitCast(0, sourceCol,
                                 columnType);
@@ -732,7 +767,14 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                             cast.close();
                         } else {
                             sourceCol.close();
-                            throw SqlException.unsupportedCast(this.colNameToCastClausePos.get(columnName), columnName,
+                            // Logic for error reporting
+                            int pos = this.colNameToCastClausePos.get(targetColumnName);
+                            // fallback to tableNamePosition if not found (e.g. implicit explicit
+                            // definition)
+                            if (pos == -1)
+                                pos = tableNamePosition;
+
+                            throw SqlException.unsupportedCast(pos, targetColumnName,
                                     fromType, columnType);
                         }
                     } catch (Exception e) {
@@ -740,7 +782,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                         if (e instanceof SqlException) {
                             throw (SqlException) e;
                         }
-                        throw SqlException.unsupportedCast(this.colNameToCastClausePos.get(columnName), columnName,
+                        int pos = this.colNameToCastClausePos.get(targetColumnName);
+                        if (pos == -1)
+                            pos = tableNamePosition;
+                        throw SqlException.unsupportedCast(pos, targetColumnName,
                                 fromType, columnType);
                     }
                 }
@@ -754,7 +799,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 if (ColumnType.isNull(columnType)) {
                     throw SqlException
                             .$(0, "cannot create NULL-type column, please use type cast, e.g. ")
-                            .put(columnName).put("::").put("type");
+                            .put(targetColumnName).put("::").put("type");
                 }
                 symbolCapacity = this.defaultSymbolCapacity;
                 symbolCacheFlag = true;
@@ -764,15 +809,20 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             }
 
             if (!ColumnType.isSymbol(columnType) && symbolIndexed) {
-                throw SqlException.$(0, "indexes are supported only for SYMBOL columns: ").put(columnName);
+                throw SqlException.$(0, "indexes are supported only for SYMBOL columns: ").put(targetColumnName);
             }
             if (isDedupKey) {
                 hasDedup = true;
+                // timestamp check logic needs careful index validation?
+                // timestampIndex is index in SELECT result.
+                // If renaming happens, explicit timestamp column name check logic at top of
+                // method handles it.
+                // Here we just check if this column index matches timestampIndex.
                 if (i == this.timestampIndex) {
                     isTimestampDeduped = true;
                 }
             }
-            this.columnNames.add(columnName);
+            this.columnNames.add(targetColumnName);
             this.addColumnBits(
                     columnType,
                     symbolCacheFlag,

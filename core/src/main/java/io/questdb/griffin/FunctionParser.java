@@ -138,15 +138,11 @@ import io.questdb.griffin.engine.functions.cast.CastVarcharToGeoHashFunctionFact
 import io.questdb.griffin.engine.functions.cast.CastVarcharToLongFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToUuidFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastDateToByteFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastDateToShortFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastDateToIntFunctionFactory;
+
 import io.questdb.griffin.engine.functions.cast.CastDateToLongFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDateToFloatFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDateToDoubleFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastTimestampToByteFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastTimestampToShortFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastTimestampToIntFunctionFactory;
+
 import io.questdb.griffin.engine.functions.cast.CastTimestampToFloatFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastTimestampToDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleToDoubleArray;
@@ -1523,12 +1519,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     return new CastDateToVarcharFunctionFactory.Func(function);
                 } else if (ColumnType.isTimestamp(toType)) {
                     return new CastDateToTimestampFunctionFactory.Func(function, toType);
-                } else if (toType == ColumnType.BYTE) {
-                    return new CastDateToByteFunctionFactory.Func(function);
-                } else if (toType == ColumnType.SHORT) {
-                    return new CastDateToShortFunctionFactory.Func(function);
-                } else if (toType == ColumnType.INT) {
-                    return new CastDateToIntFunctionFactory.Func(function);
                 } else if (toType == ColumnType.LONG) {
                     return new CastDateToLongFunctionFactory.Func(function);
                 } else if (toType == ColumnType.FLOAT) {
@@ -1549,18 +1539,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     return new CastTimestampToLongFunctionFactory.Func(function);
                 } else if (toType == ColumnType.DATE) {
                     return new CastTimestampToDateFunctionFactory.Func(function);
-                } else if (toType == ColumnType.BYTE) {
-                    return new CastTimestampToByteFunctionFactory.Func(function);
-                } else if (toType == ColumnType.SHORT) {
-                    return new CastTimestampToShortFunctionFactory.Func(function);
-                } else if (toType == ColumnType.INT) {
-                    return new CastTimestampToIntFunctionFactory.Func(function);
                 } else if (toType == ColumnType.FLOAT) {
                     return new CastTimestampToFloatFunctionFactory.Func(function);
                 } else if (toType == ColumnType.DOUBLE) {
                     return new CastTimestampToDoubleFunctionFactory.Func(function);
                 }
-                // Note: TIMESTAMP → BYTE, SHORT, INT, FLOAT, DOUBLE are narrowing casts that
+                // Note: TIMESTAMP → BYTE, SHORT, INT are narrowing casts that
                 // require explicit CAST
                 break;
             case ColumnType.FLOAT:
