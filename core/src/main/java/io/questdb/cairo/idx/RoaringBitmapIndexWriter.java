@@ -37,14 +37,11 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.TestOnly;
-
-import java.io.Closeable;
 
 import static io.questdb.cairo.RoaringBitmapIndexUtils.*;
 

@@ -39,13 +39,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.TestOnly;
-
-import java.io.Closeable;
 
 /**
  * Writer for delta-encoded bitmap index.
