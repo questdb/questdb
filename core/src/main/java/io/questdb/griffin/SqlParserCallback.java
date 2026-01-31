@@ -24,12 +24,14 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.engine.table.ShowCreateMatViewRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory;
@@ -41,6 +43,8 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.griffin.SqlKeywords.isTtlKeyword;
 
 public interface SqlParserCallback {
 
@@ -133,6 +137,26 @@ public interface SqlParserCallback {
             ObjectPool<ExpressionNode> expressionNodePool
     ) throws SqlException {
         return -1;
+    }
+
+    default CharSequence parseTtlSettings(
+            GenericLexer lexer,
+            CharSequence tok,
+            int partitionBy,
+            CreateTableOperationBuilderImpl builder,
+            boolean isMatView
+    ) throws SqlException {
+        if (tok != null && isTtlKeyword(tok)) {
+            final int ttlValuePos = lexer.getPosition();
+            final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
+            if (partitionBy != -1) {
+                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
+            }
+            builder.setTtlHoursOrMonths(ttlHoursOrMonths);
+            builder.setTtlPosition(ttlValuePos);
+            tok = SqlUtil.fetchNext(lexer);
+        }
+        return tok;
     }
 
     private static TableToken getTableToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path, SqlException notExistsError) throws SqlException {

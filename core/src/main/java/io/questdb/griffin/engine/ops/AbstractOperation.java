@@ -36,14 +36,15 @@ import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractOperation implements AsyncWriterCommand, QuietCloseable {
     private static final long NO_CORRELATION_ID = -1L;
-    protected @Nullable TableToken tableToken;
     @Nullable
-    SecurityContext securityContext;
+    protected SecurityContext securityContext;
     @Nullable
-    SqlExecutionContext sqlExecutionContext;
+    protected SqlExecutionContext sqlExecutionContext;
     @Nullable
-    CharSequence sqlText;
-    int tableNamePosition;
+    protected CharSequence sqlText;
+    protected int tableNamePosition;
+    @Nullable
+    protected TableToken tableToken;
     private String cmdName;
     private int cmdType;
     private long correlationId;
@@ -109,6 +110,10 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         return tableVersion;
     }
 
+    public boolean isForceWalBypass() {
+        return false;
+    }
+
     @Override
     public void serialize(TableWriterTask task) {
         task.of(cmdType, tableId, tableToken);
@@ -133,7 +138,7 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         this.sqlText = sqlStatement;
     }
 
-    void init(
+    protected void init(
             int cmdType,
             String cmdName,
             TableToken tableToken,
@@ -148,9 +153,5 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         this.tableVersion = tableVersion;
         this.tableNamePosition = tableNamePosition;
         this.correlationId = NO_CORRELATION_ID;
-    }
-
-    public boolean isForceWalBypass() {
-        return false;
     }
 }

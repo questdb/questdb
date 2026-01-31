@@ -201,7 +201,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set", "'param', 'ttl' or 'type' expected");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set typ", "'param' or 'type' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set typ", "'param', 'ttl' or 'type' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type", "'bypass' or 'wal' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type byoass", "'bypass' or 'wal' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type bypass", "'wal' expected");
@@ -917,7 +917,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
                     @Override
                     public SqlExecutionContext getSqlExecutionContext() {
-                        return sqlExecutionContext;
+                        return AbstractCairoTest.sqlExecutionContext;
                     }
 
                     @Override
@@ -1119,7 +1119,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 writer.apply(new UpdateOperation(tableName, 1, 22, 1) {
                     @Override
                     public SqlExecutionContext getSqlExecutionContext() {
-                        return sqlExecutionContext;
+                        return AbstractCairoTest.sqlExecutionContext;
                     }
                 });
                 Assert.fail();
