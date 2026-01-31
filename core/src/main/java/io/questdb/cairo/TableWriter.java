@@ -763,10 +763,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw CairoException.invalidMetadataRecoverable("cannot create index, column type is not SYMBOL", columnName);
         }
 
-        final SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration);
-        writeIndex(columnName, indexValueBlockSize, columnIndex, indexer);
+        final byte indexType = IndexType.SYMBOL;
+        final SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType);
+        writeIndex(columnName, indexValueBlockSize, indexType, columnIndex, indexer);
 
-        columnMetadata.setIndexType(IndexType.SYMBOL);
+        columnMetadata.setIndexType(indexType);
         columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
         // set the index flag in metadata and create new _meta.swp
@@ -1104,7 +1105,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // it uses the primary column object as a temporary tool
             if (isIndexed) {
                 SymbolColumnIndexer indexer = (SymbolColumnIndexer) indexers.get(columnIndex);
-                writeIndex(columnName, indexValueBlockCapacity, columnIndex, indexer);
+                writeIndex(columnName, indexValueBlockCapacity, IndexType.SYMBOL, columnIndex, indexer);
                 // add / remove indexers
                 indexers.extendAndSet(columnIndex, indexer);
                 populateDenseIndexerList();
@@ -5837,7 +5838,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize, int columnIndex) {
+    private void indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize, byte indexType, int columnIndex) {
         long ts = txWriter.getMaxTimestamp();
         if (ts > Numbers.LONG_NULL) {
             try {
@@ -5851,9 +5852,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         final int plen = path.size();
                         final long columnNameTxn = columnVersionWriter.getColumnNameTxn(timestamp, columnIndex);
                         if (txWriter.isPartitionParquet(i)) {
-                            indexParquetPartition(indexer, columnName, i, columnIndex, columnNameTxn, indexValueBlockSize, plen, timestamp);
+                            indexParquetPartition(indexer, columnName, i, columnIndex, columnNameTxn, indexValueBlockSize, indexType, plen, timestamp);
                         } else if (ff.exists(dFile(path.trimTo(plen), columnName, columnNameTxn))) {
-                            indexNativePartition(indexer, columnName, columnIndex, columnNameTxn, indexValueBlockSize, plen, timestamp);
+                            indexNativePartition(indexer, columnName, columnIndex, columnNameTxn, indexValueBlockSize, indexType, plen, timestamp);
                         }
                     }
                 }
@@ -5863,9 +5864,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void indexLastPartition(SymbolColumnIndexer indexer, CharSequence columnName, long columnNameTxn, int columnIndex, int indexValueBlockSize) {
+    private void indexLastPartition(SymbolColumnIndexer indexer, CharSequence columnName, long columnNameTxn, int columnIndex, int indexValueBlockSize, byte indexType) {
         final int plen = path.size();
-        final byte indexType = metadata.getColumnIndexType(columnIndex);
 
         createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true);
 
@@ -5883,12 +5883,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int columnIndex,
             long columnNameTxn,
             int indexValueBlockSize,
+            byte indexType,
             int plen,
             long timestamp
     ) {
         path.trimTo(plen);
         LOG.info().$("indexing [path=").$substr(pathRootSize, path).I$();
-        final byte indexType = metadata.getColumnIndexType(columnIndex);
 
         createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true);
         final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
@@ -5912,6 +5912,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int columnIndex,
             long columnNameTxn,
             int indexValueBlockSize,
+            byte indexType,
             int plen,
             long timestamp
     ) {
@@ -5941,7 +5942,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .I$();
                 return;
             }
-            final byte indexType = metadata.getColumnIndexType(columnIndex);
 
             createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true);
             final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
@@ -10550,7 +10550,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void writeIndex(@NotNull CharSequence columnName, int indexValueBlockSize, int columnIndex, SymbolColumnIndexer indexer) {
+    private void writeIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, int columnIndex, SymbolColumnIndexer indexer) {
         // create indexer
         final long columnNameTxn = columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(), columnIndex);
         try {
@@ -10563,18 +10563,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // This piece of code is unbelievably fragile!
                 if (PartitionBy.isPartitioned(partitionBy)) {
                     // run indexer for the whole table
-                    indexHistoricPartitions(indexer, columnName, indexValueBlockSize, columnIndex);
+                    indexHistoricPartitions(indexer, columnName, indexValueBlockSize, indexType, columnIndex);
                     long timestamp = txWriter.getLastPartitionTimestamp();
                     if (timestamp != Numbers.LONG_NULL) {
                         path.trimTo(pathSize);
                         setStateForTimestamp(path, timestamp);
                         // create index in last partition
-                        indexLastPartition(indexer, columnName, columnNameTxn, columnIndex, indexValueBlockSize);
+                        indexLastPartition(indexer, columnName, columnNameTxn, columnIndex, indexValueBlockSize, indexType);
                     }
                 } else {
                     setStateForTimestamp(path, 0);
                     // create index in last partition
-                    indexLastPartition(indexer, columnName, columnNameTxn, columnIndex, indexValueBlockSize);
+                    indexLastPartition(indexer, columnName, columnNameTxn, columnIndex, indexValueBlockSize, indexType);
                 }
             } finally {
                 path.trimTo(pathSize);

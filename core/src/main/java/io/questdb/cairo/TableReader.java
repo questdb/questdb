@@ -909,25 +909,20 @@ public class TableReader implements Closeable, SymbolTableSource {
         } else {
             Path path = pathGenNativePartition(getPartitionIndex(columnBase), partitionTxn);
             try {
+                final byte indexType = metadata.getColumnIndexType(columnIndex);
+                reader = IndexFactory.createReader(
+                        indexType,
+                        direction,
+                        configuration,
+                        path,
+                        metadata.getColumnName(columnIndex),
+                        columnNameTxn,
+                        partitionTxn,
+                        getColumnTop(columnBase, columnIndex)
+                );
                 if (direction == BitmapIndexReader.DIR_BACKWARD) {
-                    reader = new BitmapIndexBwdReader(
-                            configuration,
-                            path,
-                            metadata.getColumnName(columnIndex),
-                            columnNameTxn,
-                            partitionTxn,
-                            getColumnTop(columnBase, columnIndex)
-                    );
                     bitmapIndexes.setQuick(globalIndex, reader);
                 } else {
-                    reader = new BitmapIndexFwdReader(
-                            configuration,
-                            path,
-                            metadata.getColumnName(columnIndex),
-                            columnNameTxn,
-                            partitionTxn,
-                            getColumnTop(columnBase, columnIndex)
-                    );
                     bitmapIndexes.setQuick(globalIndex + 1, reader);
                 }
             } finally {
