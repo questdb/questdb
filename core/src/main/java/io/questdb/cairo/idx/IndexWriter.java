@@ -139,6 +139,18 @@ public interface IndexWriter extends Closeable, Mutable {
     }
 
     /**
+     * Rolls back values to keep only values less than or equal to maxValue.
+     * <p>
+     * This operation is only supported by some index implementations.
+     * Unsupported implementations throw UnsupportedOperationException.
+     *
+     * @param maxValue maximum value allowed in index (inclusive)
+     */
+    default void rollbackValues(long maxValue) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Sets the maximum value stored in the index header.
      *
      * @param maxValue the maximum value

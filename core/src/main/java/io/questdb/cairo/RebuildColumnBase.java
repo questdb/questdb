@@ -133,7 +133,8 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 partitionTimestamp,
                 tableWriter.getMetadata().getTimestampType(),
                 tableWriter.getPartitionBy(),
-                indexValueBlockCapacity
+                indexValueBlockCapacity,
+                metadata.getColumnIndexType(columnIndex)
         );
     }
 
@@ -169,7 +170,8 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 partitionTimestamp,
                 metadata.getTimestampType(),
                 partitionBy,
-                metadata.getIndexValueBlockCapacity(columnIndex)
+                metadata.getIndexValueBlockCapacity(columnIndex),
+                metadata.getColumnIndexType(columnIndex)
         );
     }
 
@@ -359,7 +361,8 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             long partitionTimestamp,
             int timestampType,
             int partitionBy,
-            int indexValueBlockCapacity
+            int indexValueBlockCapacity,
+            byte indexType
     );
 
     protected abstract boolean isSupportedColumn(RecordMetadata metadata, int columnIndex);

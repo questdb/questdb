@@ -24,7 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.idx.BitmapIndexWriter;
+import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -37,7 +38,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
 
     private static final long SEQUENCE_OFFSET;
     private final int bufferSize;
-    private final BitmapIndexWriter writer;
+    private final IndexWriter writer;
     private long buffer;
     private long columnTop;
     private volatile boolean distressed = false;
@@ -47,7 +48,11 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     private volatile long sequence = 0L;
 
     public SymbolColumnIndexer(CairoConfiguration configuration) {
-        writer = new BitmapIndexWriter(configuration);
+        this(configuration, IndexType.SYMBOL);
+    }
+
+    public SymbolColumnIndexer(CairoConfiguration configuration, byte indexType) {
+        writer = IndexFactory.createWriter(indexType, configuration);
         bufferSize = 4096 * 1024;
         buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_INDEX_READER);
     }
@@ -114,7 +119,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
-    public BitmapIndexWriter getWriter() {
+    public IndexWriter getWriter() {
         return writer;
     }
 

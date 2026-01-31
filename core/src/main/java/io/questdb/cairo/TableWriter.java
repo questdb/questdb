@@ -34,6 +34,7 @@ import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.BitmapIndexWriter;
+import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
@@ -5951,7 +5952,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 long rowCount = 0;
                 final int rowGroupCount = parquetMetadata.getRowGroupCount();
-                final BitmapIndexWriter indexWriter = indexer.getWriter();
+                final IndexWriter indexWriter = indexer.getWriter();
                 for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
                     final int rowGroupSize = parquetMetadata.getRowGroupSize(rowGroupIndex);
                     if (rowCount + rowGroupSize <= columnTop) {
@@ -7414,7 +7415,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final boolean notTheTimestamp = i != timestampIndex;
                             final CharSequence columnName = metadata.getColumnName(i);
                             final int indexBlockCapacity = metadata.isColumnIndexed(i) ? metadata.getIndexValueBlockCapacity(i) : -1;
-                            final BitmapIndexWriter indexWriter = indexBlockCapacity > -1 ? getBitmapIndexWriter(i) : null;
+                            final IndexWriter indexWriter = indexBlockCapacity > -1 ? getIndexWriter(i) : null;
                             final MemoryR oooMem1 = o3Columns.getQuick(colOffset);
                             final MemoryR oooMem2 = o3Columns.getQuick(colOffset + 1);
                             final MemoryMA mem1 = columns.getQuick(colOffset);
@@ -10746,7 +10747,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         releaseIndexerWriters();
     }
 
-    BitmapIndexWriter getBitmapIndexWriter(int columnIndex) {
+    IndexWriter getIndexWriter(int columnIndex) {
         return indexers.getQuick(columnIndex).getWriter();
     }
 

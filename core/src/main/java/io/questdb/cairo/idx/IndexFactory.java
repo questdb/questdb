@@ -27,6 +27,7 @@ package io.questdb.cairo.idx;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.str.Path;
 
 /**
@@ -39,6 +40,27 @@ public final class IndexFactory {
 
     private IndexFactory() {
         // Utility class, no instances
+    }
+
+    /**
+     * Initializes the key memory for a new index of the given type.
+     *
+     * @param indexType     the type of index (SYMBOL, DELTA, FOR, etc.)
+     * @param keyMem        the memory to initialize
+     * @param blockCapacity the value block capacity (used by SYMBOL type)
+     * @throws CairoException if the index type is not supported
+     */
+    public static void initKeyMemory(byte indexType, MemoryMA keyMem, int blockCapacity) {
+        switch (indexType) {
+            case IndexType.SYMBOL -> BitmapIndexWriter.initKeyMemory(keyMem, blockCapacity);
+            case IndexType.DELTA -> DeltaBitmapIndexWriter.initKeyMemory(keyMem);
+            case IndexType.FOR -> FORBitmapIndexWriter.initKeyMemory(keyMem);
+            case IndexType.ROARING -> RoaringBitmapIndexWriter.initKeyMemory(keyMem);
+            case IndexType.NONE -> throw CairoException.critical(0)
+                    .put("cannot initialize key memory for index type NONE");
+            default -> throw CairoException.critical(0)
+                    .put("unsupported index type: ").put(IndexType.nameOf(indexType));
+        }
     }
 
     /**

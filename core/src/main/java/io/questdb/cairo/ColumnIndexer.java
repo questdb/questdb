@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.idx.BitmapIndexWriter;
+import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.QuietCloseable;
@@ -49,7 +49,7 @@ public interface ColumnIndexer extends QuietCloseable {
 
     long getSequence();
 
-    BitmapIndexWriter getWriter();
+    IndexWriter getWriter();
 
     void index(FilesFacade ff, long dataColumnFd, long loRow, long hiRow);
 

@@ -24,7 +24,7 @@
 
 package io.questdb.tasks;
 
-import io.questdb.cairo.idx.BitmapIndexWriter;
+import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.TableWriter;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -48,7 +48,7 @@ public class O3CopyTask {
     private long dstVarOffset;
     private long dstVarSize;
     private int indexBlockCapacity;
-    private BitmapIndexWriter indexWriter;
+    private IndexWriter indexWriter;
     private long o3SplitPartitionSize;
     private AtomicInteger partCounter;
     private boolean partitionMutates;
@@ -155,7 +155,7 @@ public class O3CopyTask {
         return indexBlockCapacity;
     }
 
-    public BitmapIndexWriter getIndexWriter() {
+    public IndexWriter getIndexWriter() {
         return indexWriter;
     }
 
@@ -342,7 +342,7 @@ public class O3CopyTask {
             long srcDataOldPartitionSize,
             long o3NewPartitionSize,
             TableWriter tableWriter,
-            BitmapIndexWriter indexWriter,
+            IndexWriter indexWriter,
             long partitionUpdateSinkAddr
     ) {
         this.columnCounter = columnCounter;

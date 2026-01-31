@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.idx.BitmapIndexUtils;
-import io.questdb.cairo.idx.BitmapIndexWriter;
+import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMAR;
@@ -42,13 +42,16 @@ import io.questdb.std.str.LPSZ;
  */
 public class IndexBuilder extends RebuildColumnBase {
     private static final Log LOG = LogFactory.getLog(IndexBuilder.class);
+    private final CairoConfiguration configuration;
     private final MemoryMAR ddlMem;
-    private final SymbolColumnIndexer indexer;
+    private byte indexType = IndexType.SYMBOL;
+    private SymbolColumnIndexer indexer;
 
     public IndexBuilder(CairoConfiguration configuration) {
         super(configuration);
+        this.configuration = configuration;
         ddlMem = Vm.getPMARInstance(configuration);
-        indexer = new SymbolColumnIndexer(configuration);
+        indexer = new SymbolColumnIndexer(configuration, indexType);
         unsupportedColumnMessage = "Column is not indexed";
     }
 
@@ -73,7 +76,7 @@ public class IndexBuilder extends RebuildColumnBase {
             try {
                 LOG.info().$("writing ").$(path).$();
                 ddlMem.smallFile(ff, lpsz, MemoryTag.MMAP_TABLE_WRITER);
-                BitmapIndexWriter.initKeyMemory(ddlMem, indexValueBlockCapacity);
+                IndexFactory.initKeyMemory(indexType, ddlMem, indexValueBlockCapacity);
             } catch (CairoException e) {
                 // looks like we could not create key file properly
                 // lets not leave half-baked file sitting around
@@ -132,8 +135,15 @@ public class IndexBuilder extends RebuildColumnBase {
             long partitionTimestamp,
             int timestampType,
             int partitionBy,
-            int indexValueBlockCapacity
+            int indexValueBlockCapacity,
+            byte indexType
     ) {
+        // Update index type and recreate indexer if needed
+        if (this.indexType != indexType) {
+            this.indexType = indexType;
+            Misc.free(indexer);
+            indexer = new SymbolColumnIndexer(configuration, indexType);
+        }
         final int trimTo = path.size();
         TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         try {
