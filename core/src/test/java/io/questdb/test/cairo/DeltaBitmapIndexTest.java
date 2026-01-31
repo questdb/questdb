@@ -49,6 +49,10 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 
 public class DeltaBitmapIndexTest extends AbstractCairoTest {
@@ -267,6 +271,335 @@ public class DeltaBitmapIndexTest extends AbstractCairoTest {
                 // Compression ratio should be approximately 8x
                 double ratio = (double) uncompressedSize / valueMemSize;
                 Assert.assertTrue("Expected compression ratio > 2, got " + ratio, ratio > 2);
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentBackwardReadWhileAppending() throws Exception {
+        // Test that backward reader can read consistent data while writer is appending
+        final int totalWrites = 10000;
+        final AtomicReference<Throwable> writerError = new AtomicReference<>();
+        final AtomicReference<Throwable> readerError = new AtomicReference<>();
+        final AtomicBoolean writerDone = new AtomicBoolean(false);
+        final CountDownLatch readerReady = new CountDownLatch(1);
+
+        TestUtils.assertMemoryLeak(() -> {
+            create(configuration, path.trimTo(plen), "x");
+
+            try (DeltaBitmapIndexWriter writer = new DeltaBitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                // Initial write so reader can open
+                writer.add(0, 0);
+
+                // Writer thread: continuously append
+                Thread writerThread = new Thread(() -> {
+                    try {
+                        readerReady.await();
+                        for (int i = 1; i < totalWrites; i++) {
+                            writer.add(0, i);
+                        }
+                    } catch (Throwable t) {
+                        writerError.set(t);
+                    } finally {
+                        writerDone.set(true);
+                    }
+                });
+
+                // Reader thread: continuously read backward and verify consistency
+                Thread readerThread = new Thread(() -> {
+                    try (Path readerPath = new Path().of(configuration.getDbRoot())) {
+                        try (DeltaBitmapIndexBwdReader reader = new DeltaBitmapIndexBwdReader(
+                                configuration, readerPath, "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+
+                            readerReady.countDown();
+                            int readIterations = 0;
+
+                            while (!writerDone.get() || readIterations < 10) {
+                                reader.reloadConditionally();
+                                RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+
+                                LongList values = new LongList();
+                                while (cursor.hasNext()) {
+                                    values.add(cursor.next());
+                                }
+
+                                // Verify descending order (backward cursor)
+                                for (int i = 0; i < values.size() - 1; i++) {
+                                    if (values.getQuick(i) <= values.getQuick(i + 1)) {
+                                        throw new AssertionError("Values not descending at index " + i);
+                                    }
+                                }
+
+                                // Verify values are consistent (no gaps when reversed)
+                                int count = values.size();
+                                for (int i = 0; i < count; i++) {
+                                    long expected = count - 1 - i;
+                                    long actual = values.getQuick(i);
+                                    if (actual != expected) {
+                                        throw new AssertionError("Expected " + expected + " but got " + actual + " at position " + i);
+                                    }
+                                }
+
+                                readIterations++;
+                                Thread.yield();
+                            }
+
+                            // Final read should see all values
+                            reader.reloadConditionally();
+                            RowCursor finalCursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                            int finalCount = 0;
+                            while (finalCursor.hasNext()) {
+                                finalCursor.next();
+                                finalCount++;
+                            }
+                            Assert.assertEquals("Final read should see all values", totalWrites, finalCount);
+                        }
+                    } catch (Throwable t) {
+                        readerError.set(t);
+                    }
+                });
+
+                writerThread.start();
+                readerThread.start();
+
+                writerThread.join(30000);
+                readerThread.join(30000);
+
+                if (writerError.get() != null) {
+                    throw new AssertionError("Writer failed", writerError.get());
+                }
+                if (readerError.get() != null) {
+                    throw new AssertionError("Reader failed", readerError.get());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentForwardReadWhileAppending() throws Exception {
+        // Test that forward reader can read consistent data while writer is appending
+        final int totalWrites = 10000;
+        final AtomicReference<Throwable> writerError = new AtomicReference<>();
+        final AtomicReference<Throwable> readerError = new AtomicReference<>();
+        final AtomicBoolean writerDone = new AtomicBoolean(false);
+        final CountDownLatch readerReady = new CountDownLatch(1);
+
+        TestUtils.assertMemoryLeak(() -> {
+            create(configuration, path.trimTo(plen), "x");
+
+            try (DeltaBitmapIndexWriter writer = new DeltaBitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                // Initial write so reader can open
+                writer.add(0, 0);
+
+                // Writer thread: continuously append
+                Thread writerThread = new Thread(() -> {
+                    try {
+                        readerReady.await();
+                        for (int i = 1; i < totalWrites; i++) {
+                            writer.add(0, i);
+                        }
+                    } catch (Throwable t) {
+                        writerError.set(t);
+                    } finally {
+                        writerDone.set(true);
+                    }
+                });
+
+                // Reader thread: continuously read and verify consistency
+                Thread readerThread = new Thread(() -> {
+                    try (Path readerPath = new Path().of(configuration.getDbRoot())) {
+                        try (DeltaBitmapIndexFwdReader reader = new DeltaBitmapIndexFwdReader(
+                                configuration, readerPath, "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+
+                            readerReady.countDown();
+                            int readIterations = 0;
+
+                            while (!writerDone.get() || readIterations < 10) {
+                                reader.reloadConditionally();
+                                RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+
+                                int count = 0;
+                                long lastValue = -1;
+                                while (cursor.hasNext()) {
+                                    long value = cursor.next();
+                                    // Verify ascending order (consistency check)
+                                    if (value <= lastValue) {
+                                        throw new AssertionError("Values not ascending: " + lastValue + " -> " + value);
+                                    }
+                                    // Verify value equals index (no gaps or corruption)
+                                    if (value != count) {
+                                        throw new AssertionError("Expected value " + count + " but got " + value);
+                                    }
+                                    lastValue = value;
+                                    count++;
+                                }
+
+                                readIterations++;
+                                Thread.yield();
+                            }
+
+                            // Final read should see all values
+                            reader.reloadConditionally();
+                            RowCursor finalCursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                            int finalCount = 0;
+                            while (finalCursor.hasNext()) {
+                                finalCursor.next();
+                                finalCount++;
+                            }
+                            Assert.assertEquals("Final read should see all values", totalWrites, finalCount);
+                        }
+                    } catch (Throwable t) {
+                        readerError.set(t);
+                    }
+                });
+
+                writerThread.start();
+                readerThread.start();
+
+                writerThread.join(30000);
+                readerThread.join(30000);
+
+                if (writerError.get() != null) {
+                    throw new AssertionError("Writer failed", writerError.get());
+                }
+                if (readerError.get() != null) {
+                    throw new AssertionError("Reader failed", readerError.get());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentMultiKeyReadWhileAppending() throws Exception {
+        // Test concurrent read/write with multiple keys
+        final int totalWrites = 5000;
+        final int maxKeys = 10;
+        final AtomicReference<Throwable> writerError = new AtomicReference<>();
+        final AtomicReference<Throwable> readerError = new AtomicReference<>();
+        final AtomicBoolean writerDone = new AtomicBoolean(false);
+        final CountDownLatch readerReady = new CountDownLatch(2);  // 2 reader threads
+
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = new Rnd();
+            IntList keys = new IntList();
+            IntObjHashMap<LongList> expectedValues = new IntObjHashMap<>();
+
+            // Pre-compute values to write
+            for (int i = 0; i < totalWrites; i++) {
+                int key = rnd.nextPositiveInt() % maxKeys;
+                LongList list = expectedValues.get(key);
+                if (list == null) {
+                    list = new LongList();
+                    expectedValues.put(key, list);
+                    keys.add(key);
+                }
+                list.add(i);
+            }
+
+            create(configuration, path.trimTo(plen), "x");
+
+            try (DeltaBitmapIndexWriter writer = new DeltaBitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                // Writer thread
+                Thread writerThread = new Thread(() -> {
+                    try {
+                        readerReady.await();
+                        Rnd writerRnd = new Rnd();
+                        for (int i = 0; i < totalWrites; i++) {
+                            int key = writerRnd.nextPositiveInt() % maxKeys;
+                            writer.add(key, i);
+                        }
+                    } catch (Throwable t) {
+                        writerError.set(t);
+                    } finally {
+                        writerDone.set(true);
+                    }
+                });
+
+                // Forward reader thread
+                Thread fwdReaderThread = new Thread(() -> {
+                    try (Path readerPath = new Path().of(configuration.getDbRoot())) {
+                        try (DeltaBitmapIndexFwdReader reader = new DeltaBitmapIndexFwdReader(
+                                configuration, readerPath, "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+
+                            readerReady.countDown();
+                            while (!writerDone.get()) {
+                                reader.reloadConditionally();
+                                for (int i = 0; i < keys.size(); i++) {
+                                    int key = keys.getQuick(i);
+                                    LongList expected = expectedValues.get(key);
+                                    RowCursor cursor = reader.getCursor(false, key, 0, Long.MAX_VALUE);
+
+                                    int count = 0;
+                                    long lastValue = -1;
+                                    while (cursor.hasNext()) {
+                                        long value = cursor.next();
+                                        // Verify ascending order
+                                        if (value <= lastValue) {
+                                            throw new AssertionError("Key " + key + ": values not ascending");
+                                        }
+                                        // Verify value matches expected
+                                        if (count < expected.size() && value != expected.getQuick(count)) {
+                                            throw new AssertionError("Key " + key + ": expected " + expected.getQuick(count) + " but got " + value);
+                                        }
+                                        lastValue = value;
+                                        count++;
+                                    }
+                                }
+                                Thread.yield();
+                            }
+                        }
+                    } catch (Throwable t) {
+                        readerError.set(t);
+                    }
+                });
+
+                // Backward reader thread
+                Thread bwdReaderThread = new Thread(() -> {
+                    try (Path readerPath = new Path().of(configuration.getDbRoot())) {
+                        try (DeltaBitmapIndexBwdReader reader = new DeltaBitmapIndexBwdReader(
+                                configuration, readerPath, "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+
+                            readerReady.countDown();
+                            while (!writerDone.get()) {
+                                reader.reloadConditionally();
+                                for (int i = 0; i < keys.size(); i++) {
+                                    int key = keys.getQuick(i);
+                                    RowCursor cursor = reader.getCursor(false, key, 0, Long.MAX_VALUE);
+
+                                    long lastValue = Long.MAX_VALUE;
+                                    while (cursor.hasNext()) {
+                                        long value = cursor.next();
+                                        // Verify descending order
+                                        if (value >= lastValue) {
+                                            throw new AssertionError("Key " + key + ": values not descending");
+                                        }
+                                        lastValue = value;
+                                    }
+                                }
+                                Thread.yield();
+                            }
+                        }
+                    } catch (Throwable t) {
+                        if (readerError.get() == null) {
+                            readerError.set(t);
+                        }
+                    }
+                });
+
+                writerThread.start();
+                fwdReaderThread.start();
+                bwdReaderThread.start();
+
+                writerThread.join(30000);
+                fwdReaderThread.join(30000);
+                bwdReaderThread.join(30000);
+
+                if (writerError.get() != null) {
+                    throw new AssertionError("Writer failed", writerError.get());
+                }
+                if (readerError.get() != null) {
+                    throw new AssertionError("Reader failed", readerError.get());
+                }
             }
         });
     }

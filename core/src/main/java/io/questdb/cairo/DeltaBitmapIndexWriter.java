@@ -31,6 +31,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -55,8 +56,14 @@ public class DeltaBitmapIndexWriter implements Closeable, Mutable {
     private final Cursor cursor = new Cursor();
     private final FilesFacade ff;
     private final MemoryMARW keyMem = Vm.getCMARWInstance();
+    private final IntList keyDataLens = new IntList();
+    // Cached key entry metadata to avoid mmap reads on hot path
+    private final LongList keyDataOffsets = new LongList();
+    private final LongList keyValueCounts = new LongList();
     // Cached state for each key: last value written (for delta calculation)
     private final LongList lastValues = new LongList();
+    // Reusable list for rollback operations to avoid allocations
+    private final LongList rollbackValues = new LongList();
     private final MemoryMARW valueMem = Vm.getCMARWInstance();
     private int keyCount = -1;
     private long valueMemSize = -1;
@@ -74,18 +81,28 @@ public class DeltaBitmapIndexWriter implements Closeable, Mutable {
 
     /**
      * Initializes key memory for a new delta-encoded index.
+     * Header is 8-byte aligned for better performance.
      */
     public static void initKeyMemory(MemoryMA keyMem) {
         keyMem.jumpTo(0);
         keyMem.truncate();
+        // Offset 0: Signature (1 byte) + 7 bytes padding
         keyMem.putByte(DeltaBitmapIndexUtils.SIGNATURE);
-        keyMem.putLong(1); // SEQUENCE
+        keyMem.skip(7);
+        // Offset 8: Sequence
+        keyMem.putLong(1);
         Unsafe.getUnsafe().storeFence();
-        keyMem.putLong(0); // VALUE MEM SIZE
-        keyMem.putInt(0);  // KEY COUNT
+        // Offset 16: Value mem size
+        keyMem.putLong(0);
+        // Offset 24: Key count (4 bytes) + 4 bytes padding
+        keyMem.putInt(0);
+        keyMem.skip(4);
         Unsafe.getUnsafe().storeFence();
-        keyMem.putLong(1); // SEQUENCE CHECK
-        keyMem.putLong(-1); // MAX VALUE (inclusive, -1 means no rows)
+        // Offset 32: Sequence check
+        keyMem.putLong(1);
+        // Offset 40: Max value
+        keyMem.putLong(-1);
+        // Offset 48-63: Reserved
         keyMem.skip(DeltaBitmapIndexUtils.KEY_FILE_RESERVED - keyMem.getAppendOffset());
     }
 
@@ -98,34 +115,21 @@ public class DeltaBitmapIndexWriter implements Closeable, Mutable {
     public void add(int key, long value) {
         assert key >= 0 : "key must be non-negative: " + key;
 
-        final long offset = DeltaBitmapIndexUtils.getKeyEntryOffset(key);
+        final long keyOffset = DeltaBitmapIndexUtils.getKeyEntryOffset(key);
 
         if (key < keyCount) {
-            // Existing key - check if it was properly initialized
-            long valueCount = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
-            int countCheck = keyMem.getInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK);
-            long dataOffset = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET);
-
-            // Verify the key entry is valid:
-            // 1. countCheck matches valueCount's lower 32 bits
-            // 2. dataOffset is within valid range (0 to valueMemSize)
-            // If invalid, this key was created as a side effect of a sparse key and contains garbage
-            boolean isValid = valueCount > 0
-                    && countCheck == (int) valueCount
-                    && dataOffset >= 0
-                    && dataOffset < valueMemSize;
-
-            if (isValid) {
+            // Existing key - use cached metadata
+            long valueCount = keyValueCounts.getQuick(key);
+            if (valueCount > 0) {
                 // Append delta-encoded value
-                appendDeltaEncodedValue(offset, key, value);
+                appendDeltaEncodedValue(keyOffset, key, value);
             } else {
                 // Key exists but has no values yet (created as byproduct of sparse key)
-                initValueDataAndStoreValue(offset, key, value);
+                initValueDataAndStoreValue(keyOffset, key, value);
             }
         } else {
-            // New key - initialize value data
-            initValueDataAndStoreValue(offset, key, value);
-            updateKeyCount(key);
+            // New key - initialize value data and update header atomically
+            initValueDataForNewKey(keyOffset, key, value);
         }
     }
 
@@ -150,13 +154,13 @@ public class DeltaBitmapIndexWriter implements Closeable, Mutable {
             Misc.free(valueMem);
         }
 
-        lastValues.clear();
+        clearCaches();
     }
 
     public void closeNoTruncate() {
         keyMem.close(false);
         valueMem.close(false);
-        lastValues.clear();
+        clearCaches();
     }
 
     public void commit() {
@@ -168,12 +172,9 @@ public class DeltaBitmapIndexWriter implements Closeable, Mutable {
 
     public RowCursor getCursor(int key) {
         if (key < keyCount) {
-            long offset = DeltaBitmapIndexUtils.getKeyEntryOffset(key);
-            long valueCount = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
-            int countCheck = keyMem.getInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK);
-            long dataOffset = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET);
-            // Verify the entry is valid
-            if (valueCount > 0 && countCheck == (int) valueCount && dataOffset >= 0 && dataOffset < valueMemSize) {
+            // Use cached metadata
+            long valueCount = keyValueCounts.getQuick(key);
+            if (valueCount > 0) {
                 cursor.of(key);
                 return cursor;
             }
@@ -256,8 +257,8 @@ public class DeltaBitmapIndexWriter implements Closeable, Mutable {
                 valueMem.truncate();
             }
 
-            // Rebuild lastValues cache from existing data
-            rebuildLastValuesCache();
+            // Rebuild all caches from existing data
+            rebuildCaches();
 
         } catch (Throwable e) {
             this.close();
@@ -281,26 +282,27 @@ public class DeltaBitmapIndexWriter implements Closeable, Mutable {
     /**
      * Rolls back values to remove entries strictly greater than maxValue.
      * This requires re-reading and re-encoding the data for affected keys.
+     * Note: This operation may leave garbage data in the value file (fragmentation).
      */
     public void rollbackValues(long maxValue) {
         long newValueMemSize = 0;
 
         for (int k = 0; k < keyCount; k++) {
             long offset = DeltaBitmapIndexUtils.getKeyEntryOffset(k);
-            long valueCount = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
+            // Read from cache
+            long valueCount = keyValueCounts.getQuick(k);
 
             if (valueCount > 0) {
-                long dataOffset = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET);
-                int dataLen = keyMem.getInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN);
+                long dataOffset = keyDataOffsets.getQuick(k);
+                int dataLen = keyDataLens.getQuick(k);
 
-                // Decode all values for this key
-                LongList values = new LongList();
-                decodeAllValues(dataOffset, dataLen, valueCount, values);
+                // Decode all values for this key (reusing pre-allocated list)
+                decodeAllValues(dataOffset, dataLen, valueCount, rollbackValues);
 
                 // Find how many values to keep
                 long keepCount = 0;
-                for (long i = 0; i < values.size(); i++) {
-                    if (values.getQuick((int) i) <= maxValue) {
+                for (long i = 0; i < rollbackValues.size(); i++) {
+                    if (rollbackValues.getQuick((int) i) <= maxValue) {
                         keepCount++;
                     } else {
                         break; // Values are ordered, so we can stop here
@@ -315,23 +317,25 @@ public class DeltaBitmapIndexWriter implements Closeable, Mutable {
                         keyMem.putLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET, 0);
                         keyMem.putInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN, 0);
                         keyMem.putInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, 0);
-                        if (k < lastValues.size()) {
-                            lastValues.setQuick(k, Long.MIN_VALUE);
-                        }
+                        // Update caches
+                        keyDataOffsets.setQuick(k, 0);
+                        keyDataLens.setQuick(k, 0);
+                        keyValueCounts.setQuick(k, 0);
+                        lastValues.setQuick(k, Long.MIN_VALUE);
                     } else {
                         // Re-encode with kept values at newValueMemSize
                         long newDataOffset = newValueMemSize;
                         valueMem.jumpTo(newValueMemSize);
 
                         // Write first value
-                        long firstValue = values.getQuick(0);
+                        long firstValue = rollbackValues.getQuick(0);
                         valueMem.putLong(firstValue);
                         long lastValue = firstValue;
                         int bytesWritten = 8;
 
                         // Write deltas
                         for (int i = 1; i < keepCount; i++) {
-                            long val = values.getQuick(i);
+                            long val = rollbackValues.getQuick(i);
                             long delta = val - lastValue;
                             bytesWritten += DeltaBitmapIndexUtils.encodeDelta(valueMem, delta);
                             lastValue = val;
@@ -339,19 +343,19 @@ public class DeltaBitmapIndexWriter implements Closeable, Mutable {
 
                         newValueMemSize = valueMem.getAppendOffset();
 
-                        // Update key entry
+                        // Update key entry with reduced fences
                         Unsafe.getUnsafe().storeFence();
                         keyMem.putLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, keepCount);
-                        Unsafe.getUnsafe().storeFence();
                         keyMem.putLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET, newDataOffset);
+                        keyMem.putLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE, lastValue);
                         keyMem.putInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN, bytesWritten);
                         Unsafe.getUnsafe().storeFence();
                         keyMem.putInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, (int) keepCount);
 
-                        // Update lastValues cache
-                        while (lastValues.size() <= k) {
-                            lastValues.add(Long.MIN_VALUE);
-                        }
+                        // Update caches
+                        keyDataOffsets.setQuick(k, newDataOffset);
+                        keyDataLens.setQuick(k, bytesWritten);
+                        keyValueCounts.setQuick(k, keepCount);
                         lastValues.setQuick(k, lastValue);
                     }
                 } else {
@@ -382,24 +386,25 @@ public class DeltaBitmapIndexWriter implements Closeable, Mutable {
         valueMem.truncate();
         keyCount = 0;
         valueMemSize = 0;
-        lastValues.clear();
+        clearCaches();
     }
 
     private void appendDeltaEncodedValue(long keyOffset, int key, long value) {
-        // Get last value for this key to compute delta
+        // Get last value for this key to compute delta (from cache)
         long lastValue = lastValues.getQuick(key);
         assert value >= lastValue : "values must be added in ascending order";
 
         long delta = value - lastValue;
         int deltaSize = DeltaBitmapIndexUtils.encodedSize(delta);
 
-        // Get current data info
-        long valueCount = keyMem.getLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
-        int dataLen = keyMem.getInt(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN);
-        long dataOffset = keyMem.getLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET);
+        // Get current data info from cache
+        long valueCount = keyValueCounts.getQuick(key);
+        int dataLen = keyDataLens.getQuick(key);
+        long dataOffset = keyDataOffsets.getQuick(key);
 
         // Check if this key's data ends at the current valueMemSize
         // If so, we can append in place. Otherwise, we need to relocate the data.
+        // Note: The slow path leaves the old data as garbage (fragmentation trade-off).
         long dataEnd = dataOffset + dataLen;
         if (dataEnd == valueMemSize) {
             // Fast path: data is at the end, can append in place
@@ -407,20 +412,24 @@ public class DeltaBitmapIndexWriter implements Closeable, Mutable {
             DeltaBitmapIndexUtils.encodeDelta(valueMem, delta);
 
             int newDataLen = dataLen + deltaSize;
+            long newValueCount = valueCount + 1;
             valueMemSize = valueMem.getAppendOffset();
             updateValueMemSize();
 
-            // Update key entry atomically
+            // Update key entry atomically with reduced fences
+            // Reader checks: countCheck == (int)valueCount, so we update countCheck last
             Unsafe.getUnsafe().storeFence();
-            keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, valueCount + 1);
-            Unsafe.getUnsafe().storeFence();
+            keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, newValueCount);
+            keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE, value);
             keyMem.putInt(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN, newDataLen);
             Unsafe.getUnsafe().storeFence();
-            keyMem.putInt(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, (int) (valueCount + 1));
-            Unsafe.getUnsafe().storeFence();
+            keyMem.putInt(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, (int) newValueCount);
+
+            // Update caches
+            keyDataLens.setQuick(key, newDataLen);
+            keyValueCounts.setQuick(key, newValueCount);
         } else {
             // Slow path: need to relocate data to the end
-            // First, copy existing data to the end
             long newDataOffset = valueMemSize;
             valueMem.jumpTo(newDataOffset);
 
@@ -433,21 +442,26 @@ public class DeltaBitmapIndexWriter implements Closeable, Mutable {
             DeltaBitmapIndexUtils.encodeDelta(valueMem, delta);
 
             int newDataLen = dataLen + deltaSize;
+            long newValueCount = valueCount + 1;
             valueMemSize = valueMem.getAppendOffset();
             updateValueMemSize();
 
-            // Update key entry atomically (including new dataOffset)
+            // Update key entry atomically with reduced fences
             Unsafe.getUnsafe().storeFence();
-            keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, valueCount + 1);
-            Unsafe.getUnsafe().storeFence();
+            keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, newValueCount);
             keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET, newDataOffset);
+            keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE, value);
             keyMem.putInt(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN, newDataLen);
             Unsafe.getUnsafe().storeFence();
-            keyMem.putInt(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, (int) (valueCount + 1));
-            Unsafe.getUnsafe().storeFence();
+            keyMem.putInt(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, (int) newValueCount);
+
+            // Update caches
+            keyDataOffsets.setQuick(key, newDataOffset);
+            keyDataLens.setQuick(key, newDataLen);
+            keyValueCounts.setQuick(key, newValueCount);
         }
 
-        // Update cache
+        // Update last value cache
         lastValues.setQuick(key, value);
     }
 
@@ -474,6 +488,36 @@ public class DeltaBitmapIndexWriter implements Closeable, Mutable {
         }
     }
 
+    /**
+     * Clears all cached key metadata.
+     */
+    private void clearCaches() {
+        keyDataOffsets.clear();
+        keyDataLens.clear();
+        keyValueCounts.clear();
+        lastValues.clear();
+        rollbackValues.clear();
+    }
+
+    /**
+     * Extends all caches to accommodate the given key.
+     */
+    private void extendCachesForKey(int key) {
+        while (keyDataOffsets.size() <= key) {
+            keyDataOffsets.add(0);
+            keyDataLens.add(0);
+            keyValueCounts.add(0);
+            lastValues.add(Long.MIN_VALUE);
+        }
+    }
+
+    private long keyMemSize() {
+        return (long) this.keyCount * DeltaBitmapIndexUtils.KEY_ENTRY_SIZE + DeltaBitmapIndexUtils.KEY_FILE_RESERVED;
+    }
+
+    /**
+     * Initializes value data for an existing key that had no values (sparse key byproduct).
+     */
     private void initValueDataAndStoreValue(long keyOffset, int key, long value) {
         // Write first value at current end of value memory
         long dataOffset = valueMemSize;
@@ -484,29 +528,61 @@ public class DeltaBitmapIndexWriter implements Closeable, Mutable {
         valueMemSize = valueMem.getAppendOffset();
         updateValueMemSize();
 
-        // Update key entry atomically
+        // Update key entry atomically with reduced fences
         Unsafe.getUnsafe().storeFence();
         keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, 1);
-        Unsafe.getUnsafe().storeFence();
         keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET, dataOffset);
+        keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE, value);
         keyMem.putInt(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN, dataLen);
         Unsafe.getUnsafe().storeFence();
         keyMem.putInt(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, 1);
-        Unsafe.getUnsafe().storeFence();
 
-        // Update cache
-        while (lastValues.size() <= key) {
-            lastValues.add(Long.MIN_VALUE);
-        }
+        // Update caches
+        keyDataOffsets.setQuick(key, dataOffset);
+        keyDataLens.setQuick(key, dataLen);
+        keyValueCounts.setQuick(key, 1);
         lastValues.setQuick(key, value);
     }
 
-    private long keyMemSize() {
-        return (long) this.keyCount * DeltaBitmapIndexUtils.KEY_ENTRY_SIZE + DeltaBitmapIndexUtils.KEY_FILE_RESERVED;
+    /**
+     * Initializes value data for a new key (key >= keyCount).
+     * Uses combined header update for efficiency.
+     */
+    private void initValueDataForNewKey(long keyOffset, int key, long value) {
+        // Write first value at current end of value memory
+        long dataOffset = valueMemSize;
+        valueMem.jumpTo(dataOffset);
+        valueMem.putLong(value);
+
+        int dataLen = 8; // First value is always 8 bytes
+        long newValueMemSize = valueMem.getAppendOffset();
+
+        // Combined header update (single sequence bump for both keyCount and valueMemSize)
+        updateHeaderAtomically(key + 1, newValueMemSize);
+
+        // Update key entry atomically with reduced fences
+        Unsafe.getUnsafe().storeFence();
+        keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, 1);
+        keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET, dataOffset);
+        keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE, value);
+        keyMem.putInt(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN, dataLen);
+        Unsafe.getUnsafe().storeFence();
+        keyMem.putInt(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, 1);
+
+        // Update caches - extend if needed
+        extendCachesForKey(key);
+        keyDataOffsets.setQuick(key, dataOffset);
+        keyDataLens.setQuick(key, dataLen);
+        keyValueCounts.setQuick(key, 1);
+        lastValues.setQuick(key, value);
     }
 
-    private void rebuildLastValuesCache() {
-        lastValues.clear();
+    /**
+     * Rebuilds all caches from key entries.
+     * O(k) where k = keyCount, since all metadata is stored directly in each key entry.
+     */
+    private void rebuildCaches() {
+        clearCaches();
         for (int k = 0; k < keyCount; k++) {
             long offset = DeltaBitmapIndexUtils.getKeyEntryOffset(k);
             long valueCount = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
@@ -516,35 +592,33 @@ public class DeltaBitmapIndexWriter implements Closeable, Mutable {
             // Verify the entry is valid
             if (valueCount > 0 && countCheck == (int) valueCount && dataOffset >= 0 && dataOffset < valueMemSize) {
                 int dataLen = keyMem.getInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN);
-
-                // Decode to find last value
-                long value = valueMem.getLong(dataOffset);
-                long[] decodeResult = new long[2];
-                long readOffset = dataOffset + 8;
-                long endOffset = dataOffset + dataLen;
-                long count = 1;
-
-                while (readOffset < endOffset && count < valueCount) {
-                    DeltaBitmapIndexUtils.decodeDelta(valueMem, readOffset, decodeResult);
-                    value += decodeResult[0];
-                    readOffset += decodeResult[1];
-                    count++;
-                }
-
-                lastValues.add(value);
+                long lastValue = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE);
+                keyDataOffsets.add(dataOffset);
+                keyDataLens.add(dataLen);
+                keyValueCounts.add(valueCount);
+                lastValues.add(lastValue);
             } else {
+                keyDataOffsets.add(0);
+                keyDataLens.add(0);
+                keyValueCounts.add(0);
                 lastValues.add(Long.MIN_VALUE);
             }
         }
     }
 
-    private void updateKeyCount(int key) {
-        keyCount = key + 1;
+    /**
+     * Updates header with new key count and value mem size in a single atomic operation.
+     * This is more efficient than separate updateKeyCount + updateValueMemSize calls.
+     */
+    private void updateHeaderAtomically(int newKeyCount, long newValueMemSize) {
+        keyCount = newKeyCount;
+        valueMemSize = newValueMemSize;
 
         long seq = keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) + 1;
         keyMem.putLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE, seq);
         Unsafe.getUnsafe().storeFence();
-        keyMem.putInt(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT, keyCount);
+        keyMem.putInt(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT, newKeyCount);
+        keyMem.putLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE, newValueMemSize);
         Unsafe.getUnsafe().storeFence();
         keyMem.putLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);
     }
@@ -576,10 +650,10 @@ public class DeltaBitmapIndexWriter implements Closeable, Mutable {
         }
 
         void of(int key) {
-            long offset = DeltaBitmapIndexUtils.getKeyEntryOffset(key);
-            long valueCount = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
-            long dataOffset = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET);
-            int dataLen = keyMem.getInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN);
+            // Use cached metadata
+            long valueCount = keyValueCounts.getQuick(key);
+            long dataOffset = keyDataOffsets.getQuick(key);
+            int dataLen = keyDataLens.getQuick(key);
 
             decodeAllValues(dataOffset, dataLen, valueCount, values);
             position = values.size() - 1;

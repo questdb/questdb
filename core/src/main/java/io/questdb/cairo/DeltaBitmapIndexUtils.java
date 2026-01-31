@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
@@ -59,20 +60,24 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  */
 public final class DeltaBitmapIndexUtils {
 
-    public static final int KEY_ENTRY_OFFSET_COUNT_CHECK = 20;
-    public static final int KEY_ENTRY_OFFSET_DATA_LEN = 16;
-    public static final int KEY_ENTRY_OFFSET_DATA_OFFSET = 8;
-    public static final int KEY_ENTRY_OFFSET_VALUE_COUNT = 0;
-    // Key entry layout (24 bytes per key)
-    public static final int KEY_ENTRY_SIZE = 24;
-    // Key file header layout (64 bytes reserved)
+    public static final int KEY_ENTRY_OFFSET_COUNT_CHECK = 28;   // 4 bytes
+    public static final int KEY_ENTRY_OFFSET_DATA_LEN = 24;      // 4 bytes
+    public static final int KEY_ENTRY_OFFSET_DATA_OFFSET = 8;    // 8 bytes
+    public static final int KEY_ENTRY_OFFSET_LAST_VALUE = 16;    // 8 bytes (for O(1) reopen)
+    // Key entry layout (32 bytes per key, 8-byte aligned)
+    public static final int KEY_ENTRY_OFFSET_VALUE_COUNT = 0;    // 8 bytes
+    public static final int KEY_ENTRY_SIZE = 32;
+
+    // Key file header layout (64 bytes reserved, 8-byte aligned)
     public static final int KEY_FILE_RESERVED = 64;
-    public static final int KEY_RESERVED_OFFSET_KEY_COUNT = 17;
-    public static final int KEY_RESERVED_OFFSET_MAX_VALUE = 29;
-    public static final int KEY_RESERVED_OFFSET_SEQUENCE = 1;
-    public static final int KEY_RESERVED_OFFSET_SEQUENCE_CHECK = 21;
-    public static final int KEY_RESERVED_OFFSET_SIGNATURE = 0;
-    public static final int KEY_RESERVED_OFFSET_VALUE_MEM_SIZE = 9;
+    public static final int KEY_RESERVED_OFFSET_KEY_COUNT = 24;       // 8 bytes (4 byte count + 4 padding)
+    public static final int KEY_RESERVED_OFFSET_MAX_VALUE = 40;       // 8 bytes
+    public static final int KEY_RESERVED_OFFSET_SEQUENCE = 8;         // 8 bytes
+    public static final int KEY_RESERVED_OFFSET_SEQUENCE_CHECK = 32;  // 8 bytes
+    public static final int KEY_RESERVED_OFFSET_SIGNATURE = 0;        // 8 bytes (1 byte sig + 7 padding)
+    public static final int KEY_RESERVED_OFFSET_VALUE_MEM_SIZE = 16;  // 8 bytes
+    // Bytes 48-63 reserved for future use
+
     // Signature for delta-encoded index (distinct from legacy 0xfa)
     public static final byte SIGNATURE = (byte) 0xfc;
     // Delta encoding prefixes
@@ -116,6 +121,52 @@ public final class DeltaBitmapIndexUtils {
             result[0] = mem.getLong(offset + 1);
             result[1] = 9;
         }
+    }
+
+    /**
+     * Fast decode using direct memory address (Unsafe).
+     * Returns encoded (delta | (bytesConsumed << 56)) to avoid array allocation.
+     * Use getDelta() and getBytesConsumed() to extract values.
+     *
+     * @param address direct memory address to read from
+     * @return packed result: lower 56 bits = delta, upper 8 bits = bytes consumed
+     */
+    public static long decodeDeltaUnsafe(long address) {
+        int firstByte = Unsafe.getUnsafe().getByte(address) & 0xFF;
+
+        if ((firstByte & 0x80) == 0) {
+            // 1-byte encoding: 0xxxxxxx (most common case for sequential data)
+            return firstByte | (1L << 56);
+        } else if ((firstByte & 0xC0) == PREFIX_2BYTE_MASK) {
+            // 2-byte encoding: 10xxxxxx xxxxxxxx
+            int highPart = (firstByte & 0x3F) << 8;
+            int lowPart = Unsafe.getUnsafe().getByte(address + 1) & 0xFF;
+            return (highPart | lowPart) | (2L << 56);
+        } else if ((firstByte & 0xE0) == PREFIX_4BYTE_MASK) {
+            // 4-byte encoding: 110xxxxx xxxxxxxx xxxxxxxx xxxxxxxx
+            long val = (firstByte & 0x1FL) << 24;
+            val |= (Unsafe.getUnsafe().getByte(address + 1) & 0xFFL) << 16;
+            val |= (Unsafe.getUnsafe().getByte(address + 2) & 0xFFL) << 8;
+            val |= (Unsafe.getUnsafe().getByte(address + 3) & 0xFFL);
+            return val | (4L << 56);
+        } else {
+            // 9-byte encoding: 11100000 + full 8-byte long
+            return Unsafe.getUnsafe().getLong(address + 1) | (9L << 56);
+        }
+    }
+
+    /**
+     * Extracts bytes consumed from packed decodeDeltaUnsafe result.
+     */
+    public static int getBytesConsumed(long packed) {
+        return (int) (packed >>> 56);
+    }
+
+    /**
+     * Extracts delta value from packed decodeDeltaUnsafe result.
+     */
+    public static long getDelta(long packed) {
+        return packed & 0x00FFFFFFFFFFFFFFL;
     }
 
     /**

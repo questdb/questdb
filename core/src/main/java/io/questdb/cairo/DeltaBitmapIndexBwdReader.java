@@ -294,9 +294,9 @@ public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
     /**
      * Backward cursor with buffered decode.
      * Decodes all values into a LongList and iterates in reverse.
+     * Uses Unsafe for fast direct memory access.
      */
     private class Cursor implements RowCursor {
-        private final long[] decodeResult = new long[2];
         private final LongList values = new LongList();
         protected long minValue;
         protected long next;
@@ -321,9 +321,9 @@ public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
             return next - minValue;
         }
 
-        private void decodeValues(long dataOffset, int dataLen, long valueCount, long maxValue) {
-            // Read first value
-            long value = valueMem.getLong(dataOffset);
+        private void decodeValues(long baseAddress, long dataOffset, int dataLen, long valueCount, long maxValue) {
+            // Read first value using Unsafe
+            long value = Unsafe.getUnsafe().getLong(baseAddress + dataOffset);
             long readOffset = dataOffset + 8;
             long endOffset = dataOffset + dataLen;
             long count = 1;
@@ -333,11 +333,11 @@ public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
                 values.add(value);
             }
 
-            // Decode and add remaining values
+            // Decode and add remaining values using Unsafe
             while (readOffset < endOffset && count < valueCount) {
-                DeltaBitmapIndexUtils.decodeDelta(valueMem, readOffset, decodeResult);
-                value += decodeResult[0];
-                readOffset += decodeResult[1];
+                long packed = DeltaBitmapIndexUtils.decodeDeltaUnsafe(baseAddress + readOffset);
+                value += DeltaBitmapIndexUtils.getDelta(packed);
+                readOffset += DeltaBitmapIndexUtils.getBytesConsumed(packed);
                 count++;
 
                 if (value > maxValue) {
@@ -387,7 +387,7 @@ public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
 
             if (valueCount > 0) {
                 valueMem.extend(dataOffset + dataLen);
-                decodeValues(dataOffset, dataLen, valueCount, maxValue);
+                decodeValues(valueMem.addressOf(0), dataOffset, dataLen, valueCount, maxValue);
             }
 
             this.minValue = minValue;

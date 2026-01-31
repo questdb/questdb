@@ -291,12 +291,13 @@ public class DeltaBitmapIndexFwdReader implements BitmapIndexReader {
 
     /**
      * Forward cursor with streaming delta decode.
+     * Uses Unsafe for fast direct memory access.
      */
     private class Cursor implements RowCursor {
-        private final long[] decodeResult = new long[2];
         protected long next;
         protected long position;
         protected long valueCount;
+        private long baseAddress;
         private long currentValue;
         private long dataEndOffset;
         private long maxValue;
@@ -309,16 +310,17 @@ public class DeltaBitmapIndexFwdReader implements BitmapIndexReader {
                 long value;
                 if (position == 0) {
                     // First value is stored as full 8 bytes
-                    value = valueMem.getLong(readOffset);
+                    value = Unsafe.getUnsafe().getLong(baseAddress + readOffset);
                     readOffset += 8;
                 } else {
                     // Subsequent values are delta-encoded
                     if (readOffset >= dataEndOffset) {
                         return false;
                     }
-                    DeltaBitmapIndexUtils.decodeDelta(valueMem, readOffset, decodeResult);
-                    value = currentValue + decodeResult[0];
-                    readOffset += decodeResult[1];
+                    // Use fast Unsafe decode - returns packed (delta | bytesConsumed << 56)
+                    long packed = DeltaBitmapIndexUtils.decodeDeltaUnsafe(baseAddress + readOffset);
+                    value = currentValue + DeltaBitmapIndexUtils.getDelta(packed);
+                    readOffset += DeltaBitmapIndexUtils.getBytesConsumed(packed);
                 }
 
                 currentValue = value;
@@ -381,6 +383,7 @@ public class DeltaBitmapIndexFwdReader implements BitmapIndexReader {
                 }
 
                 this.valueCount = valueCount;
+                this.baseAddress = valueMem.addressOf(0);
                 this.readOffset = dataOffset;
                 this.dataEndOffset = dataOffset + dataLen;
                 this.currentValue = 0;
