@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.idx.BitmapIndexReader;
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -86,7 +85,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     private DirectLongList samplePeriodAddress;
 
     public SampleByFirstLastRecordCursorFactory(
-            CairoConfiguration configuration,
             RecordCursorFactory base,
             TimestampSampler timestampSampler,
             GenericRecordMetadata groupByMetadata,
@@ -124,7 +122,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             samplePeriodAddress = new DirectLongList(pageSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);
             this.symbolFilter = symbolFilter;
             cursor = new SampleByFirstLastRecordCursor(
-                    configuration,
                     timestampSampler,
                     metadata.getColumnType(timestampIndex),
                     timezoneNameFunc,
@@ -321,7 +318,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private int state;
 
         public SampleByFirstLastRecordCursor(
-                CairoConfiguration configuration,
                 TimestampSampler timestampSampler,
                 int timestampType,
                 Function timezoneNameFunc,

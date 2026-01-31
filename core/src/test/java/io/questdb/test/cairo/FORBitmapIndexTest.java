@@ -53,7 +53,7 @@ public class FORBitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBlockBoundary() throws Exception {
+    public void testBlockBoundary() {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             // Write exactly BLOCK_CAPACITY values to trigger block flush
             int blockCapacity = FORBitmapIndexUtils.BLOCK_CAPACITY;
@@ -77,7 +77,7 @@ public class FORBitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testColumnTop() throws Exception {
+    public void testColumnTop() {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             long columnTop = 100;
 
@@ -112,7 +112,7 @@ public class FORBitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testComparisonWithLegacy() throws Exception {
+    public void testComparisonWithLegacy() {
         // Ensure FOR index produces same results as legacy for same data
         try (Path path = new Path().of(configuration.getDbRoot())) {
             LongList values = new LongList();
@@ -142,7 +142,7 @@ public class FORBitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEmptyKey() throws Exception {
+    public void testEmptyKey() {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             try (FORBitmapIndexWriter writer = new FORBitmapIndexWriter(configuration, path, "empty", 0)) {
                 // Write only to key 5
@@ -165,7 +165,7 @@ public class FORBitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLargeGaps() throws Exception {
+    public void testLargeGaps() {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             try (FORBitmapIndexWriter writer = new FORBitmapIndexWriter(configuration, path, "gaps", 0)) {
                 // Write values with large gaps
@@ -188,7 +188,7 @@ public class FORBitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMaxValue() throws Exception {
+    public void testMaxValue() {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             try (FORBitmapIndexWriter writer = new FORBitmapIndexWriter(configuration, path, "maxval", 0)) {
                 writer.add(0, 100);
@@ -207,7 +207,7 @@ public class FORBitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMultipleKeys() throws Exception {
+    public void testMultipleKeys() {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             try (FORBitmapIndexWriter writer = new FORBitmapIndexWriter(configuration, path, "multikey", 0)) {
                 // Write values to multiple keys
@@ -238,7 +238,7 @@ public class FORBitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNonExistentKey() throws Exception {
+    public void testNonExistentKey() {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             try (FORBitmapIndexWriter writer = new FORBitmapIndexWriter(configuration, path, "nonexistent", 0)) {
                 writer.add(0, 0);
@@ -290,7 +290,7 @@ public class FORBitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPartialBlock() throws Exception {
+    public void testPartialBlock() {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             // Write less than BLOCK_CAPACITY values
             int valueCount = FORBitmapIndexUtils.BLOCK_CAPACITY / 2;
@@ -314,7 +314,7 @@ public class FORBitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRandomValues() throws Exception {
+    public void testRandomValues() {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             Rnd rnd = new Rnd();
             LongList expected = new LongList();
@@ -354,7 +354,7 @@ public class FORBitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRangeQuery() throws Exception {
+    public void testRangeQuery() {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             try (FORBitmapIndexWriter writer = new FORBitmapIndexWriter(configuration, path, "range", 0)) {
                 for (int i = 0; i < 1000; i++) {
@@ -388,7 +388,7 @@ public class FORBitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReopen() throws Exception {
+    public void testReopen() {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             // Write some values
             try (FORBitmapIndexWriter writer = new FORBitmapIndexWriter(configuration, path, "reopen", 0)) {
@@ -421,7 +421,7 @@ public class FORBitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSimpleWriteAndRead() throws Exception {
+    public void testSimpleWriteAndRead() {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             try (FORBitmapIndexWriter writer = new FORBitmapIndexWriter(configuration, path, "test", 0)) {
                 // Write sequential values to key 0
@@ -456,7 +456,7 @@ public class FORBitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTruncate() throws Exception {
+    public void testTruncate() {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             try (FORBitmapIndexWriter writer = new FORBitmapIndexWriter(configuration, path, "truncate", 0)) {
                 for (int i = 0; i < 1000; i++) {

@@ -39,7 +39,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 public class RoaringBitmapIndexTest extends AbstractCairoTest {
 
     @Test
-    public void testSimpleAddAndRead() throws Exception {
+    public void testSimpleAddAndRead() {
         final int keyCount = 30;
         final int valuesPerKey = 100;
 
@@ -100,7 +100,7 @@ public class RoaringBitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRangeQuery() throws Exception {
+    public void testRangeQuery() {
         try (Path path = new Path().of(root)) {
             final int plen = path.size();
 
@@ -133,7 +133,7 @@ public class RoaringBitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLargeIndex() throws Exception {
+    public void testLargeIndex() {
         // Test with enough values to trigger array -> bitmap promotion
         final int valueCount = 10000;  // More than 4096 to trigger bitmap
 
@@ -184,7 +184,7 @@ public class RoaringBitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMultipleChunks() throws Exception {
+    public void testMultipleChunks() {
         // Test values that span multiple chunks (each chunk is 65536 values)
         try (Path path = new Path().of(root)) {
             final int plen = path.size();
@@ -243,7 +243,7 @@ public class RoaringBitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSparseKeys() throws Exception {
+    public void testSparseKeys() {
         // Test with non-consecutive keys
         try (Path path = new Path().of(root)) {
             final int plen = path.size();
@@ -293,7 +293,7 @@ public class RoaringBitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEmptyIndex() throws Exception {
+    public void testEmptyIndex() {
         try (Path path = new Path().of(root)) {
             final int plen = path.size();
 
@@ -313,7 +313,7 @@ public class RoaringBitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBackwardReaderSimple() throws Exception {
+    public void testBackwardReaderSimple() {
         // Simplest backward read test
         try (Path path = new Path().of(root)) {
             final int plen = path.size();

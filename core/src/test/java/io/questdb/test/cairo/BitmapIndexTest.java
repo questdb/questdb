@@ -1694,7 +1694,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         }
                     }
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     errors.incrementAndGet();
                 } finally {
                     stopLatch.countDown();
@@ -1739,7 +1739,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         }
                     } catch (Throwable e) {
                         errors.incrementAndGet();
-                        e.printStackTrace();
+                        e.printStackTrace(System.out);
                     } finally {
                         stopLatch.countDown();
                     }
@@ -1827,7 +1827,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     }
                     writerDone.set(true);
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     errors.incrementAndGet();
                 } finally {
                     stopLatch.countDown();
@@ -1870,7 +1870,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         }
                     } catch (Throwable e) {
                         errors.incrementAndGet();
-                        e.printStackTrace();
+                        e.printStackTrace(System.out);
                     } finally {
                         stopLatch.countDown();
                     }
@@ -1940,7 +1940,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         }
                     }
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     errors.incrementAndGet();
                 } finally {
                     stopLatch.countDown();
@@ -1985,7 +1985,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         }
                     } catch (Throwable e) {
                         errors.incrementAndGet();
-                        e.printStackTrace();
+                        e.printStackTrace(System.out);
                     } finally {
                         stopLatch.countDown();
                     }

@@ -328,18 +328,11 @@ public class RoaringBitmapIndexBwdReader extends AbstractRoaringBitmapIndexReade
             while (currentChunkIndex >= 0) {
                 if (hasCurrentChunk) {
                     // Type-specialized advance to avoid per-value type check
-                    long rowId;
-                    switch (currentChunk.containerType) {
-                        case CONTAINER_TYPE_ARRAY:
-                            rowId = advanceInArray();
-                            break;
-                        case CONTAINER_TYPE_BITMAP:
-                            rowId = advanceInBitmap();
-                            break;
-                        default:
-                            rowId = advanceInRun();
-                            break;
-                    }
+                    long rowId = switch (currentChunk.containerType) {
+                        case CONTAINER_TYPE_ARRAY -> advanceInArray();
+                        case CONTAINER_TYPE_BITMAP -> advanceInBitmap();
+                        default -> advanceInRun();
+                    };
                     if (rowId >= 0) {
                         if (rowId < minValue) {
                             chunkCount = 0;
