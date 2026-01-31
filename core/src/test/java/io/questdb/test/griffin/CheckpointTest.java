@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.Bootstrap;
 import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropertyKey;
-import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -40,6 +39,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -2454,7 +2454,7 @@ public class CheckpointTest extends AbstractCairoTest {
                                 Assert.assertEquals(columnMetadata0.getColumnName(), columnMetadata1.getColumnName());
                                 Assert.assertEquals(columnMetadata0.getColumnType(), columnMetadata1.getColumnType());
                                 Assert.assertEquals(columnMetadata0.getIndexValueBlockCapacity(), columnMetadata1.getIndexValueBlockCapacity());
-                                Assert.assertEquals(columnMetadata0.isSymbolIndexFlag(), columnMetadata1.isSymbolIndexFlag());
+                                Assert.assertEquals(columnMetadata0.isIndexed(), columnMetadata1.isIndexed());
                                 Assert.assertEquals(columnMetadata0.isSymbolTableStatic(), columnMetadata1.isSymbolTableStatic());
                             }
 
@@ -2829,23 +2829,11 @@ public class CheckpointTest extends AbstractCairoTest {
      * Snapshot of a bitmap index file contents for testing purposes.
      * Reads the .k and .v files and extracts all key entries with their row IDs.
      */
-    private static class IndexSnapshot {
+    private record IndexSnapshot(IntObjHashMap<LongList> entries, int keyCount, long sequence, long maxValue) {
         private static final long MAX_VALUE_OFFSET = 37L;
 
-        final IntObjHashMap<LongList> entries;
-        final int keyCount;
-        final long maxValue;
-        final long sequence;
-
-        private IndexSnapshot(IntObjHashMap<LongList> entries, int keyCount, long sequence, long maxValue) {
-            this.entries = entries;
-            this.keyCount = keyCount;
-            this.sequence = sequence;
-            this.maxValue = maxValue;
-        }
-
         @Override
-        public String toString() {
+        public @NotNull String toString() {
             StringBuilder sb = new StringBuilder();
             sb.append("IndexSnapshot{keyCount=").append(keyCount)
                     .append(", sequence=").append(sequence)

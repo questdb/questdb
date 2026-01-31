@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -177,7 +178,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             argType = getArgType(arg);
         }
 
-        metadata.add(new TableColumnMetadata(columnName, argType, false, 0, false, null));
+        metadata.add(new TableColumnMetadata(columnName, argType, IndexType.NONE, 0, false, null));
 
         if (constantArg || forceConstant) {
             printConstant(argType, expression1, arg);
@@ -566,6 +567,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             cleanup();
         }
 
+        // todo: check if used
         public void andAssertDecimal256(long hh, long hl, long lh, long ll, int scale) {
             Decimal256 decimal256 = new Decimal256();
             function1.getDecimal256(record, decimal256);

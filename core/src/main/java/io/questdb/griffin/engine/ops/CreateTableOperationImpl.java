@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
@@ -452,6 +453,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         return ignoreIfExists;
     }
 
+    @Override
+    public byte getIndexType(int index) {
+        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_INDEXED) != 0 ? IndexType.SYMBOL : IndexType.NONE;
+    }
+
     public void initColumnMetadata(@Transient LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap) {
         assert columnNames.size() == 0;
         assert columnBits.size() == 0;
@@ -481,7 +487,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             final TableColumnMetadata columnMetadata = new TableColumnMetadata(
                     columnNameStr,
                     model.getColumnType(),
-                    model.isIndexed(),
+                    model.getIndexType(),
                     model.getIndexValueBlockSize(),
                     true,
                     null,
@@ -498,11 +504,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public boolean isDedupKey(int index) {
         return (getLowAt(index * 2 + 1) & COLUMN_FLAG_DEDUP_KEY) != 0;
-    }
-
-    @Override
-    public boolean isIndexed(int index) {
-        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_INDEXED) != 0;
     }
 
     @Override
@@ -556,7 +557,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     colMeta.getColumnType(),
                     colMeta.isSymbolCacheFlag(),
                     colMeta.getSymbolCapacity(),
-                    colMeta.isSymbolIndexFlag(),
+                    colMeta.isIndexed(),
                     colMeta.getIndexValueBlockCapacity(),
                     colMeta.isDedupKeyFlag()
             );
@@ -661,7 +662,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int columnType;
             int symbolCapacity;
             boolean symbolCacheFlag;
-            boolean symbolIndexed;
+            byte indexType;
             boolean isDedupKey;
             int indexBlockCapacity;
             if (augMeta != null) {
@@ -675,7 +676,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 }
                 symbolCapacity = augMeta.getSymbolCapacity();
                 symbolCacheFlag = augMeta.isSymbolCacheFlag();
-                symbolIndexed = augMeta.isSymbolIndexFlag();
+                indexType = augMeta.getIndexType();
                 isDedupKey = augMeta.isDedupKeyFlag();
                 indexBlockCapacity = augMeta.getIndexValueBlockCapacity();
             } else {
@@ -687,12 +688,12 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 }
                 symbolCapacity = this.defaultSymbolCapacity;
                 symbolCacheFlag = true;
-                symbolIndexed = false;
+                indexType = IndexType.NONE;
                 isDedupKey = false;
                 indexBlockCapacity = 0;
             }
 
-            if (!ColumnType.isSymbol(columnType) && symbolIndexed) {
+            if (!ColumnType.isSymbol(columnType) && IndexType.isIndexed(indexType)) {
                 throw SqlException.$(0, "indexes are supported only for SYMBOL columns: ").put(columnName);
             }
             if (isDedupKey) {
@@ -706,7 +707,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     columnType,
                     symbolCacheFlag,
                     symbolCapacity,
-                    symbolIndexed,
+                    IndexType.isIndexed(indexType),
                     indexBlockCapacity,
                     isDedupKey
             );

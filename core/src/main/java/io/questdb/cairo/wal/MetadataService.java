@@ -26,6 +26,7 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.UpdateOperator;
@@ -62,7 +63,7 @@ public interface MetadataService {
      *                                value badly wrong will cause performance degradation. Must be power of 2
      * @param symbolCacheFlag         when set to true, symbol values will be cached on Java heap.
      * @param columnType              {@link ColumnType}
-     * @param isIndexed               configures column to be indexed or not
+     * @param indexType               column index type, see {@link IndexType}
      * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
      * @param isSequential            for columns that contain sequential values query optimiser can make assumptions on range searches (future feature)
      * @param isDedupKey              when set to true, column will be used as deduplication key
@@ -72,7 +73,7 @@ public interface MetadataService {
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isSequential,
             boolean isDedupKey,
@@ -84,7 +85,7 @@ public interface MetadataService {
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isSequential,
             boolean isDedupKey
@@ -94,7 +95,7 @@ public interface MetadataService {
                 columnType,
                 symbolCapacity,
                 symbolCacheFlag,
-                isIndexed,
+                indexType,
                 indexValueBlockCapacity,
                 isSequential,
                 isDedupKey,

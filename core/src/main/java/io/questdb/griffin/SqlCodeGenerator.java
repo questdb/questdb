@@ -27,7 +27,6 @@ package io.questdb.griffin;
 import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnFilter;
@@ -36,6 +35,7 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.IntervalPartitionFrameCursorFactory;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.PartitionBy;
@@ -49,6 +49,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.Function;
@@ -1126,7 +1127,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     queryMeta.add(new TableColumnMetadata(
                             metadata.getColumnName(columnIndex),
                             type,
-                            metadata.isColumnIndexed(columnIndex),
+                            metadata.getColumnIndexType(columnIndex),
                             metadata.getIndexValueBlockCapacity(columnIndex),
                             metadata.isSymbolTableStatic(columnIndex),
                             metadata.getMetadata(columnIndex),
@@ -4311,7 +4312,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         latestBy.addAll(model.getLatestBy());
         final ExpressionNode latestByNode = latestBy.get(0);
         final int latestByIndex = metadata.getColumnIndexQuiet(latestByNode.token);
-        final boolean indexed = metadata.isColumnIndexed(latestByIndex);
+        final boolean indexed = IndexType.isIndexed(metadata.getColumnIndexType(latestByIndex));
 
         // 'latest by' clause takes over the filter and the latest by nodes,
         // so that the later generateFilter() and generateLatestBy() are no-op
@@ -5462,7 +5463,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         new TableColumnMetadata(
                                 Chars.toString(queryColumn.getAlias()),
                                 metadata.getColumnType(index),
-                                metadata.isColumnIndexed(index),
+                                metadata.getColumnIndexType(index),
                                 metadata.getIndexValueBlockCapacity(index),
                                 metadata.isSymbolTableStatic(index),
                                 metadata.getMetadata(index)
@@ -5491,7 +5492,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     new TableColumnMetadata(
                             "", // implicitly added timestamp - should never be referenced by a user, we only need the timestamp index position
                             colMetadata.getColumnType(),
-                            colMetadata.isSymbolIndexFlag(),
+                            colMetadata.getIndexType(),
                             colMetadata.getIndexValueBlockCapacity(),
                             colMetadata.isSymbolTableStatic(),
                             metadata
@@ -5664,7 +5665,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 new TableColumnMetadata(
                                         Chars.toString(columns.getQuick(indexInThis).getName()),
                                         type,
-                                        false,
+                                        IndexType.NONE,
                                         0,
                                         baseMetadata.isSymbolTableStatic(indexInBase),
                                         null
@@ -6080,7 +6081,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         m = new TableColumnMetadata(
                                 Chars.toString(column.getAlias()),
                                 function.getType(),
-                                false,
+                                IndexType.NONE,
                                 0,
                                 ((SymbolFunction) function).isSymbolTableStatic(),
                                 function.getMetadata()
@@ -6089,7 +6090,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         m = new TableColumnMetadata(
                                 Chars.toString(column.getAlias()),
                                 SYMBOL,
-                                false,
+                                IndexType.NONE,
                                 0,
                                 false,
                                 function.getMetadata()
@@ -6101,7 +6102,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     m = new TableColumnMetadata(
                             Chars.toString(column.getAlias()),
                             function.getType(),
-                            false,
+                            IndexType.NONE,
                             0,
                             false,
                             function.getMetadata()
@@ -6368,7 +6369,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     factoryMetadata.add(new TableColumnMetadata(
                             Chars.toString(qc.getAlias()),
                             windowFunction.getType(),
-                            false,
+                            IndexType.NONE,
                             0,
                             false,
                             null
@@ -6394,7 +6395,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         factoryMetadata.add(i, new TableColumnMetadata(
                                         Chars.toString(qc.getAlias()),
                                         m.getColumnType(),
-                                        m.isSymbolIndexFlag(),
+                                m.getIndexType(),
                                         m.getIndexValueBlockCapacity(),
                                         m.isSymbolTableStatic(),
                                         baseMetadata
@@ -6446,7 +6447,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         factoryMetadata.add(i, new TableColumnMetadata(
                                         Chars.toString(qc.getAlias()),
                                         m.getColumnType(),
-                                        m.isSymbolIndexFlag(),
+                                m.getIndexType(),
                                         m.getIndexValueBlockCapacity(),
                                         m.isSymbolTableStatic(),
                                         baseMetadata
@@ -6628,7 +6629,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     deferredWindowMetadata.extendAndSet(i, new TableColumnMetadata(
                             Chars.toString(qc.getAlias()),
                             windowFunction.getType(),
-                            false,
+                            IndexType.NONE,
                             0,
                             false,
                             null

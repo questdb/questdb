@@ -183,8 +183,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
-    public boolean getSymbolCacheFlag(int columnIndex) {
-        return getColumnMetadata(columnIndex).isSymbolIndexFlag();
+    public byte getIndexType(int columnIndex) {
+        return getColumnMetadata(columnIndex).getIndexType();
     }
 
     @Override
@@ -217,8 +217,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
-    public boolean isIndexed(int columnIndex) {
-        return getColumnMetadata(columnIndex).isSymbolIndexFlag();
+    public boolean getSymbolCacheFlag(int columnIndex) {
+        return getColumnMetadata(columnIndex).isSymbolCacheFlag();
     }
 
     public boolean isSoftLink() {
@@ -335,7 +335,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                         new TableReaderMetadataColumn(
                                 colName,
                                 columnType,
-                                TableUtils.isColumnIndexed(mem, writerIndex),
+                                TableUtils.getColumnIndexType(mem, writerIndex),
                                 TableUtils.getIndexBlockCapacity(mem, writerIndex),
                                 true,
                                 null,
@@ -400,7 +400,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             int denseSymbolIndex = columnOrderList.get(i + 2);
             int newColumnType = TableUtils.getColumnType(newMetaMem, writerIndex);
             int columnType = TableUtils.getColumnType(newMetaMem, writerIndex);
-            boolean isIndexed = TableUtils.isColumnIndexed(newMetaMem, writerIndex);
+            byte indexType = TableUtils.getColumnIndexType(newMetaMem, writerIndex);
             boolean isDedupKey = TableUtils.isColumnDedupKey(newMetaMem, writerIndex);
             int indexBlockCapacity = TableUtils.getIndexBlockCapacity(newMetaMem, writerIndex);
             boolean symbolIsCached = TableUtils.isSymbolCached(newMetaMem, writerIndex);
@@ -437,7 +437,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                 if (rename
                         || existing == null
                         || existing.getWriterIndex() != writerIndex
-                        || existing.isSymbolIndexFlag() != isIndexed
+                        || existing.getIndexType() != indexType
                         || existing.getIndexValueBlockCapacity() != indexBlockCapacity
                         || existing.isDedupKeyFlag() != isDedupKey
                         || existing.getDenseSymbolIndex() != denseSymbolIndex
@@ -449,7 +449,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                             new TableReaderMetadataColumn(
                                     newName,
                                     columnType,
-                                    isIndexed,
+                                    indexType,
                                     indexBlockCapacity,
                                     true,
                                     null,

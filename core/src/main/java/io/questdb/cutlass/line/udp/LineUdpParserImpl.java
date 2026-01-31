@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
@@ -633,8 +634,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
 
         @Override
-        public boolean isIndexed(int columnIndex) {
-            return false;
+        public byte getIndexType(int columnIndex) {
+            return IndexType.NONE;
         }
 
         @Override

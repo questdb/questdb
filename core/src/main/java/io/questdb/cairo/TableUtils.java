@@ -197,6 +197,7 @@ public final class TableUtils {
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
     static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
     static final int META_FLAG_BIT_INDEXED = 1;
+    static final int META_FLAG_INDEX_TYPE_MASK = 0x03; // bits 0-1 for index type
     static final int META_FLAG_BIT_SYMBOL_CACHE = 1 << 2;
     static final int META_FLAG_BIT_DEDUP_KEY = META_FLAG_BIT_SYMBOL_CACHE << 1;
     static final byte TODO_RESTORE_META = 2;
@@ -259,7 +260,7 @@ public final class TableUtils {
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             LowerCaseCharSequenceIntHashMap columnNameIndexMap,
             ObjList<TableColumnMetadata> columnMetadata
@@ -274,7 +275,7 @@ public final class TableUtils {
                 new TableColumnMetadata(
                         columnNameStr,
                         columnType,
-                        isIndexed,
+                        indexType,
                         indexValueBlockCapacity,
                         false,
                         null,
@@ -316,6 +317,7 @@ public final class TableUtils {
         return checksum;
     }
 
+    // todo: check if it is used
     public static void cleanupDirQuiet(FilesFacade ff, Utf8Sequence dir) {
         cleanupDirQuiet(ff, dir, LOG);
     }
@@ -1987,10 +1989,7 @@ public final class TableUtils {
 
         for (int i = 0; i < count; i++) {
             mem.putInt(tableStruct.getColumnType(i));
-            long flags = 0;
-            if (tableStruct.isIndexed(i)) {
-                flags |= META_FLAG_BIT_INDEXED;
-            }
+            long flags = tableStruct.getIndexType(i) & META_FLAG_INDEX_TYPE_MASK;
 
             if (tableStruct.getSymbolCacheFlag(i)) {
                 flags |= META_FLAG_BIT_SYMBOL_CACHE;
@@ -2128,8 +2127,12 @@ public final class TableUtils {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_DEDUP_KEY) != 0;
     }
 
+    static byte getColumnIndexType(MemoryR metaMem, int columnIndex) {
+        return (byte) (getColumnFlags(metaMem, columnIndex) & META_FLAG_INDEX_TYPE_MASK);
+    }
+
     static boolean isColumnIndexed(MemoryR metaMem, int columnIndex) {
-        return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_INDEXED) != 0;
+        return getColumnIndexType(metaMem, columnIndex) != IndexType.NONE;
     }
 
     static int openMetaSwapFile(FilesFacade ff, MemoryMA mem, Path path, int rootLen, int retryCount) {

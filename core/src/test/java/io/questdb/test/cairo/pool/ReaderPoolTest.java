@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -291,7 +292,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                                 columnTypeChanged = false;
                                 columnRenamed = false;
                             } else if (prob >= 90 && !columnsAdded) {
-                                writer.addColumn("sym2", ColumnType.SYMBOL, 256, true, true, 256, false);
+                                writer.addColumn("sym2", ColumnType.SYMBOL, 256, true, IndexType.SYMBOL, 256, false);
                                 writer.addColumn("int2", ColumnType.INT);
                                 writer.addColumn("bool2", ColumnType.BOOLEAN);
                                 columnsAdded = true;

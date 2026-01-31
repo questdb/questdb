@@ -26,7 +26,6 @@ package io.questdb.cairo.wal;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.AlterTableContextException;
-import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -36,6 +35,7 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DdlListener;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SymbolMapReader;
@@ -49,6 +49,7 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -205,7 +206,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 columnType,
                 configuration.getDefaultSymbolCapacity(),
                 configuration.getDefaultSymbolCacheFlag(),
-                false,
+                IndexType.NONE,
                 configuration.getIndexValueBlockSize(),
                 false,
                 securityContext
@@ -218,7 +219,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isDedupKey
     ) {
@@ -227,7 +228,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 columnType,
                 symbolCapacity,
                 symbolCacheFlag,
-                isIndexed,
+                indexType,
                 indexValueBlockCapacity,
                 isDedupKey,
                 null
@@ -657,7 +658,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isDedupKey,
             SecurityContext securityContext
@@ -672,7 +673,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 columnType,
                 symbolCapacity,
                 symbolCacheFlag,
-                isIndexed,
+                indexType,
                 indexValueBlockCapacity,
                 isDedupKey
         );
@@ -1866,7 +1867,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 int columnType,
                 int symbolCapacity,
                 boolean symbolCacheFlag,
-                boolean isIndexed,
+                byte indexType,
                 int indexValueBlockCapacity,
                 boolean isSequential,
                 boolean isDedupKey,
@@ -1994,7 +1995,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 int columnType,
                 int symbolCapacity,
                 boolean symbolCacheFlag,
-                boolean isIndexed,
+                byte indexType,
                 int indexValueBlockCapacity,
                 boolean isSequential,
                 boolean isDedupKey,
@@ -2100,7 +2101,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                                     newType,
                                     symbolCapacity,
                                     symbolCacheFlag,
-                                    isIndexed,
+                                    isIndexed ? IndexType.SYMBOL : IndexType.NONE,
                                     indexValueBlockCapacity
                             );
                             path.trimTo(pathSize).slash().put(segmentId);

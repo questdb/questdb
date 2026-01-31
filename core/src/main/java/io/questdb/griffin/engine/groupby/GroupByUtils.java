@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
@@ -139,7 +140,7 @@ public class GroupByUtils {
                         m = new TableColumnMetadata(
                                 Chars.toString(column.getName()),
                                 func.getType(),
-                                false,
+                                IndexType.NONE,
                                 0,
                                 func instanceof SymbolFunction && (((SymbolFunction) func).isSymbolTableStatic()),
                                 func.getMetadata()
@@ -170,7 +171,7 @@ public class GroupByUtils {
                         m = new TableColumnMetadata(
                                 Chars.toString(column.getAlias()),
                                 baseMetadata.getColumnType(index),
-                                baseMetadata.isColumnIndexed(index),
+                                baseMetadata.getColumnIndexType(index),
                                 baseMetadata.getIndexValueBlockCapacity(index),
                                 baseMetadata.isSymbolTableStatic(index),
                                 baseMetadata.getMetadata(index)

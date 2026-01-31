@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableStructure;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
@@ -158,8 +159,9 @@ public class TableModel implements TableStructure {
     }
 
     @Override
-    public boolean isIndexed(int index) {
-        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_INDEXED) == COLUMN_FLAG_INDEXED;
+    public byte getIndexType(int index) {
+        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_INDEXED) == COLUMN_FLAG_INDEXED
+                ? IndexType.SYMBOL : IndexType.NONE;
     }
 
     @Override
@@ -185,23 +187,19 @@ public class TableModel implements TableStructure {
     }
 
     public TableModel timestamp(int timestampType) {
-        switch (timestampType) {
-            case ColumnType.TIMESTAMP_MICRO:
-                return timestamp();
-            case ColumnType.TIMESTAMP_NANO:
-                return timestampNs();
-        }
-        return this;
+        return switch (timestampType) {
+            case ColumnType.TIMESTAMP_MICRO -> timestamp();
+            case ColumnType.TIMESTAMP_NANO -> timestampNs();
+            default -> this;
+        };
     }
 
     public TableModel timestamp(CharSequence name, int timestampType) {
-        switch (timestampType) {
-            case ColumnType.TIMESTAMP_MICRO:
-                return timestamp(name);
-            case ColumnType.TIMESTAMP_NANO:
-                return timestampNs(name);
-        }
-        return this;
+        return switch (timestampType) {
+            case ColumnType.TIMESTAMP_MICRO -> timestamp(name);
+            case ColumnType.TIMESTAMP_NANO -> timestampNs(name);
+            default -> this;
+        };
     }
 
     public TableModel timestamp() {

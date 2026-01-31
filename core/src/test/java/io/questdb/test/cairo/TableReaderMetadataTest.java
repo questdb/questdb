@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -177,7 +178,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 w -> w.changeColumnType("sym", ColumnType.STRING, 0, false, false, 0, false, null),
                 w -> w.changeColumnType("str", ColumnType.VARCHAR, 0, false, false, 0, false, null),
                 w -> w.removeColumn("bool"),
-                w -> w.addColumn("bool2", ColumnType.BOOLEAN, 0, false, false, 0, false, false, null),
+                w -> w.addColumn("bool2", ColumnType.BOOLEAN, 0, false, IndexType.NONE, 0, false, false, null),
                 w -> w.changeColumnType("varchar", ColumnType.STRING, 0, false, false, 0, false, null)
         );
     }
@@ -201,7 +202,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                     writer.changeColumnType("int", ColumnType.LONG, 0, false, false, 0, false, null);
                     writer.changeColumnType("sym", ColumnType.VARCHAR, 0, false, false, 0, false, null);
                     writer.removeColumn("bool");
-                    writer.addColumn("bool2", ColumnType.BOOLEAN, 0, false, false, 0, false, false, null);
+                    writer.addColumn("bool2", ColumnType.BOOLEAN, 0, false, IndexType.NONE, 0, false, false, null);
                     structVersion = writer.getMetadataVersion();
                 }
 

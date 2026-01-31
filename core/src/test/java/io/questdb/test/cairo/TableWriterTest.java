@@ -25,7 +25,6 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
@@ -35,6 +34,7 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReader;
@@ -43,6 +43,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
@@ -285,7 +286,7 @@ public class TableWriterTest extends AbstractCairoTest {
                         String columnName = "col" + i;
                         alterOperationBuilder
                                 .ofAddColumn(0, token, tableId)
-                                .ofAddColumn(columnName, 5, ColumnType.INT, 0, false, false, 0);
+                                .ofAddColumn(columnName, 5, ColumnType.INT, 0, false, IndexType.NONE, 0);
                         AlterOperation alterOp = alterOperationBuilder.build();
                         try (TableWriter writer = engine.getWriterOrPublishCommand(token, alterOp)) {
                             if (writer != null) {
@@ -710,7 +711,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
 
                 try {
-                    writer.addColumn("c", ColumnType.STRING, 0, false, true, 1024, false);
+                    writer.addColumn("c", ColumnType.STRING, 0, false, IndexType.SYMBOL, 1024, false);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "only supported");
@@ -725,7 +726,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
 
                 // re-add column  with index flag switched off
-                writer.addColumn("c", ColumnType.STRING, 0, false, false, 0, false);
+                writer.addColumn("c", ColumnType.STRING, 0, false, IndexType.NONE, 0, false);
             }
         });
     }
@@ -751,7 +752,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
 
                 try {
-                    writer.addColumn("c", ColumnType.SYMBOL, 0, false, true, 0, false);
+                    writer.addColumn("c", ColumnType.SYMBOL, 0, false, IndexType.SYMBOL, 0, false);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "invalid index value block capacity");
@@ -766,7 +767,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
 
                 // re-add column  with index flag switched off
-                writer.addColumn("c", ColumnType.STRING, 0, false, false, 0, false);
+                writer.addColumn("c", ColumnType.STRING, 0, false, IndexType.NONE, 0, false);
             }
         });
     }

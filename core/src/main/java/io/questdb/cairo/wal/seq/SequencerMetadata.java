@@ -27,6 +27,7 @@ package io.questdb.cairo.wal.seq;
 import io.questdb.cairo.AbstractRecordMetadata;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
@@ -85,11 +86,11 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isDedupKey
     ) {
-        addColumn0(columnName, columnType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isDedupKey);
+        addColumn0(columnName, columnType, symbolCapacity, symbolCacheFlag, indexType, indexValueBlockCapacity, isDedupKey);
         readColumnOrder.add(columnMetadata.size() - 1);
         structureVersion.incrementAndGet();
     }
@@ -99,7 +100,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity
     ) {
         int existingColumnIndex = TableUtils.changeColumnTypeInMetadata(
@@ -107,7 +108,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                 columnType,
                 symbolCapacity,
                 symbolCacheFlag,
-                isIndexed,
+                indexType,
                 indexValueBlockCapacity,
                 columnNameIndexMap, columnMetadata
         );
@@ -275,7 +276,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isDedupKey
     ) {
@@ -287,7 +288,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                 new TableColumnMetadata(
                         name,
                         columnType,
-                        isIndexed,
+                        indexType,
                         indexValueBlockCapacity,
                         false,
                         null,
@@ -317,7 +318,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                     tableStruct.getColumnType(i),
                     tableStruct.getSymbolCapacity(i),
                     tableStruct.getSymbolCacheFlag(i),
-                    tableStruct.isIndexed(i),
+                    tableStruct.getIndexType(i),
                     tableStruct.getIndexBlockCapacity(i),
                     tableStruct.isDedupKey(i)
             );
@@ -354,7 +355,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                 }
 
                 if (ColumnType.isSymbol(Math.abs(type))) {
-                    columnMetadata.add(new TableColumnMetadata(name, type, true, 1024, true, null));
+                    columnMetadata.add(new TableColumnMetadata(name, type, IndexType.SYMBOL, 1024, true, null));
                 } else {
                     columnMetadata.add(new TableColumnMetadata(name, type));
                 }

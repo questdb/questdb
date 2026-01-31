@@ -66,7 +66,7 @@ public interface TableWriterAPI extends Closeable {
      *                                value badly wrong will cause performance degradation. Must be power of 2
      * @param symbolCacheFlag         when set to true, symbol values will be cached on Java heap.
      * @param columnType              {@link ColumnType}
-     * @param isIndexed               configures column to be indexed or not
+     * @param indexType               column index type, see {@link IndexType}
      * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
      * @param isSequential            unused, should be false
      */
@@ -75,7 +75,7 @@ public interface TableWriterAPI extends Closeable {
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isSequential
     );

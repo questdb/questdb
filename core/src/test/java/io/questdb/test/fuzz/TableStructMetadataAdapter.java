@@ -26,6 +26,7 @@ package io.questdb.test.fuzz;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.sql.RecordMetadata;
 
@@ -117,8 +118,8 @@ public class TableStructMetadataAdapter implements TableStructure {
     }
 
     @Override
-    public boolean isIndexed(int columnIndex) {
-        return ColumnType.isSymbol(metadata.getColumnType(columnIndex));
+    public byte getIndexType(int columnIndex) {
+        return ColumnType.isSymbol(metadata.getColumnType(columnIndex)) ? IndexType.SYMBOL : IndexType.NONE;
     }
 
     @Override

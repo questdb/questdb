@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.std.str.StringSink;
@@ -41,7 +42,7 @@ public class GenericRecordMetadataTest {
     public void testBaseInterfaceDefaults() {
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("abc", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("cde", ColumnType.SYMBOL, true, 1024, true, null));
+        metadata.add(new TableColumnMetadata("cde", ColumnType.SYMBOL, IndexType.SYMBOL, 1024, true, null));
         metadata.add(new TableColumnMetadata("timestamp", ColumnType.TIMESTAMP));
         metadata.setTimestampIndex(2);
 
@@ -121,7 +122,7 @@ public class GenericRecordMetadataTest {
 
         String expected2 = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"x\",\"type\":\"SYMBOL\"},{\"index\":1,\"name\":\"z\",\"type\":\"DATE\"}],\"timestampIndex\":-1}";
         metadata.clear();
-        metadata.add(new TableColumnMetadata("x", ColumnType.SYMBOL, false, 0, false, null));
+        metadata.add(new TableColumnMetadata("x", ColumnType.SYMBOL, IndexType.NONE, 0, false, null));
         metadata.add(new TableColumnMetadata("z", ColumnType.DATE));
         sink.clear();
         metadata.toJson(sink);

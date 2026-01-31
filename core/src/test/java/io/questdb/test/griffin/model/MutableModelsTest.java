@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.model;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.CompileViewModel;
 import io.questdb.griffin.model.CreateTableColumnModel;
@@ -77,7 +78,7 @@ public class MutableModelsTest {
         model.setColumnNamePos(10);
         model.setColumnType(ColumnType.STRING);
         model.setCastType(ColumnType.INT, 20);
-        model.setIndexed(true, 30, 256);
+        model.setIndexType(IndexType.SYMBOL, 30, 256);
         model.setIsDedupKey();
         model.setSymbolCacheFlag(true);
         model.setSymbolCapacity(1024);

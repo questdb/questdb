@@ -238,7 +238,7 @@ public class MetadataCache implements QuietCloseable {
                 // Column positions already determined
                 column.setPosition(table.getColumnCount());
                 column.setType(columnType);
-                column.setIndexedFlag(TableUtils.isColumnIndexed(metaMem, writerIndex));
+                column.setIndexType(TableUtils.getColumnIndexType(metaMem, writerIndex));
                 column.setIndexBlockCapacity(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
                 column.setSymbolTableStaticFlag(true);
                 column.setDedupKeyFlag(TableUtils.isColumnDedupKey(metaMem, writerIndex));
@@ -574,7 +574,7 @@ public class MetadataCache implements QuietCloseable {
                 column.setType(columnType);
                 int replacingIndex = columnMetadata.getReplacingIndex();
                 column.setPosition(replacingIndex > -1 ? replacingIndex : i);
-                column.setIndexedFlag(columnMetadata.isSymbolIndexFlag());
+                column.setIndexType(columnMetadata.getIndexType());
                 column.setIndexBlockCapacity(columnMetadata.getIndexValueBlockCapacity());
                 column.setSymbolTableStaticFlag(columnMetadata.isSymbolTableStatic());
                 column.setDedupKeyFlag(columnMetadata.isDedupKeyFlag());

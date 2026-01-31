@@ -26,6 +26,7 @@ package io.questdb.test.fuzz;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
@@ -284,7 +285,7 @@ public class FuzzTransactionGenerator {
             to.add(new TableColumnMetadata(
                     from.getColumnName(i),
                     columnType,
-                    from.isColumnIndexed(i),
+                    from.getColumnIndexType(i),
                     from.getIndexValueBlockCapacity(i),
                     from.isSymbolTableStatic(i),
                     GenericRecordMetadata.copyOf(from.getMetadata(i))
@@ -301,7 +302,7 @@ public class FuzzTransactionGenerator {
                         new TableColumnMetadata(
                                 sequencerMetadata.getColumnName(i),
                                 sequencerMetadata.getColumnType(i),
-                                sequencerMetadata.isColumnIndexed(i),
+                                sequencerMetadata.getColumnIndexType(i),
                                 sequencerMetadata.getIndexValueBlockCapacity(i),
                                 sequencerMetadata.isSymbolTableStatic(i),
                                 sequencerMetadata.getMetadata(i),
@@ -427,7 +428,7 @@ public class FuzzTransactionGenerator {
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
         int newType = generateNewColumnType(rnd);
-        boolean indexFlag = newType == ColumnType.SYMBOL && rnd.nextDouble() < 0.9;
+        byte indexType = newType == ColumnType.SYMBOL && rnd.nextDouble() < 0.9 ? IndexType.SYMBOL : IndexType.NONE;
         int indexValueBlockCapacity = 256;
         boolean symbolTableStatic = rnd.nextBoolean();
 
@@ -439,7 +440,7 @@ public class FuzzTransactionGenerator {
                 break;
             }
         }
-        transaction.operationList.add(new FuzzAddColumnOperation(newColName, newType, indexFlag, indexValueBlockCapacity, symbolTableStatic));
+        transaction.operationList.add(new FuzzAddColumnOperation(newColName, newType, IndexType.isIndexed(indexType), indexValueBlockCapacity, symbolTableStatic));
         transaction.structureVersion = metadataVersion;
         transaction.waitBarrierVersion = waitBarrierVersion;
         transactionList.add(transaction);
@@ -449,7 +450,7 @@ public class FuzzTransactionGenerator {
         newMeta.add(new TableColumnMetadata(
                 newColName,
                 newType,
-                indexFlag,
+                indexType,
                 indexValueBlockCapacity,
                 symbolTableStatic,
                 null,

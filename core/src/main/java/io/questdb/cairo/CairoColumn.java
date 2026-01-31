@@ -35,7 +35,7 @@ public class CairoColumn implements Sinkable {
     private boolean dedupKey;
     private boolean designated;
     private int indexBlockCapacity;
-    private boolean indexed;
+    private byte indexType;
     private long metadataVersion;
     private CharSequence name;
     private int position;
@@ -52,7 +52,7 @@ public class CairoColumn implements Sinkable {
         target.designated = this.designated;
         target.indexBlockCapacity = this.indexBlockCapacity;
         target.dedupKey = this.dedupKey;
-        target.indexed = this.indexed;
+        target.indexType = this.indexType;
         target.symbolTableStatic = this.symbolTableStatic;
         target.name = this.name;
         target.position = this.position;
@@ -65,6 +65,10 @@ public class CairoColumn implements Sinkable {
 
     public int getIndexBlockCapacity() {
         return indexBlockCapacity;
+    }
+
+    public byte getIndexType() {
+        return indexType;
     }
 
     public CharSequence getName() {
@@ -96,7 +100,7 @@ public class CairoColumn implements Sinkable {
     }
 
     public boolean isIndexed() {
-        return indexed;
+        return IndexType.isIndexed(indexType);
     }
 
     public boolean isSymbolCached() {
@@ -119,8 +123,8 @@ public class CairoColumn implements Sinkable {
         this.indexBlockCapacity = indexBlockCapacity;
     }
 
-    public void setIndexedFlag(boolean indexed) {
-        this.indexed = indexed;
+    public void setIndexType(byte indexType) {
+        this.indexType = indexType;
     }
 
     public void setName(CharSequence name) {
@@ -162,7 +166,7 @@ public class CairoColumn implements Sinkable {
         sink.put("isSymbolTableStatic=").put(isSymbolTableStatic()).put(", ");
         sink.put("symbolCached=").put(isSymbolCached()).put(", ");
         sink.put("symbolCapacity=").put(getSymbolCapacity()).put(", ");
-        sink.put("isIndexed=").put(isIndexed()).put(", ");
+        sink.put("indexType=").put(IndexType.nameOf(getIndexType())).put(", ");
         sink.put("indexBlockCapacity=").put(getIndexBlockCapacity()).put(", ");
         sink.put("writerIndex=").put(getWriterIndex()).put("]");
     }

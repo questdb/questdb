@@ -100,8 +100,8 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, Mutable 
     }
 
     @Override
-    public boolean isColumnIndexed(int columnIndex) {
-        return getColumnMetadata(columnIndex).isSymbolIndexFlag();
+    public byte getColumnIndexType(int columnIndex) {
+        return getColumnMetadata(columnIndex).getIndexType();
     }
 
     @Override

@@ -28,6 +28,7 @@ import io.questdb.cairo.AlterTableContextException;
 import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -73,8 +74,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_MAT_VIEW_REFRESH_LIMIT = CHANGE_SYMBOL_CAPACITY + 1; // 23
     public final static short SET_MAT_VIEW_REFRESH_TIMER = SET_MAT_VIEW_REFRESH_LIMIT + 1; // 24
     public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
-    private static final long BIT_INDEXED = 0x1L;
-    private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
+    private static final long BIT_DEDUP_KEY = 0x04L;
+    private static final long INDEX_TYPE_MASK = 0x03L;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
     private final DirectCharSequenceList directExtraStrInfo = new DirectCharSequenceList();
     // This is only used to serialize partition name in form 2020-02-12 or 2020-02 or 2020
@@ -120,11 +121,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         return alterOperation;
     }
 
-    public static long getFlags(boolean indexed, boolean dedupKey) {
-        long flags = 0;
-        if (indexed) {
-            flags |= BIT_INDEXED;
-        }
+    public static long getFlags(byte indexType, boolean dedupKey) {
+        long flags = indexType & INDEX_TYPE_MASK;
         if (dedupKey) {
             flags |= BIT_DEDUP_KEY;
         }
@@ -380,7 +378,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             int columnType,
             int symbolCapacity,
             boolean cache,
-            boolean indexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean dedupKey
     ) {
@@ -390,7 +388,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         extraInfo.add(columnType);
         extraInfo.add(symbolCapacity);
         extraInfo.add(cache ? 1 : -1);
-        extraInfo.add(getFlags(indexed, dedupKey));
+        extraInfo.add(getFlags(indexType, dedupKey));
         extraInfo.add(indexValueBlockCapacity);
         extraInfo.add(columnNamePosition);
     }
@@ -452,7 +450,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             int symbolCapacity = (int) extraInfo.get(lParam++);
             boolean symbolCacheFlag = extraInfo.get(lParam++) > 0;
             long flags = extraInfo.get(lParam++);
-            boolean isIndexed = (flags & BIT_INDEXED) == BIT_INDEXED;
+            byte indexType = (byte) (flags & INDEX_TYPE_MASK);
             boolean isDedupKey = (flags & BIT_DEDUP_KEY) == BIT_DEDUP_KEY;
             assert !isDedupKey; // adding column as dedup key is not supported in SQL yet.
             int indexValueBlockCapacity = (int) extraInfo.get(lParam++);
@@ -463,7 +461,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         type,
                         symbolCapacity,
                         symbolCacheFlag,
-                        isIndexed,
+                        indexType,
                         indexValueBlockCapacity,
                         false,
                         isDedupKey,
@@ -650,7 +648,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         int symbolCapacity = (int) extraInfo.get(lParam++);
         boolean symbolCacheFlag = extraInfo.get(lParam++) > 0;
         long flags = extraInfo.get(lParam++);
-        boolean isIndexed = (flags & BIT_INDEXED) == BIT_INDEXED;
+        byte indexType = (byte) (flags & INDEX_TYPE_MASK);
+        boolean isIndexed = IndexType.isIndexed(indexType);
         boolean isDedupKey = (flags & BIT_DEDUP_KEY) == BIT_DEDUP_KEY;
         assert !isDedupKey; // adding column as dedup key is not supported in SQL yet.
         int indexValueBlockCapacity = (int) extraInfo.get(lParam++);

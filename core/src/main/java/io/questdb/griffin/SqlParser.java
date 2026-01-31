@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
@@ -1928,7 +1929,7 @@ public class SqlParser {
             indexValueBlockSize = configuration.getIndexValueBlockSize();
             lexer.unparseLast();
         }
-        model.setIndexed(true, columnNamePosition, indexValueBlockSize);
+        model.setIndexType(IndexType.SYMBOL, columnNamePosition, indexValueBlockSize);
         expectTok(lexer, ')');
     }
 
@@ -1936,7 +1937,7 @@ public class SqlParser {
         CharSequence tok = tok(lexer, "')', or 'index'");
 
         if (isFieldTerm(tok)) {
-            model.setIndexed(false, -1, configuration.getIndexValueBlockSize());
+            model.setIndexType(IndexType.NONE, -1, configuration.getIndexValueBlockSize());
             return tok;
         }
 
@@ -1944,7 +1945,7 @@ public class SqlParser {
         int indexColumnPosition = lexer.lastTokenPosition();
 
         if (isFieldTerm(tok = tok(lexer, ") | , expected"))) {
-            model.setIndexed(true, indexColumnPosition, configuration.getIndexValueBlockSize());
+            model.setIndexType(IndexType.SYMBOL, indexColumnPosition, configuration.getIndexValueBlockSize());
             return tok;
         }
 
@@ -1953,7 +1954,7 @@ public class SqlParser {
         int errorPosition = lexer.getPosition();
         int indexValueBlockSize = expectInt(lexer);
         TableUtils.validateIndexValueBlockSize(errorPosition, indexValueBlockSize);
-        model.setIndexed(true, indexColumnPosition, Numbers.ceilPow2(indexValueBlockSize));
+        model.setIndexType(IndexType.SYMBOL, indexColumnPosition, Numbers.ceilPow2(indexValueBlockSize));
         return null;
     }
 

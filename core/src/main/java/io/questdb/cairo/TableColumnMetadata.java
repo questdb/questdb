@@ -41,7 +41,7 @@ public class TableColumnMetadata implements Plannable {
     private boolean dedupKeyFlag;
     private int indexValueBlockCapacity;
     private boolean symbolCacheFlag;
-    private boolean symbolIndexFlag;
+    private byte indexType;
 
     public TableColumnMetadata(String columnName, int columnType) {
         this(columnName, columnType, null);
@@ -51,7 +51,7 @@ public class TableColumnMetadata implements Plannable {
         this(
                 columnName,
                 columnType,
-                false,
+                IndexType.NONE,
                 0,
                 false,
                 metadata,
@@ -69,7 +69,7 @@ public class TableColumnMetadata implements Plannable {
     public TableColumnMetadata(
             String columnName,
             int columnType,
-            boolean indexFlag,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             @Nullable RecordMetadata metadata
@@ -77,7 +77,7 @@ public class TableColumnMetadata implements Plannable {
         this(
                 columnName,
                 columnType,
-                indexFlag,
+                indexType,
                 indexValueBlockCapacity,
                 symbolTableStatic,
                 metadata,
@@ -92,7 +92,7 @@ public class TableColumnMetadata implements Plannable {
     public TableColumnMetadata(
             String columnName,
             int columnType,
-            boolean symbolIndexFlag,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             @Nullable RecordMetadata metadata,
@@ -102,7 +102,7 @@ public class TableColumnMetadata implements Plannable {
         this(
                 columnName,
                 columnType,
-                symbolIndexFlag,
+                indexType,
                 indexValueBlockCapacity,
                 symbolTableStatic,
                 metadata,
@@ -117,7 +117,7 @@ public class TableColumnMetadata implements Plannable {
     public TableColumnMetadata(
             String columnName,
             int columnType,
-            boolean symbolIndexFlag,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             @Nullable RecordMetadata metadata,
@@ -129,7 +129,7 @@ public class TableColumnMetadata implements Plannable {
     ) {
         this.columnName = columnName;
         this.columnType = columnType;
-        this.symbolIndexFlag = symbolIndexFlag;
+        this.indexType = indexType;
         this.indexValueBlockCapacity = indexValueBlockCapacity;
         this.symbolTableStatic = symbolTableStatic;
         this.metadata = GenericRecordMetadata.copyOf(metadata);
@@ -146,6 +146,10 @@ public class TableColumnMetadata implements Plannable {
 
     public int getColumnType() {
         return columnType;
+    }
+
+    public byte getIndexType() {
+        return indexType;
     }
 
     public int getIndexValueBlockCapacity() {
@@ -181,8 +185,8 @@ public class TableColumnMetadata implements Plannable {
         return symbolCacheFlag;
     }
 
-    public boolean isSymbolIndexFlag() {
-        return symbolIndexFlag;
+    public boolean isIndexed() {
+        return IndexType.isIndexed(indexType);
     }
 
     public boolean isSymbolTableStatic() {
@@ -201,16 +205,16 @@ public class TableColumnMetadata implements Plannable {
         this.dedupKeyFlag = dedupKeyFlag;
     }
 
+    public void setIndexType(byte indexType) {
+        this.indexType = indexType;
+    }
+
     public void setIndexValueBlockCapacity(int indexValueBlockCapacity) {
         this.indexValueBlockCapacity = indexValueBlockCapacity;
     }
 
     public void setSymbolCacheFlag(boolean cache) {
         this.symbolCacheFlag = cache;
-    }
-
-    public void setSymbolIndexFlag(boolean value) {
-        symbolIndexFlag = value;
     }
 
     @Override

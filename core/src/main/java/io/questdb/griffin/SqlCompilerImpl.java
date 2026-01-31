@@ -39,6 +39,7 @@ import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexBuilder;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MicrosTimestampDriver;
@@ -817,7 +818,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final int indexValueBlockCapacity;
         final boolean cache;
         int symbolCapacity;
-        final boolean indexed;
+        final byte indexType;
 
         if (
                 ColumnType.isSymbol(columnType)
@@ -866,7 +867,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             TableUtils.validateSymbolCapacityCached(cache, symbolCapacity, lexer.lastTokenPosition());
 
-            indexed = Chars.equalsLowerCaseAsciiNc("index", tok);
+            boolean indexed = Chars.equalsLowerCaseAsciiNc("index", tok);
+            indexType = indexed ? IndexType.SYMBOL : IndexType.NONE;
             if (indexed) {
                 tok = SqlUtil.fetchNext(lexer);
             }
@@ -896,7 +898,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             cache = configuration.getDefaultSymbolCacheFlag();
             indexValueBlockCapacity = configuration.getIndexValueBlockSize();
             symbolCapacity = configuration.getDefaultSymbolCapacity();
-            indexed = false;
+            indexType = IndexType.NONE;
         }
 
         addColumn.addColumnToList(
@@ -905,7 +907,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 columnType,
                 Numbers.ceilPow2(symbolCapacity),
                 cache,
-                indexed,
+                indexType,
                 Numbers.ceilPow2(indexValueBlockCapacity),
                 false
         );
@@ -1098,7 +1100,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 ColumnType.SYMBOL,
                 Numbers.ceilPow2(symbolCapacity),
                 configuration.getDefaultSymbolCacheFlag(), // ignored
-                false, // ignored
+                IndexType.NONE, // ignored
                 Numbers.ceilPow2(configuration.getIndexValueBlockSize()), // ignored
                 false // ignored
         );

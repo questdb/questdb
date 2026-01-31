@@ -72,9 +72,19 @@ public interface TableStructure {
     default void init(TableToken tableToken) {
     }
 
+    /**
+     * Returns the index type for the column.
+     *
+     * @param columnIndex the column index
+     * @return the index type (see {@link IndexType})
+     */
+    byte getIndexType(int columnIndex);
+
     boolean isDedupKey(int columnIndex);
 
-    boolean isIndexed(int columnIndex);
+    default boolean isIndexed(int columnIndex) {
+        return IndexType.isIndexed(getIndexType(columnIndex));
+    }
 
     default boolean isMatView() {
         return false;

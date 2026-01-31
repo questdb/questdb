@@ -26,17 +26,18 @@ package io.questdb.test.cairo;
 
 import io.questdb.MessageBusImpl;
 import io.questdb.PropertyKey;
-import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnIndexerJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.FullFwdPartitionFrameCursor;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -2030,7 +2031,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                     assertSymbolFoundInIndex(cursor, record, 4, M);
 
                     writer.removeColumn("c");
-                    writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, true, 8, false);
+                    writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, IndexType.SYMBOL, 8, false);
 
                     for (int i = 0; i < M; i++) {
                         TableWriter.Row row = writer.newRow(timestamp += increment);
@@ -2091,7 +2092,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                             ColumnType.SYMBOL,
                             Numbers.ceilPow2(N),
                             true,
-                            true,
+                            IndexType.SYMBOL,
                             Numbers.ceilPow2(N / 4),
                             false
                     );
@@ -2125,7 +2126,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                     assertSymbolFoundInIndex(cursor, record, 4, M);
 
                     writer.removeColumn("c");
-                    writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, true, 8, false);
+                    writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, IndexType.SYMBOL, 8, false);
 
                     for (int i = 0; i < M; i++) {
                         TableWriter.Row row = writer.newRow(timestamp += increment);
@@ -2265,7 +2266,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                     assertNoIndex(cursor, record);
 
                     writer.removeColumn("c");
-                    writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, true, 8, false);
+                    writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, IndexType.SYMBOL, 8, false);
 
                     for (int i = 0; i < M; i++) {
                         TableWriter.Row row = writer.newRow(timestamp += increment);
@@ -2459,7 +2460,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                     row.append();
                 }
 
-                writer.addColumn("a", ColumnType.SYMBOL, Numbers.ceilPow2(N / 4), true, false, configuration.getIndexValueBlockSize(), false);
+                writer.addColumn("a", ColumnType.SYMBOL, Numbers.ceilPow2(N / 4), true, IndexType.NONE, configuration.getIndexValueBlockSize(), false);
 
                 for (int i = 0; i < M / 2; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);

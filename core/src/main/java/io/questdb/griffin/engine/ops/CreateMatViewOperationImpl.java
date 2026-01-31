@@ -315,8 +315,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
-    public boolean isIndexed(int index) {
-        return createTableOperation.isIndexed(index);
+    public byte getIndexType(int index) {
+        return createTableOperation.getIndexType(index);
     }
 
     @Override
@@ -363,8 +363,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             model.setColumnType(ColumnType.UNDEFINED);
             // Copy index() definitions from create table op, so that we don't lose them.
             TableColumnMetadata augColumnMetadata = augColumnMetadataMap.get(columnName);
-            if (augColumnMetadata != null && augColumnMetadata.isSymbolIndexFlag()) {
-                model.setIndexed(true, qc.getAst().position, augColumnMetadata.getIndexValueBlockCapacity());
+            if (augColumnMetadata != null && augColumnMetadata.isIndexed()) {
+                model.setIndexType(augColumnMetadata.getIndexType(), qc.getAst().position, augColumnMetadata.getIndexValueBlockCapacity());
             }
             createColumnModelMap.put(columnName, model);
         }

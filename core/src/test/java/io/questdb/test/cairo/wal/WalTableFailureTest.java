@@ -26,14 +26,15 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.AlterTableContextException;
-import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.RecordCursor;
@@ -106,7 +107,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                                 ColumnType.INT,
                                 0,
                                 false,
-                                false,
+                                IndexType.NONE,
                                 12,
                                 false,
                                 false,
@@ -156,7 +157,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                                 ColumnType.INT,
                                 0,
                                 false,
-                                false,
+                                IndexType.NONE,
                                 12,
                                 false,
                                 false,
@@ -432,7 +433,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                                 ColumnType.INT,
                                 0,
                                 false,
-                                false,
+                                IndexType.NONE,
                                 12,
                                 false,
                                 false,
@@ -482,7 +483,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                                 ColumnType.INT,
                                 0,
                                 false,
-                                false,
+                                IndexType.NONE,
                                 12,
                                 false,
                                 false,

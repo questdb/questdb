@@ -26,6 +26,7 @@ package io.questdb.test.fuzz;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -84,7 +85,7 @@ public class FuzzChangeSymbolCapacityOperation implements FuzzTransactionOperati
                 wApi.getMetadata().getTableId()
         );
         builder.addColumnToList(columName, 0, ColumnType.SYMBOL, symbolCapacity, tempRnd.nextBoolean(),
-                tempRnd.nextBoolean(), tempRnd.nextInt(), false);
+                tempRnd.nextBoolean() ? IndexType.SYMBOL : IndexType.NONE, tempRnd.nextInt(), false);
         AlterOperation alterOp = builder.build();
         try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1)) {
             alterOp.withSqlStatement(

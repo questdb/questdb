@@ -60,6 +60,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public byte getIndexType(int columnIndex) {
+        return getColumnMetadata(columnIndex).getIndexType();
+    }
+
+    @Override
     public int getMaxUncommittedRows() {
         return maxUncommittedRows;
     }
@@ -118,11 +123,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
-    public boolean isIndexed(int columnIndex) {
-        return getColumnMetadata(columnIndex).isSymbolIndexFlag();
-    }
-
-    @Override
     public boolean isWalEnabled() {
         return walEnabled;
     }
@@ -154,7 +154,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                     new WriterTableColumnMetadata(
                             nameStr,
                             type,
-                            TableUtils.isColumnIndexed(metaMem, i),
+                            TableUtils.getColumnIndexType(metaMem, i),
                             TableUtils.getIndexBlockCapacity(metaMem, i),
                             true,
                             null,
@@ -198,7 +198,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     void addColumn(
             CharSequence name,
             int type,
-            boolean indexFlag,
+            byte indexType,
             int indexValueBlockCapacity,
             int columnIndex,
             int symbolCapacity,
@@ -212,7 +212,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 new WriterTableColumnMetadata(
                         str,
                         type,
-                        indexFlag,
+                        indexType,
                         indexValueBlockCapacity,
                         true,
                         null,
@@ -258,7 +258,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         var newColumnMetadata = new WriterTableColumnMetadata(
                 oldMeta.getColumnName(),
                 ColumnType.SYMBOL,
-                oldMeta.isSymbolIndexFlag(),
+                oldMeta.getIndexType(),
                 oldMeta.getIndexValueBlockCapacity(),
                 oldMeta.isSymbolTableStatic(),
                 null,
@@ -276,7 +276,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         public WriterTableColumnMetadata(
                 String nameStr,
                 int type,
-                boolean columnIndexed,
+                byte indexType,
                 int indexBlockCapacity,
                 boolean symbolTableStatic,
                 RecordMetadata parent,
@@ -289,7 +289,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             super(
                     nameStr,
                     type,
-                    columnIndexed,
+                    indexType,
                     indexBlockCapacity,
                     symbolTableStatic,
                     parent,

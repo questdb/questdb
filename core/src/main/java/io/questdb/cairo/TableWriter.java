@@ -144,12 +144,12 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.LongConsumer;
 
-import static io.questdb.cairo.idx.BitmapIndexUtils.keyFileName;
-import static io.questdb.cairo.idx.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
+import static io.questdb.cairo.idx.BitmapIndexUtils.keyFileName;
+import static io.questdb.cairo.idx.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -577,7 +577,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 columnType,
                 configuration.getDefaultSymbolCapacity(),
                 configuration.getDefaultSymbolCacheFlag(),
-                false,
+                IndexType.NONE,
                 0,
                 false,
                 false,
@@ -591,7 +591,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isDedupKey
     ) {
@@ -600,7 +600,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 columnType,
                 symbolCapacity,
                 symbolCacheFlag,
-                isIndexed,
+                indexType,
                 indexValueBlockCapacity,
                 false,
                 isDedupKey,
@@ -634,7 +634,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *                                value badly wrong will cause performance degradation. Must be power of 2
      * @param symbolCacheFlag         when set to true, symbol values will be cached on Java heap.
      * @param columnType              {@link ColumnType}
-     * @param isIndexed               configures column to be indexed or not
+     * @param indexType               column index type, see {@link IndexType}
      * @param indexValueBlockCapacity approximation of number of rows for a single index key must be power of 2
      * @param isSequential            for columns that contain sequential values query optimiser can make assumptions on range searches (future feature)
      */
@@ -643,7 +643,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isSequential,
             boolean isDedupKey,
@@ -674,7 +674,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 columnType,
                 symbolCapacity,
                 symbolCacheFlag,
-                isIndexed,
+                indexType,
                 indexValueBlockCapacity,
                 isDedupKey,
                 columnNameTxn,
@@ -693,7 +693,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // create column files
         if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
             try {
-                openNewColumnFiles(columnName, columnType, isIndexed, indexValueBlockCapacity);
+                openNewColumnFiles(columnName, columnType, indexType, indexValueBlockCapacity);
             } catch (CairoException e) {
                 runFragile(RECOVER_FROM_COLUMN_OPEN_FAILURE, e);
             }
@@ -747,7 +747,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         commit();
 
-        if (columnMetadata.isSymbolIndexFlag()) {
+        if (columnMetadata.isIndexed()) {
             throw CairoException.invalidMetadataRecoverable("column is already indexed", columnName);
         }
 
@@ -765,7 +765,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration);
         writeIndex(columnName, indexValueBlockSize, columnIndex, indexer);
 
-        columnMetadata.setSymbolIndexFlag(true);
+        columnMetadata.setIndexType(IndexType.SYMBOL);
         columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
         // set the index flag in metadata and create new _meta.swp
@@ -1081,7 +1081,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     newType,
                     symbolCapacity,
                     symbolCacheFlag,
-                    isIndexed,
+                    isIndexed ? IndexType.SYMBOL : IndexType.NONE,
                     indexValueBlockCapacity,
                     isDedupKey,
                     columnNameTxn,
@@ -2008,7 +2008,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         String columnName = metadata.getColumnName(columnIndex);
 
         TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
-        if (!columnMetadata.isSymbolIndexFlag()) {
+        if (!columnMetadata.isIndexed()) {
             // if a column is indexed, it is also of type SYMBOL
             throw CairoException.invalidMetadataRecoverable("column is not indexed", columnName);
         }
@@ -2037,7 +2037,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // swap meta commit
 
             // refresh metadata
-            columnMetadata.setSymbolIndexFlag(false);
+            columnMetadata.setIndexType(IndexType.NONE);
             columnMetadata.setIndexValueBlockCapacity(defaultIndexValueBlockSize);
             rewriteAndSwapMetadata(metadata);
             clearTodoAndCommitMeta();
@@ -3323,7 +3323,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isDedupKey,
             long columnNameTxn,
@@ -3340,7 +3340,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         metadata.addColumn(
                 columnName,
                 columnType,
-                isIndexed,
+                indexType,
                 indexValueBlockCapacity,
                 metadata.getColumnCount(),
                 symbolCapacity,
@@ -3373,8 +3373,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         // add column objects
-        configureColumn(columnType, isIndexed, columnCount);
-        if (isIndexed) {
+        boolean indexed = IndexType.isIndexed(indexType);
+        configureColumn(columnType, indexed, columnCount);
+        if (indexed) {
             populateDenseIndexerList();
         }
 
@@ -6938,7 +6939,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         setAppendPosition(txWriter.getTransientRowCount() + txWriter.getLagRowCount(), false);
     }
 
-    private void openNewColumnFiles(CharSequence name, int columnType, boolean indexFlag, int indexValueBlockCapacity) {
+    private void openNewColumnFiles(CharSequence name, int columnType, byte indexType, int indexValueBlockCapacity) {
         try {
             // open column files
             long partitionTimestamp = txWriter.getLastPartitionTimestamp();
@@ -6949,9 +6950,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Adding column in the current transaction.
             long columnNameTxn = getTxn();
 
+            boolean indexed = IndexType.isIndexed(indexType);
             // index must be created before a column is initialised because
             // it uses a primary column object as a temporary tool
-            if (indexFlag) {
+            if (indexed) {
                 createIndexFiles(name, columnNameTxn, indexValueBlockCapacity, plen, true);
             }
 
@@ -6961,7 +6963,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 columnVersionWriter.upsert(txWriter.getLastPartitionTimestamp(), columnIndex, columnNameTxn, txWriter.getTransientRowCount());
             }
 
-            if (indexFlag) {
+            if (indexed) {
                 ColumnIndexer indexer = indexers.getQuick(columnIndex);
                 assert indexer != null;
                 indexers.getQuick(columnIndex).configureFollowerAndWriter(path.trimTo(plen), name, columnNameTxn, getPrimaryColumn(columnIndex), txWriter.getTransientRowCount());

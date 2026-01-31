@@ -54,7 +54,7 @@ public class AlterOperationBuilder implements Mutable {
             int type,
             int symbolCapacity,
             boolean cache,
-            boolean indexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean dedupKey
     ) {
@@ -63,7 +63,7 @@ public class AlterOperationBuilder implements Mutable {
         extraInfo.add(type);
         extraInfo.add(symbolCapacity);
         extraInfo.add(cache ? 1 : -1);
-        extraInfo.add(getFlags(indexed, dedupKey));
+        extraInfo.add(getFlags(indexType, dedupKey));
         extraInfo.add(indexValueBlockCapacity);
         extraInfo.add(columnNamePosition);
     }
@@ -106,13 +106,13 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
-    public void ofAddColumn(CharSequence columnName, int columnNamePosition, int type, int symbolCapacity, boolean cache, boolean indexed, int indexValueBlockCapacity) {
+    public void ofAddColumn(CharSequence columnName, int columnNamePosition, int type, int symbolCapacity, boolean cache, byte indexType, int indexValueBlockCapacity) {
         assert columnName != null && !columnName.isEmpty();
         extraStrInfo.add(columnName);
         extraInfo.add(type);
         extraInfo.add(symbolCapacity);
         extraInfo.add(cache ? 1 : -1);
-        extraInfo.add(getFlags(indexed, false));
+        extraInfo.add(getFlags(indexType, false));
         extraInfo.add(indexValueBlockCapacity);
         extraInfo.add(columnNamePosition);
     }

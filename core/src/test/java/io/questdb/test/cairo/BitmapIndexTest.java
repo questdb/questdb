@@ -24,21 +24,22 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EmptyRowCursor;
+import io.questdb.cairo.IndexType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.AbstractIndexReader;
 import io.questdb.cairo.idx.BitmapIndexBwdReader;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.BitmapIndexWriter;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.idx.ConcurrentBitmapIndexFwdReader;
-import io.questdb.cairo.EmptyRowCursor;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
@@ -757,7 +758,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         ColumnType.SYMBOL,
                         Numbers.ceilPow2(N),
                         true,
-                        true,
+                        IndexType.SYMBOL,
                         indexBlockCapacity,
                         false
                 );

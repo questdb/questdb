@@ -25,6 +25,7 @@
 package io.questdb.griffin.model;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 
@@ -37,7 +38,7 @@ public class CreateTableColumnModel implements Mutable {
     private boolean dedupKeyFlag;
     private int indexColumnPos = -1;
     private int indexValueBlockSize;
-    private boolean indexedFlag;
+    private byte indexType;
     private boolean isCast;
     private boolean symbolCacheFlag;
     private int symbolCapacity = -1;
@@ -55,7 +56,7 @@ public class CreateTableColumnModel implements Mutable {
         dedupColumnPos = -1;
         indexColumnPos = -1;
         indexValueBlockSize = 0;
-        indexedFlag = false;
+        indexType = IndexType.NONE;
         isCast = false;
         symbolCacheFlag = false;
         symbolCapacity = -1;
@@ -81,6 +82,10 @@ public class CreateTableColumnModel implements Mutable {
         return indexColumnPos;
     }
 
+    public byte getIndexType() {
+        return indexType;
+    }
+
     public int getIndexValueBlockSize() {
         return indexValueBlockSize;
     }
@@ -102,7 +107,7 @@ public class CreateTableColumnModel implements Mutable {
     }
 
     public boolean isIndexed() {
-        return indexedFlag;
+        return IndexType.isIndexed(indexType);
     }
 
     public void setCastType(int columnType, int columnTypePos) {
@@ -119,8 +124,8 @@ public class CreateTableColumnModel implements Mutable {
         this.columnType = columnType;
     }
 
-    public void setIndexed(boolean indexedFlag, int indexColumnPosition, int indexValueBlockSize) {
-        this.indexedFlag = indexedFlag;
+    public void setIndexType(byte indexType, int indexColumnPosition, int indexValueBlockSize) {
+        this.indexType = indexType;
         this.indexColumnPos = indexColumnPosition;
         this.indexValueBlockSize = indexValueBlockSize;
     }
