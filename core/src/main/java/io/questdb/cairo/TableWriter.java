@@ -33,7 +33,7 @@ import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.idx.BitmapIndexUtils;
-import io.questdb.cairo.idx.BitmapIndexWriter;
+import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -4318,14 +4318,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Creates bitmap index files for a column. This method uses primary column instance as a temporary tool to
+     * Creates index files for a column. This method uses primary column instance as a temporary tool to
      * append index data. Therefore, it must be called before the primary column is initialized.
      *
      * @param columnName              column name
      * @param indexValueBlockCapacity approximate number of values per index key
+     * @param indexType               the type of index to create
      * @param plen                    path length. This is used to trim the shared path object to.
      */
-    private void createIndexFiles(CharSequence columnName, long columnNameTxn, int indexValueBlockCapacity, int plen, boolean force) {
+    private void createIndexFiles(CharSequence columnName, long columnNameTxn, int indexValueBlockCapacity, byte indexType, int plen, boolean force) {
         try {
             keyFileName(path.trimTo(plen), columnName, columnNameTxn);
 
@@ -4339,7 +4340,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 ddlMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
                 ddlMem.truncate();
-                BitmapIndexWriter.initKeyMemory(ddlMem, indexValueBlockCapacity);
+                IndexFactory.initKeyMemory(indexType, ddlMem, indexValueBlockCapacity);
             } catch (CairoException e) {
                 // looks like we could not create the key file properly;
                 // let's not leave a half-baked file sitting around
@@ -5864,8 +5865,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void indexLastPartition(SymbolColumnIndexer indexer, CharSequence columnName, long columnNameTxn, int columnIndex, int indexValueBlockSize) {
         final int plen = path.size();
+        final byte indexType = metadata.getColumnIndexType(columnIndex);
 
-        createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, plen, true);
+        createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true);
 
         final long lastPartitionTs = txWriter.getLastPartitionTimestamp();
         final long columnTop = columnVersionWriter.getColumnTopQuick(lastPartitionTs, columnIndex);
@@ -5886,8 +5888,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         path.trimTo(plen);
         LOG.info().$("indexing [path=").$substr(pathRootSize, path).I$();
+        final byte indexType = metadata.getColumnIndexType(columnIndex);
 
-        createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, plen, true);
+        createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true);
         final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
         final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
 
@@ -5938,8 +5941,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .I$();
                 return;
             }
+            final byte indexType = metadata.getColumnIndexType(columnIndex);
 
-            createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, plen, true);
+            createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true);
             final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
             final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
 
@@ -6955,7 +6959,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // index must be created before a column is initialised because
             // it uses a primary column object as a temporary tool
             if (indexed) {
-                createIndexFiles(name, columnNameTxn, indexValueBlockCapacity, plen, true);
+                createIndexFiles(name, columnNameTxn, indexValueBlockCapacity, indexType, plen, true);
             }
 
             openColumnFiles(name, columnNameTxn, columnIndex, plen);
@@ -7010,7 +7014,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (indexer != null) {
                         // we have to create files before columns are open
                         // because we are reusing MAMemoryImpl object from columns' list
-                        createIndexFiles(name, columnNameTxn, metadata.getIndexValueBlockCapacity(i), plen, rowCount < 1);
+                        createIndexFiles(name, columnNameTxn, metadata.getIndexValueBlockCapacity(i), metadata.getColumnIndexType(i), plen, rowCount < 1);
                     }
 
                     openColumnFiles(name, columnNameTxn, i, plen);

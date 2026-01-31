@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.frm;
 
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.str.Path;
 
@@ -34,11 +35,38 @@ public interface FrameColumnTypePool {
             long columnTxn,
             int columnType,
             int indexBlockCapacity,
+            byte indexType,
             long columnTop,
             int columnIndex,
             boolean init,
             boolean canWrite
     );
+
+    default FrameColumn create(
+            Path partitionPath,
+            CharSequence columnName,
+            long columnTxn,
+            int columnType,
+            int indexBlockCapacity,
+            long columnTop,
+            int columnIndex,
+            boolean init,
+            boolean canWrite
+    ) {
+        // Backward-compatible overload - defaults to SYMBOL index type if indexed
+        return create(
+                partitionPath,
+                columnName,
+                columnTxn,
+                columnType,
+                indexBlockCapacity,
+                indexBlockCapacity > 0 ? IndexType.SYMBOL : IndexType.NONE,
+                columnTop,
+                columnIndex,
+                init,
+                canWrite
+        );
+    }
 
     FrameColumn createFromMemoryColumn(
             int columnIndex,

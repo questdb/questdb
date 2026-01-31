@@ -25,7 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.idx.BitmapIndexUtils;
-import io.questdb.cairo.idx.BitmapIndexWriter;
+import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -502,6 +503,7 @@ public class TableSnapshotRestore implements QuietCloseable {
 
             final String columnName = tableMetadata.getColumnName(colIdx);
             final int indexBlockCapacity = tableMetadata.getIndexBlockCapacity(colIdx);
+            final byte indexType = tableMetadata.getColumnIndexType(colIdx);
 
             futures.add(executor.submit(() -> rebuildBitmapIndexForNativePartitionColumn(
                     tablePathStr,
@@ -509,6 +511,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                     columnName,
                     columnNameTxn,
                     indexBlockCapacity,
+                    indexType,
                     partitionTimestamp,
                     partitionNameTxn,
                     partitionRowCount,
@@ -525,6 +528,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             String columnName,
             long columnNameTxn,
             int indexBlockCapacity,
+            byte indexType,
             long partitionTimestamp,
             long partitionNameTxn,
             long partitionRowCount,
@@ -539,7 +543,7 @@ public class TableSnapshotRestore implements QuietCloseable {
         // Since we're using an executor, we can't use Path thread locals.
         try (
                 Path path = new Path().put(tablePathStr);
-                SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration)
+                SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType)
         ) {
             path.trimTo(pathTableLen);
 
@@ -559,7 +563,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             removeIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn);
 
             // Create new index files
-            createIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn, indexBlockCapacity);
+            createIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn, indexBlockCapacity, indexType);
 
             // Open the .d file and rebuild the index
             TableUtils.dFile(path.trimTo(partitionPathLen), columnName, columnNameTxn);
@@ -605,7 +609,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                 RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 DirectIntList parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT)
         ) {
-            ObjList<BitmapIndexWriter> indexWriters = new ObjList<>();
+            ObjList<IndexWriter> indexWriters = new ObjList<>();
             path.trimTo(pathTableLen);
 
             // Set path to parquet partition and mmap
@@ -799,12 +803,12 @@ public class TableSnapshotRestore implements QuietCloseable {
         }
     }
 
-    static void createIndexFiles(FilesFacade ff, Path path, int partitionPathLen, CharSequence columnName, long columnNameTxn, int indexBlockCapacity) {
+    static void createIndexFiles(FilesFacade ff, Path path, int partitionPathLen, CharSequence columnName, long columnNameTxn, int indexBlockCapacity, byte indexType) {
         // Create .k file with proper header
         try (MemoryCMARW mem = Vm.getCMARWInstance()) {
             LPSZ keyFileName = BitmapIndexUtils.keyFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn);
             mem.smallFile(ff, keyFileName, MemoryTag.MMAP_INDEX_WRITER);
-            BitmapIndexWriter.initKeyMemory(mem, indexBlockCapacity);
+            IndexFactory.initKeyMemory(indexType, mem, indexBlockCapacity);
         } catch (CairoException e) {
             LOG.error().$("could not create index key file [path=").$(path).$(", column=").$(columnName).$(", errno=").$(e.getErrno()).I$();
             throw e;
@@ -832,7 +836,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             PartitionDecoder partitionDecoder,
             RowGroupBuffers rowGroupBuffers,
             DirectIntList parquetColumns,
-            ObjList<BitmapIndexWriter> indexWriters,
+            ObjList<IndexWriter> indexWriters,
             RecordMetadata metadata,
             ColumnVersionReader columnVersionReader,
             long partitionTimestamp,
@@ -878,19 +882,20 @@ public class TableSnapshotRestore implements QuietCloseable {
             final CharSequence columnName = metadata.getColumnName(columnIndex);
             final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
             final int indexBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
+            final byte indexType = metadata.getColumnIndexType(columnIndex);
 
             // Remove existing index files
             removeIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn);
 
             // Create new index files
-            createIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn, indexBlockCapacity);
+            createIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn, indexBlockCapacity, indexType);
 
-            // Open BitmapIndexWriter
-            BitmapIndexWriter indexWriter = new BitmapIndexWriter(configuration);
+            // Open IndexWriter
+            IndexWriter indexWriter = IndexFactory.createWriter(indexType, configuration);
             try {
                 indexWriter.of(path.trimTo(partitionPathLen), columnName, columnNameTxn);
             } catch (CairoException e) {
-                LOG.error().$("could not open bitmap index writer [path=").$(path.trimTo(partitionPathLen))
+                LOG.error().$("could not open index writer [path=").$(path.trimTo(partitionPathLen))
                         .$(", column=").$(columnName)
                         .$(", errno=").$(e.getErrno())
                         .I$();
@@ -959,7 +964,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                         continue; // This column doesn't have data in this row group yet
                     }
 
-                    final BitmapIndexWriter indexWriter = indexWriters.get(i);
+                    final IndexWriter indexWriter = indexWriters.get(i);
                     final long startOffset = Math.max(0, columnTop - rowCount);
                     long rowId = Math.max(rowCount, columnTop);
 

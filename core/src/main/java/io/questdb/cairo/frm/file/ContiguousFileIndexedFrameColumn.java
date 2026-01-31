@@ -24,20 +24,26 @@
 
 package io.questdb.cairo.frm.file;
 
-import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.frm.FrameColumn;
+import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.idx.IndexWriter;
+import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
 public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColumn {
-    private final BitmapIndexWriter indexWriter;
+    private final CairoConfiguration configuration;
+    private byte indexType = IndexType.SYMBOL;
+    private IndexWriter indexWriter;
 
     public ContiguousFileIndexedFrameColumn(CairoConfiguration configuration) {
         super(configuration);
-        this.indexWriter = new BitmapIndexWriter(configuration);
+        this.configuration = configuration;
+        this.indexWriter = IndexFactory.createWriter(IndexType.SYMBOL, configuration);
     }
 
     @Override
@@ -77,10 +83,37 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
 
     @Override
     public void close() {
-        indexWriter.close();
+        Misc.free(indexWriter);
         super.close();
     }
 
+    public void ofRW(
+            Path partitionPath,
+            CharSequence columnName,
+            long columnTxn,
+            int columnType,
+            int indexBlockCapacity,
+            byte indexType,
+            long columnTop,
+            int columnIndex,
+            boolean isEmpty
+    ) {
+        super.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
+        try {
+            // Recreate writer if index type has changed
+            if (this.indexType != indexType) {
+                Misc.free(indexWriter);
+                this.indexType = indexType;
+                this.indexWriter = IndexFactory.createWriter(indexType, configuration);
+            }
+            indexWriter.of(partitionPath, columnName, columnTxn, isEmpty ? indexBlockCapacity : 0);
+        } catch (Throwable e) {
+            // indexWriter has already closed
+            super.close();
+        }
+    }
+
+    // Keep old signature for backward compatibility
     public void ofRW(
             Path partitionPath,
             CharSequence columnName,
@@ -91,13 +124,7 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
             int columnIndex,
             boolean isEmpty
     ) {
-        super.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
-        try {
-            indexWriter.of(partitionPath, columnName, columnTxn, isEmpty ? indexBlockCapacity : 0);
-        } catch (Throwable e) {
-            // indexWriter has already closed
-            super.close();
-        }
+        ofRW(partitionPath, columnName, columnTxn, columnType, indexBlockCapacity, IndexType.SYMBOL, columnTop, columnIndex, isEmpty);
     }
 
     @Override
