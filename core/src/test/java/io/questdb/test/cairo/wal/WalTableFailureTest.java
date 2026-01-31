@@ -26,7 +26,7 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.AlterTableContextException;
-import io.questdb.cairo.BitmapIndexUtils;
+import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;

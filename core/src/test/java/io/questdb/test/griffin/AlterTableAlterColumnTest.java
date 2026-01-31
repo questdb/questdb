@@ -24,7 +24,7 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;

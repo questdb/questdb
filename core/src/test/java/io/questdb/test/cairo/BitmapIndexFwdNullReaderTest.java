@@ -24,7 +24,7 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.BitmapIndexFwdNullReader;
+import io.questdb.cairo.idx.BitmapIndexFwdNullReader;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.Rnd;
 import org.junit.Assert;

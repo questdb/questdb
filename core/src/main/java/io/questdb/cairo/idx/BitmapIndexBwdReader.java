@@ -22,8 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.idx;
 
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;

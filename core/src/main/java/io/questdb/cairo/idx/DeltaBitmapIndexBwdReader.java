@@ -22,14 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.idx;
 
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -40,12 +42,12 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 /**
- * Forward reader for delta-encoded bitmap index.
- * Uses streaming decode for memory efficiency.
+ * Backward reader for delta-encoded bitmap index.
+ * Uses buffered decode (decodes all values into LongList for reverse iteration).
  */
-public class DeltaBitmapIndexFwdReader implements BitmapIndexReader {
+public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
     private static final String INDEX_CORRUPT = "cursor could not consistently read index header [corrupt?]";
-    private static final Log LOG = LogFactory.getLog(DeltaBitmapIndexFwdReader.class);
+    private static final Log LOG = LogFactory.getLog(DeltaBitmapIndexBwdReader.class);
 
     protected final MemoryMR keyMem = Vm.getCMRInstance();
     protected final MemoryMR valueMem = Vm.getCMRInstance();
@@ -61,10 +63,10 @@ public class DeltaBitmapIndexFwdReader implements BitmapIndexReader {
     private long partitionTxn;
     private long valueMemSize = -1;
 
-    public DeltaBitmapIndexFwdReader() {
+    public DeltaBitmapIndexBwdReader() {
     }
 
-    public DeltaBitmapIndexFwdReader(
+    public DeltaBitmapIndexBwdReader(
             CairoConfiguration configuration,
             Path path,
             CharSequence name,
@@ -93,14 +95,15 @@ public class DeltaBitmapIndexFwdReader implements BitmapIndexReader {
 
     @Override
     public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
+        assert minValue <= maxValue;
+
         if (key >= keyCount) {
             updateKeyCount();
         }
 
         if (key == 0 && columnTop > 0 && minValue < columnTop) {
-            // Return nulls first, then actual index values
+            // Return actual index values first (in reverse), then nulls
             final NullCursor nc = getNullCursor(cachedInstance);
-            nc.nullPos = minValue;
             final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
             nc.nullCount = Math.min(columnTop, hi);
             nc.of(key, minValue, maxValue, keyCount);
@@ -290,51 +293,26 @@ public class DeltaBitmapIndexFwdReader implements BitmapIndexReader {
     }
 
     /**
-     * Forward cursor with streaming delta decode.
+     * Backward cursor with buffered decode.
+     * Decodes all values into a LongList and iterates in reverse.
      * Uses Unsafe for fast direct memory access.
      */
     private class Cursor implements RowCursor {
+        private final LongList values = new LongList();
+        protected long minValue;
         protected long next;
-        protected long position;
-        protected long valueCount;
-        private long baseAddress;
-        private long currentValue;
-        private long dataEndOffset;
-        private long maxValue;
-        private long minValue;
-        private long readOffset;
+        private int position;
 
         @Override
         public boolean hasNext() {
-            while (position < valueCount) {
-                long value;
-                if (position == 0) {
-                    // First value is stored as full 8 bytes
-                    value = Unsafe.getUnsafe().getLong(baseAddress + readOffset);
-                    readOffset += 8;
-                } else {
-                    // Subsequent values are delta-encoded
-                    if (readOffset >= dataEndOffset) {
-                        return false;
-                    }
-                    // Use fast Unsafe decode - returns packed (delta | bytesConsumed << 56)
-                    long packed = DeltaBitmapIndexUtils.decodeDeltaUnsafe(baseAddress + readOffset);
-                    value = currentValue + DeltaBitmapIndexUtils.getDelta(packed);
-                    readOffset += DeltaBitmapIndexUtils.getBytesConsumed(packed);
-                }
-
-                currentValue = value;
-                position++;
-
-                if (value > maxValue) {
-                    valueCount = 0;
-                    return false;
-                }
-
+            while (position >= 0) {
+                long value = values.getQuick(position--);
                 if (value >= minValue) {
                     this.next = value;
                     return true;
                 }
+                // value < minValue, no more valid values since list is ordered
+                return false;
             }
             return false;
         }
@@ -344,70 +322,97 @@ public class DeltaBitmapIndexFwdReader implements BitmapIndexReader {
             return next - minValue;
         }
 
+        private void decodeValues(long baseAddress, long dataOffset, int dataLen, long valueCount, long maxValue) {
+            // Read first value using Unsafe
+            long value = Unsafe.getUnsafe().getLong(baseAddress + dataOffset);
+            long readOffset = dataOffset + 8;
+            long endOffset = dataOffset + dataLen;
+            long count = 1;
+
+            // Add first value if within range
+            if (value <= maxValue) {
+                values.add(value);
+            }
+
+            // Decode and add remaining values using Unsafe
+            while (readOffset < endOffset && count < valueCount) {
+                long packed = DeltaBitmapIndexUtils.decodeDeltaUnsafe(baseAddress + readOffset);
+                value += DeltaBitmapIndexUtils.getDelta(packed);
+                readOffset += DeltaBitmapIndexUtils.getBytesConsumed(packed);
+                count++;
+
+                if (value > maxValue) {
+                    break;
+                }
+                values.add(value);
+            }
+        }
+
         void of(int key, long minValue, long maxValue, long keyCount) {
+            values.clear();
+
             if (keyCount == 0) {
-                valueCount = 0;
-            } else {
-                assert key >= 0 : "key must be non-negative: " + key;
-                long offset = DeltaBitmapIndexUtils.getKeyEntryOffset(key);
-                keyMem.extend(offset + DeltaBitmapIndexUtils.KEY_ENTRY_SIZE);
+                position = -1;
+                return;
+            }
 
-                long valueCount;
-                long dataOffset;
-                int dataLen;
-                final long deadline = clock.getTicks() + spinLockTimeoutMs;
+            assert key >= 0 : "key must be non-negative: " + key;
+            long offset = DeltaBitmapIndexUtils.getKeyEntryOffset(key);
+            keyMem.extend(offset + DeltaBitmapIndexUtils.KEY_ENTRY_SIZE);
 
-                while (true) {
-                    valueCount = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
+            long valueCount;
+            long dataOffset;
+            int dataLen;
+            final long deadline = clock.getTicks() + spinLockTimeoutMs;
+
+            while (true) {
+                valueCount = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
+
+                Unsafe.getUnsafe().loadFence();
+                int countCheck = keyMem.getInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK);
+                if (countCheck == (int) valueCount) {
+                    dataOffset = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET);
+                    dataLen = keyMem.getInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN);
 
                     Unsafe.getUnsafe().loadFence();
-                    int countCheck = keyMem.getInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK);
-                    if (countCheck == (int) valueCount) {
-                        dataOffset = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET);
-                        dataLen = keyMem.getInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN);
-
-                        Unsafe.getUnsafe().loadFence();
-                        if (keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT) == valueCount) {
-                            break;
-                        }
-                    }
-
-                    if (clock.getTicks() > deadline) {
-                        LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms, key=").$(key).$(", offset=").$(offset).$(']').$();
-                        throw CairoException.critical(0).put(INDEX_CORRUPT);
+                    if (keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT) == valueCount) {
+                        break;
                     }
                 }
 
-                if (valueCount > 0) {
-                    valueMem.extend(dataOffset + dataLen);
+                if (clock.getTicks() > deadline) {
+                    LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms, key=").$(key).$(", offset=").$(offset).$(']').$();
+                    throw CairoException.critical(0).put(INDEX_CORRUPT);
                 }
-
-                this.valueCount = valueCount;
-                this.baseAddress = valueMem.addressOf(0);
-                this.readOffset = dataOffset;
-                this.dataEndOffset = dataOffset + dataLen;
-                this.currentValue = 0;
-                this.position = 0;
-                this.minValue = minValue;
-                this.maxValue = maxValue;
             }
+
+            if (valueCount > 0) {
+                valueMem.extend(dataOffset + dataLen);
+                decodeValues(valueMem.addressOf(0), dataOffset, dataLen, valueCount, maxValue);
+            }
+
+            this.minValue = minValue;
+            this.position = values.size() - 1;
         }
     }
 
     /**
-     * Cursor that returns nulls (for columnTop) before actual values.
+     * Cursor that returns actual values first (in reverse), then nulls (in reverse).
      */
     private class NullCursor extends Cursor {
         private long nullCount;
-        private long nullPos;
 
         @Override
         public boolean hasNext() {
-            if (nullPos < nullCount) {
-                next = nullPos++;
+            if (super.hasNext()) {
                 return true;
             }
-            return super.hasNext();
+
+            if (--nullCount >= minValue) {
+                next = nullCount;
+                return true;
+            }
+            return false;
         }
     }
 }

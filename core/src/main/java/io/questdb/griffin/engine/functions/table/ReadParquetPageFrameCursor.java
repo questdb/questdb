@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.table;
 
-import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;

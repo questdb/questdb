@@ -24,19 +24,19 @@
 
 package org.questdb;
 
-import io.questdb.cairo.BitmapIndexBwdReader;
-import io.questdb.cairo.BitmapIndexFwdReader;
-import io.questdb.cairo.BitmapIndexWriter;
+import io.questdb.cairo.idx.BitmapIndexBwdReader;
+import io.questdb.cairo.idx.BitmapIndexFwdReader;
+import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.DeltaBitmapIndexBwdReader;
-import io.questdb.cairo.DeltaBitmapIndexFwdReader;
-import io.questdb.cairo.DeltaBitmapIndexUtils;
-import io.questdb.cairo.DeltaBitmapIndexWriter;
-import io.questdb.cairo.FORBitmapIndexBwdReader;
-import io.questdb.cairo.FORBitmapIndexFwdReader;
-import io.questdb.cairo.FORBitmapIndexUtils;
-import io.questdb.cairo.FORBitmapIndexWriter;
+import io.questdb.cairo.idx.DeltaBitmapIndexBwdReader;
+import io.questdb.cairo.idx.DeltaBitmapIndexFwdReader;
+import io.questdb.cairo.idx.DeltaBitmapIndexUtils;
+import io.questdb.cairo.idx.DeltaBitmapIndexWriter;
+import io.questdb.cairo.idx.FORBitmapIndexBwdReader;
+import io.questdb.cairo.idx.FORBitmapIndexFwdReader;
+import io.questdb.cairo.idx.FORBitmapIndexUtils;
+import io.questdb.cairo.idx.FORBitmapIndexWriter;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;

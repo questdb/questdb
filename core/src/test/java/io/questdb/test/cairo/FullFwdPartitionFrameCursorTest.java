@@ -26,7 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.MessageBusImpl;
 import io.questdb.PropertyKey;
-import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;

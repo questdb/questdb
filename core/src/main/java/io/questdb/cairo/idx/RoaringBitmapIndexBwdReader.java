@@ -22,28 +22,30 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.idx;
 
 import io.questdb.NullIndexFrameCursor;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.EmptyRowCursor;
+import io.questdb.cairo.IndexFrameCursor;
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.RoaringBitmapIndexUtils.*;
 
 /**
- * Forward (ascending) reader for Roaring Bitmap Index.
- * Iterates row IDs from low to high.
+ * Backward (descending) reader for Roaring Bitmap Index.
+ * Iterates row IDs from high to low.
  */
-public class RoaringBitmapIndexFwdReader extends AbstractRoaringBitmapIndexReader {
+public class RoaringBitmapIndexBwdReader extends AbstractRoaringBitmapIndexReader {
 
     private final Cursor cursor = new Cursor();
     private final NullCursor nullCursor = new NullCursor();
 
-    public RoaringBitmapIndexFwdReader() {
+    public RoaringBitmapIndexBwdReader() {
     }
 
-    public RoaringBitmapIndexFwdReader(
+    public RoaringBitmapIndexBwdReader(
             CairoConfiguration configuration,
             Path path,
             CharSequence name,
@@ -62,9 +64,9 @@ public class RoaringBitmapIndexFwdReader extends AbstractRoaringBitmapIndexReade
 
         if (key == 0 && columnTop > 0 && minValue < columnTop) {
             final NullCursor nc = cachedInstance ? nullCursor : new NullCursor();
-            nc.nullPos = minValue;
-            nc.nullCount = Math.min(columnTop, maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1);
             nc.of(key, minValue, maxValue);
+            nc.nullPos = Math.min(columnTop, maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1) - 1;
+            nc.nullMin = minValue;
             return nc;
         }
 
@@ -93,7 +95,7 @@ public class RoaringBitmapIndexFwdReader extends AbstractRoaringBitmapIndexReade
     }
 
     /**
-     * Forward cursor implementation with optimized iteration.
+     * Backward cursor implementation with optimized iteration.
      * Uses incremental state tracking to avoid re-scanning containers.
      */
     private class Cursor implements RowCursor, IndexFrameCursor {
@@ -103,9 +105,9 @@ public class RoaringBitmapIndexFwdReader extends AbstractRoaringBitmapIndexReade
         private final ChunkInfo currentChunk = new ChunkInfo();
 
         // Range limits
-        private long maxValue;
+        private long minValue;
 
-        // Chunk iteration state
+        // Chunk iteration state (iterate from last to first)
         private int chunkCount;
         private long chunkDirOffset;
         private int currentChunkIndex;
@@ -116,22 +118,19 @@ public class RoaringBitmapIndexFwdReader extends AbstractRoaringBitmapIndexReade
         // Pre-computed values to avoid per-value overhead
         private long chunkBase;           // (chunkId << CHUNK_BITS) - computed once per chunk
         private long containerOffset;     // cached container offset
-        private long containerAddress;    // direct memory address for Unsafe access
 
         // Container iteration state (maintained across calls for efficiency)
         // For array containers
         private int arrayIndex;
-        private int arrayCardinality;     // cached cardinality for array bounds check
 
-        // For bitmap containers
+        // For bitmap containers - iterate from high to low
         private int bitmapWordIndex;
         private long bitmapCurrentWord;
 
-        // For run containers
+        // For run containers - iterate from last run to first
         private int runIndex;
         private int runCurrentStart;
-        private int runCurrentEnd;
-        private int runCurrentPos;
+        private int runCurrentPos;  // current position within run (iterates down)
 
         // For hasNext/next pattern
         private long nextValue;
@@ -156,7 +155,6 @@ public class RoaringBitmapIndexFwdReader extends AbstractRoaringBitmapIndexReade
             if (!hasNext()) {
                 return IndexFrame.NULL_INSTANCE;
             }
-            // For array containers, we can return direct memory reference
             if (hasCurrentChunk && currentChunk.containerType == CONTAINER_TYPE_ARRAY) {
                 long addr = valueMem.addressOf(containerOffset + (long) arrayIndex * Short.BYTES);
                 return indexFrame.of(addr, 1);
@@ -165,7 +163,7 @@ public class RoaringBitmapIndexFwdReader extends AbstractRoaringBitmapIndexReade
         }
 
         void of(int key, long minValue, long maxValue) {
-            this.maxValue = maxValue;
+            this.minValue = minValue;
             this.hasNextValue = false;
             this.hasCurrentChunk = false;
 
@@ -187,37 +185,44 @@ public class RoaringBitmapIndexFwdReader extends AbstractRoaringBitmapIndexReade
             long requiredSize = keyInfo.chunkDirOffset + (long) keyInfo.chunkCount * CHUNK_DIR_ENTRY_SIZE;
             valueMem.extend(requiredSize);
 
-            // Find the first chunk that could contain values >= minValue
-            int minChunkId = getChunkId(minValue);
-            currentChunkIndex = findFirstChunk(minChunkId);
+            // Find the last chunk that could contain values <= maxValue
+            int maxChunkId;
+            if (maxValue >= ((long) Integer.MAX_VALUE << CHUNK_BITS)) {
+                maxChunkId = Integer.MAX_VALUE;
+            } else {
+                maxChunkId = getChunkId(maxValue);
+            }
+            currentChunkIndex = findLastChunk(maxChunkId);
 
-            if (currentChunkIndex >= chunkCount) {
+            if (currentChunkIndex < 0) {
                 chunkCount = 0;
                 return;
             }
 
-            // Load first chunk and position within it
+            // Load last chunk and position at end
             loadChunk(currentChunkIndex);
-            initializeContainerPosition(minValue);
+            initializeContainerPosition(maxValue);
         }
 
-        private int findFirstChunk(int minChunkId) {
+        private int findLastChunk(int maxChunkId) {
             int low = 0;
             int high = chunkCount - 1;
+            int result = -1;
 
-            while (low < high) {
+            while (low <= high) {
                 int mid = (low + high) >>> 1;
                 long dirOffset = chunkDirOffset + (long) mid * CHUNK_DIR_ENTRY_SIZE;
                 int chunkId = valueMem.getShort(dirOffset + CHUNK_DIR_OFFSET_CHUNK_ID) & 0xFFFF;
 
-                if (chunkId < minChunkId) {
+                if (chunkId <= maxChunkId) {
+                    result = mid;
                     low = mid + 1;
                 } else {
-                    high = mid;
+                    high = mid - 1;
                 }
             }
 
-            return low;
+            return result;
         }
 
         private void loadChunk(int chunkIndex) {
@@ -227,90 +232,100 @@ public class RoaringBitmapIndexFwdReader extends AbstractRoaringBitmapIndexReade
             // Pre-compute values to avoid per-value overhead
             chunkBase = (long) currentChunk.chunkId << CHUNK_BITS;
             containerOffset = currentChunk.containerOffset;
-            containerAddress = valueMem.addressOf(containerOffset);
-            arrayCardinality = currentChunk.cardinality;
         }
 
-        private void initializeContainerPosition(long minValue) {
+        private void initializeContainerPosition(long maxValue) {
             if (!hasCurrentChunk || currentChunk.cardinality == 0) {
                 return;
             }
 
-            int minChunkId = getChunkId(minValue);
-            short minOffset = (currentChunk.chunkId == minChunkId) ? getOffsetInChunk(minValue) : 0;
+            int maxChunkId;
+            if (maxValue >= ((long) Integer.MAX_VALUE << CHUNK_BITS)) {
+                maxChunkId = Integer.MAX_VALUE;
+            } else {
+                maxChunkId = getChunkId(maxValue);
+            }
+
+            // If this chunk is entirely <= maxValue, start at the end
+            short maxOffset = (currentChunk.chunkId == maxChunkId)
+                    ? getOffsetInChunk(maxValue)
+                    : (short) 0xFFFF;
 
             if (currentChunk.containerType == CONTAINER_TYPE_ARRAY) {
-                initArrayPosition(minOffset);
+                initArrayPosition(maxOffset);
             } else if (currentChunk.containerType == CONTAINER_TYPE_BITMAP) {
-                initBitmapPosition(minOffset);
+                initBitmapPosition(maxOffset);
             } else {
-                initRunPosition(minOffset);
+                initRunPosition(maxOffset);
             }
         }
 
-        private void initArrayPosition(short minOffset) {
-            // Binary search for first value >= minOffset
-            arrayIndex = lowerBound(
+        private void initArrayPosition(short maxOffset) {
+            // Binary search for last value <= maxOffset
+            int idx = upperBound(
                     valueMem.addressOf(containerOffset),
                     currentChunk.cardinality,
-                    minOffset
+                    maxOffset
             );
+            arrayIndex = idx - 1;
         }
 
-        private void initBitmapPosition(short minOffset) {
-            int uMinOffset = minOffset & 0xFFFF;
-            bitmapWordIndex = uMinOffset >>> 6;
-            int startBit = uMinOffset & 63;
+        private void initBitmapPosition(short maxOffset) {
+            int uMaxOffset = maxOffset & 0xFFFF;
+            bitmapWordIndex = uMaxOffset >>> 6;
+            int endBit = uMaxOffset & 63;
 
-            // Load current word and mask off bits before startBit
+            // Load current word and mask off bits after endBit
             if (bitmapWordIndex < 1024) {
                 bitmapCurrentWord = valueMem.getLong(containerOffset + (long) bitmapWordIndex * 8);
-                // Clear bits before startBit
-                bitmapCurrentWord &= ~((1L << startBit) - 1);
-                // Find next set bit or advance to next word
-                advanceToNextBitmapBit();
+                // Clear bits after endBit (keep bits 0..endBit inclusive)
+                if (endBit < 63) {
+                    bitmapCurrentWord &= (1L << (endBit + 1)) - 1;
+                }
+                // Find previous set bit or go to previous word
+                advanceToPrevBitmapBit();
             } else {
-                bitmapCurrentWord = 0;
+                bitmapWordIndex = 1023;
+                bitmapCurrentWord = valueMem.getLong(containerOffset + (long) bitmapWordIndex * 8);
+                advanceToPrevBitmapBit();
             }
         }
 
-        private void advanceToNextBitmapBit() {
-            // Direct memory access via Unsafe
-            while (bitmapCurrentWord == 0 && bitmapWordIndex < 1023) {
-                bitmapWordIndex++;
-                bitmapCurrentWord = Unsafe.getUnsafe().getLong(containerAddress + (long) bitmapWordIndex * 8);
+        private void advanceToPrevBitmapBit() {
+            // Skip empty words going backward
+            while (bitmapCurrentWord == 0 && bitmapWordIndex > 0) {
+                bitmapWordIndex--;
+                bitmapCurrentWord = valueMem.getLong(containerOffset + (long) bitmapWordIndex * 8);
             }
         }
 
-        private void initRunPosition(short minOffset) {
-            int uMinOffset = minOffset & 0xFFFF;
+        private void initRunPosition(short maxOffset) {
+            int uMaxOffset = maxOffset & 0xFFFF;
             int runCount = valueMem.getShort(containerOffset) & 0xFFFF;
 
-            runIndex = 0;
-            runCurrentPos = 0;
-
-            // Find the run containing or after minOffset
-            for (int r = 0; r < runCount; r++) {
+            // Find the last run that starts <= maxOffset
+            runIndex = -1;
+            for (int r = runCount - 1; r >= 0; r--) {
                 long runOffset = containerOffset + RUN_CONTAINER_HEADER_SIZE + (long) r * 4;
-                runCurrentStart = valueMem.getShort(runOffset) & 0xFFFF;
+                int start = valueMem.getShort(runOffset) & 0xFFFF;
                 int length = valueMem.getShort(runOffset + 2) & 0xFFFF;
-                runCurrentEnd = runCurrentStart + length;
+                int end = start + length - 1;
 
-                if (uMinOffset < runCurrentEnd) {
+                if (start <= uMaxOffset) {
                     runIndex = r;
-                    runCurrentPos = Math.max(runCurrentStart, uMinOffset);
+                    runCurrentStart = start;
+                    // Position at min(end, maxOffset)
+                    runCurrentPos = Math.min(end, uMaxOffset);
                     return;
                 }
             }
 
-            // Past all runs
-            runIndex = runCount;
-            runCurrentPos = 0;
-            runCurrentEnd = 0;
+            // No valid run found
+            runCurrentPos = -1;
         }
 
         private boolean advance() {
-            while (currentChunkIndex < chunkCount) {
+            while (currentChunkIndex >= 0) {
                 if (hasCurrentChunk) {
                     // Type-specialized advance to avoid per-value type check
                     long rowId;
@@ -326,7 +341,7 @@ public class RoaringBitmapIndexFwdReader extends AbstractRoaringBitmapIndexReade
                             break;
                     }
                     if (rowId >= 0) {
-                        if (rowId > maxValue) {
+                        if (rowId < minValue) {
                             chunkCount = 0;
                             return false;
                         }
@@ -336,19 +351,17 @@ public class RoaringBitmapIndexFwdReader extends AbstractRoaringBitmapIndexReade
                     }
                 }
 
-                // Move to next chunk
-                currentChunkIndex++;
-                if (currentChunkIndex < chunkCount) {
+                // Move to previous chunk
+                currentChunkIndex--;
+                if (currentChunkIndex >= 0) {
                     loadChunk(currentChunkIndex);
-                    initializeContainerAtStart();
+                    initializeContainerAtEnd();
 
-                    // Check if this chunk is past maxValue
-                    if (maxValue < ((long) Integer.MAX_VALUE << CHUNK_BITS)) {
-                        int maxChunkId = getChunkId(maxValue);
-                        if (currentChunk.chunkId > maxChunkId) {
-                            chunkCount = 0;
-                            return false;
-                        }
+                    // Check if this chunk is before minValue
+                    int minChunkId = getChunkId(minValue);
+                    if (currentChunk.chunkId < minChunkId) {
+                        chunkCount = 0;
+                        return false;
                     }
                 }
             }
@@ -356,43 +369,41 @@ public class RoaringBitmapIndexFwdReader extends AbstractRoaringBitmapIndexReade
             return false;
         }
 
-        private void initializeContainerAtStart() {
+        private void initializeContainerAtEnd() {
             switch (currentChunk.containerType) {
                 case CONTAINER_TYPE_ARRAY:
-                    arrayIndex = 0;
+                    arrayIndex = currentChunk.cardinality - 1;
                     break;
                 case CONTAINER_TYPE_BITMAP:
-                    bitmapWordIndex = 0;
-                    bitmapCurrentWord = Unsafe.getUnsafe().getLong(containerAddress);
-                    advanceToNextBitmapBit();
+                    // Start from last word
+                    bitmapWordIndex = 1023;
+                    bitmapCurrentWord = valueMem.getLong(containerOffset + (long) bitmapWordIndex * 8);
+                    advanceToPrevBitmapBit();
                     break;
                 default:
-                    initRunAtStart();
+                    initRunAtEnd();
                     break;
             }
         }
 
-        private void initRunAtStart() {
+        private void initRunAtEnd() {
             int runCount = valueMem.getShort(containerOffset) & 0xFFFF;
             if (runCount > 0) {
-                runIndex = 0;
-                long runOffset = containerOffset + RUN_CONTAINER_HEADER_SIZE;
+                runIndex = runCount - 1;
+                long runOffset = containerOffset + RUN_CONTAINER_HEADER_SIZE + (long) runIndex * 4;
                 runCurrentStart = valueMem.getShort(runOffset) & 0xFFFF;
                 int length = valueMem.getShort(runOffset + 2) & 0xFFFF;
-                runCurrentEnd = runCurrentStart + length;
-                runCurrentPos = runCurrentStart;
+                runCurrentPos = runCurrentStart + length - 1;
             } else {
-                runIndex = 0;
-                runCurrentEnd = 0;
-                runCurrentPos = 0;
+                runIndex = -1;
+                runCurrentPos = -1;
             }
         }
 
         private long advanceInArray() {
-            if (arrayIndex < arrayCardinality) {
-                // Direct memory access via Unsafe - bypasses Memory abstraction overhead
-                int offset = Unsafe.getUnsafe().getShort(containerAddress + (long) arrayIndex * Short.BYTES) & 0xFFFF;
-                arrayIndex++;
+            if (arrayIndex >= 0) {
+                int offset = valueMem.getShort(containerOffset + (long) arrayIndex * Short.BYTES) & 0xFFFF;
+                arrayIndex--;
                 return chunkBase + offset;
             }
             return -1;
@@ -400,16 +411,16 @@ public class RoaringBitmapIndexFwdReader extends AbstractRoaringBitmapIndexReade
 
         private long advanceInBitmap() {
             if (bitmapCurrentWord != 0) {
-                // Find lowest set bit using numberOfTrailingZeros (intrinsic - very fast)
-                int bit = Long.numberOfTrailingZeros(bitmapCurrentWord);
+                // Find highest set bit using numberOfLeadingZeros (intrinsic - very fast)
+                int bit = 63 - Long.numberOfLeadingZeros(bitmapCurrentWord);
                 long rowId = chunkBase + (bitmapWordIndex << 6) + bit;
 
-                // Clear lowest set bit
-                bitmapCurrentWord &= bitmapCurrentWord - 1;
+                // Clear highest set bit
+                bitmapCurrentWord &= ~(1L << bit);
 
-                // If word is now empty, advance to next non-empty word
+                // If word is now empty, go to previous non-empty word
                 if (bitmapCurrentWord == 0) {
-                    advanceToNextBitmapBit();
+                    advanceToPrevBitmapBit();
                 }
 
                 return rowId;
@@ -418,13 +429,13 @@ public class RoaringBitmapIndexFwdReader extends AbstractRoaringBitmapIndexReade
         }
 
         private long advanceInRun() {
-            if (runCurrentPos < runCurrentEnd) {
+            if (runCurrentPos >= runCurrentStart) {
                 long rowId = chunkBase + runCurrentPos;
-                runCurrentPos++;
+                runCurrentPos--;
 
-                // If we've exhausted this run, move to next
-                if (runCurrentPos >= runCurrentEnd) {
-                    advanceToNextRun();
+                // If we've exhausted this run, move to previous
+                if (runCurrentPos < runCurrentStart) {
+                    advanceToPrevRun();
                 }
 
                 return rowId;
@@ -432,43 +443,52 @@ public class RoaringBitmapIndexFwdReader extends AbstractRoaringBitmapIndexReade
             return -1;
         }
 
-        private void advanceToNextRun() {
-            int runCount = valueMem.getShort(containerOffset) & 0xFFFF;
-            runIndex++;
-            if (runIndex < runCount) {
+        private void advanceToPrevRun() {
+            runIndex--;
+            if (runIndex >= 0) {
                 long runOffset = containerOffset + RUN_CONTAINER_HEADER_SIZE + (long) runIndex * 4;
                 runCurrentStart = valueMem.getShort(runOffset) & 0xFFFF;
                 int length = valueMem.getShort(runOffset + 2) & 0xFFFF;
-                runCurrentEnd = runCurrentStart + length;
-                runCurrentPos = runCurrentStart;
+                runCurrentPos = runCurrentStart + length - 1;
             } else {
-                runCurrentEnd = 0;
-                runCurrentPos = 0;
+                runCurrentPos = -1;
             }
         }
     }
 
     /**
-     * Cursor that includes null values at the beginning for column top.
+     * Cursor that includes null values at the end for column top (iterating backward).
      */
     private class NullCursor extends Cursor {
         long nullPos;
-        long nullCount;
+        long nullMin;
+        boolean inNulls = false;
 
         @Override
         public boolean hasNext() {
-            if (nullPos < nullCount) {
+            if (inNulls) {
+                return nullPos >= nullMin;
+            }
+            if (super.hasNext()) {
                 return true;
             }
-            return super.hasNext();
+            // Switch to nulls after exhausting real values
+            inNulls = true;
+            return nullPos >= nullMin;
         }
 
         @Override
         public long next() {
-            if (nullPos < nullCount) {
-                return nullPos++;
+            if (inNulls) {
+                return nullPos--;
             }
             return super.next();
+        }
+
+        @Override
+        void of(int key, long minValue, long maxValue) {
+            super.of(key, minValue, maxValue);
+            inNulls = false;
         }
     }
 }

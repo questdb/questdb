@@ -24,10 +24,10 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.FORBitmapIndexBwdReader;
-import io.questdb.cairo.FORBitmapIndexFwdReader;
-import io.questdb.cairo.FORBitmapIndexUtils;
-import io.questdb.cairo.FORBitmapIndexWriter;
+import io.questdb.cairo.idx.FORBitmapIndexBwdReader;
+import io.questdb.cairo.idx.FORBitmapIndexFwdReader;
+import io.questdb.cairo.idx.FORBitmapIndexUtils;
+import io.questdb.cairo.idx.FORBitmapIndexWriter;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;

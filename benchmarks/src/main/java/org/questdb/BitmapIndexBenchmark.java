@@ -24,14 +24,14 @@
 
 package org.questdb;
 
-import io.questdb.cairo.BitmapIndexBwdReader;
-import io.questdb.cairo.BitmapIndexFwdReader;
-import io.questdb.cairo.BitmapIndexWriter;
+import io.questdb.cairo.idx.BitmapIndexBwdReader;
+import io.questdb.cairo.idx.BitmapIndexFwdReader;
+import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.RoaringBitmapIndexBwdReader;
-import io.questdb.cairo.RoaringBitmapIndexFwdReader;
-import io.questdb.cairo.RoaringBitmapIndexWriter;
+import io.questdb.cairo.idx.RoaringBitmapIndexBwdReader;
+import io.questdb.cairo.idx.RoaringBitmapIndexFwdReader;
+import io.questdb.cairo.idx.RoaringBitmapIndexWriter;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;

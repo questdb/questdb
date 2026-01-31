@@ -22,9 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.idx;
 
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.IndexFrameCursor;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;

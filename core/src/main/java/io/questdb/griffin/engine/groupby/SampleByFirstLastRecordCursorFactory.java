@@ -25,13 +25,13 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.IndexFrame;
+import io.questdb.cairo.idx.IndexFrame;
 import io.questdb.cairo.IndexFrameCursor;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.sql.Function;

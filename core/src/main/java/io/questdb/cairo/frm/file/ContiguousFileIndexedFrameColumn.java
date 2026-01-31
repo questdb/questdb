@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.frm.file;
 
-import io.questdb.cairo.BitmapIndexWriter;
+import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;

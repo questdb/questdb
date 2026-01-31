@@ -26,10 +26,11 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DeltaBitmapIndexBwdReader;
-import io.questdb.cairo.DeltaBitmapIndexFwdReader;
-import io.questdb.cairo.DeltaBitmapIndexUtils;
-import io.questdb.cairo.DeltaBitmapIndexWriter;
+import io.questdb.cairo.idx.BitmapIndexReader;
+import io.questdb.cairo.idx.DeltaBitmapIndexBwdReader;
+import io.questdb.cairo.idx.DeltaBitmapIndexFwdReader;
+import io.questdb.cairo.idx.DeltaBitmapIndexUtils;
+import io.questdb.cairo.idx.DeltaBitmapIndexWriter;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
@@ -872,7 +873,7 @@ public class DeltaBitmapIndexTest extends AbstractCairoTest {
         }
     }
 
-    private void assertEmptyCursor(io.questdb.cairo.BitmapIndexReader reader) {
+    private void assertEmptyCursor(BitmapIndexReader reader) {
         RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
         Assert.assertFalse(cursor.hasNext());
     }

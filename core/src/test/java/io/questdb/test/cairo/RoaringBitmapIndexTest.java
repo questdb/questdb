@@ -24,9 +24,9 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.RoaringBitmapIndexBwdReader;
-import io.questdb.cairo.RoaringBitmapIndexFwdReader;
-import io.questdb.cairo.RoaringBitmapIndexWriter;
+import io.questdb.cairo.idx.RoaringBitmapIndexBwdReader;
+import io.questdb.cairo.idx.RoaringBitmapIndexFwdReader;
+import io.questdb.cairo.idx.RoaringBitmapIndexWriter;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.LongList;
 import io.questdb.std.str.Path;

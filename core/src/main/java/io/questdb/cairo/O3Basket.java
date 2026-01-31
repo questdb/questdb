@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 

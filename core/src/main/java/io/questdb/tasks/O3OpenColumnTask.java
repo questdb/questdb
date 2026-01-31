@@ -24,7 +24,7 @@
 
 package io.questdb.tasks;
 
-import io.questdb.cairo.BitmapIndexWriter;
+import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.str.Path;
 

@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.idx;
 
 public class IndexFrame {
     public static final IndexFrame NULL_INSTANCE = new IndexFrame();

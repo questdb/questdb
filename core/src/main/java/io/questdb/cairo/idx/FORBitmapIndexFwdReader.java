@@ -22,15 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.idx;
 
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -41,12 +41,12 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 /**
- * Backward reader for delta-encoded bitmap index.
- * Uses buffered decode (decodes all values into LongList for reverse iteration).
+ * Forward reader for Frame of Reference (FOR) bitmap index.
+ * Reads values block by block in forward order.
  */
-public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
+public class FORBitmapIndexFwdReader implements BitmapIndexReader {
     private static final String INDEX_CORRUPT = "cursor could not consistently read index header [corrupt?]";
-    private static final Log LOG = LogFactory.getLog(DeltaBitmapIndexBwdReader.class);
+    private static final Log LOG = LogFactory.getLog(FORBitmapIndexFwdReader.class);
 
     protected final MemoryMR keyMem = Vm.getCMRInstance();
     protected final MemoryMR valueMem = Vm.getCMRInstance();
@@ -62,10 +62,10 @@ public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
     private long partitionTxn;
     private long valueMemSize = -1;
 
-    public DeltaBitmapIndexBwdReader() {
+    public FORBitmapIndexFwdReader() {
     }
 
-    public DeltaBitmapIndexBwdReader(
+    public FORBitmapIndexFwdReader(
             CairoConfiguration configuration,
             Path path,
             CharSequence name,
@@ -94,15 +94,14 @@ public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
 
     @Override
     public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
-        assert minValue <= maxValue;
-
         if (key >= keyCount) {
             updateKeyCount();
         }
 
         if (key == 0 && columnTop > 0 && minValue < columnTop) {
-            // Return actual index values first (in reverse), then nulls
+            // Return nulls first, then actual index values
             final NullCursor nc = getNullCursor(cachedInstance);
+            nc.nullPos = minValue;
             final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
             nc.nullCount = Math.min(columnTop, hi);
             nc.of(key, minValue, maxValue, keyCount);
@@ -145,8 +144,7 @@ public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
 
     @Override
     public int getValueBlockCapacity() {
-        // Delta-encoded index doesn't use fixed block capacity
-        return 0;
+        return FORBitmapIndexUtils.BLOCK_CAPACITY;
     }
 
     @Override
@@ -176,19 +174,19 @@ public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
 
         try {
             FilesFacade ff = configuration.getFilesFacade();
-            LPSZ name = DeltaBitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
+            LPSZ name = FORBitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
             keyMem.of(
                     ff,
                     name,
                     ff.getMapPageSize(),
-                    DeltaBitmapIndexUtils.getKeyEntryOffset(0),
+                    FORBitmapIndexUtils.getKeyEntryOffset(0),
                     MemoryTag.MMAP_INDEX_READER,
                     CairoConfiguration.O_NONE,
                     -1
             );
             this.clock = configuration.getMillisecondClock();
 
-            if (keyMem.getByte(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) != DeltaBitmapIndexUtils.SIGNATURE) {
+            if (keyMem.getByte(FORBitmapIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) != FORBitmapIndexUtils.SIGNATURE) {
                 LOG.error().$("unknown format [corrupt] ").$(path).$();
                 throw CairoException.critical(0).put("Unknown format: ").put(path);
             }
@@ -197,7 +195,7 @@ public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
 
             this.valueMem.of(
                     configuration.getFilesFacade(),
-                    DeltaBitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn),
+                    FORBitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn),
                     valueMemSize,
                     valueMemSize,
                     MemoryTag.MMAP_INDEX_READER
@@ -212,10 +210,10 @@ public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
 
     @Override
     public void reloadConditionally() {
-        long seq = keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK);
+        long seq = keyMem.getLong(FORBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK);
         if (seq != keyFileSequence) {
             readIndexMetadataAtomically();
-            this.keyMem.extend(DeltaBitmapIndexUtils.getKeyEntryOffset(keyCount));
+            this.keyMem.extend(FORBitmapIndexUtils.getKeyEntryOffset(keyCount));
             this.valueMem.extend(valueMemSize);
         }
     }
@@ -224,14 +222,14 @@ public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
         int keyCount;
         final long deadline = clock.getTicks() + spinLockTimeoutMs;
         while (true) {
-            long seq = keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
+            long seq = keyMem.getLong(FORBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
 
             Unsafe.getUnsafe().loadFence();
-            if (keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
-                keyCount = keyMem.getInt(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
+            if (keyMem.getLong(FORBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
+                keyCount = keyMem.getInt(FORBitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
 
                 Unsafe.getUnsafe().loadFence();
-                if (seq == keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {
+                if (seq == keyMem.getLong(FORBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {
                     break;
                 }
             }
@@ -247,7 +245,7 @@ public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
         if (keyCount > this.keyCount) {
             this.keyCount = keyCount;
             this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
-            keyMem.extend(DeltaBitmapIndexUtils.getKeyEntryOffset(keyCount));
+            keyMem.extend(FORBitmapIndexUtils.getKeyEntryOffset(keyCount));
         }
     }
 
@@ -262,22 +260,22 @@ public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
     private void readIndexMetadataAtomically() {
         final long deadline = clock.getTicks() + spinLockTimeoutMs;
         while (true) {
-            long seq = keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
+            long seq = keyMem.getLong(FORBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
             int keyCount;
             long valueMemSize;
 
             Unsafe.getUnsafe().loadFence();
-            if (keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
-                keyCount = keyMem.getInt(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
-                valueMemSize = keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
+            if (keyMem.getLong(FORBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
+                keyCount = keyMem.getInt(FORBitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
+                valueMemSize = keyMem.getLong(FORBitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
 
                 Unsafe.getUnsafe().loadFence();
-                if (keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) == seq) {
+                if (keyMem.getLong(FORBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) == seq) {
                     this.keyFileSequence = seq;
                     this.valueMemSize = valueMemSize;
                     this.keyCount = keyCount;
                     this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
-                    keyMem.extend(DeltaBitmapIndexUtils.getKeyEntryOffset(keyCount));
+                    keyMem.extend(FORBitmapIndexUtils.getKeyEntryOffset(keyCount));
                     break;
                 }
             }
@@ -292,126 +290,134 @@ public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
     }
 
     /**
-     * Backward cursor with buffered decode.
-     * Decodes all values into a LongList and iterates in reverse.
-     * Uses Unsafe for fast direct memory access.
+     * Forward cursor that reads FOR blocks sequentially.
      */
     private class Cursor implements RowCursor {
-        private final LongList values = new LongList();
-        protected long minValue;
+        // Output
         protected long next;
-        private int position;
+        // Block iteration state
+        private long baseAddress;
+        private int blockCount;
+        private int blockValueCount;
+        private int blockValueIndex;
+        // Within-block state
+        private final long[] blockValues = new long[FORBitmapIndexUtils.BLOCK_CAPACITY];
+        private int currentBlockIndex;
+        private long currentBlockOffset;
+        private long maxValue;
+        // Query range
+        private long minValue;
 
         @Override
         public boolean hasNext() {
-            while (position >= 0) {
-                long value = values.getQuick(position--);
-                if (value >= minValue) {
-                    this.next = value;
-                    return true;
+            while (true) {
+                // Try to get next value from current block
+                while (blockValueIndex < blockValueCount) {
+                    long value = blockValues[blockValueIndex++];
+                    if (value > maxValue) {
+                        return false;
+                    }
+                    if (value >= minValue) {
+                        this.next = value;
+                        return true;
+                    }
                 }
-                // value < minValue, no more valid values since list is ordered
-                return false;
+
+                // Move to next block
+                if (currentBlockIndex >= blockCount) {
+                    return false;
+                }
+
+                loadBlock();
+                currentBlockIndex++;
             }
-            return false;
         }
 
         @Override
         public long next() {
-            return next - minValue;
+            return next;
         }
 
-        private void decodeValues(long baseAddress, long dataOffset, int dataLen, long valueCount, long maxValue) {
-            // Read first value using Unsafe
-            long value = Unsafe.getUnsafe().getLong(baseAddress + dataOffset);
-            long readOffset = dataOffset + 8;
-            long endOffset = dataOffset + dataLen;
-            long count = 1;
+        private void loadBlock() {
+            long blockAddr = baseAddress + currentBlockOffset;
 
-            // Add first value if within range
-            if (value <= maxValue) {
-                values.add(value);
-            }
+            // Read block header
+            long blockMinValue = Unsafe.getUnsafe().getLong(blockAddr + FORBitmapIndexUtils.BLOCK_OFFSET_MIN_VALUE);
+            int bitWidth = Unsafe.getUnsafe().getByte(blockAddr + FORBitmapIndexUtils.BLOCK_OFFSET_BIT_WIDTH) & 0xFF;
+            int valueCount = Unsafe.getUnsafe().getShort(blockAddr + FORBitmapIndexUtils.BLOCK_OFFSET_VALUE_COUNT) & 0xFFFF;
 
-            // Decode and add remaining values using Unsafe
-            while (readOffset < endOffset && count < valueCount) {
-                long packed = DeltaBitmapIndexUtils.decodeDeltaUnsafe(baseAddress + readOffset);
-                value += DeltaBitmapIndexUtils.getDelta(packed);
-                readOffset += DeltaBitmapIndexUtils.getBytesConsumed(packed);
-                count++;
+            // Unpack values
+            long dataAddr = blockAddr + FORBitmapIndexUtils.BLOCK_OFFSET_DATA;
+            FORBitmapIndexUtils.unpackAllValues(dataAddr, valueCount, bitWidth, blockMinValue, blockValues);
 
-                if (value > maxValue) {
-                    break;
-                }
-                values.add(value);
-            }
+            this.blockValueCount = valueCount;
+            this.blockValueIndex = 0;
+
+            // Calculate next block offset
+            int packedSize = FORBitmapIndexUtils.packedDataSize(valueCount, bitWidth);
+            currentBlockOffset += FORBitmapIndexUtils.BLOCK_HEADER_SIZE + packedSize;
         }
 
         void of(int key, long minValue, long maxValue, long keyCount) {
-            values.clear();
-
             if (keyCount == 0) {
-                position = -1;
+                this.blockCount = 0;
                 return;
             }
 
-            assert key >= 0 : "key must be non-negative: " + key;
-            long offset = DeltaBitmapIndexUtils.getKeyEntryOffset(key);
-            keyMem.extend(offset + DeltaBitmapIndexUtils.KEY_ENTRY_SIZE);
+            long offset = FORBitmapIndexUtils.getKeyEntryOffset(key);
+            keyMem.extend(offset + FORBitmapIndexUtils.KEY_ENTRY_SIZE);
 
             long valueCount;
-            long dataOffset;
-            int dataLen;
+            long firstBlockOffset;
+            int blockCount;
             final long deadline = clock.getTicks() + spinLockTimeoutMs;
 
             while (true) {
-                valueCount = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
+                valueCount = keyMem.getLong(offset + FORBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
 
                 Unsafe.getUnsafe().loadFence();
-                int countCheck = keyMem.getInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK);
+                int countCheck = keyMem.getInt(offset + FORBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK);
                 if (countCheck == (int) valueCount) {
-                    dataOffset = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET);
-                    dataLen = keyMem.getInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN);
+                    firstBlockOffset = keyMem.getLong(offset + FORBitmapIndexUtils.KEY_ENTRY_OFFSET_FIRST_BLOCK);
+                    blockCount = keyMem.getInt(offset + FORBitmapIndexUtils.KEY_ENTRY_OFFSET_BLOCK_COUNT);
 
                     Unsafe.getUnsafe().loadFence();
-                    if (keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT) == valueCount) {
+                    if (keyMem.getLong(offset + FORBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT) == valueCount) {
                         break;
                     }
                 }
 
                 if (clock.getTicks() > deadline) {
-                    LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms, key=").$(key).$(", offset=").$(offset).$(']').$();
+                    LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms, key=").$(key).$("]").$();
                     throw CairoException.critical(0).put(INDEX_CORRUPT);
                 }
             }
 
-            if (valueCount > 0) {
-                valueMem.extend(dataOffset + dataLen);
-                decodeValues(valueMem.addressOf(0), dataOffset, dataLen, valueCount, maxValue);
-            }
-
             this.minValue = minValue;
-            this.position = values.size() - 1;
+            this.maxValue = maxValue;
+            this.blockCount = blockCount;
+            this.currentBlockOffset = firstBlockOffset;
+            this.currentBlockIndex = 0;
+            this.blockValueCount = 0;
+            this.blockValueIndex = 0;
+            this.baseAddress = valueMem.addressOf(0);
         }
     }
 
     /**
-     * Cursor that returns actual values first (in reverse), then nulls (in reverse).
+     * Cursor that returns nulls (for columnTop) before actual values.
      */
     private class NullCursor extends Cursor {
         private long nullCount;
+        private long nullPos;
 
         @Override
         public boolean hasNext() {
-            if (super.hasNext()) {
+            if (nullPos < nullCount) {
+                next = nullPos++;
                 return true;
             }
-
-            if (--nullCount >= minValue) {
-                next = nullCount;
-                return true;
-            }
-            return false;
+            return super.hasNext();
         }
     }
 }

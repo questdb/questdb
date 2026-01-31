@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.idx;
 
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
