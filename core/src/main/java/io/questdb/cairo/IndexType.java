@@ -30,21 +30,29 @@ package io.questdb.cairo;
  */
 public final class IndexType {
     /**
-     * Mask for extracting the index type from metadata flags (bits 0-1).
+     * Mask for extracting the index type from metadata flags (bits 0-2).
      */
-    public static final int INDEX_TYPE_MASK = 0x03;
+    public static final int INDEX_TYPE_MASK = 0x07;
     /**
      * No index on this column.
      */
     public static final byte NONE = 0;
-
-    // Reserved for future index types:
-    // public static final byte DELTA = 2;
-    // public static final byte FOR = 3;
     /**
      * Symbol index (original BitmapIndex for SYMBOL columns).
      */
     public static final byte SYMBOL = 1;
+    /**
+     * Delta-encoded bitmap index. Achieves 2-4x compression for sequential row IDs.
+     */
+    public static final byte DELTA = 2;
+    /**
+     * Frame of Reference (FOR) bitmap index. Fixed-size blocks with SIMD-friendly decoding.
+     */
+    public static final byte FOR = 3;
+    /**
+     * Roaring bitmap index. Uses hybrid container types (array/bitmap) for optimal compression.
+     */
+    public static final byte ROARING = 4;
 
     private IndexType() {
         // Utility class, no instances
@@ -70,6 +78,9 @@ public final class IndexType {
         return switch (indexType) {
             case NONE -> "NONE";
             case SYMBOL -> "SYMBOL";
+            case DELTA -> "DELTA";
+            case FOR -> "FOR";
+            case ROARING -> "ROARING";
             default -> "UNKNOWN(" + indexType + ")";
         };
     }
@@ -87,6 +98,15 @@ public final class IndexType {
         // Case-insensitive comparison
         if (equalsIgnoreCase(name, "SYMBOL")) {
             return SYMBOL;
+        }
+        if (equalsIgnoreCase(name, "DELTA")) {
+            return DELTA;
+        }
+        if (equalsIgnoreCase(name, "FOR")) {
+            return FOR;
+        }
+        if (equalsIgnoreCase(name, "ROARING")) {
+            return ROARING;
         }
         if (equalsIgnoreCase(name, "NONE")) {
             return NONE;

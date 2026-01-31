@@ -53,7 +53,7 @@ import java.io.Closeable;
  * Delta encoding achieves 2-4x compression for sequential row IDs common in time-series data.
  * Values for each key are stored as: first_value (8 bytes) followed by delta-encoded differences.
  */
-public class DeltaBitmapIndexWriter implements Closeable, Mutable {
+public class DeltaBitmapIndexWriter implements IndexWriter {
     private static final Log LOG = LogFactory.getLog(DeltaBitmapIndexWriter.class);
 
     private final CairoConfiguration configuration;

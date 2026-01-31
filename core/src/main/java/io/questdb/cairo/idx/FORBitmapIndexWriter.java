@@ -51,7 +51,7 @@ import java.io.Closeable;
  * FOR compression stores row IDs in fixed-size blocks, achieving excellent compression
  * for sequential data while enabling fast SIMD-friendly decoding.
  */
-public class FORBitmapIndexWriter implements Closeable, Mutable {
+public class FORBitmapIndexWriter implements IndexWriter {
     private static final Log LOG = LogFactory.getLog(FORBitmapIndexWriter.class);
 
     private final CairoConfiguration configuration;

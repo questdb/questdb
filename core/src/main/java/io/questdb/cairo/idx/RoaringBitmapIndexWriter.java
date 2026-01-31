@@ -64,7 +64,7 @@ import static io.questdb.cairo.RoaringBitmapIndexUtils.*;
  * - Chunk directory (16 bytes per chunk) stored contiguously
  * - Containers stored after the directory
  */
-public class RoaringBitmapIndexWriter implements Closeable, Mutable {
+public class RoaringBitmapIndexWriter implements IndexWriter {
     private static final Log LOG = LogFactory.getLog(RoaringBitmapIndexWriter.class);
 
     private final CairoConfiguration configuration;
@@ -367,6 +367,11 @@ public class RoaringBitmapIndexWriter implements Closeable, Mutable {
         keyMem.putLong(KEY_RESERVED_OFFSET_VALUE_MEM_SIZE, valueMemSize);
         Unsafe.getUnsafe().storeFence();
         keyMem.putLong(KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);
+    }
+
+    @Override
+    public final void of(Path path, CharSequence name, long columnNameTxn) {
+        of(path, name, columnNameTxn, false);
     }
 
     public final void of(Path path, CharSequence name, long columnNameTxn, boolean create) {
