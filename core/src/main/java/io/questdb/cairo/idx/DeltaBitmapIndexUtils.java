@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.idx;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.Unsafe;
@@ -77,7 +78,10 @@ public final class DeltaBitmapIndexUtils {
     public static final int KEY_RESERVED_OFFSET_SIGNATURE = 0;        // 8 bytes (1 byte sig + 7 padding)
     public static final int KEY_RESERVED_OFFSET_VALUE_MEM_SIZE = 16;  // 8 bytes
     // Bytes 48-63 reserved for future use
-
+    // Maximum delta value that can be encoded/decoded correctly.
+    // The packed decoding format uses upper 8 bits for bytes consumed,
+    // leaving 56 bits for the delta value.
+    public static final long MAX_DELTA = 0x00FFFFFFFFFFFFFFL;  // 2^56 - 1
     // Signature for delta-encoded index (distinct from legacy 0xfa)
     public static final byte SIGNATURE = (byte) 0xfc;
     // Delta encoding prefixes
@@ -156,6 +160,82 @@ public final class DeltaBitmapIndexUtils {
     }
 
     /**
+     * Encodes a delta value and writes it to memory.
+     *
+     * @param mem   memory to write to
+     * @param delta the delta value to encode (must be >= 0 and <= MAX_DELTA)
+     * @return number of bytes written
+     * @throws CairoException if delta is negative or exceeds MAX_DELTA
+     */
+    public static int encodeDelta(MemoryA mem, long delta) {
+        if (delta < 0) {
+            throw CairoException.critical(0)
+                    .put("delta index value cannot be negative [delta=").put(delta).put(']');
+        }
+
+        if (delta <= PREFIX_1BYTE_MAX) {
+            // 1-byte encoding: 0x00-0x7F
+            mem.putByte((byte) delta);
+            return 1;
+        }
+
+        if (delta <= PREFIX_2BYTE_MAX) {
+            // 2-byte encoding: 10xxxxxx xxxxxxxx
+            mem.putByte((byte) (PREFIX_2BYTE_MASK | (delta >> 8)));
+            mem.putByte((byte) (delta & 0xFF));
+            return 2;
+        }
+        if (delta <= PREFIX_4BYTE_MAX) {
+            // 4-byte encoding: 110xxxxx xxxxxxxx xxxxxxxx xxxxxxxx
+            mem.putByte((byte) (PREFIX_4BYTE_MASK | (delta >> 24)));
+            mem.putByte((byte) ((delta >> 16) & 0xFF));
+            mem.putByte((byte) ((delta >> 8) & 0xFF));
+            mem.putByte((byte) (delta & 0xFF));
+            return 4;
+        }
+
+        if (delta > MAX_DELTA) {
+            throw CairoException.critical(0)
+                    .put("delta index value exceeds maximum [delta=").put(delta)
+                    .put(", max=").put(MAX_DELTA).put(']');
+        }
+
+        // 9-byte encoding: 11100000 + full 8-byte long
+        mem.putByte((byte) PREFIX_9BYTE_MARKER);
+        mem.putLong(delta);
+        return 9;
+    }
+
+    /**
+     * Calculates the encoded size of a delta value without writing it.
+     *
+     * @param delta the delta value (must be >= 0 and <= MAX_DELTA)
+     * @return number of bytes required to encode this delta
+     * @throws CairoException if delta is negative or exceeds MAX_DELTA
+     */
+    public static int encodedSize(long delta) {
+        if (delta < 0) {
+            throw CairoException.critical(0)
+                    .put("delta index value cannot be negative [delta=").put(delta).put(']');
+        }
+        if (delta > MAX_DELTA) {
+            throw CairoException.critical(0)
+                    .put("delta index value exceeds maximum [delta=").put(delta)
+                    .put(", max=").put(MAX_DELTA).put(']');
+        }
+
+        if (delta <= PREFIX_1BYTE_MAX) {
+            return 1;
+        } else if (delta <= PREFIX_2BYTE_MAX) {
+            return 2;
+        } else if (delta <= PREFIX_4BYTE_MAX) {
+            return 4;
+        } else {
+            return 9;
+        }
+    }
+
+    /**
      * Extracts bytes consumed from packed decodeDeltaUnsafe result.
      */
     public static int getBytesConsumed(long packed) {
@@ -167,56 +247,6 @@ public final class DeltaBitmapIndexUtils {
      */
     public static long getDelta(long packed) {
         return packed & 0x00FFFFFFFFFFFFFFL;
-    }
-
-    /**
-     * Encodes a delta value and writes it to memory.
-     *
-     * @param mem   memory to write to
-     * @param delta the delta value to encode
-     * @return number of bytes written
-     */
-    public static int encodeDelta(MemoryA mem, long delta) {
-        if (delta >= 0 && delta <= PREFIX_1BYTE_MAX) {
-            // 1-byte encoding: 0x00-0x7F
-            mem.putByte((byte) delta);
-            return 1;
-        } else if (delta >= 0 && delta <= PREFIX_2BYTE_MAX) {
-            // 2-byte encoding: 10xxxxxx xxxxxxxx
-            mem.putByte((byte) (PREFIX_2BYTE_MASK | (delta >> 8)));
-            mem.putByte((byte) (delta & 0xFF));
-            return 2;
-        } else if (delta >= 0 && delta <= PREFIX_4BYTE_MAX) {
-            // 4-byte encoding: 110xxxxx xxxxxxxx xxxxxxxx xxxxxxxx
-            mem.putByte((byte) (PREFIX_4BYTE_MASK | (delta >> 24)));
-            mem.putByte((byte) ((delta >> 16) & 0xFF));
-            mem.putByte((byte) ((delta >> 8) & 0xFF));
-            mem.putByte((byte) (delta & 0xFF));
-            return 4;
-        } else {
-            // 9-byte encoding: 11100000 + full 8-byte long
-            mem.putByte((byte) PREFIX_9BYTE_MARKER);
-            mem.putLong(delta);
-            return 9;
-        }
-    }
-
-    /**
-     * Calculates the encoded size of a delta value without writing it.
-     *
-     * @param delta the delta value
-     * @return number of bytes required to encode this delta
-     */
-    public static int encodedSize(long delta) {
-        if (delta >= 0 && delta <= PREFIX_1BYTE_MAX) {
-            return 1;
-        } else if (delta >= 0 && delta <= PREFIX_2BYTE_MAX) {
-            return 2;
-        } else if (delta >= 0 && delta <= PREFIX_4BYTE_MAX) {
-            return 4;
-        } else {
-            return 9;
-        }
     }
 
     /**

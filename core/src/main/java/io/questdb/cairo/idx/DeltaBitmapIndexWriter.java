@@ -112,9 +112,13 @@ public class DeltaBitmapIndexWriter implements IndexWriter {
      *
      * @param key   the index key (must be non-negative)
      * @param value the row ID value to add
+     * @throws CairoException if key is negative
      */
     public void add(int key, long value) {
-        assert key >= 0 : "key must be non-negative: " + key;
+        if (key < 0) {
+            throw CairoException.critical(0)
+                    .put("index key cannot be negative [key=").put(key).put(']');
+        }
 
         final long keyOffset = DeltaBitmapIndexUtils.getKeyEntryOffset(key);
 
@@ -155,6 +159,9 @@ public class DeltaBitmapIndexWriter implements IndexWriter {
             Misc.free(valueMem);
         }
 
+        // Reset state so reopening works correctly
+        keyCount = -1;
+        valueMemSize = -1;
         clearCaches();
     }
 
@@ -173,12 +180,8 @@ public class DeltaBitmapIndexWriter implements IndexWriter {
 
     public RowCursor getCursor(int key) {
         if (key < keyCount) {
-            // Use cached metadata
-            long valueCount = keyValueCounts.getQuick(key);
-            if (valueCount > 0) {
-                cursor.of(key);
-                return cursor;
-            }
+            cursor.of(key);
+            return cursor;
         }
         return EmptyRowCursor.INSTANCE;
     }
@@ -393,7 +396,12 @@ public class DeltaBitmapIndexWriter implements IndexWriter {
     private void appendDeltaEncodedValue(long keyOffset, int key, long value) {
         // Get last value for this key to compute delta (from cache)
         long lastValue = lastValues.getQuick(key);
-        assert value >= lastValue : "values must be added in ascending order";
+        if (value < lastValue) {
+            throw CairoException.critical(0)
+                    .put("index values must be added in ascending order [key=").put(key)
+                    .put(", lastValue=").put(lastValue)
+                    .put(", newValue=").put(value).put(']');
+        }
 
         long delta = value - lastValue;
         int deltaSize = DeltaBitmapIndexUtils.encodedSize(delta);

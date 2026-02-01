@@ -62,9 +62,6 @@ public class DeltaBitmapIndexFwdReader implements BitmapIndexReader {
     private long partitionTxn;
     private long valueMemSize = -1;
 
-    public DeltaBitmapIndexFwdReader() {
-    }
-
     public DeltaBitmapIndexFwdReader(
             CairoConfiguration configuration,
             Path path,
