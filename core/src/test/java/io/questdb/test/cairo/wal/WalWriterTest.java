@@ -1907,12 +1907,13 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertSegmentExistence(true, tableName, 1, 0);
                 assertSegmentExistence(true, tableName, 1, 1);
                 assertSegmentExistence(false, tableName, 1, 2);
-
-                assertSegmentLockEngagement(false, tableName, 1, 0);
+                // Current segment (1) is locked
+                assertSegmentLocked(tableName, 1, 1);
 
                 drainWalQueue();
                 drainPurgeJob();
 
+                // Segment 0 was purged since writer moved to segment 1
                 assertSegmentExistence(false, tableName, 1, 0);
             }
         });
