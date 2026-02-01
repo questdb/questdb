@@ -24,7 +24,9 @@
 
 package io.questdb;
 
+import io.questdb.cairo.DefaultExchangeCalendarServiceFactory;
 import io.questdb.cairo.DefaultWalJobFactory;
+import io.questdb.cairo.ExchangeCalendarServiceFactory;
 import io.questdb.cairo.WalJobFactory;
 import io.questdb.cairo.security.AllowAllSecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
@@ -46,6 +48,11 @@ import org.jetbrains.annotations.NotNull;
 
 public class DefaultFactoryProvider implements FactoryProvider {
     public static final DefaultFactoryProvider INSTANCE = new DefaultFactoryProvider();
+
+    @Override
+    public @NotNull ExchangeCalendarServiceFactory getExchangeCalendarServiceFactory() {
+        return DefaultExchangeCalendarServiceFactory.INSTANCE;
+    }
 
     @Override
     public @NotNull HttpAuthenticatorFactory getHttpAuthenticatorFactory() {

@@ -1026,6 +1026,19 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testDateListUnsortedDatesWithDayFilter() throws SqlException {
+        // Dates out of chronological order WITH day filter
+        // [2024-01-15,2024-01-01,2024-01-08]#Mon - all three are Mondays, out of order
+        // Should be sorted to: Jan 1, Jan 8, Jan 15
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}," +
+                        "{lo=2024-01-08T00:00:00.000000Z, hi=2024-01-08T23:59:59.999999Z}," +
+                        "{lo=2024-01-15T00:00:00.000000Z, hi=2024-01-15T23:59:59.999999Z}]",
+                "[2024-01-15,2024-01-01,2024-01-08]#Mon"
+        );
+    }
+
+    @Test
     public void testDateListWithApplyEncodedFalse() throws SqlException {
         // Test date list path with applyEncoded=false (exercises line 455 branch)
         // When applyEncoded=false, intervals stay in 4-long encoded format and union is skipped
