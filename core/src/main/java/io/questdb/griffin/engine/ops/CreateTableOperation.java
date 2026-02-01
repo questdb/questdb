@@ -26,14 +26,17 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.CopyDataProgressReporter;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import org.jetbrains.annotations.Nullable;
 
 public interface CreateTableOperation extends TableStructure, Operation {
+    LowerCaseCharSequenceObjHashMap<TableColumnMetadata> getAugmentedColumnMetadata();
 
     long getBatchO3MaxLag();
 
@@ -64,11 +67,24 @@ public interface CreateTableOperation extends TableStructure, Operation {
 
     int getVolumePosition();
 
+    String getTimestampColumnName();
+
+    int getTimestampColumnNamePosition();
+
+    int getTimestampType();
+
     boolean ignoreIfExists();
 
     boolean needRegister();
 
     void setCopyDataProgressReporter(CopyDataProgressReporter reporter);
+
+    void initColumnMetadata(
+            io.questdb.std.ObjList<CharSequence> columnNames,
+            LowerCaseCharSequenceObjHashMap<io.questdb.griffin.model.CreateTableColumnModel> createColumnModelMap);
+
+    void initColumnMetadata(
+            LowerCaseCharSequenceObjHashMap<io.questdb.griffin.model.CreateTableColumnModel> createColumnModelMap);
 
     void updateFromLikeTableMetadata(TableMetadata likeTableMetadata);
 
@@ -76,5 +92,8 @@ public interface CreateTableOperation extends TableStructure, Operation {
 
     void updateOperationFutureTableToken(TableToken tableToken);
 
-    void validateAndUpdateMetadataFromSelect(RecordMetadata metadata, int scanDirection) throws SqlException;
+    void validateAndUpdateMetadataFromSelect(RecordMetadata metadata, int scanDirection,
+            io.questdb.griffin.FunctionParser functionParser) throws SqlException;
+
+    io.questdb.std.ObjList<io.questdb.griffin.model.CreateTableColumnModel> getColumns();
 }

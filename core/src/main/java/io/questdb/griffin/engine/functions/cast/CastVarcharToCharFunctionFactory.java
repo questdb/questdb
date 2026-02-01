@@ -52,7 +52,7 @@ public class CastVarcharToCharFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToCharFunction {
+    public static class Func extends AbstractCastToCharFunction {
         private final StringSink utf16Sink = new StringSink();
 
         public Func(Function arg) {

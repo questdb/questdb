@@ -45,7 +45,7 @@ public class CastStrToFloatFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToFloatFunction {
+    public static class Func extends AbstractCastToFloatFunction {
         public Func(Function arg) {
             super(arg);
         }

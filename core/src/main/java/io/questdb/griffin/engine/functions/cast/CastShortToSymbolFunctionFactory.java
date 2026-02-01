@@ -52,7 +52,7 @@ public class CastShortToSymbolFunctionFactory implements FunctionFactory {
         return new Func(arg);
     }
 
-    private static class Func extends AbstractCastToSymbolFunction {
+    public static class Func extends AbstractCastToSymbolFunction {
         public Func(Function arg) {
             super(arg);
         }

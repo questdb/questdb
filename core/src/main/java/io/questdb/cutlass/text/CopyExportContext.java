@@ -92,12 +92,16 @@ public class CopyExportContext {
             SqlExecutionCircuitBreaker sqlExecutionCircuitBreaker,
             CopyTrigger trigger) throws SqlException {
         assert trigger != CopyTrigger.NONE;
-        // This context acts as the registry for exports in-flight. It will contain all requests
-        // that were submitted via SQL execution in order to prevent duplicate exports. Ideally this is
-        // to disallow repeated exports by the same user, but in OSS we are not able to tell users apart, so
+        // This context acts as the registry for exports in-flight. It will contain all
+        // requests
+        // that were submitted via SQL execution in order to prevent duplicate exports.
+        // Ideally this is
+        // to disallow repeated exports by the same user, but in OSS we are not able to
+        // tell users apart, so
         // the key is SQL, and it would be global across the server for now.
 
-        // The requests triggered by REST API are not verified on duplicates, so it is less of a friction.
+        // The requests triggered by REST API are not verified on duplicates, so it is
+        // less of a friction.
         lock.writeLock().lock();
         try {
             ExportTaskEntry entry;
@@ -113,7 +117,8 @@ public class CopyExportContext {
                     if (entry != null) {
                         StringSink sink = Misc.getThreadLocalSink();
                         Numbers.appendHex(sink, entry.id, true);
-                        throw SqlException.$(0, "duplicate export path: ").put(fileName).put(" [id=").put(sink).put(']');
+                        throw SqlException.$(0, "duplicate export path: ").put(fileName).put(" [id=").put(sink)
+                                .put(']');
                     }
                 }
             }
@@ -131,8 +136,7 @@ public class CopyExportContext {
                     sqlText,
                     fileName,
                     sqlExecutionCircuitBreaker,
-                    trigger
-            );
+                    trigger);
 
             activeExports.putAt(index, id, entry);
 
@@ -244,8 +248,10 @@ public class CopyExportContext {
         CairoConfiguration configuration = engine.getConfiguration();
         int logRetentionDays = configuration.getSqlCopyLogRetentionDays();
         final String statusTableName = configuration.getSystemTableNamePrefix() + "copy_export_log";
-        try (SqlCompiler compiler = engine.getSqlCompiler(); var sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
-            sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
+        try (SqlCompiler compiler = engine.getSqlCompiler();
+                var sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+            sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                    null, null);
             statusTableToken = compiler.query()
                     .$("CREATE TABLE IF NOT EXISTS \"")
                     .$(statusTableName)
@@ -260,12 +266,13 @@ public class CopyExportContext {
                             "message VARCHAR, " + // 7
                             "errors LONG" + // 8
                             ") timestamp(ts) PARTITION BY DAY\n" +
-                            "TTL " + logRetentionDays + " DAYS Bypass WAL;"
-                    )
+                            "TTL " + logRetentionDays + " DAYS Bypass WAL;")
                     .createTable(sqlExecutionContext);
         } catch (SqlException e) {
-            LOG.critical().$("cannot create system table [table=").$(statusTableName).$(", error=").$((Throwable) e).I$();
-            throw CairoException.critical(e.getErrorCode()).put("cannot create system table ").put(statusTableName).put(": ").put(e.getMessage());
+            LOG.critical().$("cannot create system table [table=").$(statusTableName).$(", error=").$((Throwable) e)
+                    .I$();
+            throw CairoException.critical(e.getErrorCode()).put("cannot create system table ").put(statusTableName)
+                    .put(": ").put(e.getMessage());
         }
     }
 
@@ -291,8 +298,7 @@ public class CopyExportContext {
             @Nullable final CharSequence msg,
             long errors,
             String tableName,
-            long copyID
-    ) {
+            long copyID) {
         Throwable error = null;
         synchronized (this) {
             if (!initialized) {
@@ -356,8 +362,7 @@ public class CopyExportContext {
             int partitionBy,
             String tableName,
             String sqlText,
-            int tableOrSelectTextPos
-    ) throws SqlException {
+            int tableOrSelectTextPos) throws SqlException {
         CreateTableOperationImpl createOp = null;
         final CairoEngine engine = executionContext.getCairoEngine();
         CompiledQuery selectQuery;
@@ -378,10 +383,9 @@ public class CopyExportContext {
                         false,
                         executionContext.getCairoEngine().getConfiguration().getDefaultSymbolCapacity(),
                         sqlText,
-                        false
-                );
+                        false);
                 createOp.setTableKind(TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT);
-                createOp.validateAndUpdateMetadataFromSelect(rcf.getMetadata(), rcf.getScanDirection());
+                createOp.validateAndUpdateMetadataFromSelect(rcf.getMetadata(), rcf.getScanDirection(), null);
             }
         } catch (SqlException ex) {
             ex.setPosition(ex.getPosition() + tableOrSelectTextPos);
@@ -403,6 +407,7 @@ public class CopyExportContext {
         NONE(null),
         SQL("copy sql"),
         HTTP("http export");
+
         private final String name;
 
         CopyTrigger(String name) {
@@ -586,5 +591,3 @@ public class CopyExportContext {
         }
     }
 }
-
-

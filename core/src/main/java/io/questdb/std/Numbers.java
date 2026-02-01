@@ -59,7 +59,8 @@ public final class Numbers {
     public static final long SIZE_1GB = 1024 * SIZE_1MB;
     public static final long SIZE_1TB = 1024L * SIZE_1GB;
     public static final double TOLERANCE = 1E-15d;
-    public static final char[] hexDigits = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+    public static final char[] hexDigits = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e',
+            'f' };
     public final static int[] hexNumbers;
     public static final long[] pow10;
     public final static int pow10max;
@@ -68,17 +69,46 @@ public final class Numbers {
     private static final int EXP_SHIFT = SIGNIFICAND_WIDTH - 1;
     static final long EXP_ONE = ((long) EXP_BIAS) << EXP_SHIFT; // exponent of 1.0
     private static final long FRACT_HOB = (1L << EXP_SHIFT); // assumed High-Order bit
-    private static final long[] LONG_5_POW = new long[]{1L, 5L, 25L, 125L, 625L, 3125L, 15625L, 78125L, 390625L, 1953125L, 9765625L, 48828125L, 244140625L, 1220703125L, 6103515625L, 30517578125L, 152587890625L, 762939453125L, 3814697265625L, 19073486328125L, 95367431640625L, 476837158203125L, 2384185791015625L, 11920928955078125L, 59604644775390625L, 298023223876953125L, 1490116119384765625L};
+    private static final long[] LONG_5_POW = new long[] { 1L, 5L, 25L, 125L, 625L, 3125L, 15625L, 78125L, 390625L,
+            1953125L, 9765625L, 48828125L, 244140625L, 1220703125L, 6103515625L, 30517578125L, 152587890625L,
+            762939453125L, 3814697265625L, 19073486328125L, 95367431640625L, 476837158203125L, 2384185791015625L,
+            11920928955078125L, 59604644775390625L, 298023223876953125L, 1490116119384765625L };
     private static final int MAX_SMALL_BIN_EXP = 62;
     private static final int MIN_SMALL_BIN_EXP = -(63 / 3);
-    private static final int[] N_5_BITS = new int[]{0, 3, 5, 7, 10, 12, 14, 17, 19, 21, 24, 26, 28, 31, 33, 35, 38, 40, 42, 45, 47, 49, 52, 54, 56, 59, 61};
+    private static final int[] N_5_BITS = new int[] { 0, 3, 5, 7, 10, 12, 14, 17, 19, 21, 24, 26, 28, 31, 33, 35, 38,
+            40, 42, 45, 47, 49, 52, 54, 56, 59, 61 };
     private static final long SIGNIF_BIT_MASK = 0x000FFFFFFFFFFFFFL;
-    private static final int[] SMALL_5_POW = new int[]{1, 5, 25, 125, 625, 3125, 15625, 78125, 390625, 1953125, 9765625, 48828125, 244140625, 1220703125};
-    private static final int[] insignificantDigitsNumber = new int[]{0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 8, 8, 8, 9, 9, 9, 9, 10, 10, 10, 11, 11, 11, 12, 12, 12, 12, 13, 13, 13, 14, 14, 14, 15, 15, 15, 15, 16, 16, 16, 17, 17, 17, 18, 18, 18, 19};
+    private static final int[] SMALL_5_POW = new int[] { 1, 5, 25, 125, 625, 3125, 15625, 78125, 390625, 1953125,
+            9765625, 48828125, 244140625, 1220703125 };
+    private static final int[] insignificantDigitsNumber = new int[] { 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 4, 4,
+            4, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 8, 8, 8, 9, 9, 9, 9, 10, 10, 10, 11, 11, 11, 12, 12, 12, 12, 13, 13, 13,
+            14, 14, 14, 15, 15, 15, 15, 16, 16, 16, 17, 17, 17, 18, 18, 18, 19 };
     private static final LongHexAppender[] longHexAppender = new LongHexAppender[Long.SIZE + 1];
     private static final LongHexAppender[] longHexAppenderPad64 = new LongHexAppender[Long.SIZE + 1];
-    private static final double[] pow10dNeg =
-            new double[]{1, 1E-1, 1E-2, 1E-3, 1E-4, 1E-5, 1E-6, 1E-7, 1E-8, 1E-9, 1E-10, 1E-11, 1E-12, 1E-13, 1E-14, 1E-15, 1E-16, 1E-17, 1E-18, 1E-19, 1E-20, 1E-21, 1E-22, 1E-23, 1E-24, 1E-25, 1E-26, 1E-27, 1E-28, 1E-29, 1E-30, 1E-31, 1E-32, 1E-33, 1E-34, 1E-35, 1E-36, 1E-37, 1E-38, 1E-39, 1E-40, 1E-41, 1E-42, 1E-43, 1E-44, 1E-45, 1E-46, 1E-47, 1E-48, 1E-49, 1E-50, 1E-51, 1E-52, 1E-53, 1E-54, 1E-55, 1E-56, 1E-57, 1E-58, 1E-59, 1E-60, 1E-61, 1E-62, 1E-63, 1E-64, 1E-65, 1E-66, 1E-67, 1E-68, 1E-69, 1E-70, 1E-71, 1E-72, 1E-73, 1E-74, 1E-75, 1E-76, 1E-77, 1E-78, 1E-79, 1E-80, 1E-81, 1E-82, 1E-83, 1E-84, 1E-85, 1E-86, 1E-87, 1E-88, 1E-89, 1E-90, 1E-91, 1E-92, 1E-93, 1E-94, 1E-95, 1E-96, 1E-97, 1E-98, 1E-99, 1E-100, 1E-101, 1E-102, 1E-103, 1E-104, 1E-105, 1E-106, 1E-107, 1E-108, 1E-109, 1E-110, 1E-111, 1E-112, 1E-113, 1E-114, 1E-115, 1E-116, 1E-117, 1E-118, 1E-119, 1E-120, 1E-121, 1E-122, 1E-123, 1E-124, 1E-125, 1E-126, 1E-127, 1E-128, 1E-129, 1E-130, 1E-131, 1E-132, 1E-133, 1E-134, 1E-135, 1E-136, 1E-137, 1E-138, 1E-139, 1E-140, 1E-141, 1E-142, 1E-143, 1E-144, 1E-145, 1E-146, 1E-147, 1E-148, 1E-149, 1E-150, 1E-151, 1E-152, 1E-153, 1E-154, 1E-155, 1E-156, 1E-157, 1E-158, 1E-159, 1E-160, 1E-161, 1E-162, 1E-163, 1E-164, 1E-165, 1E-166, 1E-167, 1E-168, 1E-169, 1E-170, 1E-171, 1E-172, 1E-173, 1E-174, 1E-175, 1E-176, 1E-177, 1E-178, 1E-179, 1E-180, 1E-181, 1E-182, 1E-183, 1E-184, 1E-185, 1E-186, 1E-187, 1E-188, 1E-189, 1E-190, 1E-191, 1E-192, 1E-193, 1E-194, 1E-195, 1E-196, 1E-197, 1E-198, 1E-199, 1E-200, 1E-201, 1E-202, 1E-203, 1E-204, 1E-205, 1E-206, 1E-207, 1E-208, 1E-209, 1E-210, 1E-211, 1E-212, 1E-213, 1E-214, 1E-215, 1E-216, 1E-217, 1E-218, 1E-219, 1E-220, 1E-221, 1E-222, 1E-223, 1E-224, 1E-225, 1E-226, 1E-227, 1E-228, 1E-229, 1E-230, 1E-231, 1E-232, 1E-233, 1E-234, 1E-235, 1E-236, 1E-237, 1E-238, 1E-239, 1E-240, 1E-241, 1E-242, 1E-243, 1E-244, 1E-245, 1E-246, 1E-247, 1E-248, 1E-249, 1E-250, 1E-251, 1E-252, 1E-253, 1E-254, 1E-255, 1E-256, 1E-257, 1E-258, 1E-259, 1E-260, 1E-261, 1E-262, 1E-263, 1E-264, 1E-265, 1E-266, 1E-267, 1E-268, 1E-269, 1E-270, 1E-271, 1E-272, 1E-273, 1E-274, 1E-275, 1E-276, 1E-277, 1E-278, 1E-279, 1E-280, 1E-281, 1E-282, 1E-283, 1E-284, 1E-285, 1E-286, 1E-287, 1E-288, 1E-289, 1E-290, 1E-291, 1E-292, 1E-293, 1E-294, 1E-295, 1E-296, 1E-297, 1E-298, 1E-299, 1E-300, 1E-301, 1E-302, 1E-303, 1E-304, 1E-305, 1E-306, 1E-307, 1E-308};
+    private static final double[] pow10dNeg = new double[] { 1, 1E-1, 1E-2, 1E-3, 1E-4, 1E-5, 1E-6, 1E-7, 1E-8, 1E-9,
+            1E-10, 1E-11, 1E-12, 1E-13, 1E-14, 1E-15, 1E-16, 1E-17, 1E-18, 1E-19, 1E-20, 1E-21, 1E-22, 1E-23, 1E-24,
+            1E-25, 1E-26, 1E-27, 1E-28, 1E-29, 1E-30, 1E-31, 1E-32, 1E-33, 1E-34, 1E-35, 1E-36, 1E-37, 1E-38, 1E-39,
+            1E-40, 1E-41, 1E-42, 1E-43, 1E-44, 1E-45, 1E-46, 1E-47, 1E-48, 1E-49, 1E-50, 1E-51, 1E-52, 1E-53, 1E-54,
+            1E-55, 1E-56, 1E-57, 1E-58, 1E-59, 1E-60, 1E-61, 1E-62, 1E-63, 1E-64, 1E-65, 1E-66, 1E-67, 1E-68, 1E-69,
+            1E-70, 1E-71, 1E-72, 1E-73, 1E-74, 1E-75, 1E-76, 1E-77, 1E-78, 1E-79, 1E-80, 1E-81, 1E-82, 1E-83, 1E-84,
+            1E-85, 1E-86, 1E-87, 1E-88, 1E-89, 1E-90, 1E-91, 1E-92, 1E-93, 1E-94, 1E-95, 1E-96, 1E-97, 1E-98, 1E-99,
+            1E-100, 1E-101, 1E-102, 1E-103, 1E-104, 1E-105, 1E-106, 1E-107, 1E-108, 1E-109, 1E-110, 1E-111, 1E-112,
+            1E-113, 1E-114, 1E-115, 1E-116, 1E-117, 1E-118, 1E-119, 1E-120, 1E-121, 1E-122, 1E-123, 1E-124, 1E-125,
+            1E-126, 1E-127, 1E-128, 1E-129, 1E-130, 1E-131, 1E-132, 1E-133, 1E-134, 1E-135, 1E-136, 1E-137, 1E-138,
+            1E-139, 1E-140, 1E-141, 1E-142, 1E-143, 1E-144, 1E-145, 1E-146, 1E-147, 1E-148, 1E-149, 1E-150, 1E-151,
+            1E-152, 1E-153, 1E-154, 1E-155, 1E-156, 1E-157, 1E-158, 1E-159, 1E-160, 1E-161, 1E-162, 1E-163, 1E-164,
+            1E-165, 1E-166, 1E-167, 1E-168, 1E-169, 1E-170, 1E-171, 1E-172, 1E-173, 1E-174, 1E-175, 1E-176, 1E-177,
+            1E-178, 1E-179, 1E-180, 1E-181, 1E-182, 1E-183, 1E-184, 1E-185, 1E-186, 1E-187, 1E-188, 1E-189, 1E-190,
+            1E-191, 1E-192, 1E-193, 1E-194, 1E-195, 1E-196, 1E-197, 1E-198, 1E-199, 1E-200, 1E-201, 1E-202, 1E-203,
+            1E-204, 1E-205, 1E-206, 1E-207, 1E-208, 1E-209, 1E-210, 1E-211, 1E-212, 1E-213, 1E-214, 1E-215, 1E-216,
+            1E-217, 1E-218, 1E-219, 1E-220, 1E-221, 1E-222, 1E-223, 1E-224, 1E-225, 1E-226, 1E-227, 1E-228, 1E-229,
+            1E-230, 1E-231, 1E-232, 1E-233, 1E-234, 1E-235, 1E-236, 1E-237, 1E-238, 1E-239, 1E-240, 1E-241, 1E-242,
+            1E-243, 1E-244, 1E-245, 1E-246, 1E-247, 1E-248, 1E-249, 1E-250, 1E-251, 1E-252, 1E-253, 1E-254, 1E-255,
+            1E-256, 1E-257, 1E-258, 1E-259, 1E-260, 1E-261, 1E-262, 1E-263, 1E-264, 1E-265, 1E-266, 1E-267, 1E-268,
+            1E-269, 1E-270, 1E-271, 1E-272, 1E-273, 1E-274, 1E-275, 1E-276, 1E-277, 1E-278, 1E-279, 1E-280, 1E-281,
+            1E-282, 1E-283, 1E-284, 1E-285, 1E-286, 1E-287, 1E-288, 1E-289, 1E-290, 1E-291, 1E-292, 1E-293, 1E-294,
+            1E-295, 1E-296, 1E-297, 1E-298, 1E-299, 1E-300, 1E-301, 1E-302, 1E-303, 1E-304, 1E-305, 1E-306, 1E-307,
+            1E-308 };
     private final static ThreadLocal<char[]> tlDoubleDigitsBuffer = new ThreadLocal<>(() -> new char[21]);
 
     private Numbers() {
@@ -142,7 +172,7 @@ public final class Numbers {
         }
         if (i < 10) {
             sink.putAscii((char) ('0' + i));
-        } else if (i < 100) {  // two
+        } else if (i < 100) { // two
             appendInt2(sink, i);
         } else if (i < 1000) { // three
             appendInt3(sink, i);
@@ -186,7 +216,7 @@ public final class Numbers {
 
         if (i < 10) {
             sink.putAscii((char) ('0' + i));
-        } else if (i < 100) {  // two
+        } else if (i < 100) { // two
             appendLong2(sink, i);
         } else if (i < 1000) { // three
             appendLong3(sink, i);
@@ -204,23 +234,23 @@ public final class Numbers {
             appendLong9(sink, i);
         } else if (i < 10000000000L) {
             appendLong10(sink, i);
-        } else if (i < 100000000000L) { //  eleven
+        } else if (i < 100000000000L) { // eleven
             appendLong11(sink, i);
-        } else if (i < 1000000000000L) { //  twelve
+        } else if (i < 1000000000000L) { // twelve
             appendLong12(sink, i);
-        } else if (i < 10000000000000L) { //  thirteen
+        } else if (i < 10000000000000L) { // thirteen
             appendLong13(sink, i);
-        } else if (i < 100000000000000L) { //  fourteen
+        } else if (i < 100000000000000L) { // fourteen
             appendLong14(sink, i);
-        } else if (i < 1000000000000000L) { //  fifteen
+        } else if (i < 1000000000000000L) { // fifteen
             appendLong15(sink, i);
-        } else if (i < 10000000000000000L) { //  sixteen
+        } else if (i < 10000000000000000L) { // sixteen
             appendLong16(sink, i);
-        } else if (i < 100000000000000000L) { //  seventeen
+        } else if (i < 100000000000000000L) { // seventeen
             appendLong17(sink, i);
-        } else if (i < 1000000000000000000L) { //  eighteen
+        } else if (i < 1000000000000000000L) { // eighteen
             appendLong18(sink, i);
-        } else { //  nineteen
+        } else { // nineteen
             appendLong19(sink, i);
         }
     }
@@ -292,7 +322,7 @@ public final class Numbers {
         if (i < 0x10) {
             sink.putAscii('0');
             sink.putAscii(hexDigits[i]);
-        } else if (i < 0x100) {  // two
+        } else if (i < 0x100) { // two
             sink.putAscii(hexDigits[i / 0x10]);
             sink.putAscii(hexDigits[i % 0x10]);
         } else if (i < 0x1000) { // three
@@ -351,22 +381,31 @@ public final class Numbers {
      *
      * @param sink       the CharSink to append to
      * @param value      the value to append
-     * @param padToBytes if non-zero, pad the output to the specified number of bytes
+     * @param padToBytes if non-zero, pad the output to the specified number of
+     *                   bytes
      */
     public static void appendHexPadded(CharSink<?> sink, long value, int padToBytes) {
         assert padToBytes >= 0 && padToBytes <= 8;
         // This code might be unclear, so here are some hints:
-        // This method uses longHexAppender() and longHexAppender() is always padding to a whole byte. It never prints
-        // just a nibble. It means the longHexAppender() will print value 0xf as "0f". Value 0xff will be printed as "ff".
-        // Value 0xfff will be printed as "0fff". Value 0xffff will be printed as "ffff" and so on.
+        // This method uses longHexAppender() and longHexAppender() is always padding to
+        // a whole byte. It never prints
+        // just a nibble. It means the longHexAppender() will print value 0xf as "0f".
+        // Value 0xff will be printed as "ff".
+        // Value 0xfff will be printed as "0fff". Value 0xffff will be printed as "ffff"
+        // and so on.
         // So this method needs to pad only from the next whole byte up.
-        // In other words: This method always pads with full bytes (=even number of zeros), never with just a nibble.
+        // In other words: This method always pads with full bytes (=even number of
+        // zeros), never with just a nibble.
 
-        // Example 1: Value is 0xF and padToBytes is 2. This means the desired output is 000f.
-        // longHexAppender() pads to a full byte. This means it will output is 0f. So this method needs to pad with 2 zeros.
+        // Example 1: Value is 0xF and padToBytes is 2. This means the desired output is
+        // 000f.
+        // longHexAppender() pads to a full byte. This means it will output is 0f. So
+        // this method needs to pad with 2 zeros.
 
-        // Example 2: The value is 0xFF and padToBytes is 2. This means the desired output is 00ff.
-        // longHexAppender() will output "ff". This is a full byte so longHexAppender() will not do any padding on its own.
+        // Example 2: The value is 0xFF and padToBytes is 2. This means the desired
+        // output is 00ff.
+        // longHexAppender() will output "ff". This is a full byte so longHexAppender()
+        // will not do any padding on its own.
         // So this method needs to pad with 2 zeros.
         int leadingZeroBits = Long.numberOfLeadingZeros(value);
         int padToBits = padToBytes << 3;
@@ -403,7 +442,7 @@ public final class Numbers {
             sink.putAscii('0');
             sink.putAscii('0');
             sink.putAscii(hexDigits[i]);
-        } else if (i < 0x100) {  // two
+        } else if (i < 0x100) { // two
             sink.putAscii('0');
             sink.putAscii('0');
             sink.putAscii('0');
@@ -475,8 +514,7 @@ public final class Numbers {
                 long256.getLong1(),
                 long256.getLong2(),
                 long256.getLong3(),
-                sink
-        );
+                sink);
     }
 
     public static void appendLong256(long a, long b, long c, long d, CharSink<?> sink) {
@@ -520,7 +558,8 @@ public final class Numbers {
     }
 
     public static int bswap(int value) {
-        return ((value >> 24) & 0xff) | ((value << 8) & 0xff0000) | ((value >> 8) & 0xff00) | ((value << 24) & 0xff000000);
+        return ((value >> 24) & 0xff) | ((value << 8) & 0xff0000) | ((value >> 8) & 0xff00)
+                | ((value << 24) & 0xff000000);
     }
 
     public static short bswap(short value) {
@@ -722,7 +761,8 @@ public final class Numbers {
             return pack(ipv4, netmask);
         } catch (NumericException e) {
             if (mid == -1) {
-                throw NumericException.instance().put("invalid IPv4 subnet format, expected format: x.x.x.x/mask, got: ").put(sequence);
+                throw NumericException.instance()
+                        .put("invalid IPv4 subnet format, expected format: x.x.x.x/mask, got: ").put(sequence);
             }
             return pack(parseSubnet0(sequence, 0, mid, getNetmaskLength(netmask)), netmask);
         }
@@ -866,8 +906,9 @@ public final class Numbers {
      * the return value of {@link #isFinite(double)}
      *
      * @param value to check
-     * @return true if value is "infinite", which includes {@link Double#isNaN(double)}, positive and negative
-     * infinities that arise from division by 0.
+     * @return true if value is "infinite", which includes
+     *         {@link Double#isNaN(double)}, positive and negative
+     *         infinities that arise from division by 0.
      */
     public static boolean isNull(double value) {
         return (Double.doubleToRawLongBits(value) & EXP_BIT_MASK) == EXP_BIT_MASK;
@@ -1256,8 +1297,7 @@ public final class Numbers {
 
         int val = 0;
         int r;
-        EX:
-        for (; i < lim; i++) {
+        EX: for (; i < lim; i++) {
             int c = sequence.charAt(i);
             if (c < '0' || c > '9') {
                 if (i == lim - 1) {
@@ -1395,8 +1435,7 @@ public final class Numbers {
         long val = 0;
         long r;
         TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
-        EX:
-        for (int i = 0; i < lim; i++) {
+        EX: for (int i = 0; i < lim; i++) {
             int c = sequence.charAt(i);
             if (c < '0' || c > '9') {
                 if (i == lim - 1) {
@@ -1500,8 +1539,7 @@ public final class Numbers {
 
         long val = 0;
         long r;
-        EX:
-        for (; i < lim; i++) {
+        EX: for (; i < lim; i++) {
             int c = sequence.charAt(i);
             if (c < '0' || c > '9') {
                 if (i == lim - 1) {
@@ -1574,8 +1612,7 @@ public final class Numbers {
         int digitCount = 0;
         TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
         char c;
-        OUT:
-        for (; i < lim; i++) {
+        OUT: for (; i < lim; i++) {
             c = sequence.charAt(i);
             switch (c | 32) {
                 case 'm':
@@ -1676,8 +1713,7 @@ public final class Numbers {
         long val = 0;
         int digitCount = 0;
         char c;
-        OUT:
-        for (; i < lim; i++) {
+        OUT: for (; i < lim; i++) {
             c = sequence.charAt(i);
             switch (c | 32) {
                 case 'm':
@@ -1778,8 +1814,7 @@ public final class Numbers {
         int digitCount = 0;
         TimestampDriver driver = NanosTimestampDriver.INSTANCE;
         char c;
-        OUT:
-        for (; i < lim; i++) {
+        OUT: for (; i < lim; i++) {
             c = sequence.charAt(i);
             switch (c | 32) {
                 case 'm':
@@ -1888,9 +1923,12 @@ public final class Numbers {
         return pack(parseSubnet0(sequence, 0, delim, netmaskBits), toNetMask(netmaskBits));
     }
 
-    // test whether the subnet matches the netmaskLength (according to postgres rules)
-    // throws NumericException if sequence is not a valid subnet OR the subnet doesn't match the netmaskLength
-    public static int parseSubnet0(CharSequence sequence, final int p, int lim, int netmaskLength) throws NumericException {
+    // test whether the subnet matches the netmaskLength (according to postgres
+    // rules)
+    // throws NumericException if sequence is not a valid subnet OR the subnet
+    // doesn't match the netmaskLength
+    public static int parseSubnet0(CharSequence sequence, final int p, int lim, int netmaskLength)
+            throws NumericException {
         int hi;
         int lo = p;
         int num;
@@ -1916,7 +1954,8 @@ public final class Numbers {
             if (num > 255) {
                 throw NumericException.instance().put("IPv4 octet out of range [0-255]: ").put(num);
             }
-            // each byte goes to left-most pos in int - accounts for issues that arise from parsing variable length subnets
+            // each byte goes to left-most pos in int - accounts for issues that arise from
+            // parsing variable length subnets
             ipv4 = ipv4 | (num << ((4 - i) * 8));
             count++;
             i++;
@@ -1933,24 +1972,26 @@ public final class Numbers {
             throw NumericException.instance().put("IPv4 octet out of range [0-255]: ").put(num);
         }
 
-        //if netmaskLength is full byte longer than subnet
+        // if netmaskLength is full byte longer than subnet
         if (count == 0) {
             if (netmaskLength >= 16) {
-                throw NumericException.instance().put("netmask length too long for single octet subnet: ").put(netmaskLength);
+                throw NumericException.instance().put("netmask length too long for single octet subnet: ")
+                        .put(netmaskLength);
             }
             checker = (checker << bits);
             num = (num << 24) & checker;
             return num;
         }
-        //if netmaskLength is a full byte longer than subnet
+        // if netmaskLength is a full byte longer than subnet
         else if (count == 1 && netmaskLength >= 24) {
             throw NumericException.instance().put("netmask length too long for two octet subnet: ").put(netmaskLength);
         }
-        //if netmaskLength is a full byte longer than subnet
+        // if netmaskLength is a full byte longer than subnet
         else if (count == 2 && netmaskLength >= 32) {
-            throw NumericException.instance().put("netmask length too long for three octet subnet: ").put(netmaskLength);
+            throw NumericException.instance().put("netmask length too long for three octet subnet: ")
+                    .put(netmaskLength);
         }
-        //if netmaskLength is a full byte longer than subnet
+        // if netmaskLength is a full byte longer than subnet
         else if (count == 3 && netmaskLength > 32) {
             throw NumericException.instance().put("netmask length out of range [0-32]: ").put(netmaskLength);
         }
@@ -2108,15 +2149,24 @@ public final class Numbers {
         int sz = (value < 0) ? 1 : 0;
         value = Math.abs(value);
 
-        if (value < 10) return sz + 1;
-        if (value < 100) return sz + 2;
-        if (value < 1000) return sz + 3;
-        if (value < 10000) return sz + 4;
-        if (value < 100000) return sz + 5;
-        if (value < 1000000) return sz + 6;
-        if (value < 10000000) return sz + 7;
-        if (value < 100000000) return sz + 8;
-        if (value < 1000000000) return sz + 9;
+        if (value < 10)
+            return sz + 1;
+        if (value < 100)
+            return sz + 2;
+        if (value < 1000)
+            return sz + 3;
+        if (value < 10000)
+            return sz + 4;
+        if (value < 100000)
+            return sz + 5;
+        if (value < 1000000)
+            return sz + 6;
+        if (value < 10000000)
+            return sz + 7;
+        if (value < 100000000)
+            return sz + 8;
+        if (value < 1000000000)
+            return sz + 9;
         return sz + 10;
     }
 
@@ -2152,8 +2202,7 @@ public final class Numbers {
             boolean negative,
             char[] digits,
             CharSink<?> out,
-            int outScale
-    ) {
+            int outScale) {
         assert fractionBits > 0L;
         assert (fractionBits & FRACT_HOB) != 0L;
 
@@ -2164,7 +2213,8 @@ public final class Numbers {
         int nDigits;
 
         final int tinyBitCount = Math.max(0, fractBitCount - binExp - 1);
-        if (binExp < MAX_SMALL_BIN_EXP + 1 && binExp > MIN_SMALL_BIN_EXP - 1 && tinyBitCount < LONG_5_POW.length && fractBitCount + N_5_BITS[tinyBitCount] < 64 && tinyBitCount == 0) {
+        if (binExp < MAX_SMALL_BIN_EXP + 1 && binExp > MIN_SMALL_BIN_EXP - 1 && tinyBitCount < LONG_5_POW.length
+                && fractBitCount + N_5_BITS[tinyBitCount] < 64 && tinyBitCount == 0) {
             int insignificant;
             if (binExp > significantBitCount) {
                 insignificant = insignificantDigitsForPow2(binExp - significantBitCount - 1);
@@ -2424,8 +2474,7 @@ public final class Numbers {
             boolean isNegative,
             int decExp,
             CharSink<?> sink,
-            int outScale
-    ) {
+            int outScale) {
         assert nDigits <= MAX_DOUBLE_SCALE : nDigits;
         if (isNegative) {
             sink.putAscii('-');

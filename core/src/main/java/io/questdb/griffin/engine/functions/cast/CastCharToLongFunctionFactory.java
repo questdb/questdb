@@ -46,12 +46,11 @@ public class CastCharToLongFunctionFactory implements FunctionFactory {
             ObjList<Function> args,
             IntList argPositions,
             CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) {
+            SqlExecutionContext sqlExecutionContext) {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToLongFunction {
+    public static class Func extends AbstractCastToLongFunction {
         public Func(Function arg) {
             super(arg);
         }
@@ -64,6 +63,7 @@ public class CastCharToLongFunctionFactory implements FunctionFactory {
                 return v;
             }
             throw ImplicitCastException.inconvertibleValue(c, ColumnType.CHAR, ColumnType.LONG);
+
         }
     }
 }

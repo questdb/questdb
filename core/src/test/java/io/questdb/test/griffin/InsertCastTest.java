@@ -45,8 +45,8 @@ public class InsertCastTest extends AbstractCairoTest {
             // execute insert statement for each value of reference table
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
-            ) {
+                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext)
+                            .popInsertOperation()) {
                 bindVariableService.setByte(0, (byte) 9);
                 insert.execute(sqlExecutionContext);
 
@@ -61,8 +61,7 @@ public class InsertCastTest extends AbstractCairoTest {
             assertSql(
                     "a\n" +
                             "9\n",
-                    "y"
-            );
+                    "y");
         });
     }
 
@@ -73,8 +72,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "5\n" +
                         "3\n" +
-                        "0\n"
-        ));
+                        "0\n"));
     }
 
     @Test
@@ -86,8 +84,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "3\n" +
                         "0\n" +
                         "7\n" +
-                        "0\n"
-        ));
+                        "0\n"));
     }
 
     @Test
@@ -97,8 +94,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "1970-01-01T00:00:00.005Z\n" +
                         "1970-01-01T00:00:00.003Z\n" +
-                        "1970-01-01T00:00:00.000Z\n"
-        ));
+                        "1970-01-01T00:00:00.000Z\n"));
     }
 
     @Test
@@ -110,8 +106,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.003Z\n" +
                         "1970-01-01T00:00:00.000Z\n" +
                         "1970-01-01T00:00:00.007Z\n" +
-                        "1970-01-01T00:00:00.000Z\n"
-        ));
+                        "1970-01-01T00:00:00.000Z\n"));
     }
 
     @Test
@@ -121,8 +116,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "5.0\n" +
                         "3.0\n" +
-                        "0.0\n"
-        ));
+                        "0.0\n"));
     }
 
     @Test
@@ -134,8 +128,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "3.0\n" +
                         "0.0\n" +
                         "7.0\n" +
-                        "0.0\n"
-        ));
+                        "0.0\n"));
     }
 
     @Test
@@ -145,8 +138,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "5.0\n" +
                         "3.0\n" +
-                        "0.0\n"
-        ));
+                        "0.0\n"));
     }
 
     @Test
@@ -158,8 +150,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "3.0\n" +
                         "0.0\n" +
                         "7.0\n" +
-                        "0.0\n"
-        ));
+                        "0.0\n"));
     }
 
     @Test
@@ -171,8 +162,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "3\n" +
                         "0\n" +
                         "7\n" +
-                        "0\n"
-        ));
+                        "0\n"));
     }
 
     @Test
@@ -182,8 +172,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "5\n" +
                         "3\n" +
-                        "0\n"
-        ));
+                        "0\n"));
     }
 
     @Test
@@ -195,8 +184,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "3\n" +
                         "0\n" +
                         "7\n" +
-                        "0\n"
-        ));
+                        "0\n"));
     }
 
     @Test
@@ -206,8 +194,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "5\n" +
                         "3\n" +
-                        "0\n"
-        ));
+                        "0\n"));
     }
 
     @Test
@@ -219,8 +206,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "3\n" +
                         "0\n" +
                         "7\n" +
-                        "0\n"
-        ));
+                        "0\n"));
     }
 
     @Test
@@ -230,8 +216,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "5\n" +
                         "3\n" +
-                        "0\n"
-        ));
+                        "0\n"));
     }
 
     @Test
@@ -243,8 +228,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "3\n" +
                         "0\n" +
                         "7\n" +
-                        "0\n"
-        ));
+                        "0\n"));
     }
 
     @Test
@@ -254,8 +238,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "1970-01-01T00:00:00.000005Z\n" +
                         "1970-01-01T00:00:00.000003Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n"
-        ));
+                        "1970-01-01T00:00:00.000000Z\n"));
     }
 
     @Test
@@ -265,8 +248,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "1970-01-01T00:00:00.000000005Z\n" +
                         "1970-01-01T00:00:00.000000003Z\n" +
-                        "1970-01-01T00:00:00.000000000Z\n"
-        ));
+                        "1970-01-01T00:00:00.000000000Z\n"));
     }
 
     @Test
@@ -278,8 +260,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000000003Z\n" +
                         "1970-01-01T00:00:00.000000000Z\n" +
                         "1970-01-01T00:00:00.000000007Z\n" +
-                        "1970-01-01T00:00:00.000000000Z\n"
-        ));
+                        "1970-01-01T00:00:00.000000000Z\n"));
     }
 
     @Test
@@ -291,8 +272,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000003Z\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T00:00:00.000007Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n"
-        ));
+                        "1970-01-01T00:00:00.000000Z\n"));
     }
 
     @Test
@@ -301,8 +281,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "byte",
                 "a\n" +
                         "0\n" +
-                        "3\n"
-        ));
+                        "3\n"));
     }
 
     @Test
@@ -312,8 +291,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "4\n" +
                         "7\n" +
-                        "1\n"
-        ));
+                        "1\n"));
     }
 
     @Test
@@ -323,8 +301,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "date",
                 "a\n" +
                         "1970-01-01T00:00:00.000Z\n" +
-                        "1970-01-01T00:00:00.003Z\n"
-        ));
+                        "1970-01-01T00:00:00.003Z\n"));
     }
 
     @Test
@@ -334,8 +311,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "1970-01-01T00:00:00.004Z\n" +
                         "1970-01-01T00:00:00.007Z\n" +
-                        "1970-01-01T00:00:00.001Z\n"
-        ));
+                        "1970-01-01T00:00:00.001Z\n"));
     }
 
     @Test
@@ -344,8 +320,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "double",
                 "a\n" +
                         "0.0\n" +
-                        "3.0\n"
-        ));
+                        "3.0\n"));
     }
 
     @Test
@@ -355,8 +330,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "4.0\n" +
                         "7.0\n" +
-                        "1.0\n"
-        ));
+                        "1.0\n"));
     }
 
     @Test
@@ -365,8 +339,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "float",
                 "a\n" +
                         "0.0\n" +
-                        "3.0\n"
-        ));
+                        "3.0\n"));
     }
 
     @Test
@@ -376,8 +349,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "4.0\n" +
                         "7.0\n" +
-                        "1.0\n"
-        ));
+                        "1.0\n"));
     }
 
     @Test
@@ -386,8 +358,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "geohash(1c)",
                 "a\n" +
                         "0\n" +
-                        "3\n"
-        ));
+                        "3\n"));
     }
 
     @Test
@@ -397,8 +368,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "4\n" +
                         "7\n" +
-                        "1\n"
-        ));
+                        "1\n"));
     }
 
     @Test
@@ -407,8 +377,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "int",
                 "a\n" +
                         "0\n" +
-                        "3\n"
-        ));
+                        "3\n"));
     }
 
     @Test
@@ -418,8 +387,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "4\n" +
                         "7\n" +
-                        "1\n"
-        ));
+                        "1\n"));
     }
 
     @Test
@@ -430,11 +398,11 @@ public class InsertCastTest extends AbstractCairoTest {
                         "long256",
                         "a\n" +
                                 "0\n" +
-                                "3\n"
-                );
+                                "3\n");
                 Assert.fail();
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as LONG256 and cannot accept CHAR");
+                TestUtils.assertContains(e.getFlyweightMessage(),
+                        "bind variable at 0 is defined as LONG256 and cannot accept CHAR");
             }
         });
     }
@@ -445,8 +413,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "long",
                 "a\n" +
                         "0\n" +
-                        "3\n"
-        ));
+                        "3\n"));
     }
 
     @Test
@@ -456,8 +423,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "4\n" +
                         "7\n" +
-                        "1\n"
-        ));
+                        "1\n"));
     }
 
     @Test
@@ -466,8 +432,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "short",
                 "a\n" +
                         "0\n" +
-                        "3\n"
-        ));
+                        "3\n"));
     }
 
     @Test
@@ -477,8 +442,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "4\n" +
                         "7\n" +
-                        "1\n"
-        ));
+                        "1\n"));
     }
 
     @Test
@@ -488,8 +452,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "timestamp",
                 "a\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
-                        "1970-01-01T00:00:00.000003Z\n"
-        ));
+                        "1970-01-01T00:00:00.000003Z\n"));
     }
 
     @Test
@@ -499,8 +462,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "1970-01-01T00:00:00.000004Z\n" +
                         "1970-01-01T00:00:00.000007Z\n" +
-                        "1970-01-01T00:00:00.000001Z\n"
-        ));
+                        "1970-01-01T00:00:00.000001Z\n"));
     }
 
     @Test
@@ -510,8 +472,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "timestamp_ns",
                 "a\n" +
                         "1970-01-01T00:00:00.000000000Z\n" +
-                        "1970-01-01T00:00:00.000000003Z\n"
-        ));
+                        "1970-01-01T00:00:00.000000003Z\n"));
     }
 
     @Test
@@ -521,8 +482,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "1970-01-01T00:00:00.000000004Z\n" +
                         "1970-01-01T00:00:00.000000007Z\n" +
-                        "1970-01-01T00:00:00.000000001Z\n"
-        ));
+                        "1970-01-01T00:00:00.000000001Z\n"));
     }
 
     @Test
@@ -533,8 +493,8 @@ public class InsertCastTest extends AbstractCairoTest {
             // execute insert statement for each value of reference table
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
-            ) {
+                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext)
+                            .popInsertOperation()) {
                 bindVariableService.setDouble(0, 1.7e25);
                 insert.execute(sqlExecutionContext);
 
@@ -552,8 +512,7 @@ public class InsertCastTest extends AbstractCairoTest {
                     "a\n" +
                             "1.7E25\n" +
                             "null\n",
-                    "y"
-            );
+                    "y");
         });
     }
 
@@ -574,8 +533,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "12\n" +
                         "8\n",
                 -210f,
-                220f
-        ));
+                220f));
     }
 
     @Test
@@ -595,8 +553,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "12\n" +
                         "8\n",
                 -3.4e20f,
-                3.4e20f
-        ));
+                3.4e20f));
     }
 
     @Test
@@ -616,8 +573,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "12\n" +
                         "8\n",
                 -3.4e35f,
-                3.4e35f
-        ));
+                3.4e35f));
     }
 
     @Test
@@ -637,8 +593,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "12\n" +
                         "8\n",
                 -42230f,
-                42230f
-        ));
+                42230f));
     }
 
     @Test
@@ -647,8 +602,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "byte",
                 "a\n" +
                         "3\n" +
-                        "0\n"
-        ));
+                        "0\n"));
     }
 
     @Test
@@ -657,8 +611,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "char",
                 "a\n" +
                         "3\n" +
-                        "\n"
-        ));
+                        "\n"));
     }
 
     @Test
@@ -669,11 +622,11 @@ public class InsertCastTest extends AbstractCairoTest {
                         "long256",
                         "a\n" +
                                 "3\n" +
-                                "0\n"
-                );
+                                "0\n");
                 Assert.fail();
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as LONG256 and cannot accept INT");
+                TestUtils.assertContains(e.getFlyweightMessage(),
+                        "bind variable at 0 is defined as LONG256 and cannot accept INT");
             }
         });
     }
@@ -684,8 +637,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "short",
                 "a\n" +
                         "3\n" +
-                        "0\n"
-        ));
+                        "0\n"));
     }
 
     @Test
@@ -694,8 +646,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "byte",
                 "a\n" +
                         "8\n" +
-                        "0\n"
-        ));
+                        "0\n"));
     }
 
     @Test
@@ -704,8 +655,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "char",
                 "a\n" +
                         "8\n" +
-                        "\n"
-        ));
+                        "\n"));
     }
 
     @Test
@@ -716,11 +666,11 @@ public class InsertCastTest extends AbstractCairoTest {
                         "long256",
                         "a\n" +
                                 "3\n" +
-                                "0\n"
-                );
+                                "0\n");
                 Assert.fail();
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as LONG256 and cannot accept LONG");
+                TestUtils.assertContains(e.getFlyweightMessage(),
+                        "bind variable at 0 is defined as LONG256 and cannot accept LONG");
             }
         });
     }
@@ -731,8 +681,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "short",
                 "a\n" +
                         "8\n" +
-                        "0\n"
-        ));
+                        "0\n"));
     }
 
     @Test
@@ -748,8 +697,8 @@ public class InsertCastTest extends AbstractCairoTest {
             // execute insert statement for each value of reference table
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
-            ) {
+                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext)
+                            .popInsertOperation()) {
                 bindVariableService.setShort(0, (short) 2);
                 insert.execute(sqlExecutionContext);
 
@@ -767,8 +716,7 @@ public class InsertCastTest extends AbstractCairoTest {
                     "a\n" +
                             "2\n" +
                             "8\n",
-                    "y"
-            );
+                    "y");
         });
     }
 
@@ -779,7 +727,8 @@ public class InsertCastTest extends AbstractCairoTest {
                 assertShortBind("long256");
                 Assert.fail();
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as LONG256 and cannot accept SHORT");
+                TestUtils.assertContains(e.getFlyweightMessage(),
+                        "bind variable at 0 is defined as LONG256 and cannot accept SHORT");
             }
         });
     }
@@ -793,8 +742,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "102\t102\n" +
                         "27\t27\n" +
                         "87\t87\n" +
-                        "79\t79\n"
-        ));
+                        "79\t79\n"));
     }
 
     @Test
@@ -812,8 +760,7 @@ public class InsertCastTest extends AbstractCairoTest {
                             "7\t7\n" +
                             "7\t7\n" +
                             "9\t9\n",
-                    "y"
-            );
+                    "y");
         });
     }
 
@@ -826,8 +773,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.102Z\t102\n" +
                         "1970-01-01T00:00:00.027Z\t27\n" +
                         "1970-01-01T00:00:00.087Z\t87\n" +
-                        "1970-01-01T00:00:00.079Z\t79\n"
-        ));
+                        "1970-01-01T00:00:00.079Z\t79\n"));
     }
 
     @Test
@@ -839,8 +785,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "102.0\t102\n" +
                         "27.0\t27\n" +
                         "87.0\t87\n" +
-                        "79.0\t79\n"
-        ));
+                        "79.0\t79\n"));
     }
 
     @Test
@@ -852,8 +797,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "102.0\t102\n" +
                         "27.0\t27\n" +
                         "87.0\t87\n" +
-                        "79.0\t79\n"
-        ));
+                        "79.0\t79\n"));
     }
 
     @Test
@@ -865,8 +809,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "102\t102\n" +
                         "27\t27\n" +
                         "87\t87\n" +
-                        "79\t79\n"
-        ));
+                        "79\t79\n"));
     }
 
     @Test
@@ -878,8 +821,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "102\t102\n" +
                         "27\t27\n" +
                         "87\t87\n" +
-                        "79\t79\n"
-        ));
+                        "79\t79\n"));
     }
 
     @Test
@@ -891,8 +833,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "102\t102\n" +
                         "27\t27\n" +
                         "87\t87\n" +
-                        "79\t79\n"
-        ));
+                        "79\t79\n"));
     }
 
     @Test
@@ -904,8 +845,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000000102Z\t102\n" +
                         "1970-01-01T00:00:00.000000027Z\t27\n" +
                         "1970-01-01T00:00:00.000000087Z\t87\n" +
-                        "1970-01-01T00:00:00.000000079Z\t79\n"
-        ));
+                        "1970-01-01T00:00:00.000000079Z\t79\n"));
     }
 
     @Test
@@ -917,8 +857,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000102Z\t102\n" +
                         "1970-01-01T00:00:00.000027Z\t27\n" +
                         "1970-01-01T00:00:00.000087Z\t87\n" +
-                        "1970-01-01T00:00:00.000079Z\t79\n"
-        ));
+                        "1970-01-01T00:00:00.000079Z\t79\n"));
     }
 
     @Test
@@ -928,8 +867,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "12\n" +
                         "31\n" +
-                        "0\n"
-        ));
+                        "0\n"));
     }
 
     @Test
@@ -939,8 +877,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "45\n" +
                         "76\n" +
-                        "124\n"
-        ));
+                        "124\n"));
     }
 
     @Test
@@ -963,8 +900,7 @@ public class InsertCastTest extends AbstractCairoTest {
                             "A\n" +
                             "7\n" +
                             "K\n",
-                    "y"
-            );
+                    "y");
         });
     }
 
@@ -976,8 +912,8 @@ public class InsertCastTest extends AbstractCairoTest {
             // execute insert statement for each value of reference table
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
-            ) {
+                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext)
+                            .popInsertOperation()) {
                 bindVariableService.setStr(0, "2012-04-11 10:45:11Z");
                 insert.execute(sqlExecutionContext);
 
@@ -1008,8 +944,7 @@ public class InsertCastTest extends AbstractCairoTest {
                             "2012-04-11T00:00:00.000Z\n" +
                             "2013-05-12T00:00:00.000Z\n" +
                             "\n",
-                    "y"
-            );
+                    "y");
         });
     }
 
@@ -1020,8 +955,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "1970-01-01T00:00:00.045Z\n" +
                         "1970-01-01T00:00:00.076Z\n" +
-                        "1970-01-01T00:00:00.124Z\n"
-        ));
+                        "1970-01-01T00:00:00.124Z\n"));
     }
 
     @Test
@@ -1044,8 +978,7 @@ public class InsertCastTest extends AbstractCairoTest {
                             "2022-01-01T00:00:00.045Z\n" +
                             "2022-01-01T00:00:00.076Z\n" +
                             "2222-01-01T00:00:00.124Z\n",
-                    "y"
-            );
+                    "y");
         });
     }
 
@@ -1056,8 +989,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "12.0\n" +
                         "31.0\n" +
-                        "null\n"
-        ));
+                        "null\n"));
     }
 
     @Test
@@ -1067,8 +999,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "45.0\n" +
                         "76.0\n" +
-                        "124.0\n"
-        ));
+                        "124.0\n"));
     }
 
     @Test
@@ -1078,8 +1009,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "12.0\n" +
                         "31.0\n" +
-                        "null\n"
-        ));
+                        "null\n"));
     }
 
     @Test
@@ -1089,8 +1019,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "45.0\n" +
                         "76.0\n" +
-                        "124.0\n"
-        ));
+                        "124.0\n"));
     }
 
     @Test
@@ -1100,8 +1029,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "12\n" +
                         "31\n" +
-                        "null\n"
-        ));
+                        "null\n"));
     }
 
     @Test
@@ -1111,8 +1039,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "45\n" +
                         "76\n" +
-                        "124\n"
-        ));
+                        "124\n"));
     }
 
     @Test
@@ -1122,8 +1049,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "0x12\n" +
                         "0x31\n" +
-                        "\n"
-        ));
+                        "\n"));
     }
 
     @Test
@@ -1133,8 +1059,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "12\n" +
                         "31\n" +
-                        "null\n"
-        ));
+                        "null\n"));
     }
 
     @Test
@@ -1144,8 +1069,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "45\n" +
                         "76\n" +
-                        "124\n"
-        ));
+                        "124\n"));
     }
 
     @Test
@@ -1155,8 +1079,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "12\n" +
                         "31\n" +
-                        "0\n"
-        ));
+                        "0\n"));
     }
 
     @Test
@@ -1166,8 +1089,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "45\n" +
                         "76\n" +
-                        "124\n"
-        ));
+                        "124\n"));
     }
 
     @Test
@@ -1178,8 +1100,8 @@ public class InsertCastTest extends AbstractCairoTest {
             // execute insert statement for each value of reference table
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
-            ) {
+                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext)
+                            .popInsertOperation()) {
                 bindVariableService.setStr(0, "2012-04-11T10:45:11");
                 insert.execute(sqlExecutionContext);
 
@@ -1202,8 +1124,7 @@ public class InsertCastTest extends AbstractCairoTest {
                             "2012-04-11T10:45:11.000000Z\n" +
                             "2012-04-11T10:45:11.344999Z\n" +
                             "\n",
-                    "y"
-            );
+                    "y");
         });
     }
 
@@ -1214,8 +1135,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "1970-01-01T00:00:00.000045Z\n" +
                         "1970-01-01T00:00:00.000076Z\n" +
-                        "1970-01-01T00:00:00.000124Z\n"
-        ));
+                        "1970-01-01T00:00:00.000124Z\n"));
     }
 
     @Test
@@ -1238,8 +1158,7 @@ public class InsertCastTest extends AbstractCairoTest {
                             "2022-01-01T00:00:00.000045Z\n" +
                             "2222-01-01T00:00:00.000076Z\n" +
                             "2222-01-01T00:00:00.000124Z\n",
-                    "y"
-            );
+                    "y");
         });
     }
 
@@ -1263,8 +1182,7 @@ public class InsertCastTest extends AbstractCairoTest {
                             "2022-01-01T00:00:00.000045678Z\n" +
                             "2222-01-01T00:00:00.000076543Z\n" +
                             "2222-01-01T00:00:00.000124987Z\n",
-                    "y"
-            );
+                    "y");
         });
     }
 
@@ -1277,8 +1195,8 @@ public class InsertCastTest extends AbstractCairoTest {
             // execute insert statement for each value of reference table
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
-            ) {
+                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext)
+                            .popInsertOperation()) {
                 bindVariableService.setStr(0, "2012-04-11T10:45:11");
                 insert.execute(sqlExecutionContext);
 
@@ -1301,8 +1219,7 @@ public class InsertCastTest extends AbstractCairoTest {
                             "2012-04-11T10:45:11.000000000Z\n" +
                             "2012-04-11T10:45:11.344999123Z\n" +
                             "\n",
-                    "y"
-            );
+                    "y");
         });
     }
 
@@ -1313,8 +1230,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "1970-01-01T00:00:00.000000045Z\n" +
                         "1970-01-01T00:00:00.000000076Z\n" +
-                        "1970-01-01T00:00:00.000000124Z\n"
-        ));
+                        "1970-01-01T00:00:00.000000124Z\n"));
     }
 
     @Test
@@ -1323,8 +1239,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "byte",
                 "a\n" +
                         "8\n" +
-                        "0\n"
-        ));
+                        "0\n"));
     }
 
     @Test
@@ -1334,8 +1249,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "8.0\n" +
                         "null\n" +
-                        "8.8990229990007E13\n"
-        ));
+                        "8.8990229990007E13\n"));
     }
 
     @Test
@@ -1345,8 +1259,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "8.0\n" +
                         "null\n" +
-                        "8.8990229E13\n"
-        ));
+                        "8.899023E13\n"));
     }
 
     @Test
@@ -1355,8 +1268,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "int",
                 "a\n" +
                         "8\n" +
-                        "null\n"
-        ));
+                        "null\n"));
     }
 
     @Test
@@ -1368,11 +1280,11 @@ public class InsertCastTest extends AbstractCairoTest {
                         "a\n" +
                                 "1970-01-01T00:00:00.000008Z\n" +
                                 "\n" +
-                                "1972-10-26T23:30:29.990007Z\n"
-                );
+                                "1972-10-26T23:30:29.990007Z\n");
                 Assert.fail();
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as LONG256 and cannot accept TIMESTAMP");
+                TestUtils.assertContains(e.getFlyweightMessage(),
+                        "bind variable at 0 is defined as LONG256 and cannot accept TIMESTAMP");
             }
         });
     }
@@ -1384,8 +1296,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "8\n" +
                         "null\n" +
-                        "88990229990007\n"
-        ));
+                        "88990229990007\n"));
     }
 
     @Test
@@ -1394,8 +1305,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "short",
                 "a\n" +
                         "8\n" +
-                        "0\n"
-        ));
+                        "0\n"));
     }
 
     @Test
@@ -1405,8 +1315,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "1970-01-01T00:00:00.000008Z\n" +
                         "\n" +
-                        "1972-10-26T23:30:29.990007Z\n"
-        ));
+                        "1972-10-26T23:30:29.990007Z\n"));
     }
 
     @Test
@@ -1418,8 +1327,7 @@ public class InsertCastTest extends AbstractCairoTest {
                     "d\tts\n" +
                             "string\t2000-01-01T00:00:00.000000Z\n" +
                             "varchar\t2000-01-01T00:00:00.000000Z\n",
-                    "select * from tab order by d"
-            );
+                    "select * from tab order by d");
         });
     }
 
@@ -1432,8 +1340,7 @@ public class InsertCastTest extends AbstractCairoTest {
                     "d\tts\n" +
                             "string\t2000-01-01T00:00:00.000000000Z\n" +
                             "varchar\t2000-01-01T00:00:00.000000000Z\n",
-                    "select * from tab order by d"
-            );
+                    "select * from tab order by d");
         });
     }
 
@@ -1445,8 +1352,7 @@ public class InsertCastTest extends AbstractCairoTest {
             assertSql(
                     "ts\n" +
                             "\n",
-                    "x"
-            );
+                    "x");
         });
     }
 
@@ -1458,8 +1364,7 @@ public class InsertCastTest extends AbstractCairoTest {
             assertSql(
                     "ts\n" +
                             "\n",
-                    "x"
-            );
+                    "x");
         });
     }
 
@@ -1521,8 +1426,8 @@ public class InsertCastTest extends AbstractCairoTest {
             execute("create table tab(arr double[][])");
             execute("insert into tab values ('{{1.0, 2.0}, {3.0, 4.0}}'::varchar), (null)");
             assertQuery("arr\n" +
-                            "[[1.0,2.0],[3.0,4.0]]\n" +
-                            "null\n",
+                    "[[1.0,2.0],[3.0,4.0]]\n" +
+                    "null\n",
                     "select * from tab",
                     true);
 
@@ -1538,7 +1443,8 @@ public class InsertCastTest extends AbstractCairoTest {
         });
     }
 
-    private void assertCastFloatTab(String type, String expected, float outOfRangeLeft, float outOfRangeRight) throws Exception {
+    private void assertCastFloatTab(String type, String expected, float outOfRangeLeft, float outOfRangeRight)
+            throws Exception {
         // insert table
         execute("create table y(a " + type + ");");
         execute("create table x as (select rnd_float()*100 a from long_sequence(5));");
@@ -1570,8 +1476,8 @@ public class InsertCastTest extends AbstractCairoTest {
         // execute insert statement for each value of reference table
         try (
                 SqlCompiler compiler = engine.getSqlCompiler();
-                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
-        ) {
+                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext)
+                        .popInsertOperation()) {
             bindVariableService.setChar(0, '0');
             insert.execute(sqlExecutionContext);
 
@@ -1597,9 +1503,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 SqlCompiler compiler = engine.getSqlCompiler();
                 InsertOperation insert = compiler.compile(
                         "insert into y values (cast(rnd_int(0, 10, 0) + 47 as char))",
-                        sqlExecutionContext
-                ).popInsertOperation()
-        ) {
+                        sqlExecutionContext).popInsertOperation()) {
             insert.execute(sqlExecutionContext);
             insert.execute(sqlExecutionContext);
             insert.execute(sqlExecutionContext);
@@ -1639,8 +1543,8 @@ public class InsertCastTest extends AbstractCairoTest {
         // execute insert statement for each value of reference table
         try (
                 SqlCompiler compiler = engine.getSqlCompiler();
-                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
-        ) {
+                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext)
+                        .popInsertOperation()) {
             bindVariableService.setInt(0, 3); // compatible with everything
             insert.execute(sqlExecutionContext);
 
@@ -1663,8 +1567,8 @@ public class InsertCastTest extends AbstractCairoTest {
         // execute insert statement for each value of reference table
         try (
                 SqlCompiler compiler = engine.getSqlCompiler();
-                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
-        ) {
+                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext)
+                        .popInsertOperation()) {
             bindVariableService.setLong(0, 8); // compatible with everything
             insert.execute(sqlExecutionContext);
 
@@ -1687,8 +1591,8 @@ public class InsertCastTest extends AbstractCairoTest {
         // execute insert statement for each value of reference table
         try (
                 SqlCompiler compiler = engine.getSqlCompiler();
-                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
-        ) {
+                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext)
+                        .popInsertOperation()) {
             bindVariableService.setShort(0, (short) 12);
             insert.execute(sqlExecutionContext);
 
@@ -1705,8 +1609,8 @@ public class InsertCastTest extends AbstractCairoTest {
         assertSql(
                 "a\n" +
                         "12\n" +
-                        "31\n", "y"
-        );
+                        "31\n",
+                "y");
     }
 
     private void assertStrBind(String toType, String expected) throws Exception {
@@ -1715,8 +1619,8 @@ public class InsertCastTest extends AbstractCairoTest {
         // execute insert statement for each value of reference table
         try (
                 SqlCompiler compiler = engine.getSqlCompiler();
-                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
-        ) {
+                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext)
+                        .popInsertOperation()) {
             bindVariableService.setStr(0, "12");
             insert.execute(sqlExecutionContext);
 
@@ -1768,8 +1672,8 @@ public class InsertCastTest extends AbstractCairoTest {
         // execute insert statement for each value of reference table
         try (
                 SqlCompiler compiler = engine.getSqlCompiler();
-                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
-        ) {
+                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext)
+                        .popInsertOperation()) {
             bindVariableService.setTimestamp(0, 8L); // compatible with everything
             insert.execute(sqlExecutionContext);
 
@@ -1792,8 +1696,8 @@ public class InsertCastTest extends AbstractCairoTest {
         // execute insert statement for each value of reference table
         try (
                 SqlCompiler compiler = engine.getSqlCompiler();
-                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
-        ) {
+                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext)
+                        .popInsertOperation()) {
             bindVariableService.setTimestamp(0, 8L); // compatible with everything
             insert.execute(sqlExecutionContext);
 

@@ -60,7 +60,8 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
     static void validateMatViewPeriodLength(int length, char lengthUnit, int pos) throws SqlException {
         final int lengthSeconds = matViewPeriodLengthSeconds(length, lengthUnit, pos);
         if (lengthSeconds > 24 * 60 * 60) {
-            throw SqlException.position(pos).put("maximum supported length interval is 24 hours: ").put(length).put(lengthUnit);
+            throw SqlException.position(pos).put("maximum supported length interval is 24 hours: ").put(length)
+                    .put(lengthUnit);
         }
     }
 
@@ -84,7 +85,9 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
 
     void updateOperationFutureTableToken(TableToken tableToken);
 
-    void validateAndUpdateMetadataFromModel(SqlExecutionContext sqlExecutionContext, FunctionFactoryCache functionFactoryCache, QueryModel queryModel) throws SqlException;
+    void validateAndUpdateMetadataFromModel(SqlExecutionContext sqlExecutionContext,
+            FunctionFactoryCache functionFactoryCache, QueryModel queryModel) throws SqlException;
 
-    void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, TableReaderMetadata baseTableMetadata, int scanDirection) throws SqlException;
+    void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, TableReaderMetadata baseTableMetadata,
+            int scanDirection, io.questdb.griffin.FunctionParser functionParser) throws SqlException;
 }

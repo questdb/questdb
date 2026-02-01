@@ -64,7 +64,8 @@ public final class DecimalUtil {
     /**
      * Creates a new constant Decimal from the given 256-bit decimal value.
      */
-    public static @NotNull ConstantFunction createDecimalConstant(long hh, long hl, long lh, long ll, int precision, int scale) {
+    public static @NotNull ConstantFunction createDecimalConstant(long hh, long hl, long lh, long ll, int precision,
+            int scale) {
         int type = ColumnType.getDecimalType(precision, scale);
         return switch (ColumnType.tagOf(type)) {
             case ColumnType.DECIMAL8 -> new Decimal8Constant((byte) ll, type);
@@ -94,19 +95,19 @@ public final class DecimalUtil {
             case ColumnType.DECIMAL32 -> new Decimal32Constant(Decimals.DECIMAL32_NULL, type);
             case ColumnType.DECIMAL64 -> new Decimal64Constant(Decimals.DECIMAL64_NULL, type);
             case ColumnType.DECIMAL128 ->
-                    new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, type);
+                new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, type);
             default -> new Decimal256Constant(
                     Decimals.DECIMAL256_HH_NULL,
                     Decimals.DECIMAL256_HL_NULL,
                     Decimals.DECIMAL256_LH_NULL,
                     Decimals.DECIMAL256_LL_NULL,
-                    type
-            );
+                    type);
         };
     }
 
     /**
-     * Returns a decimal instance from a sqlExecutionContext that can fit any number of {@code precision} digits.
+     * Returns a decimal instance from a sqlExecutionContext that can fit any number
+     * of {@code precision} digits.
      *
      * @param executionContext to retrieve an instance of the decimal
      */
@@ -120,28 +121,32 @@ public final class DecimalUtil {
     }
 
     /**
-     * Returns a function that can cast a type to a specific decimal through implicit casting.
+     * Returns a function that can cast a type to a specific decimal through
+     * implicit casting.
      * It may return null if the type cannot be implicitly cast.
      */
-    public static Function getImplicitCastFunction(Function arg, int position, int toType, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public static Function getImplicitCastFunction(Function arg, int position, int toType,
+            SqlExecutionContext sqlExecutionContext) throws SqlException {
         return switch (ColumnType.tagOf(arg.getType())) {
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
-                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
-                    CastDecimalToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
+                    ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
+                CastDecimalToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
             case ColumnType.BYTE ->
-                    CastByteToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
+                CastByteToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
             case ColumnType.SHORT ->
-                    CastShortToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
+                CastShortToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
             case ColumnType.INT ->
-                    CastIntToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
+                CastIntToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
             case ColumnType.LONG ->
-                    CastLongToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext.getDecimal256());
+                CastLongToDecimalFunctionFactory.newInstance(position, arg, toType,
+                        sqlExecutionContext != null ? sqlExecutionContext.getDecimal256() : new Decimal256());
             default -> null;
         };
     }
 
     /**
-     * Returns a decimal type that is fitting for the original type or 0 if it cannot be implicitly cast.
+     * Returns a decimal type that is fitting for the original type or 0 if it
+     * cannot be implicitly cast.
      */
     public static int getImplicitCastType(int fromType) {
         if (ColumnType.isDecimal(fromType)) {
@@ -167,8 +172,9 @@ public final class DecimalUtil {
      * - Timestamp
      * - Date
      *
-     * @return the precision and scale as low/high short encoded with {@link Numbers#encodeLowHighShorts} or 0
-     * if the type is not supported.
+     * @return the precision and scale as low/high short encoded with
+     *         {@link Numbers#encodeLowHighShorts} or 0
+     *         if the type is not supported.
      */
     public static int getTypePrecisionScale(int type) {
         int tag = ColumnType.tagOf(type);
@@ -179,7 +185,7 @@ public final class DecimalUtil {
         }
         return switch (tag) {
             case ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.LONG ->
-                    Numbers.encodeLowHighShorts((short) 19, (short) 0);
+                Numbers.encodeLowHighShorts((short) 19, (short) 0);
             case ColumnType.INT -> Numbers.encodeLowHighShorts((short) 10, (short) 0);
             case ColumnType.SHORT -> Numbers.encodeLowHighShorts((short) 5, (short) 0);
             case ColumnType.BYTE -> Numbers.encodeLowHighShorts((short) 3, (short) 0);
@@ -198,7 +204,8 @@ public final class DecimalUtil {
     /**
      * Load any decimal value from a Function into a Decimal256
      */
-    public static void load(Decimal256 decimal, Decimal128 decimal128, Function value, @Nullable Record rec, int fromType) {
+    public static void load(Decimal256 decimal, Decimal128 decimal128, Function value, @Nullable Record rec,
+            int fromType) {
         switch (ColumnType.tagOf(fromType)) {
             case ColumnType.DECIMAL8:
                 byte b = value.getDecimal8(rec);
@@ -346,13 +353,17 @@ public final class DecimalUtil {
     }
 
     /**
-     * Checks if the provided function is a Decimal constant and, if so, tries to rescale it.
+     * Checks if the provided function is a Decimal constant and, if so, tries to
+     * rescale it.
      * Otherwise, returns the same function.
      * <p>
-     * This method is useful when choosing the most efficient function implementation in a function factory.
-     * After rescaling one of the arguments, we no longer have to rescale it for each row.
+     * This method is useful when choosing the most efficient function
+     * implementation in a function factory.
+     * After rescaling one of the arguments, we no longer have to rescale it for
+     * each row.
      *
-     * @param func            the input function; must not be used after this call as it may be closed.
+     * @param func            the input function; must not be used after this call
+     *                        as it may be closed.
      * @param decimal         intermediate object, used for rescaling
      * @param targetPrecision target precision
      * @param targetScale     target scale
@@ -363,8 +374,7 @@ public final class DecimalUtil {
             @NotNull Decimal256 decimal,
             @NotNull Decimal128 decimal128,
             int targetPrecision,
-            int targetScale
-    ) {
+            int targetScale) {
         final int type = func.getType();
         final int scale = ColumnType.getDecimalScale(type);
         if (func.isConstant() && ColumnType.isDecimal(type) && scale < targetScale) {
@@ -392,27 +402,30 @@ public final class DecimalUtil {
     }
 
     /**
-     * Parses a decimal from a literal to the most adapted decimal type as a constant.
+     * Parses a decimal from a literal to the most adapted decimal type as a
+     * constant.
      * The literal may end with [m/M] but not necessarily.
      *
      * @param position         the position in the SQL query for error reporting
      * @param tok              token containing the literal
-     * @param executionContext to retrieve an instance of a decimal that can parse and store the resulting value
+     * @param executionContext to retrieve an instance of a decimal that can parse
+     *                         and store the resulting value
      * @param precision        of the decimal (or -1 to infer from literal)
      * @param scale            of the decimal (or -1 to infer from literal)
      * @return a ConstantFunction containing the value parsed
-     * @throws SqlException if the value couldn't be parsed with detailed error message
+     * @throws SqlException if the value couldn't be parsed with detailed error
+     *                      message
      */
     public static @NotNull ConstantFunction parseDecimalConstant(
             int position,
             @NotNull SqlExecutionContext executionContext,
             @NotNull CharSequence tok,
             int precision,
-            int scale
-    ) throws SqlException {
+            int scale) throws SqlException {
         Decimal256 decimal256 = executionContext.getDecimal256();
         try {
-            // We might not know the precision of the final type, in this case we want to use
+            // We might not know the precision of the final type, in this case we want to
+            // use
             // the decimal that have the most precision.
             Decimal decimal = precision > 0 ? getDecimal(executionContext, precision) : decimal256;
             long r = DecimalParser.parse(decimal, tok, 0, tok.length(), precision, scale, false, false);
@@ -426,7 +439,8 @@ public final class DecimalUtil {
     }
 
     /**
-     * Parses the precision from a CharSequence and returns its value, it doesn't validate whether
+     * Parses the precision from a CharSequence and returns its value, it doesn't
+     * validate whether
      * the value is in the correct range.
      *
      * @throws SqlException if the value couldn't be parsed
@@ -443,7 +457,8 @@ public final class DecimalUtil {
     }
 
     /**
-     * Parses the scale from a CharSequence and returns its value, it doesn't validate whether
+     * Parses the scale from a CharSequence and returns its value, it doesn't
+     * validate whether
      * the value is in the correct range.
      *
      * @throws SqlException if the value couldn't be parsed
@@ -485,8 +500,7 @@ public final class DecimalUtil {
                             Decimals.DECIMAL256_HH_NULL,
                             Decimals.DECIMAL256_HL_NULL,
                             Decimals.DECIMAL256_LH_NULL,
-                            Decimals.DECIMAL256_LL_NULL
-                    );
+                            Decimals.DECIMAL256_LL_NULL);
                     break;
                 default:
                     assert false;
@@ -514,8 +528,7 @@ public final class DecimalUtil {
                         decimal.getHh(),
                         decimal.getHl(),
                         decimal.getLh(),
-                        decimal.getLl()
-                );
+                        decimal.getLl());
                 break;
         }
     }
@@ -557,8 +570,7 @@ public final class DecimalUtil {
                         decimal.getHh(),
                         decimal.getHl(),
                         decimal.getLh(),
-                        decimal.getLl()
-                );
+                        decimal.getLl());
                 break;
         }
     }
@@ -589,8 +601,7 @@ public final class DecimalUtil {
                         Decimals.DECIMAL256_HH_NULL,
                         Decimals.DECIMAL256_HL_NULL,
                         Decimals.DECIMAL256_LH_NULL,
-                        Decimals.DECIMAL256_LL_NULL
-                );
+                        Decimals.DECIMAL256_LL_NULL);
                 break;
         }
     }

@@ -72,7 +72,8 @@ import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
 import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
 /**
- * Create mat view operation relies on implicit create table as select operation.
+ * Create mat view operation relies on implicit create table as select
+ * operation.
  * <p>
  * The supported clauses are the following:
  * - index
@@ -83,7 +84,8 @@ import static io.questdb.griffin.model.ExpressionNode.LITERAL;
  * <p>
  * Other than that, at the execution phase the query is compiled and optimized
  * and validated. Sampling interval
- * and unit are also parsed at this stage as we want to support GROUP BY timestamp_floor(ts)
+ * and unit are also parsed at this stage as we want to support GROUP BY
+ * timestamp_floor(ts)
  * queries.
  */
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
@@ -130,8 +132,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             int periodLength,
             char periodLengthUnit,
             int periodDelay,
-            char periodDelayUnit
-    ) {
+            char periodDelayUnit) {
         this.configuration = configuration;
         this.sqlText = sqlText;
         this.createTableOperation = createTableOperation;
@@ -157,7 +158,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
-    public OperationFuture execute(SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
+    public OperationFuture execute(SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq)
+            throws SqlException {
         try (SqlCompiler compiler = sqlExecutionContext.getCairoEngine().getSqlCompiler()) {
             compiler.execute(this, sqlExecutionContext);
         }
@@ -300,8 +302,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 periodLength,
                 periodLengthUnit,
                 periodDelay,
-                periodDelayUnit
-        );
+                periodDelayUnit);
     }
 
     @Override
@@ -331,7 +332,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     /**
-     * This is SQLCompiler side API to set table token after the operation has been executed.
+     * This is SQLCompiler side API to set table token after the operation has been
+     * executed.
      *
      * @param tableToken table token of the newly created table
      */
@@ -344,8 +346,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     public void validateAndUpdateMetadataFromModel(
             @NotNull SqlExecutionContext sqlExecutionContext,
             @NotNull FunctionFactoryCache functionFactoryCache,
-            @NotNull QueryModel queryModel
-    ) throws SqlException {
+            @NotNull QueryModel queryModel) throws SqlException {
         // Create view columns based on query.
         final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
         assert columns.size() > 0;
@@ -353,8 +354,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         // We do not know types of columns at this stage.
         // Compiler must put table together using query metadata.
         createColumnModelMap.clear();
-        final LowerCaseCharSequenceObjHashMap<TableColumnMetadata> augColumnMetadataMap =
-                createTableOperation.getAugmentedColumnMetadata();
+        final LowerCaseCharSequenceObjHashMap<TableColumnMetadata> augColumnMetadataMap = createTableOperation
+                .getAugmentedColumnMetadata();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
             final CharSequence columnName = qc.getName();
@@ -443,7 +444,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         final CharSequence interval = GenericLexer.unquote(intervalExpr);
         final int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(interval, intervalPos, "sample");
         assert samplingIntervalEnd < interval.length();
-        samplingInterval = TimestampSamplerFactory.parseInterval(interval, samplingIntervalEnd, intervalPos, "sample", Numbers.INT_NULL, ' ');
+        samplingInterval = TimestampSamplerFactory.parseInterval(interval, samplingIntervalEnd, intervalPos, "sample",
+                Numbers.INT_NULL, ' ');
         assert samplingInterval > 0;
         samplingIntervalUnit = interval.charAt(samplingIntervalEnd);
 
@@ -456,16 +458,19 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                     if (columnModel == null) {
                         throw SqlException.$(0, "missing column [name=").put(column.getName()).put(']');
                     }
-                    copyBaseTableSymbolColumnCapacity(column.getAst(), queryModel, columnModel, baseTableName, baseTableMetadata);
+                    copyBaseTableSymbolColumnCapacity(column.getAst(), queryModel, columnModel, baseTableName,
+                            baseTableMetadata);
                 }
             }
         }
 
-        // Don't forget to reset augmented columns in create table op with what we have scraped.
+        // Don't forget to reset augmented columns in create table op with what we have
+        // scraped.
         createTableOperation.initColumnMetadata(createColumnModelMap);
 
         if (periodLength == -1) {
-            // It's PERIOD (SAMPLE BY INTERVAL) which means that we need to align the period to the SAMPLE BY bucket.
+            // It's PERIOD (SAMPLE BY INTERVAL) which means that we need to align the period
+            // to the SAMPLE BY bucket.
             periodLength = (int) Math.min(samplingInterval, Integer.MAX_VALUE);
             periodLengthUnit = samplingIntervalUnit;
             CreateMatViewOperation.validateMatViewPeriodLength(periodLength, periodLengthUnit, intervalPos);
@@ -473,14 +478,14 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                     MicrosTimestampDriver.INSTANCE,
                     periodLength,
                     periodLengthUnit,
-                    intervalPos
-            );
+                    intervalPos);
             assert timerTimeZone == null;
             timerTimeZone = timeZone;
             TimeZoneRules tzRulesMicros = null;
             if (timerTimeZone != null) {
                 try {
-                    tzRulesMicros = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timerTimeZone);
+                    tzRulesMicros = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE,
+                            timerTimeZone);
                 } catch (CairoException e) {
                     throw SqlException.position(intervalPos).put(e.getFlyweightMessage());
                 }
@@ -491,11 +496,13 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                     throw SqlException.position(intervalPos).put("invalid offset: ").put(timeZoneOffset);
                 }
                 if (Numbers.decodeLowInt(val) != 0) {
-                    throw SqlException.position(intervalPos).put("PERIOD (SAMPLE BY INTERVAL) can't be used with WITH OFFSET");
+                    throw SqlException.position(intervalPos)
+                            .put("PERIOD (SAMPLE BY INTERVAL) can't be used with WITH OFFSET");
                 }
             }
             final long nowMicros = configuration.getMicrosecondClock().getTicks();
-            final long nowLocalMicros = tzRulesMicros != null ? nowMicros + tzRulesMicros.getOffset(nowMicros) : nowMicros;
+            final long nowLocalMicros = tzRulesMicros != null ? nowMicros + tzRulesMicros.getOffset(nowMicros)
+                    : nowMicros;
             timerStartUs = periodSamplerMicros.round(nowLocalMicros);
         }
     }
@@ -504,8 +511,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     public void validateAndUpdateMetadataFromSelect(
             @NotNull RecordMetadata selectMetadata,
             @NotNull TableReaderMetadata baseTableMetadata,
-            int scanDirection
-    ) throws SqlException {
+            int scanDirection,
+            io.questdb.griffin.FunctionParser functionParser) throws SqlException {
         final int selectTextPosition = createTableOperation.getSelectTextPosition();
         // SELECT validation
         if (createTableOperation.getTimestampColumnName() == null) {
@@ -514,7 +521,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                         .put("materialized view query is required to have designated timestamp");
             }
         }
-        createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection);
+        createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection, functionParser);
         updateMatViewTablePartitionBy(createTableOperation.getTimestampType());
         this.baseTableTimestampType = baseTableMetadata.getTimestampType();
     }
@@ -524,8 +531,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             @Nullable QueryModel queryModel,
             @NotNull CreateTableColumnModel columnModel,
             @NotNull CharSequence baseTableName,
-            @NotNull TableMetadata baseTableMetadata
-    ) {
+            @NotNull TableMetadata baseTableMetadata) {
         if (columnNode != null && queryModel != null) {
             if (columnNode.type == ExpressionNode.LITERAL) {
                 if (queryModel.getTableName() != null) {
@@ -534,7 +540,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                         if (columnName != null) {
                             final int columnIndex = baseTableMetadata.getColumnIndexQuiet(columnName);
                             if (columnIndex > -1) {
-                                final TableColumnMetadata baseTableColumnMetadata = baseTableMetadata.getColumnMetadata(columnIndex);
+                                final TableColumnMetadata baseTableColumnMetadata = baseTableMetadata
+                                        .getColumnMetadata(columnIndex);
                                 if (baseTableColumnMetadata.getColumnType() == ColumnType.SYMBOL) {
                                     columnModel.setSymbolCapacity(baseTableColumnMetadata.getSymbolCapacity());
                                 }
@@ -549,16 +556,17 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                             queryModel.getNestedModel(),
                             columnModel,
                             baseTableName,
-                            baseTableMetadata
-                    );
+                            baseTableMetadata);
                 }
             }
 
             for (int i = 1, n = queryModel.getJoinModels().size(); i < n; i++) {
-                copyBaseTableSymbolColumnCapacity(columnNode, queryModel.getJoinModels().getQuick(i), columnModel, baseTableName, baseTableMetadata);
+                copyBaseTableSymbolColumnCapacity(columnNode, queryModel.getJoinModels().getQuick(i), columnModel,
+                        baseTableName, baseTableMetadata);
             }
 
-            copyBaseTableSymbolColumnCapacity(columnNode, queryModel.getUnionModel(), columnModel, baseTableName, baseTableMetadata);
+            copyBaseTableSymbolColumnCapacity(columnNode, queryModel.getUnionModel(), columnModel, baseTableName,
+                    baseTableMetadata);
         }
     }
 
@@ -588,7 +596,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             for (int i = 0, n = queryColumns.size(); i < n; i++) {
                 final QueryColumn queryColumn = queryColumns.getQuick(i);
                 final ExpressionNode ast = queryColumn.getAst();
-                if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase(TimestampFloorFunctionFactory.NAME, ast.token)) {
+                if (ast.type == ExpressionNode.FUNCTION
+                        && Chars.equalsIgnoreCase(TimestampFloorFunctionFactory.NAME, ast.token)) {
                     return queryColumn;
                 }
             }
@@ -613,7 +622,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         tmpColumnIndexes.clear();
         tmpColumnIndexes.add(columnIndex);
 
-        for (; ; ) {
+        for (;;) {
             // First, check the columns for aggregate functions
             // and accumulate all literals we've met on the way.
             tmpLiterals.clear();
@@ -659,7 +668,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             // OK, it's a simple select model, so we need to check the nested model
             // as the column may reference nested aggregates.
             // Example:
-            //   SELECT c FROM (SELECT count() AS c FROM x);
+            // SELECT c FROM (SELECT count() AS c FROM x);
             queryModel = queryModel.getNestedModel();
 
             // Collect column indexes to check in the next iteration and carry on.
@@ -682,17 +691,17 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                     timestampDriver,
                     samplingInterval,
                     samplingIntervalUnit,
-                    0
-            );
+                    0);
             final long approxBucket = timestampSampler.getApproxBucketSize();
             final int partitionBy = approxBucket > timestampDriver.fromHours(1) ? PartitionBy.YEAR
                     : approxBucket > timestampDriver.fromMinutes(1) ? PartitionBy.MONTH
-                    : PartitionBy.DAY;
+                            : PartitionBy.DAY;
             createTableOperation.setPartitionBy(partitionBy);
             final int ttlHoursOrMonths = createTableOperation.getTtlHoursOrMonths();
             if (ttlHoursOrMonths > 0) {
                 // Don't forget to validate TTL against PARTITION BY.
-                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, createTableOperation.getTtlPosition());
+                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths,
+                        createTableOperation.getTtlPosition());
             }
         }
     }

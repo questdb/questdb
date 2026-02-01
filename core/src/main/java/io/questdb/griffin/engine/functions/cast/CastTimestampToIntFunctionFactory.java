@@ -45,7 +45,7 @@ public class CastTimestampToIntFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToIntFunction implements UnaryFunction {
+    public static class Func extends AbstractCastToIntFunction implements UnaryFunction {
         public Func(Function arg) {
             super(arg);
         }

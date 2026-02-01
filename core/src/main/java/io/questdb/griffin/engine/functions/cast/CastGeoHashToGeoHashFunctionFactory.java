@@ -50,7 +50,8 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         return new CastGeoByteToStrBitsFunc(value, srcBitsPrecision);
     }
 
-    // TODO: getGeo*ToVarcharCastFunction methods are currently unused due to the lack
+    // TODO: getGeo*ToVarcharCastFunction methods are currently unused due to the
+    // lack
     // of support for cast(geohash_col as VARCHAR). Issue that tracks this:
     // https://github.com/questdb/questdb/issues/4262
 
@@ -127,6 +128,13 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
             }
         } else if (shift == 0) {
             return value;
+        } else {
+            throw SqlException.position(position)
+                    .put("CAST cannot narrow values from GEOHASH(")
+                    .put(fromBits)
+                    .put("b) to GEOHASH(")
+                    .put(toBits)
+                    .put("b)");
         }
 
         // check if this is a null of different bit count
@@ -139,18 +147,17 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
             case ColumnType.GEOSHORT:
             case ColumnType.GEOINT:
             case ColumnType.GEOLONG:
-                throw SqlException.position(position)
-                        .put("CAST cannot narrow values from GEOHASH(")
-                        .put(fromBits)
-                        .put("b) to GEOHASH(")
-                        .put(toBits)
-                        .put("b)");
+                return getCastGeoHashToGeoHashFunction(value, toType, fromType, shift);
             case ColumnType.STRING:
                 switch (ColumnType.tagOf(fromType)) {
                     case ColumnType.GEOBYTE:
                         return getGeoByteToStrCastFunction(value, fromBits);
                     case ColumnType.GEOSHORT:
                         return getGeoShortToStrCastFunction(value, fromBits);
+                    case ColumnType.GEOINT:
+                        return getGeoIntToStrCastFunction(value, fromBits);
+                    case ColumnType.GEOLONG:
+                        return getGeoLongToStrCastFunction(value, fromBits);
                 }
             default:
                 throw SqlException.position(position)
@@ -171,11 +178,10 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position,
-                                ObjList<Function> args,
-                                IntList argPositions,
-                                CairoConfiguration configuration,
-                                SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext) throws SqlException {
         final Function value = args.getQuick(0);
         int srcType = value.getType();
         int targetType = args.getQuick(1).getType();
@@ -273,7 +279,8 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         protected abstract void print(long value, Utf16Sink sink);
     }
 
-    private static abstract class AbstractCastGeoByteToVarcharFunction extends VarcharFunction implements UnaryFunction {
+    private static abstract class AbstractCastGeoByteToVarcharFunction extends VarcharFunction
+            implements UnaryFunction {
         protected final int bits;
         protected final Function value;
         private final Utf8StringSink sinkA = new Utf8StringSink();
@@ -379,7 +386,8 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastGeoByteToVarcharBitsFunc extends AbstractCastGeoByteToVarcharFunction implements UnaryFunction {
+    private static class CastGeoByteToVarcharBitsFunc extends AbstractCastGeoByteToVarcharFunction
+            implements UnaryFunction {
 
         public CastGeoByteToVarcharBitsFunc(Function value, int bits) {
             super(value, bits);
@@ -396,7 +404,8 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastGeoByteToVarcharCharsFunc extends AbstractCastGeoByteToVarcharFunction implements UnaryFunction {
+    private static class CastGeoByteToVarcharCharsFunc extends AbstractCastGeoByteToVarcharFunction
+            implements UnaryFunction {
 
         public CastGeoByteToVarcharCharsFunc(Function value, int bits) {
             super(value, bits);
@@ -468,7 +477,8 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastGeoIntToVarcharBitsFunc extends AbstractCastGeoByteToVarcharFunction implements UnaryFunction {
+    private static class CastGeoIntToVarcharBitsFunc extends AbstractCastGeoByteToVarcharFunction
+            implements UnaryFunction {
 
         public CastGeoIntToVarcharBitsFunc(Function value, int bits) {
             super(value, bits);
@@ -485,7 +495,8 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastGeoIntToVarcharCharsFunc extends AbstractCastGeoByteToVarcharFunction implements UnaryFunction {
+    private static class CastGeoIntToVarcharCharsFunc extends AbstractCastGeoByteToVarcharFunction
+            implements UnaryFunction {
 
         public CastGeoIntToVarcharCharsFunc(Function value, int bits) {
             super(value, bits);
@@ -557,7 +568,8 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastGeoLongToVarcharBitsFunc extends AbstractCastGeoByteToVarcharFunction implements UnaryFunction {
+    private static class CastGeoLongToVarcharBitsFunc extends AbstractCastGeoByteToVarcharFunction
+            implements UnaryFunction {
 
         public CastGeoLongToVarcharBitsFunc(Function value, int bits) {
             super(value, bits);
@@ -574,7 +586,8 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastGeoLongToVarcharCharsFunc extends AbstractCastGeoByteToVarcharFunction implements UnaryFunction {
+    private static class CastGeoLongToVarcharCharsFunc extends AbstractCastGeoByteToVarcharFunction
+            implements UnaryFunction {
 
         public CastGeoLongToVarcharCharsFunc(Function value, int bits) {
             super(value, bits);
@@ -646,7 +659,8 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastGeoShortToVarcharBitsFunc extends AbstractCastGeoByteToVarcharFunction implements UnaryFunction {
+    private static class CastGeoShortToVarcharBitsFunc extends AbstractCastGeoByteToVarcharFunction
+            implements UnaryFunction {
 
         public CastGeoShortToVarcharBitsFunc(Function value, int bits) {
             super(value, bits);
@@ -663,7 +677,8 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastGeoShortToVarcharCharsFunc extends AbstractCastGeoByteToVarcharFunction implements UnaryFunction {
+    private static class CastGeoShortToVarcharCharsFunc extends AbstractCastGeoByteToVarcharFunction
+            implements UnaryFunction {
 
         public CastGeoShortToVarcharCharsFunc(Function value, int bits) {
             super(value, bits);
@@ -694,7 +709,6 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         public Function getArg() {
             return value;
         }
-
 
         @Override
         public int getGeoInt(Record rec) {

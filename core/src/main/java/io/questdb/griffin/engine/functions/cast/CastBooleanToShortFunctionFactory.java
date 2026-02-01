@@ -43,7 +43,7 @@ public class CastBooleanToShortFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToShortFunction {
+    public static class Func extends AbstractCastToShortFunction {
         public Func(Function arg) {
             super(arg);
         }

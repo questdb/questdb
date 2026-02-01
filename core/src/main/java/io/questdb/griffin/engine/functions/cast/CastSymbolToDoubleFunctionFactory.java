@@ -51,7 +51,7 @@ public class CastSymbolToDoubleFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToDoubleFunction {
+    public static class Func extends AbstractCastToDoubleFunction {
         public Func(Function arg) {
             super(arg);
         }

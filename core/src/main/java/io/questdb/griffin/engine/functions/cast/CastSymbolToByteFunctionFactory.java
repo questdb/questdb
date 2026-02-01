@@ -44,7 +44,7 @@ public class CastSymbolToByteFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToByteFunction {
+    public static class Func extends AbstractCastToByteFunction {
         public Func(Function arg) {
             super(arg);
         }

@@ -67,7 +67,7 @@ public class CastStrToIPv4FunctionFactory implements FunctionFactory {
         return new Func(arg);
     }
 
-    private static class Func extends AbstractCastToIPv4Function {
+    public static class Func extends AbstractCastToIPv4Function {
 
         public Func(Function arg) {
             super(arg);

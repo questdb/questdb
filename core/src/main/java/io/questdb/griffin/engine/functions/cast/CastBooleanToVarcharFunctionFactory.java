@@ -47,8 +47,7 @@ public class CastBooleanToVarcharFunctionFactory implements FunctionFactory {
             ObjList<Function> args,
             IntList argPositions,
             CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) {
+            SqlExecutionContext sqlExecutionContext) {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
             return new VarcharConstant(func.getStrA(null));
@@ -56,7 +55,7 @@ public class CastBooleanToVarcharFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToVarcharFunction {
+    public static class Func extends AbstractCastToVarcharFunction {
         public Func(Function arg) {
             super(arg);
         }

@@ -53,7 +53,7 @@ public class CastSymbolToLong256FunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Func extends AbstractCastToLong256Function {
+    public static class Func extends AbstractCastToLong256Function {
         private final Long256Impl long256a = new Long256Impl();
         private final Long256Impl long256b = new Long256Impl();
         private final Long256Impl long256builder = new Long256Impl();

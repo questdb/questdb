@@ -44,7 +44,7 @@ public class CastIntToLongFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToLongFunction {
+    public static class Func extends AbstractCastToLongFunction {
         public Func(Function arg) {
             super(arg);
         }

@@ -70,7 +70,7 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
         return newInstance(args.getQuick(0), args.getQuick(1).getType(), argPositions.getQuick(0));
     }
 
-    private static class Func128 extends Decimal128Function implements UnaryFunction {
+    public static class Func128 extends Decimal128Function implements UnaryFunction {
         private final Function arg;
         private final int position;
         private final int precision;
@@ -117,7 +117,7 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Func256 extends Decimal256Function implements UnaryFunction {
+    public static class Func256 extends Decimal256Function implements UnaryFunction {
         private final Function arg;
         private final int position;
         private final int precision;
@@ -164,7 +164,7 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Func64 extends AbstractCastToDecimal64Function {
+    public static class Func64 extends AbstractCastToDecimal64Function {
         private final StringSink sink = new StringSink();
 
         public Func64(Function value, int targetType, int position) {

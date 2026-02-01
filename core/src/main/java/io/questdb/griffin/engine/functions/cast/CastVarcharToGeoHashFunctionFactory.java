@@ -87,7 +87,7 @@ public class CastVarcharToGeoHashFunctionFactory implements FunctionFactory {
         return CastStrToGeoHashFunctionFactory.parseGeoHash(value.asAsciiCharSequence(), position, typeBits);
     }
 
-    private static class Func extends AbstractCastToGeoHashFunction {
+    public static class Func extends AbstractCastToGeoHashFunction {
 
         public Func(int geoType, Function arg, int position) {
             super(geoType, arg, position);

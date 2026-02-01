@@ -44,7 +44,9 @@ public interface CreateViewOperation extends TableStructure, Operation {
 
     void updateOperationFutureTableToken(TableToken tableToken);
 
-    void validateAndUpdateMetadataFromModel(SqlExecutionContext sqlExecutionContext, FunctionFactoryCache functionFactoryCache, QueryModel queryModel) throws SqlException;
+    void validateAndUpdateMetadataFromModel(SqlExecutionContext sqlExecutionContext,
+            FunctionFactoryCache functionFactoryCache, QueryModel queryModel) throws SqlException;
 
-    void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, int scanDirection) throws SqlException;
+    void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, int scanDirection,
+            io.questdb.griffin.FunctionParser functionParser) throws SqlException;
 }

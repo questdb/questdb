@@ -50,7 +50,7 @@ public class CastBooleanToTimestampFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), args.getQuick(1).getType());
     }
 
-    private static class Func extends AbstractCastToTimestampFunction {
+    public static class Func extends AbstractCastToTimestampFunction {
 
         public Func(Function arg, int timestampType) {
             super(arg, timestampType);
