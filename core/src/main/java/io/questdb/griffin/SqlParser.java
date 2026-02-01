@@ -1949,12 +1949,34 @@ public class SqlParser {
             return tok;
         }
 
+        // Parse optional TYPE <type_name>
+        byte indexType = IndexType.SYMBOL;
+        if (isTypeKeyword(tok)) {
+            tok = tok(lexer, "index type name");
+            int typePosition = lexer.lastTokenPosition();
+            indexType = IndexType.valueOf(tok);
+            if (indexType == IndexType.NONE) {
+                throw SqlException.position(typePosition).put("unknown index type: ").put(tok);
+            }
+
+            if (isFieldTerm(tok = tok(lexer, ") | , expected"))) {
+                model.setIndexType(indexType, indexColumnPosition, configuration.getIndexValueBlockSize());
+                return tok;
+            }
+        }
+
         expectTok(lexer, tok, "capacity");
+
+        // CAPACITY only makes sense for SYMBOL index type
+        if (indexType != IndexType.SYMBOL) {
+            throw SqlException.position(lexer.lastTokenPosition())
+                    .put("CAPACITY is only supported for SYMBOL (legacy) index type");
+        }
 
         int errorPosition = lexer.getPosition();
         int indexValueBlockSize = expectInt(lexer);
         TableUtils.validateIndexValueBlockSize(errorPosition, indexValueBlockSize);
-        model.setIndexType(IndexType.SYMBOL, indexColumnPosition, Numbers.ceilPow2(indexValueBlockSize));
+        model.setIndexType(indexType, indexColumnPosition, Numbers.ceilPow2(indexValueBlockSize));
         return null;
     }
 

@@ -3159,6 +3159,70 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableInPlaceIndexTypeDelta() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " x SYMBOL capacity 128 cache index type DELTA) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type delta) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypeLegacy() throws SqlException {
+        // LEGACY is an alias for SYMBOL index type
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " x SYMBOL capacity 128 cache index capacity 256) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type legacy) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypeLegacyWithCapacity() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " x SYMBOL capacity 128 cache index capacity 64) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type legacy capacity 64) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypeDeltaWithCapacityFails() throws Exception {
+        assertSyntaxError(
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type delta capacity 64) " +
+                        "timestamp(t)",
+                55,
+                "CAPACITY is only supported for SYMBOL (legacy) index type"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypeUnknown() throws Exception {
+        assertSyntaxError(
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type foo) " +
+                        "timestamp(t)",
+                49,
+                "unknown index type: foo"
+        );
+    }
+
+    @Test
     public void testCreateTableInPlaceIndexCapacityHigh() throws Exception {
         assertSyntaxError(
                 "create table x (" +

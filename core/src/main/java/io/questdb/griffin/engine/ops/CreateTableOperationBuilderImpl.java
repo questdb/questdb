@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -405,8 +406,15 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             sink.putAscii(" nocache");
         }
         if (model.isIndexed()) {
-            sink.putAscii(" index capacity ");
-            sink.put(model.getIndexValueBlockSize());
+            sink.putAscii(" index");
+            byte indexType = model.getIndexType();
+            if (indexType != IndexType.SYMBOL) {
+                sink.putAscii(" type ");
+                sink.putAscii(IndexType.nameOf(indexType));
+            } else {
+                sink.putAscii(" capacity ");
+                sink.put(model.getIndexValueBlockSize());
+            }
         }
     }
 

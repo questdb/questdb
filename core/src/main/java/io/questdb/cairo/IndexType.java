@@ -96,7 +96,7 @@ public final class IndexType {
             return NONE;
         }
         // Case-insensitive comparison
-        if (equalsIgnoreCase(name, "SYMBOL")) {
+        if (equalsIgnoreCase(name, "SYMBOL") || equalsIgnoreCase(name, "LEGACY")) {
             return SYMBOL;
         }
         if (equalsIgnoreCase(name, "DELTA")) {

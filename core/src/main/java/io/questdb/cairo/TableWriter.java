@@ -3375,9 +3375,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         // add column objects
-        boolean indexed = IndexType.isIndexed(indexType);
-        configureColumn(columnType, indexed, columnCount);
-        if (indexed) {
+        configureColumn(columnType, indexType, columnCount);
+        if (IndexType.isIndexed(indexType)) {
             populateDenseIndexerList();
         }
 
@@ -4145,7 +4144,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         activeNullSetters = nullSetters;
     }
 
-    private void configureColumn(int type, boolean indexFlag, int index) {
+    private void configureColumn(int type, byte indexType, int index) {
         final MemoryMA dataMem;
         final MemoryMA auxMem;
         final MemoryCARW o3DataMem1;
@@ -4183,8 +4182,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         configureNullSetters(o3NullSetters1, type, o3DataMem1, o3AuxMem1, index, symbolMapWriters);
         configureNullSetters(o3NullSetters2, type, o3DataMem2, o3AuxMem2, index, symbolMapWriters);
 
-        if (indexFlag && type > 0) {
-            indexers.extendAndSet(index, new SymbolColumnIndexer(configuration));
+        if (IndexType.isIndexed(indexType) && type > 0) {
+            indexers.extendAndSet(index, new SymbolColumnIndexer(configuration, indexType));
         }
         rowValueIsNotNull.add(0);
     }
@@ -4194,7 +4193,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int dedupColCount = 0;
         for (int i = 0; i < columnCount; i++) {
             int type = metadata.getColumnType(i);
-            configureColumn(type, metadata.isColumnIndexed(i), i);
+            configureColumn(type, metadata.getColumnIndexType(i), i);
 
             if (type > -1 && !tableToken.isView()) {
                 if (ColumnType.isSymbol(type)) {
