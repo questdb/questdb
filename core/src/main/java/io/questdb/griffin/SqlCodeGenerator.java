@@ -6018,10 +6018,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 timestampColumn = null;
             }
 
+            // Check if the model has a detected timestamp offset - if so, use that column as timestamp
+            int modelTimestampIndex = model.getTimestampColumnIndex();
+
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn column = columns.getQuick(i);
                 final ExpressionNode node = column.getAst();
-                if (node.type == LITERAL && Chars.equalsNc(node.token, timestampColumn)) {
+                if (modelTimestampIndex == i) {
+                    // Model explicitly indicates this column should be the timestamp
+                    virtualMetadata.setTimestampIndex(i);
+                } else if (modelTimestampIndex < 0 && node.type == LITERAL && Chars.equalsNc(node.token, timestampColumn)) {
+                    // Only use literal match if model hasn't specified a timestamp index
                     virtualMetadata.setTimestampIndex(i);
                 }
 

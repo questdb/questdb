@@ -39,11 +39,9 @@ public class PartitionDescriptor implements QuietCloseable, Mutable {
     public static final int COLUMN_ENTRY_SIZE = 9;
     public static final int COLUMN_ID_AND_TYPE_OFFSET = 1; // two 4-byte integers packed into a single 8-byte long
     //    The following constants are used to document the column data layout in the columnData DirectLongList
-    public static final int COLUMN_NAME_SIZE_OFFSET = 0;
     public static final int COLUMN_SECONDARY_ADDR_OFFSET = 5;
     public static final int COLUMN_SECONDARY_SIZE_OFFSET = 6;
     public static final int COLUMN_SIZE_OFFSET = 4;
-    public static final int COLUMN_TOP_OFFSET = 2;
     public static final int SYMBOL_OFFSET_ADDR_OFFSET = 7;
     public static final int SYMBOL_OFFSET_SIZE_OFFSET = 8;
     // A single DirectLongList to store all the column-related data
@@ -68,13 +66,7 @@ public class PartitionDescriptor implements QuietCloseable, Mutable {
             long symbolOffsetsAddr,
             long symbolOffsetsSize
     ) {
-        final int startSize = columnNames.size();
-        columnNames.put(columnName);
-        final int columnNameSize = columnNames.size() - startSize;
-        pendingEntryIndex = columnData.size();
-        columnData.add(columnNameSize);
-        columnData.add((long) columnId << 32 | columnType);
-        columnData.add(columnTop);
+        addColumn0(columnName, columnType, columnId, columnTop);
         columnData.add(columnAddr);
         columnData.add(columnSize);
         columnData.add(columnSecondaryAddr);
@@ -91,13 +83,7 @@ public class PartitionDescriptor implements QuietCloseable, Mutable {
             int columnId,
             long columnTop
     ) {
-        final int startSize = columnNames.size();
-        columnNames.put(columnName);
-        final int columnNameSize = columnNames.size() - startSize;
-        pendingEntryIndex = columnData.size();
-        columnData.add(columnNameSize);
-        columnData.add((long) columnId << 32 | columnType);
-        columnData.add(columnTop);
+        addColumn0(columnName, columnType, columnId, columnTop);
         columnData.add(0); // columnAddr
         columnData.add(0); // columnSize
         columnData.add(0); // columnSecondaryAddr
@@ -178,5 +164,15 @@ public class PartitionDescriptor implements QuietCloseable, Mutable {
     public void setSymbolOffsetsAddr(long symbolOffsetsAddr, long symbolOffsetsSize) {
         columnData.set(pendingEntryIndex + SYMBOL_OFFSET_ADDR_OFFSET, symbolOffsetsAddr);
         columnData.set(pendingEntryIndex + SYMBOL_OFFSET_SIZE_OFFSET, symbolOffsetsSize);
+    }
+
+    private void addColumn0(CharSequence columnName, int columnType, long columnId, long columnTop) {
+        final int startSize = columnNames.size();
+        columnNames.put(columnName);
+        final int columnNameSize = columnNames.size() - startSize;
+        pendingEntryIndex = columnData.size();
+        columnData.add(columnNameSize);
+        columnData.add(columnId << 32 | (columnType & 0xFFFFFFFFL));
+        columnData.add(columnTop);
     }
 }

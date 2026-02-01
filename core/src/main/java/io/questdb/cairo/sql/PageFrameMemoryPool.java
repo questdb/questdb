@@ -127,10 +127,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             openParquet(frameIndex);
             final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
             final ParquetBuffers parquetBuffers = nextFreeBuffers(frameIndex, usageBit);
-            final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
-            final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
-            final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
-            parquetBuffers.decode(parquetDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi);
+            if (!parquetBuffers.cacheHit) {
+                final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
+                final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
+                final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
+                parquetBuffers.decode(parquetDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi);
+            }
 
             record.init(
                     frameIndex,
@@ -170,10 +172,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         } else if (format == PartitionFormat.PARQUET) {
             openParquet(frameIndex);
             final ParquetBuffers parquetBuffers = nextFreeBuffers(frameIndex, FRAME_MEMORY_MASK);
-            final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
-            final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
-            final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
-            parquetBuffers.decode(parquetDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi);
+            if (!parquetBuffers.cacheHit) {
+                final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
+                final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
+                final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
+                parquetBuffers.decode(parquetDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi);
+            }
 
             frameMemory.pageAddresses = parquetBuffers.pageAddresses;
             frameMemory.auxPageAddresses = parquetBuffers.auxPageAddresses;
@@ -223,6 +227,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             ParquetBuffers buffers = cachedParquetBuffers.getQuick(i);
             if (buffers.frameIndex == frameIndex) {
                 buffers.usageFlags |= usageBit;
+                buffers.cacheHit = true;
                 // Preserve LRU order.
                 cachedParquetBuffers.setQuick(i, cachedParquetBuffers.getQuick(cached - 1));
                 cachedParquetBuffers.setQuick(cached - 1, buffers);
@@ -237,6 +242,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             buffers.reopen();
             buffers.frameIndex = frameIndex;
             buffers.usageFlags = usageBit;
+            buffers.cacheHit = false;
             cachedParquetBuffers.add(buffers);
             return buffers;
         }
@@ -246,6 +252,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (buffers.usageFlags == 0) {
                 buffers.frameIndex = frameIndex;
                 buffers.usageFlags = usageBit;
+                buffers.cacheHit = false;
                 // Preserve LRU order.
                 cachedParquetBuffers.setQuick(i, cachedParquetBuffers.getQuick(cached - 1));
                 cachedParquetBuffers.setQuick(cached - 1, buffers);
@@ -385,6 +392,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         private final DirectLongList pageAddresses;
         private final DirectLongList pageSizes;
         private final RowGroupBuffers rowGroupBuffers;
+        private boolean cacheHit;
         private int frameIndex = -1;
         // Contains bits FRAME_MEMORY_MASK, RECORD_A_MASK and RECORD_B_MASK.
         private byte usageFlags;

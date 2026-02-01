@@ -424,6 +424,35 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         intervalApplied = true;
     }
 
+    /**
+     * Applies the add method with overflow checking.
+     * Throws SqlException if the addition would cause timestamp overflow.
+     */
+    private static long addWithOverflowCheck(TimestampDriver.TimestampAddMethod addMethod, long timestamp, int offset) throws SqlException {
+        // For zero offset, no change needed
+        if (offset == 0) {
+            return timestamp;
+        }
+
+        long result = addMethod.add(timestamp, offset);
+
+        // Detect overflow: if offset is positive but result is less than original,
+        // or if offset is negative but result is greater than original, overflow occurred.
+        if (offset > 0 && result < timestamp) {
+            throw SqlException.position(0)
+                    .put("timestamp overflow: applying offset ")
+                    .put(offset)
+                    .put(" to timestamp would exceed maximum value");
+        } else if (offset < 0 && result > timestamp) {
+            throw SqlException.position(0)
+                    .put("timestamp overflow: applying offset ")
+                    .put(offset)
+                    .put(" to timestamp would exceed minimum value");
+        }
+
+        return result;
+    }
+
     private void intersectBetweenDynamic(Function funcValue1, Function funcValue2) {
         if (isEmptySet()) {
             return;
@@ -458,5 +487,43 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         IntervalUtils.encodeInterval(constValue, 0, (short) 0, IntervalDynamicIndicator.IS_HI_DYNAMIC, operation, staticIntervals);
         dynamicRangeList.add(funcValue);
         intervalApplied = true;
+    }
+
+    /**
+     * Merges intervals from another builder with calendar-aware offset adjustment.
+     * This avoids allocating an intermediate RuntimeIntervalModel.
+     *
+     * @param other     the builder to merge from
+     * @param addMethod the timestamp add method (from TimestampDriver)
+     * @param offset    the offset value to apply
+     * @throws SqlException if applying the offset would cause timestamp overflow
+     */
+    void mergeWithAddMethod(RuntimeIntervalModelBuilder other, TimestampDriver.TimestampAddMethod addMethod, int offset) throws SqlException {
+        if (other == null || isEmptySet() || addMethod == null || !other.intervalApplied) {
+            return;
+        }
+        LongList otherIntervals = other.staticIntervals;
+        if (otherIntervals.size() > 0) {
+            int dynamicStart = otherIntervals.size() - other.dynamicRangeList.size() * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
+            TimestampDriver otherDriver = other.timestampDriver;
+
+            for (int i = 0; i < dynamicStart; i += 2) {
+                long lo = otherIntervals.getQuick(i);
+                if (lo != Numbers.LONG_NULL && lo != Long.MAX_VALUE) {
+                    lo = timestampDriver.from(lo, otherDriver.getTimestampType());
+                    lo = addWithOverflowCheck(addMethod, lo, offset);
+                }
+                long hi = otherIntervals.getQuick(i + 1);
+                if (hi != Numbers.LONG_NULL && hi != Long.MAX_VALUE) {
+                    hi = timestampDriver.from(hi, otherDriver.getTimestampType());
+                    hi = addWithOverflowCheck(addMethod, hi, offset);
+                }
+                if (lo == Numbers.LONG_NULL && hi == Long.MAX_VALUE) {
+                    return;
+                } else {
+                    intersect(lo, hi);
+                }
+            }
+        }
     }
 }

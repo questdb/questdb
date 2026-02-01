@@ -345,6 +345,10 @@ impl ColumnType {
         let flag_shifted: i32 = flag << 8;
         self.code.get() & flag_shifted == flag_shifted
     }
+
+    pub fn is_symbol(&self) -> bool {
+        self.tag() == ColumnTypeTag::Symbol
+    }
 }
 
 impl Display for ColumnType {

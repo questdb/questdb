@@ -20,6 +20,7 @@
 /// Macro that generates an unpack function taking the number of bits as a const generic
 macro_rules! unpack_impl {
     ($t:ty, $bytes:literal, $bits:tt) => {
+        #[inline]
         pub fn unpack<const NUM_BITS: usize>(input: &[u8], output: &mut [$t; $bits]) {
             if NUM_BITS == 0 {
                 for out in output {
@@ -77,6 +78,7 @@ macro_rules! unpack {
         }
 
         /// Unpack packed `input` into `output` with a bit width of `num_bits`
+        #[inline]
         pub fn $name(input: &[u8], output: &mut [$t; $bits], num_bits: usize) {
             // This will get optimised into a jump table
             seq_macro::seq!(i in 0..=$bits {
@@ -96,7 +98,7 @@ unpack!(unpack64, u64, 8, 64);
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::encoding::bitpacked::unpack::{unpack16, unpack32, unpack64, unpack8};
 
     #[test]
     fn test_basic() {

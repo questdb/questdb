@@ -419,6 +419,29 @@ public class SqlOptimiser implements Mutable {
         return model != null && flexColumnModelTypes.contains(model.getSelectModelType());
     }
 
+    /**
+     * Parses a unit character from a dateadd unit token.
+     * Handles both quoted ('h') and unquoted (h) formats.
+     *
+     * @param unitToken the unit token from the expression
+     * @return the unit character, or 0 if parsing fails
+     */
+    private static char parseUnitCharacter(CharSequence unitToken) {
+        if (unitToken == null || unitToken.isEmpty()) {
+            return 0;
+        }
+        int len = unitToken.length();
+        if (len == 3 && unitToken.charAt(0) == '\'' && unitToken.charAt(2) == '\'') {
+            // Quoted single char: 'h'
+            return unitToken.charAt(1);
+        } else if (len == 1) {
+            // Unquoted single char: h
+            return unitToken.charAt(0);
+        }
+        // Invalid format
+        return 0;
+    }
+
     private static boolean printRecordColumnOrNull(Record record, RecordMetadata metadata, StringSink sink, int position) throws SqlException {
         final int columnType = metadata.getColumnType(0);
         sink.clear();
@@ -1995,6 +2018,19 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * Checks if the token is a time function that returns the current time.
+     * These functions cannot be pushed through dateadd transformations because
+     * their values are not constant relative to the timestamp column.
+     * Uses SqlKeywords methods for efficient case-insensitive matching.
+     */
+    private static boolean isTimeFunctionKeyword(CharSequence token) {
+        return isNowKeyword(token)
+                || isSysdateKeyword(token)
+                || isSystimestampKeyword(token)
+                || isCurrentTimestampKeyword(token);
+    }
+
     private void copyColumnTypesFromMetadata(QueryModel model, TableRecordMetadata m) {
         for (int i = 0, k = m.getColumnCount(); i < k; i++) {
             model.addUpdateTableColumnMetadata(m.getColumnType(i), m.getColumnName(i));
@@ -2433,6 +2469,149 @@ public class SqlOptimiser implements Mutable {
             tempIntHashSet.add(hash);
         }
         return false;
+    }
+
+    /**
+     * Checks if the expression contains disallowed functions for timestamp offset pushdown.
+     * Disallowed functions:
+     * - now(), sysdate (time functions)
+     * - dateadd that doesn't reference the timestamp column
+     */
+    private boolean containsDisallowedFunction(ExpressionNode node, CharSequence timestampColumn) {
+        if (node == null) {
+            return false;
+        }
+
+        if (node.type == FUNCTION) {
+            // Check for time functions like now(), sysdate
+            if (isTimeFunctionKeyword(node.token)) {
+                return true;
+            }
+            // Check for dateadd that doesn't reference the timestamp
+            if (Chars.equalsLowerCaseAscii(node.token, "dateadd")) {
+                if (!isDateaddWithTimestamp(node, timestampColumn)) {
+                    return true;
+                }
+            }
+        }
+
+        // Check children
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (containsDisallowedFunction(node.args.getQuick(i), timestampColumn)) {
+                return true;
+            }
+        }
+        if (containsDisallowedFunction(node.lhs, timestampColumn)) {
+            return true;
+        }
+        return containsDisallowedFunction(node.rhs, timestampColumn);
+    }
+
+    /**
+     * Detects if the model's timestamp column is derived from a dateadd expression
+     * on the nested model's timestamp. If so, stores the offset information on the model
+     * for use during predicate pushdown.
+     *
+     * @param parent the parent model to detect and annotate
+     * @param nested the nested model
+     * @throws SqlException if the offset value exceeds the allowed range for dateadd
+     */
+    private void detectTimestampOffset(QueryModel parent, QueryModel nested) throws SqlException {
+        ExpressionNode modelTimestamp = parent.getTimestamp();
+        if (modelTimestamp == null) {
+            return;
+        }
+
+        // First try parent's column map (for cases where parent defines the column)
+        QueryColumn tsColumn = parent.getAliasToColumnMap().get(modelTimestamp.token);
+        ExpressionNode ast = tsColumn != null ? tsColumn.getAst() : null;
+
+        // Track where we found the dateadd definition - that's where we need to set offset
+        QueryModel modelToAnnotate = parent;
+
+        // If parent just passes through the column, look at nested model's column map
+        // This handles: SELECT * FROM (SELECT dateadd(...) as ts FROM ...) timestamp(ts)
+        // where the outer select-choose just references 'ts' but doesn't define it
+        if (ast == null || ast.type == LITERAL) {
+            // The timestamp column is defined in the nested model
+            tsColumn = nested.getAliasToColumnMap().get(modelTimestamp.token);
+            if (tsColumn == null) {
+                return;
+            }
+            ast = tsColumn.getAst();
+            // Set offset on nested model since that's where dateadd is defined
+            // The NonLiteralException will be thrown when pushing FROM nested
+            modelToAnnotate = nested;
+        }
+
+        // Check nested model for its timestamp to validate dateadd argument
+        // Traverse down through nested models to find one with timestamp info
+        QueryModel timestampSourceModel = nested.getNestedModel();
+        if (timestampSourceModel == null) {
+            timestampSourceModel = nested;
+        }
+        // Keep traversing until we find a model with timestamp info
+        while (timestampSourceModel != null && lacksTimestampInfo(timestampSourceModel)) {
+            timestampSourceModel = timestampSourceModel.getNestedModel();
+        }
+        if (timestampSourceModel == null) {
+            return;
+        }
+
+        if (!isDateaddTimestampExpression(ast, timestampSourceModel)) {
+            return;
+        }
+
+        // Extract offset info (args are reversed: [timestamp, stride, unit])
+        ObjList<ExpressionNode> args = ast.args;
+        ExpressionNode unitArg = args.getQuick(2);
+        ExpressionNode strideArg = args.getQuick(1);
+        ExpressionNode timestampArg = args.getQuick(0);
+
+        // Parse the unit character
+        char unit = parseUnitCharacter(unitArg.token);
+        if (unit == 0) {
+            return;  // Invalid unit format
+        }
+
+        try {
+            long stride = extractInvertedConstantLong(strideArg);
+
+            // Validate that offset fits in int range.
+            // The offset must match dateadd's signature: dateadd(char, int, timestamp).
+            // See TimestampAddFunctionFactory for the function definition.
+            long inverseOffset = -stride;
+            if (inverseOffset < Integer.MIN_VALUE || inverseOffset > Integer.MAX_VALUE) {
+                throw SqlException.position(strideArg.position)
+                        .put("timestamp offset value ")
+                        .put(inverseOffset)
+                        .put(" exceeds maximum allowed range for dateadd function (must be between ")
+                        .put(Integer.MIN_VALUE)
+                        .put(" and ")
+                        .put(Integer.MAX_VALUE)
+                        .put(")");
+            }
+
+            // Store INVERSE offset (negate stride) for pushdown.
+            // When timestamp = dateadd('h', -1, original), pushing predicate needs +1h offset.
+            modelToAnnotate.setTimestampOffsetUnit(unit);
+            modelToAnnotate.setTimestampOffsetValue((int) inverseOffset);
+            modelToAnnotate.setTimestampSourceColumn(timestampArg.token);
+            // Store the alias name so predicates can be matched
+            modelToAnnotate.setTimestampOffsetAlias(modelTimestamp.token);
+
+            // Find and store the column index for the timestamp column
+            ObjList<QueryColumn> columns = modelToAnnotate.getColumns();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                QueryColumn col = columns.getQuick(i);
+                if (Chars.equalsIgnoreCase(col.getAlias(), modelTimestamp.token)) {
+                    modelToAnnotate.setTimestampColumnIndex(i);
+                    break;
+                }
+            }
+        } catch (NumericException e) {
+            // Cannot parse stride, don't set offset
+        }
     }
 
     private int doReorderTables(QueryModel parent, IntList ordered) {
@@ -3126,6 +3305,148 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
+     * Recursively walks the model tree and detects dateadd patterns on timestamp columns.
+     * For virtual models that have a dateadd expression on the nested model's timestamp,
+     * this sets the timestampColumnIndex so SqlCodeGenerator can use it as the virtual model's timestamp.
+     * This enables the timestamp(ts) clause to be optional when using dateadd on the designated timestamp.
+     *
+     * @throws SqlException if a dateadd offset exceeds the allowed int range
+     */
+    private void detectTimestampOffsetsRecursive(QueryModel model) throws SqlException {
+        if (model == null) {
+            return;
+        }
+
+        // Process joins first
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            detectTimestampOffsetsRecursive(joinModels.getQuick(i));
+        }
+
+        // Process union models
+        detectTimestampOffsetsRecursive(model.getUnionModel());
+
+        // Process nested model
+        QueryModel nested = model.getNestedModel();
+        detectTimestampOffsetsRecursive(nested);
+
+        // Now process this model - only for virtual models
+        if (model.getSelectModelType() != SELECT_MODEL_VIRTUAL) {
+            return;
+        }
+
+        // Skip if timestamp column index is already set
+        if (model.getTimestampColumnIndex() >= 0) {
+            return;
+        }
+
+        // Skip if no nested model
+        if (nested == null) {
+            return;
+        }
+
+        // Skip if nested model doesn't preserve row ordering
+        int nestedType = nested.getSelectModelType();
+        if (nestedType == SELECT_MODEL_GROUP_BY
+                || nestedType == SELECT_MODEL_DISTINCT
+                || nestedType == SELECT_MODEL_WINDOW) {
+            return;
+        }
+
+        // Find the source of the timestamp - traverse down through nested models
+        // We look for a model that has either:
+        // 1. A designated timestamp (getTimestamp() != null)
+        // 2. A timestampColumnIndex set (from a previous dateadd detection)
+        // 3. A timestampOffsetAlias set
+        QueryModel timestampSourceModel = nested.getNestedModel();
+        if (timestampSourceModel == null) {
+            timestampSourceModel = nested;
+        }
+        // Keep traversing until we find a model with timestamp info
+        while (timestampSourceModel != null && lacksTimestampInfo(timestampSourceModel)) {
+            timestampSourceModel = timestampSourceModel.getNestedModel();
+        }
+
+        // If no timestamp info found, we can't detect offset
+        if (timestampSourceModel == null) {
+            return;
+        }
+
+        // Get the source timestamp column name
+        CharSequence sourceTimestampName = null;
+        if (timestampSourceModel.getTimestamp() != null) {
+            sourceTimestampName = timestampSourceModel.getTimestamp().token;
+        } else if (timestampSourceModel.getTimestampOffsetAlias() != null) {
+            sourceTimestampName = timestampSourceModel.getTimestampOffsetAlias();
+        }
+
+        // Look for a column that is dateadd on the nested timestamp
+        ObjList<QueryColumn> columns = model.getBottomUpColumns();
+
+        // First, check if the original timestamp column is in the projection as a literal.
+        // If so, skip ts_offset detection - the original timestamp should be the designated one.
+        if (sourceTimestampName != null) {
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                QueryColumn col = columns.getQuick(i);
+                ExpressionNode ast = col.getAst();
+                if (ast != null && ast.type == LITERAL && isLiteralTimestampReference(ast, nested, sourceTimestampName)) {
+                    // Original timestamp is in projection - it takes precedence over dateadd columns
+                    return;
+                }
+            }
+        }
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QueryColumn col = columns.getQuick(i);
+            ExpressionNode ast = col.getAst();
+
+            if (isDateaddTimestampExpression(ast, timestampSourceModel)) {
+                // Found a dateadd on the timestamp - set this as the timestamp column
+                model.setTimestampColumnIndex(i);
+
+                // Also set the offset info for predicate pushdown
+                ObjList<ExpressionNode> args = ast.args;
+                ExpressionNode unitArg = args.getQuick(2);
+                ExpressionNode strideArg = args.getQuick(1);
+                ExpressionNode timestampArg = args.getQuick(0);
+
+                // Parse the unit character
+                char unit = parseUnitCharacter(unitArg.token);
+                if (unit == 0) {
+                    break;  // Invalid unit format, just use index without offset
+                }
+
+                try {
+                    long stride = extractInvertedConstantLong(strideArg);
+
+                    // Validate that offset fits in int range.
+                    // The offset must match dateadd's signature: dateadd(char, int, timestamp).
+                    // See TimestampAddFunctionFactory for the function definition.
+                    long inverseOffset = -stride;
+                    if (inverseOffset < Integer.MIN_VALUE || inverseOffset > Integer.MAX_VALUE) {
+                        throw SqlException.position(strideArg.position)
+                                .put("timestamp offset value ")
+                                .put(inverseOffset)
+                                .put(" exceeds maximum allowed range for dateadd function (must be between ")
+                                .put(Integer.MIN_VALUE)
+                                .put(" and ")
+                                .put(Integer.MAX_VALUE)
+                                .put(")");
+                    }
+
+                    // Store INVERSE offset (negate stride) for pushdown
+                    model.setTimestampOffsetUnit(unit);
+                    model.setTimestampOffsetValue((int) inverseOffset);
+                    model.setTimestampSourceColumn(timestampArg.token);
+                    model.setTimestampOffsetAlias(col.getAlias());
+                } catch (NumericException e) {
+                    // Cannot parse stride, just set the index without offset info
+                }
+                break; // Only handle first dateadd column
+            }
+        }
+    }
+
+    /**
      * Extracts nested window functions from an expression tree and replaces them with literal references.
      * Processes depth-first (innermost window functions first) by recursively processing children
      * before checking if the current node is a window function.
@@ -3437,6 +3758,21 @@ public class SqlOptimiser implements Mutable {
         return column;
     }
 
+    /**
+     * Extracts a constant long value from an expression node.
+     * Handles both positive constants and unary minus expressions.
+     */
+    private long extractInvertedConstantLong(ExpressionNode node) throws NumericException {
+        if (node.type == CONSTANT) {
+            return Numbers.parseLong(node.token);
+        }
+        // Handle unary minus: -(constant)
+        if (node.type == OPERATION && Chars.equals(node.token, "-") && node.paramCount == 1) {
+            return -Numbers.parseLong(node.rhs.token);
+        }
+        throw NumericException.INSTANCE;
+    }
+
     private CharSequence getTranslatedColumnAlias(QueryModel model, QueryModel stopModel, CharSequence token) {
         if (model == stopModel) {
             return token;
@@ -3533,6 +3869,123 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    /**
+     * Checks if the given expression is a constant integer (positive or negative).
+     */
+    private boolean isConstantIntegerExpression(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == CONSTANT) {
+            try {
+                Numbers.parseLong(node.token);
+                return true;
+            } catch (NumericException e) {
+                return false;
+            }
+        }
+        // Handle unary minus: -(constant)
+        if (node.type == OPERATION && Chars.equals(node.token, "-") && node.paramCount == 1) {
+            if (node.rhs != null && node.rhs.type == CONSTANT) {
+                try {
+                    Numbers.parseLong(node.rhs.token);
+                    return true;
+                } catch (NumericException e) {
+                    return false;
+                }
+            }
+            return false;
+        }
+        return false;
+    }
+
+    /**
+     * Detects if the given expression is a dateadd function call with constant unit and stride,
+     * where the timestamp argument references the nested model's designated timestamp or
+     * a column that is itself a dateadd-transformed timestamp (for chained dateadd detection).
+     *
+     * @param ast         the expression node to check
+     * @param nestedModel the nested model whose timestamp we're checking against
+     * @return true if the expression is dateadd(unit, constant, timestamp)
+     */
+    private boolean isDateaddTimestampExpression(ExpressionNode ast, QueryModel nestedModel) {
+        if (ast == null || ast.type != FUNCTION) {
+            return false;
+        }
+        if (!Chars.equalsLowerCaseAscii(ast.token, "dateadd")) {
+            return false;
+        }
+        if (ast.paramCount != 3) {
+            return false;
+        }
+
+        // Args are reversed: args[0]=timestamp, args[1]=stride, args[2]=unit
+        ObjList<ExpressionNode> args = ast.args;
+        if (args.size() != 3) {
+            return false;
+        }
+
+        ExpressionNode timestampArg = args.getQuick(0);
+        ExpressionNode strideArg = args.getQuick(1);
+        ExpressionNode unitArg = args.getQuick(2);
+
+        // Check unit is constant char (like 'h', 'd', etc.)
+        if (unitArg == null || unitArg.type != CONSTANT) {
+            return false;
+        }
+
+        // Check stride is constant integer
+        if (!isConstantIntegerExpression(strideArg)) {
+            return false;
+        }
+
+        // Check timestamp arg references a timestamp column
+        if (timestampArg == null || timestampArg.type != LITERAL) {
+            return false;
+        }
+
+        // Check 1: Does it match the designated timestamp?
+        // Use matchesColumnName to handle qualified references like v.timestamp
+        ExpressionNode nestedTimestamp = nestedModel.getTimestamp();
+        if (nestedTimestamp != null && matchesColumnName(timestampArg.token, nestedTimestamp.token)) {
+            return true;
+        }
+
+        // Check 2: Does it match a column that has timestampColumnIndex set?
+        // This handles chained dateadd: dateadd('d', -1, ts1) where ts1 is from dateadd('h', -1, timestamp)
+        int tsColIndex = nestedModel.getTimestampColumnIndex();
+        if (tsColIndex >= 0) {
+            // Use getColumns() to match how the index was set in detectTimestampOffsetInfo
+            ObjList<QueryColumn> cols = nestedModel.getColumns();
+            if (tsColIndex < cols.size()) {
+                QueryColumn tsCol = cols.getQuick(tsColIndex);
+                if (matchesColumnName(timestampArg.token, tsCol.getAlias())) {
+                    return true;
+                }
+            }
+        }
+
+        // Check 3: Does it match the timestampOffsetAlias? (for virtual models)
+        CharSequence offsetAlias = nestedModel.getTimestampOffsetAlias();
+        return offsetAlias != null && matchesColumnName(timestampArg.token, offsetAlias);
+    }
+
+    /**
+     * Gets the timestamp column name for pushdown validation.
+     * Returns the timestamp alias or designated timestamp token.
+     */
+    private CharSequence getTimestampColumnForPushdown(QueryModel model) {
+        CharSequence alias = model.getTimestampOffsetAlias();
+        if (alias != null) {
+            return alias;
+        }
+        ExpressionNode ts = model.getTimestamp();
+        if (ts != null) {
+            return ts.token;
+        }
+        return null;
+    }
+
     private boolean isEffectivelyConstantExpression(ExpressionNode node) {
         sqlNodeStack.clear();
         while (node != null) {
@@ -3573,8 +4026,111 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * Checks if a literal expression references the timestamp column, either directly or through
+     * nested model aliases. This handles the case where qualified column references like "t.timestamp"
+     * get resolved to aliases in intermediate translating models.
+     */
+    private boolean isLiteralTimestampReference(ExpressionNode ast, QueryModel nested, CharSequence sourceTimestampName) {
+        // First, check direct match
+        if (matchesColumnName(ast.token, sourceTimestampName)) {
+            return true;
+        }
+
+        // Check if ast.token references a column in the nested model that maps to the timestamp
+        if (nested != null) {
+            QueryColumn nestedCol = nested.getAliasToColumnMap().get(ast.token);
+            if (nestedCol != null) {
+                ExpressionNode nestedAst = nestedCol.getAst();
+                return nestedAst != null && nestedAst.type == LITERAL && matchesColumnName(nestedAst.token, sourceTimestampName);
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Checks if the expression is dateadd(constant, constant, timestamp).
+     */
+    private boolean isDateaddWithTimestamp(ExpressionNode node, CharSequence timestampColumn) {
+        if (node == null || node.type != FUNCTION) {
+            return false;
+        }
+        if (!Chars.equalsLowerCaseAscii(node.token, "dateadd")) {
+            return false;
+        }
+        // dateadd has 3 arguments: unit, amount, timestamp
+        if (node.args.size() != 3) {
+            return false;
+        }
+        // args are in reverse order: [timestamp, amount, unit]
+        ExpressionNode timestampArg = node.args.getQuick(0);
+        ExpressionNode amountArg = node.args.getQuick(1);
+        ExpressionNode unitArg = node.args.getQuick(2);
+
+        // unit and amount must be constants
+        if (!isSimpleConstant(unitArg) || !isSimpleConstant(amountArg)) {
+            return false;
+        }
+        // timestamp argument must reference the timestamp column
+        return isTimestampLiteral(timestampArg, timestampColumn);
+    }
+
     private boolean isSimpleIntegerColumn(ExpressionNode column, QueryModel model) {
         return checkSimpleIntegerColumn(column, model) != null;
+    }
+
+    /**
+     * Checks if the expression is a simple constant value (not a function).
+     * CONSTANT and LITERAL types are allowed (string/numeric constants).
+     * FUNCTION types are rejected (like now(), sysdate, etc.).
+     */
+    private boolean isSimpleConstant(ExpressionNode node) {
+        if (node == null) {
+            return true;
+        }
+        return switch (node.type) {
+            case CONSTANT, LITERAL ->
+                // CONSTANT is for numeric constants, LITERAL includes string constants
+                // Column references are also LITERAL but are handled by literalCheckingVisitor
+                    true;
+            case OPERATION ->
+                // Allow arithmetic on simple constants (e.g., 1 + 2)
+                    isSimpleConstant(node.lhs) && isSimpleConstant(node.rhs);
+            default ->
+                // Reject FUNCTION (like now()), etc.
+                    false;
+        };
+    }
+
+    private boolean isTimestampLiteral(ExpressionNode node, CharSequence timestampColumn) {
+        return node != null && node.type == LITERAL && matchesColumnName(node.token, timestampColumn);
+    }
+
+    /**
+     * Checks if the given predicate references the model's timestamp column or offset alias.
+     */
+    private boolean isTimestampPredicate(ExpressionNode node, QueryModel model) {
+        // Check against the model's designated timestamp
+        ExpressionNode ts = model.getTimestamp();
+        if (ts != null && referencesColumn(node, ts.token)) {
+            return true;
+        }
+        // Also check against the timestamp offset alias (for virtual models without timestamp designation)
+        CharSequence alias = model.getTimestampOffsetAlias();
+        return alias != null && referencesColumn(node, alias);
+    }
+
+    /**
+     * Checks if the model lacks timestamp information needed for offset detection.
+     * Returns true if none of: designated timestamp, timestampColumnIndex, or timestampOffsetAlias are set.
+     */
+    private boolean lacksTimestampInfo(QueryModel model) {
+        if (model == null) {
+            return true;
+        }
+        return model.getTimestamp() == null
+                && model.getTimestampColumnIndex() < 0
+                && model.getTimestampOffsetAlias() == null;
     }
 
     private ExpressionNode makeJoinAlias() {
@@ -3596,6 +4152,23 @@ public class SqlOptimiser implements Mutable {
         node.lhs = lhs;
         node.rhs = rhs;
         return node;
+    }
+
+    /**
+     * Checks if a token matches a column name, handling qualified names.
+     * "ts" matches "ts", and "v.ts" also matches "ts" (suffix after last dot).
+     */
+    private boolean matchesColumnName(CharSequence token, CharSequence columnName) {
+        if (Chars.equalsIgnoreCase(token, columnName)) {
+            return true;
+        }
+        // Check if token is qualified (contains a dot) and the suffix matches
+        int dotIndex = Chars.lastIndexOf(token, 0, token.length(), '.');
+        if (dotIndex >= 0 && dotIndex < token.length() - 1) {
+            CharSequence suffix = token.subSequence(dotIndex + 1, token.length());
+            return Chars.equalsIgnoreCase(suffix, columnName);
+        }
+        return false;
     }
 
     @SuppressWarnings("BooleanMethodIsAlwaysInverted")
@@ -3899,6 +4472,13 @@ public class SqlOptimiser implements Mutable {
                     }
 
                     final QueryModel nested = parent.getNestedModel();
+
+                    // Detect if the parent's timestamp column is derived from a dateadd expression
+                    // on the nested model's timestamp. This enables timestamp predicate pushdown with offset.
+                    if (nested != null && !parent.hasTimestampOffset()) {
+                        detectTimestampOffset(parent, nested);
+                    }
+
                     if (nested == null
                             || nested.getLatestBy().size() > 0
                             || nested.getLimitLo() != null
@@ -3937,8 +4517,23 @@ public class SqlOptimiser implements Mutable {
                             // we do not have to deal with "union" models here
                             // because "where" clause is made to apply to the result of the union
                         } catch (NonLiteralException ignore) {
-                            // keep node where it is
-                            addWhereNode(parent, node);
+                            // Check if this is a timestamp predicate on a model with timestamp offset.
+                            // If so, we can still push it down by wrapping it in and_offset.
+                            // But only if the predicate references only the timestamp alias.
+                            CharSequence timestampCol = getTimestampColumnForPushdown(parent);
+                            if (parent.hasTimestampOffset()
+                                    && isTimestampPredicate(node, parent)
+                                    && referencesOnlyTimestampAlias(node, parent)
+                                    && !containsDisallowedFunction(node, timestampCol)) {
+                                // Rewrite column references from virtual timestamp to source column
+                                rewriteTimestampColumnForOffset(node, parent);
+                                // Wrap in and_offset and push to nested model
+                                ExpressionNode wrapped = wrapInAndOffset(node, parent);
+                                addWhereNode(nested, wrapped);
+                            } else {
+                                // keep node where it is
+                                addWhereNode(parent, node);
+                            }
                         }
                     }
                 }
@@ -5087,6 +5682,80 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
+     * Checks if the given expression references a specific column name.
+     * Handles both simple names ("ts") and qualified names ("v.ts").
+     */
+    private boolean referencesColumn(ExpressionNode node, CharSequence columnName) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == LITERAL && matchesColumnName(node.token, columnName)) {
+            return true;
+        }
+        // Check children
+        if (node.paramCount < 3) {
+            return referencesColumn(node.lhs, columnName) || referencesColumn(node.rhs, columnName);
+        } else {
+            ObjList<ExpressionNode> args = node.args;
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (referencesColumn(args.getQuick(i), columnName)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Checks if the given predicate references ONLY the timestamp column/alias and constants.
+     * This is used to determine if a predicate can safely be pushed down with timestamp offset.
+     * Returns false if the predicate references any other columns (non-literal aliases).
+     */
+    private boolean referencesOnlyTimestampAlias(ExpressionNode node, QueryModel model) {
+        if (node == null) {
+            return true;
+        }
+
+        // Get allowed timestamp tokens
+        CharSequence timestampToken = model.getTimestamp() != null ? model.getTimestamp().token : null;
+        CharSequence offsetAlias = model.getTimestampOffsetAlias();
+
+        return referencesOnlyTimestampAliasRecursive(node, timestampToken, offsetAlias);
+    }
+
+    private boolean referencesOnlyTimestampAliasRecursive(ExpressionNode node, CharSequence timestampToken, CharSequence offsetAlias) {
+        if (node == null) {
+            return true;
+        }
+
+        // If this is a literal (column reference), check if it's the timestamp
+        if (node.type == LITERAL) {
+            // Check if it matches the timestamp token or offset alias
+            return timestampToken != null && matchesColumnName(node.token, timestampToken) || offsetAlias != null && matchesColumnName(node.token, offsetAlias);
+            // It's a column reference but not the timestamp - not allowed
+        }
+
+        // Constants are allowed
+        if (node.type == CONSTANT) {
+            return true;
+        }
+
+        // For functions/operations, check all children
+        if (node.paramCount < 3) {
+            return referencesOnlyTimestampAliasRecursive(node.lhs, timestampToken, offsetAlias)
+                    && referencesOnlyTimestampAliasRecursive(node.rhs, timestampToken, offsetAlias);
+        } else {
+            ObjList<ExpressionNode> args = node.args;
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (!referencesOnlyTimestampAliasRecursive(args.getQuick(i), timestampToken, offsetAlias)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    /**
      * Registers a window function in the hash map for future deduplication lookups.
      *
      * @param column The window column to register
@@ -5506,6 +6175,54 @@ public class SqlOptimiser implements Mutable {
         }
 
         return agg;
+    }
+
+    /**
+     * Recursively rewrites all column references from one name to another.
+     * Handles both simple names ("ts") and qualified names ("v.ts").
+     */
+    private void rewriteColumnReferences(ExpressionNode node, CharSequence from, CharSequence to) {
+        if (node == null) {
+            return;
+        }
+        if (node.type == LITERAL && matchesColumnName(node.token, from)) {
+            node.token = rewriteColumnToken(node.token, to);
+        }
+        if (node.paramCount < 3) {
+            rewriteColumnReferences(node.lhs, from, to);
+            rewriteColumnReferences(node.rhs, from, to);
+        } else {
+            ObjList<ExpressionNode> args = node.args;
+            for (int i = 0, n = args.size(); i < n; i++) {
+                rewriteColumnReferences(args.getQuick(i), from, to);
+            }
+        }
+    }
+
+    /**
+     * Rewrites a column token to a new name, preserving any table prefix.
+     * "ts" -> "timestamp", "v.ts" -> "v.timestamp"
+     * If 'to' is already qualified (contains a dot), return it as-is to avoid double-qualification.
+     */
+    private CharSequence rewriteColumnToken(CharSequence token, CharSequence to) {
+        // If 'to' is already qualified, return it as-is to avoid double-qualification
+        // e.g., rewriting "v.ts" to "t.timestamp" should return "t.timestamp", not "v.t.timestamp"
+        if (Chars.lastIndexOf(to, 0, to.length(), '.') >= 0) {
+            return to;
+        }
+
+        int dotIndex = Chars.lastIndexOf(token, 0, token.length(), '.');
+        if (dotIndex >= 0 && dotIndex < token.length() - 1) {
+            // Qualified name: preserve prefix and replace suffix
+            CharSequence prefix = token.subSequence(0, dotIndex + 1);
+            CharacterStoreEntry entry = characterStore.newEntry();
+            entry.put(prefix);
+            entry.put(to);
+            return entry.toImmutable();
+        } else {
+            // Simple name: just replace
+            return to;
+        }
     }
 
     // This rewrite should be invoked before the select rewrite!
@@ -6188,7 +6905,8 @@ public class SqlOptimiser implements Mutable {
                 case SELECT_MODEL_VIRTUAL:
                 case SELECT_MODEL_CHOOSE:
                     QueryModel nested = base.getNestedModel();
-                    if (nested != null && nested.getSelectModelType() == SELECT_MODEL_GROUP_BY) {
+                    if (nested != null && (nested.getSelectModelType() == SELECT_MODEL_GROUP_BY
+                            || nested.getSelectModelType() == SELECT_MODEL_WINDOW)) {
                         baseOuter = base;
                     }
                     break;
@@ -8177,6 +8895,21 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * Rewrites column references in the expression from the virtual timestamp alias to the source column.
+     */
+    private void rewriteTimestampColumnForOffset(ExpressionNode node, QueryModel model) {
+        // Get the alias to rewrite from - use stored alias or timestamp token
+        CharSequence virtualTs = model.getTimestampOffsetAlias();
+        if (virtualTs == null && model.getTimestamp() != null) {
+            virtualTs = model.getTimestamp().token;
+        }
+        CharSequence sourceTs = model.getTimestampSourceColumn();
+        if (virtualTs != null && sourceTs != null) {
+            rewriteColumnReferences(node, virtualTs, sourceTs);
+        }
+    }
+
     private int rewriteTimestampMixedWithAggregates(@NotNull ExpressionNode node, @NotNull QueryModel groupByModel) throws SqlException {
         int aggregates = 0;
 
@@ -8924,6 +9657,59 @@ public class SqlOptimiser implements Mutable {
         validateWindowJoins(model.getUnionModel(), sqlExecutionContext, recursionLevel + 1);
     }
 
+    /**
+     * Wraps a predicate in an and_offset expression for timestamp predicate pushdown.
+     * The and_offset wrapper indicates that interval extraction should apply an offset.
+     *
+     * @param predicate the predicate to wrap
+     * @param model     the model containing timestamp offset info
+     * @return the wrapped expression: and_offset(predicate, unit, offset)
+     */
+    private ExpressionNode wrapInAndOffset(ExpressionNode predicate, QueryModel model) {
+        // Create: and_offset(predicate, unit, offset)
+        // This is an internal pseudo-function used to pass offset information to WhereClauseParser.
+        // It is NOT a user-facing function - WhereClauseParser consumes it during interval extraction.
+        //
+        // The optimizer intrinsically understands dateadd(char, int, timestamp) and pushes
+        // predicates through it by wrapping them with offset adjustment info.
+        // See TimestampAddFunctionFactory for the dateadd function definition.
+        ExpressionNode wrapper = expressionNodePool.next().of(
+                FUNCTION,
+                "and_offset",
+                0,
+                predicate.position
+        );
+        wrapper.paramCount = 3;
+
+        // Unit as constant char (quoted to match dateadd format)
+        CharacterStoreEntry unitEntry = characterStore.newEntry();
+        unitEntry.put('\'').put(model.getTimestampOffsetUnit()).put('\'');
+        ExpressionNode unitNode = expressionNodePool.next().of(
+                CONSTANT,
+                unitEntry.toImmutable(),
+                0,
+                0
+        );
+
+        // Offset value as constant (int, matching dateadd's signature)
+        CharacterStoreEntry offsetEntry = characterStore.newEntry();
+        offsetEntry.put(model.getTimestampOffsetValue());
+        ExpressionNode offsetNode = expressionNodePool.next().of(
+                CONSTANT,
+                offsetEntry.toImmutable(),
+                0,
+                0
+        );
+
+        // Add arguments to wrapper (args list is pre-initialized in ExpressionNode)
+        // Note: args are stored in reverse order for rendering, so add [offset, unit, predicate]
+        wrapper.args.add(offsetNode);
+        wrapper.args.add(unitNode);
+        wrapper.args.add(predicate);
+
+        return wrapper;
+    }
+
     @NotNull
     private QueryModel wrapWithSelectModel(QueryModel model, int columnCount) {
         final QueryModel outerModel = createWrapperModel(model);
@@ -9206,6 +9992,7 @@ public class SqlOptimiser implements Mutable {
             optimiseBooleanNot(rewrittenModel);
             validateNoWindowFunctionsInWhereClauses(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
+            detectTimestampOffsetsRecursive(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);
             rewriteTrivialGroupByExpressions(rewrittenModel);
             optimiseJoins(rewrittenModel);

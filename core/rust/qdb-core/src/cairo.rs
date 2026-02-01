@@ -21,54 +21,11 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-use jni::objects::{JObject, JThrowable, JValue};
 use jni::JNIEnv;
+use jni::objects::{JObject, JThrowable, JValue};
 use std::backtrace::{Backtrace, BacktraceStatus};
+use std::error::Error;
 use std::sync::Arc;
-
-pub trait DefaultReturn {
-    fn default_return() -> Self;
-}
-
-impl DefaultReturn for () {
-    fn default_return() -> Self {}
-}
-
-impl DefaultReturn for usize {
-    fn default_return() -> Self {
-        0
-    }
-}
-
-impl DefaultReturn for u32 {
-    fn default_return() -> Self {
-        0
-    }
-}
-
-impl DefaultReturn for i64 {
-    fn default_return() -> Self {
-        0
-    }
-}
-
-impl DefaultReturn for u64 {
-    fn default_return() -> Self {
-        0
-    }
-}
-
-impl<T> DefaultReturn for *mut T {
-    fn default_return() -> Self {
-        std::ptr::null_mut()
-    }
-}
-
-impl<T> DefaultReturn for *const T {
-    fn default_return() -> Self {
-        std::ptr::null()
-    }
-}
 
 pub struct CairoException {
     out_of_memory: bool,
@@ -95,7 +52,7 @@ impl CairoException {
         Self { backtrace, ..self }
     }
 
-    pub fn throw<T: DefaultReturn>(self, env: &mut JNIEnv) -> T {
+    pub fn throw<T: Default>(self, env: &mut JNIEnv) -> T {
         let errno = -1; // NON_CRITICAL
         let message: JObject = env
             .new_string(&self.message)
@@ -130,6 +87,38 @@ impl CairoException {
             .into();
         env.throw(cairo_exc)
             .expect("failed to throw CairoException");
-        T::default_return()
+        T::default()
     }
 }
+
+/// Converts the error into a CairoException and throws it to Java.
+pub trait ToCairoException<T: Default>: Error + Sized {
+    fn throw_to_java(self, env: &mut JNIEnv) -> T {
+        let cairo_exc = CairoException::new(self.to_string());
+        cairo_exc.throw(env)
+    }
+}
+
+impl<T: Error, U: Default> ToCairoException<U> for T {}
+
+pub trait IntoResult<T, E: Error + Sized> {
+    fn into_result(self) -> Result<T, E>;
+}
+
+/// Converts the error into a CairoException and throws it to Java or returns the result.
+pub trait ResultToCairoException<T: Default, E: Error + Sized>: IntoResult<T, E> + Sized {
+    fn or_throw_to_java(self, env: &mut JNIEnv) -> T {
+        match self.into_result() {
+            Ok(value) => value,
+            Err(err) => err.throw_to_java(env),
+        }
+    }
+}
+
+impl<T, E: Error + Sized> IntoResult<T, E> for Result<T, E> {
+    fn into_result(self) -> Result<T, E> {
+        self
+    }
+}
+
+impl<T: Default, E: Error + Sized, R: IntoResult<T, E>> ResultToCairoException<T, E> for R {}

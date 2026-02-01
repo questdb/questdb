@@ -59,6 +59,41 @@ impl<'a, T: Unpackable> Decoder<'a, T> {
     }
 }
 
+impl<'a, T: Unpackable> Decoder<'a, T> {
+    #[inline]
+    pub fn advance(&mut self, n: usize) -> usize {
+        let n = n.min(self.remaining);
+        if n == 0 {
+            return 0;
+        }
+
+        self.remaining -= n;
+
+        let left_in_pack = T::Unpacked::LENGTH - self.current_pack_index;
+
+        if n < left_in_pack {
+            self.current_pack_index += n;
+        } else {
+            let mut to_skip = n - left_in_pack;
+
+            let packs_to_skip = to_skip / T::Unpacked::LENGTH;
+            if packs_to_skip > 0 {
+                self.packed.nth(packs_to_skip - 1);
+            }
+            to_skip %= T::Unpacked::LENGTH;
+
+            if let Some(packed) = self.packed.next() {
+                decode_pack::<T>(packed, self.num_bits, &mut self.unpacked);
+                self.current_pack_index = to_skip;
+            } else {
+                self.current_pack_index = 0;
+            }
+        }
+
+        n
+    }
+}
+
 impl<'a, T: Unpackable> Iterator for Decoder<'a, T> {
     type Item = T;
 
