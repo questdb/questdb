@@ -75,6 +75,30 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertAllPartitionsPlural() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = "testConvertAllPartitionsPlural";
+            createTable(
+                    tableName,
+                    "insert into " + tableName + " values(1, '2024-06-10T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(2, '2024-06-11T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(3, '2024-06-12T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(4, '2024-06-12T00:00:01.000000Z')",
+                    "insert into " + tableName + " values(5, '2024-06-15T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(6, '2024-06-12T00:00:02.000000Z')"
+            );
+
+            // Use plural 'partitions' keyword instead of singular 'partition'
+            execute("alter table " + tableName + " convert partitions to parquet where timestamp > 0");
+
+            assertPartitionExists(tableName, "2024-06-10.8");
+            assertPartitionExists(tableName, "2024-06-11.6");
+            assertPartitionExists(tableName, "2024-06-12.7");
+            // last partition is not converted
+        });
+    }
+
+    @Test
     public void testConvertAllPartitionsToParquetAndBack() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = "testConvertAllPartitionsToParquetAndBack";
