@@ -2535,7 +2535,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         long size = 0;
         try (Path path = new Path()) {
             path.of(filePath);
-            // Reject directories - only regular files are allowed for secrets
+            // Reject directories (symlinks to directories are also rejected)
             if (filesFacade.isDirOrSoftLinkDir(path.$())) {
                 throw CairoException.critical(0)
                         .put("secret file path is a directory [path=").put(filePath).put(']');

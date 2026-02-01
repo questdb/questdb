@@ -439,7 +439,12 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
                     return false;
                 }
 
-                boolean propsChanged = updateSupportedProperties(properties, newProperties, dynamicProps, keyResolver, changedKeys, LOG);
+                // Fast-path: skip property comparison if properties are equal
+                boolean propsChanged = false;
+                if (!newProperties.equals(properties)) {
+                    propsChanged = updateSupportedProperties(properties, newProperties, dynamicProps, keyResolver, changedKeys, LOG);
+                }
+
                 boolean secretFilesChanged;
                 try {
                     secretFilesChanged = checkSecretFileChanges(newProperties, changedKeys);
