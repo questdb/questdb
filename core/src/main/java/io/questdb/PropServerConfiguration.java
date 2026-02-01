@@ -2454,56 +2454,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     /**
-     * Reads a secret value from a file. The file content is read as UTF-8 and trimmed.
-     * This is useful for Kubernetes deployments where secrets are mounted as files.
-     *
-     * @param filePath the path to the secret file
-     * @return the trimmed file content
-     * @throws CairoException if the file is too large or cannot be read
-     */
-    protected String readSecretFromFile(String filePath) {
-        long fd = -1;
-        long address = 0;
-        long size = 0;
-        try (Path path = new Path()) {
-            path.of(filePath);
-            fd = filesFacade.openRO(path.$());
-            if (fd < 0) {
-                throw CairoException.critical(filesFacade.errno())
-                        .put("cannot open secret file [path=").put(filePath).put(']');
-            }
-            size = filesFacade.length(fd);
-            if (size < 0) {
-                throw CairoException.critical(filesFacade.errno())
-                        .put("cannot get size of secret file [path=").put(filePath).put(']');
-            }
-            if (size > SECRET_FILE_MAX_SIZE) {
-                throw CairoException.critical(0)
-                        .put("secret file is too large [path=").put(filePath)
-                        .put(", size=").put(size)
-                        .put(", maxSize=").put(SECRET_FILE_MAX_SIZE).put(']');
-            }
-            if (size == 0) {
-                return "";
-            }
-            address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
-            long bytesRead = filesFacade.read(fd, address, size, 0);
-            if (bytesRead != size) {
-                throw CairoException.critical(filesFacade.errno())
-                        .put("cannot read secret file [path=").put(filePath).put(']');
-            }
-            return Utf8s.stringFromUtf8Bytes(address, address + size).trim();
-        } finally {
-            if (address != 0) {
-                Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
-            }
-            if (fd >= 0) {
-                filesFacade.close(fd);
-            }
-        }
-    }
-
-    /**
      * Gets the file path for a secret property by checking the _FILE variant.
      * Checks environment variable first (KEY_FILE), then property file (key.file).
      *
@@ -2528,8 +2478,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         if (key.isSensitive() && filesFacade != null) {
             String secretFilePath = getSecretFilePath(properties, env, key);
             if (secretFilePath != null && !secretFilePath.isEmpty()) {
-                log.info().$("reading secret from file [key=").$(key.getPropertyPath()).$(", file=").$(secretFilePath).I$();
+                log.info().$("reading secret from file [key=").$(key.getPropertyPath()).I$();
                 String result = readSecretFromFile(secretFilePath);
+                if (result.isEmpty()) {
+                    log.advisory().$("secret file is empty or contains only whitespace, this may weaken authentication [key=")
+                            .$(key.getPropertyPath()).I$();
+                }
                 if (!key.isDebug()) {
                     boolean dynamic = dynamicProperties != null && dynamicProperties.contains(key);
                     allPairs.put(key, new ConfigPropertyValueImpl(result, ConfigPropertyValue.VALUE_SOURCE_FILE, dynamic));
@@ -2561,6 +2515,87 @@ public class PropServerConfiguration implements ServerConfiguration {
             allPairs.put(key, new ConfigPropertyValueImpl(result, valueSource, dynamic));
         }
         return result;
+    }
+
+    /**
+     * Reads a secret value from a file. The file content is read as UTF-8 and trimmed.
+     * This is useful for Kubernetes deployments where secrets are mounted as files.
+     *
+     * @param filePath the path to the secret file
+     * @return the trimmed file content
+     * @throws CairoException if the file is too large or cannot be read
+     */
+    protected String readSecretFromFile(String filePath) {
+        long fd = -1;
+        long address = 0;
+        long size = 0;
+        try (Path path = new Path()) {
+            path.of(filePath);
+            // Reject directories - only regular files are allowed for secrets
+            if (filesFacade.isDirOrSoftLinkDir(path.$())) {
+                throw CairoException.critical(0)
+                        .put("secret file path is a directory [path=").put(filePath).put(']');
+            }
+            fd = filesFacade.openRO(path.$());
+            if (fd < 0) {
+                throw CairoException.critical(filesFacade.errno())
+                        .put("cannot open secret file [path=").put(filePath).put(']');
+            }
+
+            // Retry loop to handle race condition where file is modified between
+            // getting size and reading content
+            final int maxRetries = 3;
+            for (int attempt = 0; attempt < maxRetries; attempt++) {
+                // Free previous allocation if retrying
+                if (address != 0) {
+                    Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+                    address = 0;
+                }
+
+                size = filesFacade.length(fd);
+                if (size < 0) {
+                    throw CairoException.critical(filesFacade.errno())
+                            .put("cannot get size of secret file [path=").put(filePath).put(']');
+                }
+                if (size > SECRET_FILE_MAX_SIZE) {
+                    throw CairoException.critical(0)
+                            .put("secret file is too large [path=").put(filePath)
+                            .put(", size=").put(size)
+                            .put(", maxSize=").put(SECRET_FILE_MAX_SIZE).put(']');
+                }
+                if (size == 0) {
+                    return "";
+                }
+
+                address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+                long bytesRead = filesFacade.read(fd, address, size, 0);
+
+                if (bytesRead == size) {
+                    // Successful read - verify size hasn't changed
+                    long newSize = filesFacade.length(fd);
+                    if (newSize == size) {
+                        return Utf8s.stringFromUtf8Bytes(address, address + size).trim();
+                    }
+                    // Size changed during read, retry
+                    log.info().$("secret file size changed during read, retrying [attempt=").$(attempt + 1).I$();
+                } else {
+                    // Partial read, retry
+                    log.info().$("secret file partial read, retrying [expected=").$(size)
+                            .$(", read=").$(bytesRead).$(", attempt=").$(attempt + 1).I$();
+                }
+            }
+
+            throw CairoException.critical(0)
+                    .put("cannot read secret file after retries [path=").put(filePath)
+                    .put(", retries=").put(maxRetries).put(']');
+        } finally {
+            if (address != 0) {
+                Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+            }
+            if (fd >= 0) {
+                filesFacade.close(fd);
+            }
+        }
     }
 
     protected void getUrls(

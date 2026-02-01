@@ -440,7 +440,13 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
                 }
 
                 boolean propsChanged = updateSupportedProperties(properties, newProperties, dynamicProps, keyResolver, changedKeys, LOG);
-                boolean secretFilesChanged = checkSecretFileChanges(newProperties, changedKeys);
+                boolean secretFilesChanged;
+                try {
+                    secretFilesChanged = checkSecretFileChanges(newProperties, changedKeys);
+                } catch (CairoException e) {
+                    LOG.error().$("could not read secret file, reload aborted [error=").$((Throwable) e).I$();
+                    return false;
+                }
 
                 if (propsChanged || secretFilesChanged) {
                     reload0();
@@ -455,14 +461,25 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         return false;
     }
 
+    @Override
+    public void unwatch(long watchId) {
+        watchRegistry.unwatch(watchId);
+    }
+
+    @Override
+    public long watch(Listener listener) {
+        return watchRegistry.watch(listener);
+    }
+
     /**
      * Checks if any secret file contents have changed since the last reload.
      * For sensitive properties that use .file suffix, reads the current file content
      * and compares it against the previously loaded value.
      *
      * @param currentProperties the current properties (to find .file paths)
-     * @param changedKeys set to record which keys changed
-     * @return true if any secret file content has changed
+     * @param changedKeys       set to record which keys changed
+     * @return true if any secret file content has changed, false if no changes
+     * @throws CairoException if a secret file cannot be read
      */
     private boolean checkSecretFileChanges(Properties currentProperties, ObjHashSet<String> changedKeys) {
         boolean changed = false;
@@ -483,15 +500,8 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
                 continue;
             }
 
-            // Read current file content
-            String currentFileContent;
-            try {
-                currentFileContent = currentConfig.readSecretFromFile(secretFilePath);
-            } catch (CairoException e) {
-                LOG.error().$("could not read secret file for reload check [key=").$(key.getPropertyPath())
-                        .$(", file=").$(secretFilePath).$(", error=").$((Throwable) e).I$();
-                continue;
-            }
+            // Read current file content - throws CairoException if file cannot be read
+            String currentFileContent = currentConfig.readSecretFromFile(secretFilePath);
 
             // Get previously loaded value
             ConfigPropertyValue previousValue = allPairs.get(key);
@@ -503,24 +513,13 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
 
             // Compare content
             if (!currentFileContent.equals(previousContent)) {
-                LOG.info().$("secret file content changed [key=").$(key.getPropertyPath())
-                        .$(", file=").$(secretFilePath).I$();
+                LOG.info().$("secret file content changed [key=").$(key.getPropertyPath()).I$();
                 changed = true;
                 changedKeys.add(key.getPropertyPath());
             }
         }
 
         return changed;
-    }
-
-    @Override
-    public void unwatch(long watchId) {
-        watchRegistry.unwatch(watchId);
-    }
-
-    @Override
-    public long watch(Listener listener) {
-        return watchRegistry.watch(listener);
     }
 
     private void reload0() {
