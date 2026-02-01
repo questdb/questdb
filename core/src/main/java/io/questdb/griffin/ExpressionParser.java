@@ -2088,6 +2088,9 @@ public class ExpressionParser {
                             if (en == null) {
                                 throw SqlException.$(lastPos, "qualifier expected");
                             }
+                            if (en.type != ExpressionNode.LITERAL && en.type != ExpressionNode.CONSTANT) {
+                                throw SqlException.$(lexer.getContent().toString().lastIndexOf('.', lastPos), "unexpected dot");
+                            }
                             // two possibilities here:
                             // 1. 'a.b'
                             // 2. 'a. b'
@@ -2108,7 +2111,7 @@ public class ExpressionParser {
                                 cse.put(en.token).put(GenericLexer.unquoteIfNoDots(tok));
                                 opStack.push(expressionNodePool.next().of(
                                         ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
-                            } else {
+                            } else if (en.token instanceof GenericLexer.FloatingSequence) {
                                 final GenericLexer.FloatingSequence fsA = (GenericLexer.FloatingSequence) en.token;
                                 // vanilla 'a.b', just concat tokens efficiently
                                 fsA.setHi(lexer.getTokenHi());
