@@ -1191,7 +1191,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
             // Server should fail to start with invalid UTF-8 in secret file
             try {
-                new ServerMain(getBootstrap());
+                new ServerMain(getBootstrap()).close();
                 Assert.fail("Expected exception for invalid UTF-8 in secret file");
             } catch (Exception e) {
                 String message = e.getMessage();
@@ -1213,7 +1213,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             }
 
             try {
-                new ServerMain(getBootstrap());
+                new ServerMain(getBootstrap()).close();
                 Assert.fail("Expected exception for directory as secret file");
             } catch (Exception e) {
                 // The CairoException is wrapped in BootstrapException
@@ -1232,7 +1232,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             }
 
             try {
-                new ServerMain(getBootstrap());
+                new ServerMain(getBootstrap()).close();
                 Assert.fail("Expected exception for missing secret file");
             } catch (Exception e) {
                 // The CairoException is wrapped in BootstrapException
@@ -1259,7 +1259,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             }
 
             try {
-                new ServerMain(getBootstrap());
+                new ServerMain(getBootstrap()).close();
                 Assert.fail("Expected exception for too large secret file");
             } catch (Exception e) {
                 // The CairoException is wrapped in BootstrapException
