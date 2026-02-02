@@ -462,6 +462,74 @@ public class IlpV4WebSocketSender implements Sender {
         return maxSentSymbolId;
     }
 
+    // ==================== Fast-path API for high-throughput generators ====================
+    //
+    // These methods bypass the normal fluent API to avoid per-row overhead:
+    // - No hashmap lookups for column names
+    // - No checkNotClosed()/checkTableSelected() per column
+    // - Direct access to column buffers
+    //
+    // Usage:
+    //   // Setup (once)
+    //   IlpV4TableBuffer tableBuffer = sender.getTableBuffer("q");
+    //   IlpV4TableBuffer.ColumnBuffer colSymbol = tableBuffer.getOrCreateColumn("s", TYPE_SYMBOL, true);
+    //   IlpV4TableBuffer.ColumnBuffer colBid = tableBuffer.getOrCreateColumn("b", TYPE_DOUBLE, false);
+    //
+    //   // Hot path (per row)
+    //   colSymbol.addSymbolWithGlobalId(symbol, sender.getOrAddGlobalSymbol(symbol));
+    //   colBid.addDouble(bid);
+    //   tableBuffer.nextRow();
+    //   sender.incrementPendingRowCount();
+
+    /**
+     * Gets or creates a table buffer for direct access.
+     * For high-throughput generators that want to bypass fluent API overhead.
+     */
+    public IlpV4TableBuffer getTableBuffer(String tableName) {
+        IlpV4TableBuffer buffer = tableBuffers.get(tableName);
+        if (buffer == null) {
+            buffer = new IlpV4TableBuffer(tableName);
+            tableBuffers.put(tableName, buffer);
+        }
+        currentTableBuffer = buffer;
+        currentTableName = tableName;
+        return buffer;
+    }
+
+    /**
+     * Registers a symbol in the global dictionary and returns its ID.
+     * For use with fast-path column buffer access.
+     */
+    public int getOrAddGlobalSymbol(String value) {
+        int globalId = globalSymbolDictionary.getOrAddSymbol(value);
+        if (globalId > currentBatchMaxSymbolId) {
+            currentBatchMaxSymbolId = globalId;
+        }
+        return globalId;
+    }
+
+    /**
+     * Increments the pending row count for auto-flush tracking.
+     * Call this after adding a complete row via fast-path API.
+     * Triggers auto-flush if any threshold is exceeded.
+     */
+    public void incrementPendingRowCount() {
+        if (pendingRowCount == 0) {
+            firstPendingRowTimeNanos = System.nanoTime();
+        }
+        pendingRowCount++;
+
+        // Check if any flush threshold is exceeded (same as sendRow())
+        if (shouldAutoFlush()) {
+            if (inFlightWindowSize > 1) {
+                flushPendingRows();
+            } else {
+                // Sync mode (window=1): flush directly with ACK wait
+                flushSync();
+            }
+        }
+    }
+
     // ==================== Sender interface implementation ====================
 
     @Override
@@ -538,6 +606,23 @@ public class IlpV4WebSocketSender implements Sender {
         checkTableSelected();
         IlpV4TableBuffer.ColumnBuffer col = currentTableBuffer.getOrCreateColumn(columnName.toString(), TYPE_STRING, true);
         col.addString(value != null ? value.toString() : null);
+        return this;
+    }
+
+    /**
+     * Adds a CHAR column value to the current row.
+     * <p>
+     * CHAR is stored as a 2-byte SHORT (UTF-16 code unit) in QuestDB.
+     *
+     * @param columnName the column name
+     * @param value      the character value
+     * @return this sender for method chaining
+     */
+    public IlpV4WebSocketSender charColumn(CharSequence columnName, char value) {
+        checkNotClosed();
+        checkTableSelected();
+        IlpV4TableBuffer.ColumnBuffer col = currentTableBuffer.getOrCreateColumn(columnName.toString(), TYPE_SHORT, false);
+        col.addShort((short) value);
         return this;
     }
 
