@@ -70,6 +70,7 @@ import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -78,6 +79,7 @@ import io.questdb.std.Os;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -777,7 +779,9 @@ public class SqlParser {
             } else {
                 CharSequence tokenAlias = qc.getAst().token;
                 if (qc.isWindowExpression() && ((WindowExpression) qc).isIgnoreNulls()) {
-                    tokenAlias += "_ignore_nulls";
+                    StringSink sink = Misc.getThreadLocalSink();
+                    sink.put(tokenAlias).put("_ignore_nulls");
+                    tokenAlias = sink.toString();
                 }
                 alias = createColumnAlias(tokenAlias, qc.getAst().type, aliasMap);
             }
