@@ -719,12 +719,7 @@ pub fn decode_page(
                 }
                 // INT32 with Decimal logical type -> Decimal8, Decimal16, Decimal32
                 // INT32 is already little-endian, so we just truncate to the target size
-                (
-                    Encoding::Plain,
-                    _,
-                    Some(PrimitiveLogicalType::Decimal(_, _)),
-                    ColumnTypeTag::Decimal8,
-                ) => {
+                (Encoding::Plain, _, _, ColumnTypeTag::Decimal8) => {
                     decode_page0(
                         page,
                         row_lo,
@@ -737,12 +732,7 @@ pub fn decode_page(
                     )?;
                     Ok(())
                 }
-                (
-                    Encoding::Plain,
-                    _,
-                    Some(PrimitiveLogicalType::Decimal(_, _)),
-                    ColumnTypeTag::Decimal16,
-                ) => {
+                (Encoding::Plain, _, _, ColumnTypeTag::Decimal16) => {
                     decode_page0(
                         page,
                         row_lo,
@@ -755,12 +745,7 @@ pub fn decode_page(
                     )?;
                     Ok(())
                 }
-                (
-                    Encoding::Plain,
-                    _,
-                    Some(PrimitiveLogicalType::Decimal(_, _)),
-                    ColumnTypeTag::Decimal32,
-                ) => {
+                (Encoding::Plain, _, _, ColumnTypeTag::Decimal32) => {
                     decode_page0(
                         page,
                         row_lo,
@@ -785,7 +770,8 @@ pub fn decode_page(
                     ColumnTypeTag::Long
                     | ColumnTypeTag::Date
                     | ColumnTypeTag::GeoLong
-                    | ColumnTypeTag::Timestamp,
+                    | ColumnTypeTag::Timestamp
+                    | ColumnTypeTag::Decimal64,
                 ) => {
                     decode_page0(
                         page,
@@ -806,7 +792,8 @@ pub fn decode_page(
                     ColumnTypeTag::Long
                     | ColumnTypeTag::Timestamp
                     | ColumnTypeTag::Date
-                    | ColumnTypeTag::GeoLong,
+                    | ColumnTypeTag::GeoLong
+                    | ColumnTypeTag::Decimal64,
                 ) => {
                     decode_page0(
                         page,
@@ -827,7 +814,8 @@ pub fn decode_page(
                     ColumnTypeTag::Long
                     | ColumnTypeTag::Timestamp
                     | ColumnTypeTag::Date
-                    | ColumnTypeTag::GeoLong,
+                    | ColumnTypeTag::GeoLong
+                    | ColumnTypeTag::Decimal64,
                 ) => {
                     let dict_decoder = FixedDictDecoder::<8>::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
@@ -842,26 +830,6 @@ pub fn decode_page(
                         row_lo,
                         row_hi,
                         &mut FixedLongColumnSink::new(&mut slicer, bufs, &LONG_NULL),
-                    )?;
-                    Ok(())
-                }
-                // INT64 with Decimal logical type -> Decimal64
-                // INT64 is already little-endian, so we just copy directly
-                (
-                    Encoding::Plain,
-                    _,
-                    Some(PrimitiveLogicalType::Decimal(_, _)),
-                    ColumnTypeTag::Decimal64,
-                ) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut FixedLongColumnSink::new(
-                            &mut DataPageFixedSlicer::<8>::new(values_buffer, row_count),
-                            bufs,
-                            &DECIMAL64_NULL,
-                        ),
                     )?;
                     Ok(())
                 }
@@ -912,10 +880,9 @@ pub fn decode_page(
             )?;
             Ok(())
         }
-        // Handle FixedLenByteArray(16) for non-decimal types (Long128)
-        (PhysicalType::FixedLenByteArray(16), _logical_type, _) => {
-            match (page.encoding(), column_type.tag()) {
-                (Encoding::Plain, ColumnTypeTag::Long128) => {
+        (PhysicalType::FixedLenByteArray(len), _, _) => {
+            match (page.encoding(), len, column_type.tag()) {
+                (Encoding::Plain, 16, ColumnTypeTag::Long128) => {
                     decode_page0(
                         page,
                         row_lo,
@@ -928,13 +895,7 @@ pub fn decode_page(
                     )?;
                     Ok(())
                 }
-                _ => Err(encoding_error),
-            }
-        }
-        // Handle FixedLenByteArray(32) for non-decimal types (Long256)
-        (PhysicalType::FixedLenByteArray(32), _logical_type, _) => {
-            match (page.encoding(), column_type.tag()) {
-                (Encoding::Plain, ColumnTypeTag::Long256) => {
+                (Encoding::Plain, 32, ColumnTypeTag::Long256) => {
                     decode_page0(
                         page,
                         row_lo,
@@ -944,6 +905,28 @@ pub fn decode_page(
                             bufs,
                             &LONG256_NULL,
                         ),
+                    )?;
+                    Ok(())
+                }
+                (
+                    Encoding::Plain,
+                    _len,
+                    ColumnTypeTag::Decimal8
+                    | ColumnTypeTag::Decimal16
+                    | ColumnTypeTag::Decimal32
+                    | ColumnTypeTag::Decimal64
+                    | ColumnTypeTag::Decimal128
+                    | ColumnTypeTag::Decimal256,
+                ) => {
+                    decode_fixed_decimal(
+                        page,
+                        bufs,
+                        values_buffer,
+                        row_lo,
+                        row_hi,
+                        row_count,
+                        len,
+                        column_type.tag(),
                     )?;
                     Ok(())
                 }

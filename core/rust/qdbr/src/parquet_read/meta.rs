@@ -202,13 +202,17 @@ impl ParquetDecoder {
                 }),
                 _,
             ) => Some(ColumnType::new(ColumnTypeTag::Date, 0)),
+            (PhysicalType::Int64, Some(PrimitiveLogicalType::Decimal(precision, scale)), _)
+            | (PhysicalType::Int64, _, Some(PrimitiveConvertedType::Decimal(precision, scale))) => {
+                ColumnType::new_decimal(precision as u8, scale as u8)
+            }
             (PhysicalType::Int64, _, _) => Some(ColumnType::new(ColumnTypeTag::Long, 0)),
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int32)), _) => {
                 Some(ColumnType::new(ColumnTypeTag::Int, 0))
             }
-            (PhysicalType::Int32, Some(PrimitiveLogicalType::Decimal(_, _)), _)
-            | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Decimal(_, _))) => {
-                Some(ColumnType::new(ColumnTypeTag::Double, 0))
+            (PhysicalType::Int32, Some(PrimitiveLogicalType::Decimal(precision, scale)), _)
+            | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Decimal(precision, scale))) => {
+                ColumnType::new_decimal(precision as u8, scale as u8)
             }
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int16)), _)
             | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int16)) => {
@@ -229,6 +233,16 @@ impl ParquetDecoder {
                 None => Some(ColumnType::new(ColumnTypeTag::Double, 0)),
             },
             (PhysicalType::Float, _, _) => Some(ColumnType::new(ColumnTypeTag::Float, 0)),
+            (
+                PhysicalType::FixedLenByteArray(_),
+                Some(PrimitiveLogicalType::Decimal(precision, scale)),
+                _,
+            )
+            | (
+                PhysicalType::FixedLenByteArray(_),
+                _,
+                Some(PrimitiveConvertedType::Decimal(precision, scale)),
+            ) => ColumnType::new_decimal(precision as u8, scale as u8),
             (PhysicalType::FixedLenByteArray(16), Some(Uuid), _) => {
                 Some(ColumnType::new(ColumnTypeTag::Uuid, 0))
             }

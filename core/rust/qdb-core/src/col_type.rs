@@ -242,7 +242,7 @@ const ARRAY_NDIMS_LIMIT: i32 = 32; // inclusive
 const ARRAY_NDIMS_FIELD_MASK: i32 = ARRAY_NDIMS_LIMIT - 1;
 const ARRAY_NDIMS_FIELD_POS: i32 = 14;
 const DECIMAL_SCALE_FIELD_MASK: i32 = 0xFF;
-const DECIMAL_SCALE_FIELD_POS: i32 = 24;
+const DECIMAL_SCALE_FIELD_POS: i32 = 18;
 const DECIMAL_PRECISION_FIELD_MASK: i32 = 0xFF;
 const DECIMAL_PRECISION_FIELD_POS: i32 = 8;
 
@@ -259,6 +259,27 @@ impl ColumnType {
         let code = NonZeroI32::new(tag as i32 | shifted_extra_type_info)
             .expect("column type code should never be zero");
         Self { code }
+    }
+
+    pub const fn new_decimal(precision: u8, scale: u8) -> Option<Self> {
+        if scale > precision {
+            return None;
+        }
+        let extra_type_info = (((precision as i32) & DECIMAL_PRECISION_FIELD_MASK)
+            << DECIMAL_PRECISION_FIELD_POS)
+            | (((scale as i32) & DECIMAL_SCALE_FIELD_MASK) << DECIMAL_SCALE_FIELD_POS);
+        let tag = match precision {
+            1..=2 => ColumnTypeTag::Decimal8,
+            3..=4 => ColumnTypeTag::Decimal16,
+            5..=9 => ColumnTypeTag::Decimal32,
+            10..=18 => ColumnTypeTag::Decimal64,
+            19..=38 => ColumnTypeTag::Decimal128,
+            39..=76 => ColumnTypeTag::Decimal256,
+            _ => return None,
+        };
+        Some(Self {
+            code: NonZeroI32::new(tag as i32 | extra_type_info).unwrap(),
+        })
     }
 
     pub fn code(&self) -> i32 {
