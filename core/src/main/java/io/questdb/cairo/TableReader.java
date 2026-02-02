@@ -274,6 +274,26 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+    /**
+     * Closes a specific partition, releasing its memory mappings.
+     * This can be called when the caller is done reading a partition to free
+     * page cache and reduce memory pressure.
+     * <p>
+     * The partition will be automatically re-opened if accessed again.
+     *
+     * @param partitionIndex the index of the partition to close
+     */
+    public void closePartitionByIndex(int partitionIndex) {
+        if (partitionIndex < 0 || partitionIndex >= partitionCount) {
+            return;
+        }
+        final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
+        long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
+        if (partitionSize > -1) {
+            closePartition(partitionIndex);
+        }
+    }
+
     public void dumpRawTxPartitionInfo(LongList container) {
         txFile.dumpRawTxPartitionInfo(container);
     }
@@ -824,6 +844,16 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void closePartitionColumn(int base, int columnIndex) {
         int index = getPrimaryColumnIndex(base, columnIndex);
+        if (streamingMode) {
+            MemoryCMR mem = columns.get(index);
+            if (mem != null) {
+                ff.madvise(mem.addressOf(0), mem.size(), Files.POSIX_MADV_DONTNEED);
+            }
+            mem = columns.get(index + 1);
+            if (mem != null) {
+                ff.madvise(mem.addressOf(0), mem.size(), Files.POSIX_MADV_DONTNEED);
+            }
+        }
         Misc.free(columns.get(index));
         Misc.free(columns.get(index + 1));
         closeIndexReader(base, columnIndex);
@@ -1168,7 +1198,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     ) {
         // When streaming mode is enabled, use MADV_DONTNEED to hint the kernel
         // to release page cache after reading, avoiding memory pressure during large scans
-        final int madviseOpts = streamingMode ? Files.POSIX_MADV_DONTNEED | Files.POSIX_MADV_SEQUENTIAL : -1;
+        final int madviseOpts = streamingMode ? Files.POSIX_MADV_SEQUENTIAL : -1;
         MemoryCMRDetachedImpl memory;
         if (mem != null && mem != NullMemoryCMR.INSTANCE) {
             memory = (MemoryCMRDetachedImpl) mem;

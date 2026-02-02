@@ -144,6 +144,10 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     @Nullable
     PageFrame next(long skipTarget);
 
+    default void releaseOpenPartitions() {
+        // no-op by default
+    }
+
     /**
      * Enables or disables streaming mode for the cursor.
      * When streaming mode is enabled, underlying resources (e.g., partitions) are opened

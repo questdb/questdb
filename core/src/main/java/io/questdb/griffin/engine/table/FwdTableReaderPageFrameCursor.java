@@ -51,6 +51,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final TableReaderPageFrame frame = new TableReaderPageFrame();
     private final LongList pageSizes = new LongList();
     private final int sharedQueryWorkerCount;
+    // Track the lowest partition index that has not been released yet
+    private int lowestOpenPartitionIndex = 0;
     private int pageFrameMaxRows;
     private int pageFrameMinRows;
     private PartitionFrameCursor partitionFrameCursor;
@@ -115,8 +117,9 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         if (reenterPartitionFrame) {
             if (reenterParquetDecoder != null) {
                 return computeParquetFrame(reenterPartitionLo, reenterPartitionHi);
+            } else {
+                return computeNativeFrame(reenterPartitionLo, reenterPartitionHi);
             }
-            return computeNativeFrame(reenterPartitionLo, reenterPartitionHi);
         }
 
         final PartitionFrame partitionFrame = partitionFrameCursor.next(skipTarget);
@@ -133,7 +136,6 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                 if (frame.format == PartitionFormat.PARQUET) {
                     frame.partitionDecoder = partitionFrame.getParquetDecoder();
                 }
-
                 return frame;
             }
             return nextSlow(partitionFrame, lo, hi);
@@ -152,6 +154,15 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
+    public void releaseOpenPartitions() {
+        // Close all partitions from lowestOpenPartitionIndex up to (but not including) current partition
+        for (int i = lowestOpenPartitionIndex; i < reenterPartitionIndex; i++) {
+            reader.closePartitionByIndex(i);
+        }
+        lowestOpenPartitionIndex = reenterPartitionIndex;
+    }
+
+    @Override
     public long size() {
         return partitionFrameCursor.size();
     }
@@ -166,6 +177,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         partitionFrameCursor.toTop();
         reenterPartitionFrame = false;
         reenterParquetDecoder = null;
+        lowestOpenPartitionIndex = 0;
         clearAddresses();
     }
 

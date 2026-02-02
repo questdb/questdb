@@ -236,6 +236,11 @@ public class HTTPSerialParquetExporter {
 
             exporter.setCurrentPartitionIndex(partitionIndex, rowsInFrame);
             exporter.writePageFrame(pageFrameCursor, frame);
+
+            // Release partitions that have been fully processed by the Parquet writer.
+            // This frees page cache memory for large sequential exports.
+            pageFrameCursor.releaseOpenPartitions();
+
             LOG.info().$("stream export progress [id=").$hexPadded(task.getCopyID())
                     .$(", rowsInFrame=").$(rowsInFrame)
                     .$(", exported totalRows=").$(exporter.getTotalRows())
