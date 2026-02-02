@@ -382,9 +382,22 @@ pub fn i64_slice_to_page_simd(
 }
 
 fn encode_i64_plain(slice: &[i64], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8> {
-    buffer.reserve(std::mem::size_of::<i64>() * (slice.len() - null_count));
-    for &x in slice.iter().filter(|&&x| x != i64::MIN) {
-        buffer.extend_from_slice(&x.to_le_bytes());
+    let non_null_count = slice.len() - null_count;
+    buffer.reserve(std::mem::size_of::<i64>() * non_null_count);
+
+    if null_count == 0 {
+        // Fast path: no nulls, use memcpy
+        // SAFETY: i64 slice can be safely viewed as bytes, and Parquet uses little-endian
+        // which matches x86/ARM-LE native byte order
+        let bytes = unsafe {
+            std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 8)
+        };
+        buffer.extend_from_slice(bytes);
+    } else {
+        // Slow path: filter out nulls
+        for &x in slice.iter().filter(|&&x| x != i64::MIN) {
+            buffer.extend_from_slice(&x.to_le_bytes());
+        }
     }
     buffer
 }
@@ -467,9 +480,20 @@ pub fn i32_slice_to_page_simd(
 }
 
 fn encode_i32_plain(slice: &[i32], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8> {
-    buffer.reserve(std::mem::size_of::<i32>() * (slice.len() - null_count));
-    for &x in slice.iter().filter(|&&x| x != i32::MIN) {
-        buffer.extend_from_slice(&x.to_le_bytes());
+    let non_null_count = slice.len() - null_count;
+    buffer.reserve(std::mem::size_of::<i32>() * non_null_count);
+
+    if null_count == 0 {
+        // Fast path: no nulls, use memcpy
+        let bytes = unsafe {
+            std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 4)
+        };
+        buffer.extend_from_slice(bytes);
+    } else {
+        // Slow path: filter out nulls
+        for &x in slice.iter().filter(|&&x| x != i32::MIN) {
+            buffer.extend_from_slice(&x.to_le_bytes());
+        }
     }
     buffer
 }
@@ -516,9 +540,20 @@ pub fn f64_slice_to_page_simd(
     let definition_levels_byte_length = buffer.len();
 
     // Encode the actual data (Plain encoding only for floats)
-    buffer.reserve(std::mem::size_of::<f64>() * (slice.len() - result.null_count));
-    for &x in slice.iter().filter(|x| !x.is_nan()) {
-        buffer.extend_from_slice(&x.to_le_bytes());
+    let non_null_count = slice.len() - result.null_count;
+    buffer.reserve(std::mem::size_of::<f64>() * non_null_count);
+
+    if result.null_count == 0 {
+        // Fast path: no nulls (NaNs), use memcpy
+        let bytes = unsafe {
+            std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 8)
+        };
+        buffer.extend_from_slice(bytes);
+    } else {
+        // Slow path: filter out NaNs
+        for &x in slice.iter().filter(|x| !x.is_nan()) {
+            buffer.extend_from_slice(&x.to_le_bytes());
+        }
     }
 
     let statistics = if options.write_statistics {
@@ -580,9 +615,20 @@ pub fn f32_slice_to_page_simd(
     let definition_levels_byte_length = buffer.len();
 
     // Encode the actual data (Plain encoding only for floats)
-    buffer.reserve(std::mem::size_of::<f32>() * (slice.len() - result.null_count));
-    for &x in slice.iter().filter(|x| !x.is_nan()) {
-        buffer.extend_from_slice(&x.to_le_bytes());
+    let non_null_count = slice.len() - result.null_count;
+    buffer.reserve(std::mem::size_of::<f32>() * non_null_count);
+
+    if result.null_count == 0 {
+        // Fast path: no nulls (NaNs), use memcpy
+        let bytes = unsafe {
+            std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 4)
+        };
+        buffer.extend_from_slice(bytes);
+    } else {
+        // Slow path: filter out NaNs
+        for &x in slice.iter().filter(|x| !x.is_nan()) {
+            buffer.extend_from_slice(&x.to_le_bytes());
+        }
     }
 
     let statistics = if options.write_statistics {
