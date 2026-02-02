@@ -67,7 +67,7 @@
         <dependency>
             <groupId>org.questdb</groupId>
             <artifactId>client</artifactId>
-            <version>1.0.0-SNAPSHOT</version>
+            <version>1.0.0</version>
         </dependency>
     </dependencies>
 
