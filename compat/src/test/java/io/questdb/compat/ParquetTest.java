@@ -167,53 +167,9 @@ public class ParquetTest extends AbstractTest {
         }
     }
 
-    private static void assertDecimal8(byte expected, Object actual) {
-        if (actual == null) {
-            Assert.assertEquals(Decimals.DECIMAL8_NULL, expected);
-            return;
-        }
-        GenericData.Fixed fixed = (GenericData.Fixed) actual;
-        ByteBuffer buf = ByteBuffer.wrap(fixed.bytes());
-        // Parquet stores decimals in big-endian
-        Assert.assertEquals(expected, buf.get());
-    }
-
-    private static void assertDecimal16(short expected, Object actual) {
-        if (actual == null) {
-            Assert.assertEquals(Decimals.DECIMAL16_NULL, expected);
-            return;
-        }
-        GenericData.Fixed fixed = (GenericData.Fixed) actual;
-        ByteBuffer buf = ByteBuffer.wrap(fixed.bytes());
-        buf.order(ByteOrder.BIG_ENDIAN);
-        Assert.assertEquals(expected, buf.getShort());
-    }
-
-    private static void assertDecimal32(int expected, Object actual) {
-        if (actual == null) {
-            Assert.assertEquals(Decimals.DECIMAL32_NULL, expected);
-            return;
-        }
-        GenericData.Fixed fixed = (GenericData.Fixed) actual;
-        ByteBuffer buf = ByteBuffer.wrap(fixed.bytes());
-        buf.order(ByteOrder.BIG_ENDIAN);
-        Assert.assertEquals(expected, buf.getInt());
-    }
-
-    private static void assertDecimal64(long expected, Object actual) {
-        if (actual == null) {
-            Assert.assertEquals(Decimals.DECIMAL64_NULL, expected);
-            return;
-        }
-        GenericData.Fixed fixed = (GenericData.Fixed) actual;
-        ByteBuffer buf = ByteBuffer.wrap(fixed.bytes());
-        buf.order(ByteOrder.BIG_ENDIAN);
-        Assert.assertEquals(expected, buf.getLong());
-    }
-
     private static void assertDecimal128(Decimal128 expected, Object actual) {
-        if (actual == null) {
-            Assert.assertTrue(expected.isNull());
+        if (expected.isNull()) {
+            Assert.assertNull(actual);
             return;
         }
         GenericData.Fixed fixed = (GenericData.Fixed) actual;
@@ -226,9 +182,20 @@ public class ParquetTest extends AbstractTest {
         Assert.assertEquals(expected.getLow(), actualLow);
     }
 
+    private static void assertDecimal16(short expected, Object actual) {
+        if (expected == Decimals.DECIMAL16_NULL) {
+            Assert.assertNull(actual);
+            return;
+        }
+        GenericData.Fixed fixed = (GenericData.Fixed) actual;
+        ByteBuffer buf = ByteBuffer.wrap(fixed.bytes());
+        buf.order(ByteOrder.BIG_ENDIAN);
+        Assert.assertEquals(expected, buf.getShort());
+    }
+
     private static void assertDecimal256(Decimal256 expected, Object actual) {
-        if (actual == null) {
-            Assert.assertTrue(expected.isNull());
+        if (expected.isNull()) {
+            Assert.assertNull(actual);
             return;
         }
         GenericData.Fixed fixed = (GenericData.Fixed) actual;
@@ -243,6 +210,39 @@ public class ParquetTest extends AbstractTest {
         Assert.assertEquals(expected.getHl(), actualHL);
         Assert.assertEquals(expected.getLh(), actualLH);
         Assert.assertEquals(expected.getLl(), actualLL);
+    }
+
+    private static void assertDecimal32(int expected, Object actual) {
+        if (expected == Decimals.DECIMAL32_NULL) {
+            Assert.assertNull(actual);
+            return;
+        }
+        GenericData.Fixed fixed = (GenericData.Fixed) actual;
+        ByteBuffer buf = ByteBuffer.wrap(fixed.bytes());
+        buf.order(ByteOrder.BIG_ENDIAN);
+        Assert.assertEquals(expected, buf.getInt());
+    }
+
+    private static void assertDecimal64(long expected, Object actual) {
+        if (expected == Decimals.DECIMAL64_NULL) {
+            Assert.assertNull(actual);
+            return;
+        }
+        GenericData.Fixed fixed = (GenericData.Fixed) actual;
+        ByteBuffer buf = ByteBuffer.wrap(fixed.bytes());
+        buf.order(ByteOrder.BIG_ENDIAN);
+        Assert.assertEquals(expected, buf.getLong());
+    }
+
+    private static void assertDecimal8(byte expected, Object actual) {
+        if (expected == Decimals.DECIMAL8_NULL) {
+            Assert.assertNull(actual);
+            return;
+        }
+        GenericData.Fixed fixed = (GenericData.Fixed) actual;
+        ByteBuffer buf = ByteBuffer.wrap(fixed.bytes());
+        // Parquet stores decimals in big-endian
+        Assert.assertEquals(expected, buf.get());
     }
 
     private static void assertGeoHash(long expected, Object value) {
