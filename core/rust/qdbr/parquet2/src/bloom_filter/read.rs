@@ -1,4 +1,4 @@
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Cursor, Read, Seek, SeekFrom};
 
 use parquet_format_safe::{
     thrift::protocol::TCompactInputProtocol, BloomFilterAlgorithm, BloomFilterCompression,
@@ -46,4 +46,39 @@ pub fn read<R: Read + Seek>(
     reader.by_ref().take(length as u64).read_to_end(bitset)?;
 
     Ok(())
+}
+
+pub fn read_from_slice<'a>(
+    column_metadata: &ColumnChunkMetaData,
+    data: &'a [u8],
+) -> Result<&'a [u8], Error> {
+    let Some(offset) = column_metadata.metadata().bloom_filter_offset else {
+        return Ok(&[]);
+    };
+    let offset = offset as usize;
+
+    let remaining = data.get(offset..).ok_or_else(|| {
+        Error::oos("bloom filter offset exceeds data length")
+    })?;
+
+    let mut cursor = Cursor::new(remaining);
+    let header = {
+        // max is ok since `BloomFilterHeader` never allocates
+        let mut prot = TCompactInputProtocol::new(&mut cursor, usize::MAX);
+        BloomFilterHeader::read_from_in_protocol(&mut prot)?
+    };
+    let header_size = cursor.position() as usize;
+
+    if header.algorithm != BloomFilterAlgorithm::BLOCK(SplitBlockAlgorithm {}) {
+        return Ok(&[]);
+    }
+    if header.compression != BloomFilterCompression::UNCOMPRESSED(Uncompressed {}) {
+        return Ok(&[]);
+    }
+
+    let length: usize = header.num_bytes.try_into()?;
+    let start = offset + header_size;
+    data.get(start..start + length).ok_or_else(|| {
+        Error::oos("bloom filter bitset exceeds data length")
+    })
 }
