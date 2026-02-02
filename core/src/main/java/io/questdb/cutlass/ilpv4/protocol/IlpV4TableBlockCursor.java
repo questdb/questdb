@@ -225,6 +225,7 @@ public class IlpV4TableBlockCursor implements Mutable {
 
             case TYPE_BYTE:
             case TYPE_SHORT:
+            case TYPE_CHAR:
             case TYPE_INT:
             case TYPE_LONG:
             case TYPE_FLOAT:

@@ -112,6 +112,7 @@ public final class IlpV4FixedWidthDecoder implements IlpV4ColumnDecoder {
                 decodeBytes(valuesAddress, nullBitmapAddress, rowCount, nullable, sink);
                 break;
             case TYPE_SHORT:
+            case TYPE_CHAR:
                 decodeShorts(valuesAddress, nullBitmapAddress, rowCount, nullable, sink);
                 break;
             case TYPE_INT:
@@ -316,6 +317,7 @@ public final class IlpV4FixedWidthDecoder implements IlpV4ColumnDecoder {
                 }
                 break;
             case TYPE_SHORT:
+            case TYPE_CHAR:
                 for (int i = 0; i < rowCount; i++) {
                     if (nullable && nulls[i]) continue;
                     Unsafe.getUnsafe().putShort(pos, (short) values[i]);

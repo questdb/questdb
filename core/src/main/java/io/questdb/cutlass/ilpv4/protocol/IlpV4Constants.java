@@ -233,6 +233,11 @@ public final class IlpV4Constants {
     public static final byte TYPE_DECIMAL256 = 0x15;
 
     /**
+     * Column type: CHAR (2-byte UTF-16 code unit).
+     */
+    public static final byte TYPE_CHAR = 0x16;
+
+    /**
      * High bit indicating nullable column.
      */
     public static final byte TYPE_NULLABLE_FLAG = (byte) 0x80;
@@ -370,6 +375,7 @@ public final class IlpV4Constants {
         return code == TYPE_BOOLEAN ||
                 code == TYPE_BYTE ||
                 code == TYPE_SHORT ||
+                code == TYPE_CHAR ||
                 code == TYPE_INT ||
                 code == TYPE_LONG ||
                 code == TYPE_FLOAT ||
@@ -395,6 +401,7 @@ public final class IlpV4Constants {
             case TYPE_BYTE:
                 return 1;
             case TYPE_SHORT:
+            case TYPE_CHAR:
                 return 2;
             case TYPE_INT:
             case TYPE_FLOAT:
@@ -433,6 +440,9 @@ public final class IlpV4Constants {
                 break;
             case TYPE_SHORT:
                 name = "SHORT";
+                break;
+            case TYPE_CHAR:
+                name = "CHAR";
                 break;
             case TYPE_INT:
                 name = "INT";

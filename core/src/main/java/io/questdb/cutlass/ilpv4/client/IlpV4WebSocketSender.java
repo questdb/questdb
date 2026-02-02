@@ -591,6 +591,21 @@ public class IlpV4WebSocketSender implements Sender {
         return this;
     }
 
+    /**
+     * Adds an INT column value to the current row.
+     *
+     * @param columnName the column name
+     * @param value      the int value
+     * @return this sender for method chaining
+     */
+    public IlpV4WebSocketSender intColumn(CharSequence columnName, int value) {
+        checkNotClosed();
+        checkTableSelected();
+        IlpV4TableBuffer.ColumnBuffer col = currentTableBuffer.getOrCreateColumn(columnName.toString(), TYPE_INT, false);
+        col.addInt(value);
+        return this;
+    }
+
     @Override
     public IlpV4WebSocketSender doubleColumn(CharSequence columnName, double value) {
         checkNotClosed();
@@ -610,9 +625,24 @@ public class IlpV4WebSocketSender implements Sender {
     }
 
     /**
+     * Adds a SHORT column value to the current row.
+     *
+     * @param columnName the column name
+     * @param value      the short value
+     * @return this sender for method chaining
+     */
+    public IlpV4WebSocketSender shortColumn(CharSequence columnName, short value) {
+        checkNotClosed();
+        checkTableSelected();
+        IlpV4TableBuffer.ColumnBuffer col = currentTableBuffer.getOrCreateColumn(columnName.toString(), TYPE_SHORT, false);
+        col.addShort(value);
+        return this;
+    }
+
+    /**
      * Adds a CHAR column value to the current row.
      * <p>
-     * CHAR is stored as a 2-byte SHORT (UTF-16 code unit) in QuestDB.
+     * CHAR is stored as a 2-byte UTF-16 code unit in QuestDB.
      *
      * @param columnName the column name
      * @param value      the character value
@@ -621,7 +651,7 @@ public class IlpV4WebSocketSender implements Sender {
     public IlpV4WebSocketSender charColumn(CharSequence columnName, char value) {
         checkNotClosed();
         checkTableSelected();
-        IlpV4TableBuffer.ColumnBuffer col = currentTableBuffer.getOrCreateColumn(columnName.toString(), TYPE_SHORT, false);
+        IlpV4TableBuffer.ColumnBuffer col = currentTableBuffer.getOrCreateColumn(columnName.toString(), TYPE_CHAR, false);
         col.addShort((short) value);
         return this;
     }

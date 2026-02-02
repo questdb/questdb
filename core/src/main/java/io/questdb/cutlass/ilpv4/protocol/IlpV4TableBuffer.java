@@ -1037,6 +1037,7 @@ public class IlpV4TableBuffer {
                         byteValues[valueCount++] = 0;
                         break;
                     case TYPE_SHORT:
+                    case TYPE_CHAR:
                         shortValues[valueCount++] = 0;
                         break;
                     case TYPE_INT:
@@ -1186,6 +1187,7 @@ public class IlpV4TableBuffer {
                     byteValues = new byte[cap];
                     break;
                 case TYPE_SHORT:
+                case TYPE_CHAR:
                     shortValues = new short[cap];
                     break;
                 case TYPE_INT:
@@ -1252,6 +1254,7 @@ public class IlpV4TableBuffer {
                     byteValues = Arrays.copyOf(byteValues, newCap);
                     break;
                 case TYPE_SHORT:
+                case TYPE_CHAR:
                     shortValues = Arrays.copyOf(shortValues, newCap);
                     break;
                 case TYPE_INT:

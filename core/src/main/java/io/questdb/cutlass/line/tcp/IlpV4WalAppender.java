@@ -539,6 +539,7 @@ public class IlpV4WalAppender implements QuietCloseable {
             case TYPE_BOOLEAN -> ColumnType.BOOLEAN;
             case TYPE_BYTE -> ColumnType.BYTE;
             case TYPE_SHORT -> ColumnType.SHORT;
+            case TYPE_CHAR -> ColumnType.CHAR;
             case TYPE_INT -> ColumnType.INT;
             case TYPE_LONG -> ColumnType.LONG;
             case TYPE_FLOAT -> ColumnType.FLOAT;
@@ -575,7 +576,7 @@ public class IlpV4WalAppender implements QuietCloseable {
             case ColumnType.LONG -> TYPE_LONG;
             case ColumnType.FLOAT -> TYPE_FLOAT;
             case ColumnType.DOUBLE -> TYPE_DOUBLE;
-            case ColumnType.CHAR -> TYPE_STRING;
+            case ColumnType.CHAR -> TYPE_CHAR;
             case ColumnType.STRING -> TYPE_STRING;
             case ColumnType.VARCHAR -> TYPE_VARCHAR;
             case ColumnType.SYMBOL -> TYPE_SYMBOL;

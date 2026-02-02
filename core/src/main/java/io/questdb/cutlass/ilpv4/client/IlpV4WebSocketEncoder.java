@@ -375,6 +375,7 @@ public class IlpV4WebSocketEncoder implements QuietCloseable {
                 writeByteColumn(col.getByteValues(), valueCount);
                 break;
             case TYPE_SHORT:
+            case TYPE_CHAR:
                 writeShortColumn(col.getShortValues(), valueCount);
                 break;
             case TYPE_INT:
@@ -456,6 +457,7 @@ public class IlpV4WebSocketEncoder implements QuietCloseable {
                     writeByteColumn(col.getByteValues(), valueCount);
                     break;
                 case TYPE_SHORT:
+                case TYPE_CHAR:
                     writeShortColumn(col.getShortValues(), valueCount);
                     break;
                 case TYPE_INT:

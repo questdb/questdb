@@ -157,6 +157,7 @@ public final class IlpV4FixedWidthColumnCursor implements IlpV4ColumnCursor {
                 currentLong = Unsafe.getUnsafe().getByte(address);
                 break;
             case TYPE_SHORT:
+            case TYPE_CHAR:
                 currentLong = Unsafe.getUnsafe().getShort(address);
                 break;
             case TYPE_INT:
