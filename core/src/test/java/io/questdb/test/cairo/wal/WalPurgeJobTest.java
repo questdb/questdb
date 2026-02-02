@@ -38,7 +38,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
-import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
@@ -148,15 +147,13 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
-            assertWalLockEngagement(true, tableName, 1);
-            assertSegmentLockEngagement(false, tableName, 1, 0);  // Old segment is unlocked.
-            assertSegmentLockEngagement(true, tableName, 1, 1);
+            assertWalLocked(tableName, 1);
+            // Current segment (1) is locked by the writer
+            assertSegmentLocked(tableName, 1, 1);
 
             // Release WAL and segments.
             engine.releaseInactive();
-            assertWalLockEngagement(false, tableName, 1);
-            assertSegmentLockEngagement(false, tableName, 1, 0);
-            assertSegmentLockEngagement(false, tableName, 1, 1);
+            assertWalNotLocked(tableName, 1);
 
             // The segments are not going to be cleaned up despite being both unlocked.
             drainPurgeJob();
@@ -179,11 +176,8 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     "2\t2022-02-24T00:00:01.000000Z\tx\n", tableName);
             drainPurgeJob();
             assertWalExistence(false, tableName, 1);
-            assertWalLockExistence(false, tableName, 1);
             assertSegmentExistence(false, tableName, 1, 0);
-            assertSegmentLockExistence(false, tableName, 1, 0);
             assertSegmentExistence(false, tableName, 1, 1);
-            assertSegmentLockExistence(false, tableName, 1, 1);
         });
     }
 
@@ -235,7 +229,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 assertWalExistence(false, tableName, 2);
                 assertSegmentExistence(true, tableName, 1, 0);
                 assertSegmentExistence(false, tableName, 1, 1);
-                assertSegmentLockEngagement(true, tableName, 1, 0);
+                assertSegmentLocked(tableName, 1, 0);
 
                 addColumn(walWriter1, "i1");
                 TableWriter.Row row2 = walWriter1.newRow(MicrosTimestampDriver.floor("2022-02-25"));
@@ -246,8 +240,8 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 // We assert that we've created a new segment.
                 assertSegmentExistence(true, tableName, 1, 0);
                 assertSegmentExistence(true, tableName, 1, 1);
-                assertSegmentLockEngagement(false, tableName, 1, 0);
-                assertSegmentLockEngagement(true, tableName, 1, 1);
+                // Current segment (1) is locked
+                assertSegmentLocked(tableName, 1, 1);
 
                 // We commit the segment to the sequencer.
                 walWriter1.commit();
@@ -273,8 +267,8 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
                     assertSegmentExistence(true, tableName, 2, 0);
                     assertSegmentExistence(true, tableName, 2, 1);
-                    assertSegmentLockEngagement(false, tableName, 2, 0);
-                    assertSegmentLockEngagement(true, tableName, 2, 1);
+                    // Current segment (1) is locked
+                    assertSegmentLocked(tableName, 2, 1);
 
                     walWriter2.commit();
 
@@ -288,24 +282,22 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
                     assertWalExistence(true, tableName, 1);
                     assertSegmentExistence(true, tableName, 1, 0);
-                    assertSegmentLockEngagement(false, tableName, 1, 0);
                     assertSegmentExistence(true, tableName, 1, 1);
-                    assertSegmentLockEngagement(true, tableName, 1, 1);  // wal1/1 locked
+                    assertSegmentLocked(tableName, 1, 1);  // wal1/1 locked
                     assertWalExistence(true, tableName, 2);
                     assertSegmentExistence(true, tableName, 2, 0);
-                    assertSegmentLockEngagement(false, tableName, 2, 0);
                     assertSegmentExistence(true, tableName, 2, 1);
-                    assertSegmentLockEngagement(true, tableName, 2, 1);  // wal2/1 locked
+                    assertSegmentLocked(tableName, 2, 1);  // wal2/1 locked
                     TestUtils.drainPurgeJob(engine, testFF);
-                    assertSegmentLockEngagement(true, tableName, 1, 1);
+                    assertSegmentLocked(tableName, 1, 1);
                     assertWalExistence(true, tableName, 1);
                     assertSegmentExistence(false, tableName, 1, 0);  // DELETED
                     assertSegmentExistence(true, tableName, 1, 1);  // wal1/1 kept
-                    assertSegmentLockEngagement(true, tableName, 1, 1);  // wal1/1 locked
+                    assertSegmentLocked(tableName, 1, 1);  // wal1/1 locked
                     assertWalExistence(true, tableName, 2);
-                    assertSegmentExistence(false, tableName, 2, 0);  // Segment wal2/0 is applied and inactive (unlocked)
+                    assertSegmentExistence(false, tableName, 2, 0);  // DELETED
                     assertSegmentExistence(true, tableName, 2, 1);  // wal2/1 kept
-                    assertSegmentLockEngagement(true, tableName, 2, 1);  // wal2/1 locked
+                    assertSegmentLocked(tableName, 2, 1);  // wal2/1 locked
                 }
             }
         });
@@ -393,45 +385,65 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     @Test
     public void testLastSegmentUnlockedPrevLocked() {
         /*
-          discovered=[
-              (1,1),(1,2),(1,3),(1,4),(1,5),(1,6:locked),(1,7),(wal1:locked),
-              (2,0),(2,1),(2,2),(2,3),(2,4:locked),(wal2:locked),
-              (3,0),(3,1),(3,2),(3,3:locked),(wal3:locked),
-              (4,0),(4,1),(4,2),(4,3),(4,4),(4,5),(4,6:locked),(wal4:locked)],
-          nextToApply=[
-              (1,1),(2,0),(3,0),(4,0)]
+          Test WAL purge logic when a writer is active (isLocked=false).
+
+          isLocked=false means either:
+          - A writer is present (lockPurge returned maxSegmentLocked != SEG_NONE_ID), OR
+          - Some segments have pending tasks
+
+          WAL 1: segments 1-7, writer active at segment 6, maxSegmentLocked = 5
+          WAL 2: segments 0-4, writer active at segment 4, maxSegmentLocked = 3
+          WAL 3: segments 0-3, writer active at segment 3, maxSegmentLocked = 2
+          WAL 4: segments 0-6, writer active at segment 6, maxSegmentLocked = 5
+
+          nextToApply: (1,1), (2,0), (3,0), (4,0)
+
+          Nothing should be deleted since nextToApply matches the first segment of each WAL.
          */
         TestDeleter deleter = new TestDeleter();
         WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
         TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
         logic.reset(tableToken);
-        logic.trackDiscoveredSegment(1, 1, 1);
-        logic.trackDiscoveredSegment(1, 2, 2);
-        logic.trackDiscoveredSegment(1, 3, 3);
-        logic.trackDiscoveredSegment(1, 4, 4);
-        logic.trackDiscoveredSegment(1, 5, 5);
-        logic.trackDiscoveredSegment(1, 6, -1);
-        logic.trackDiscoveredSegment(1, 7, 6);
-        logic.trackDiscoveredWal(1, -1);
-        logic.trackDiscoveredSegment(2, 0, 7);
-        logic.trackDiscoveredSegment(2, 1, 8);
-        logic.trackDiscoveredSegment(2, 2, 9);
-        logic.trackDiscoveredSegment(2, 3, 10);
-        logic.trackDiscoveredSegment(2, 4, -1);
-        logic.trackDiscoveredWal(2, -1);
-        logic.trackDiscoveredSegment(3, 0, 11);
-        logic.trackDiscoveredSegment(3, 1, 12);
-        logic.trackDiscoveredSegment(3, 2, 13);
-        logic.trackDiscoveredSegment(3, 3, -1);
-        logic.trackDiscoveredWal(3, -1);
-        logic.trackDiscoveredSegment(4, 0, 14);
-        logic.trackDiscoveredSegment(4, 1, 15);
-        logic.trackDiscoveredSegment(4, 2, 16);
-        logic.trackDiscoveredSegment(4, 3, 17);
-        logic.trackDiscoveredSegment(4, 4, 18);
-        logic.trackDiscoveredSegment(4, 5, 19);
-        logic.trackDiscoveredSegment(4, 6, -1);
-        logic.trackDiscoveredWal(4, -1);
+
+        // WAL 1: segments 1-7, writer active, maxSegmentLocked = 5
+        int idx1 = logic.trackDiscoveredWal(1);
+        logic.trackDiscoveredSegment(1, true);   // purgeable
+        logic.trackDiscoveredSegment(2, true);   // purgeable
+        logic.trackDiscoveredSegment(3, true);   // purgeable
+        logic.trackDiscoveredSegment(4, true);   // purgeable
+        logic.trackDiscoveredSegment(5, true);   // purgeable
+        logic.trackDiscoveredSegment(6, false);  // writer active here
+        logic.trackDiscoveredSegment(7, false);  // writer active here
+        logic.endWalTracking(idx1, 5, false);    // isLocked=false: writer is active
+
+        // WAL 2: segments 0-4, writer active, maxSegmentLocked = 3
+        int idx2 = logic.trackDiscoveredWal(2);
+        logic.trackDiscoveredSegment(0, true);   // purgeable
+        logic.trackDiscoveredSegment(1, true);   // purgeable
+        logic.trackDiscoveredSegment(2, true);   // purgeable
+        logic.trackDiscoveredSegment(3, true);   // purgeable
+        logic.trackDiscoveredSegment(4, false);  // writer active here
+        logic.endWalTracking(idx2, 3, false);    // isLocked=false: writer is active
+
+        // WAL 3: segments 0-3, writer active, maxSegmentLocked = 2
+        int idx3 = logic.trackDiscoveredWal(3);
+        logic.trackDiscoveredSegment(0, true);   // purgeable
+        logic.trackDiscoveredSegment(1, true);   // purgeable
+        logic.trackDiscoveredSegment(2, true);   // purgeable
+        logic.trackDiscoveredSegment(3, false);  // writer active here
+        logic.endWalTracking(idx3, 2, false);    // isLocked=false: writer is active
+
+        // WAL 4: segments 0-6, writer active, maxSegmentLocked = 5
+        int idx4 = logic.trackDiscoveredWal(4);
+        logic.trackDiscoveredSegment(0, true);   // purgeable
+        logic.trackDiscoveredSegment(1, true);   // purgeable
+        logic.trackDiscoveredSegment(2, true);   // purgeable
+        logic.trackDiscoveredSegment(3, true);   // purgeable
+        logic.trackDiscoveredSegment(4, true);   // purgeable
+        logic.trackDiscoveredSegment(5, true);   // purgeable
+        logic.trackDiscoveredSegment(6, false);  // writer active here
+        logic.endWalTracking(idx4, 5, false);    // isLocked=false: writer is active
+
         logic.trackNextToApplySegment(1, 1);
         logic.trackNextToApplySegment(2, 0);
         logic.trackNextToApplySegment(3, 0);
@@ -445,22 +457,32 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     @Test
     public void testLastSegmentUnlockedPrevLocked2() {
         /*
-          discovered=[
-              (1,1),(1,2:locked),(1,3),(wal1:locked),
-              (2,0:locked),(wal2:locked)],
-          nextToApply=[
-              (1,1),(2,0)]
+          Test WAL purge logic when a writer is active (isLocked=false).
+
+          WAL 1: segments 1-3, writer active at segment 2, maxSegmentLocked = 1
+          WAL 2: segment 0 only, writer active at segment 0, maxSegmentLocked = -1 (nothing purgeable)
+
+          nextToApply: (1,1), (2,0)
+
+          Nothing should be deleted since nextToApply matches the first segment of each WAL.
          */
         TestDeleter deleter = new TestDeleter();
         WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
         TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
         logic.reset(tableToken);
-        logic.trackDiscoveredSegment(1, 1, 1);
-        logic.trackDiscoveredSegment(1, 2, -1);
-        logic.trackDiscoveredSegment(1, 3, 2);
-        logic.trackDiscoveredWal(1, -1);
-        logic.trackDiscoveredSegment(2, 0, -1);
-        logic.trackDiscoveredWal(2, -1);
+
+        // WAL 1: segments 1-3, writer active, maxSegmentLocked = 1
+        int idx1 = logic.trackDiscoveredWal(1);
+        logic.trackDiscoveredSegment(1, true);   // purgeable
+        logic.trackDiscoveredSegment(2, false);  // writer active here
+        logic.trackDiscoveredSegment(3, false);  // writer active here
+        logic.endWalTracking(idx1, 1, false);   // isLocked=false: writer is active
+
+        // WAL 2: segment 0, writer active at segment 0, maxSegmentLocked = -1
+        int idx2 = logic.trackDiscoveredWal(2);
+        logic.trackDiscoveredSegment(0, false);  // writer active here
+        logic.endWalTracking(idx2, -1, false);   // isLocked=false: writer is active, nothing purgeable
+
         logic.trackNextToApplySegment(1, 1);
         logic.trackNextToApplySegment(2, 0);
         logic.run();
@@ -518,11 +540,10 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     " from long_sequence(5)" +
                     ") timestamp(ts) partition by DAY WAL");
             assertWalExistence(true, tableName, 1);
-            assertWalLockExistence(true, tableName, 1);
+            assertWalLocked(tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
-            assertSegmentLockExistence(true, tableName, 1, 0);
+            assertSegmentLocked(tableName, 1, 0);
             assertSegmentExistence(false, tableName, 1, 1);
-            assertSegmentLockExistence(false, tableName, 1, 1);
 
             // Create a second segment.
             execute("alter table " + tableName + " add column sss string");
@@ -531,7 +552,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             assertSegmentExistence(true, tableName, 1, 0);
             final File segment1DirPath = assertSegmentExistence(true, tableName, 1, 1);
             assertSegmentExistence(false, tableName, 1, 2);
-            assertSegmentLockExistence(false, tableName, 1, 2);
+            assertSegmentLocked(tableName, 1, 1);
 
             // We write a marker file to prevent the second segment "wal1/1" from being reaped.
             final File pendingDirPath = new File(segment1DirPath, WalUtils.WAL_PENDING_FS_MARKER);
@@ -552,7 +573,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             engine.releaseInactive();
 
             assertWalExistence(true, tableName, 1);
-            assertWalLockEngagement(false, tableName, 1);
+            assertWalNotLocked(tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
             assertSegmentExistence(true, tableName, 1, 2);
@@ -586,11 +607,10 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName(tableName);
             assertWalExistence(true, tableName, 1);
-            assertWalLockExistence(true, tableName, 1);
+            assertWalLocked(tableName, 1);
             final File segment0DirPath = assertSegmentExistence(true, tableName, 1, 0);
-            assertSegmentLockExistence(true, tableName, 1, 0);
+            assertSegmentLocked(tableName, 1, 0);
             assertSegmentExistence(false, tableName, 1, 1);
-            assertSegmentLockExistence(false, tableName, 1, 1);
 
             // We write a marker file to prevent the segment "wal1/0" from being reaped.
             final File pendingDirPath = new File(segment0DirPath, WalUtils.WAL_PENDING_FS_MARKER);
@@ -607,9 +627,8 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             // The table, wal and the segment are intact, but unlocked.
             assertTableExistence(true, tableToken);
             assertWalExistence(true, tableToken, 1);
-            assertWalLockEngagement(false, tableToken, 1);
+            assertWalNotLocked(tableToken, 1);
             assertSegmentExistence(true, tableToken, 1, 0);
-            assertSegmentLockEngagement(false, tableToken, 1, 0);
 
             // We remove the marker file to allow the segment directory, wal and the whole table dir to be reaped.
             Assert.assertTrue(pendingFilePath.delete());
@@ -751,19 +770,16 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertWalExistence(true, tableName, 1);
-            assertWalLockExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
-            assertSegmentLockExistence(true, tableName, 1, 0);
-            assertSegmentLockEngagement(true, tableName, 1, 0);  // Segment 0 is locked.
-            assertWalLockEngagement(true, tableName, 1);
+            assertWalLocked(tableName, 1);
+            assertSegmentLocked(tableName, 1, 0);  // Segment 0 is locked.
 
             execute("alter table " + tableName + " add column s1 string");
             execute("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z', 'x')");
-            assertWalLockEngagement(true, tableName, 1);
+            assertWalLocked(tableName, 1);
             assertSegmentExistence(true, tableName, 1, 1);
-            assertSegmentLockExistence(true, tableName, 1, 1);
-            assertSegmentLockEngagement(false, tableName, 1, 0);  // Segment 0 is unlocked.
-            assertSegmentLockEngagement(true, tableName, 1, 1);  // Segment 1 is locked.
+            // Current segment (1) is locked
+            assertSegmentLocked(tableName, 1, 1);
 
             CharSequence root = engine.getConfiguration().getDbRoot();
             try (Path path = new Path()) {
@@ -773,7 +789,8 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 Assert.assertTrue(path.toString(), ff.exists(path.$()));
 
                 drainPurgeJob();
-                assertSegmentLockExistence(false, tableName, 1, 0);
+                // Segment 0 was purged/deleted
+                assertSegmentExistence(false, tableName, 1, 0);
 
                 // "stuff" is untouched.
                 Assert.assertTrue(path.toString(), ff.exists(path.$()));
@@ -948,11 +965,10 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     " from long_sequence(5)" +
                     ") timestamp(ts) partition by DAY WAL");
             assertWalExistence(true, tableName, 1);
-            assertWalLockExistence(true, tableName, 1);
+            assertWalLocked(tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
-            assertSegmentLockExistence(true, tableName, 1, 0);
+            assertSegmentLocked(tableName, 1, 0);
             assertSegmentExistence(false, tableName, 1, 1);
-            assertSegmentLockExistence(false, tableName, 1, 1);
 
             // Altering the table doesn't create a new segment yet.
             execute("alter table " + tableName + " add column sss string");
@@ -986,17 +1002,16 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             // Purging will now clean up the inactive segmentId==0, but leave segmentId==1
             drainPurgeJob();
             assertWalExistence(true, tableName, 1);
-            assertWalLockExistence(true, tableName, 1);
+            assertWalLocked(tableName, 1);
             assertSegmentExistence(false, tableName, 1, 0);
-            assertSegmentLockExistence(false, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
-            assertSegmentLockExistence(true, tableName, 1, 1);
+            assertSegmentLocked(tableName, 1, 1);
 
             // Releasing inactive writers and purging will also delete the wal directory.
             engine.releaseInactive();
             drainPurgeJob();
             assertWalExistence(false, tableName, 1);
-            assertWalLockExistence(false, tableName, 1);
+            assertWalNotLocked(tableName, 1);
         });
     }
 
@@ -1013,7 +1028,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             getTableWriterAPI(tableName).close();
 
             assertWalExistence(true, tableName, 1);
-            assertWalLockExistence(true, tableName, 1);
+            assertWalLocked(tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
 
             // Released before committing anything to the sequencer.
@@ -1021,7 +1036,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             drainPurgeJob();
             assertWalExistence(false, tableName, 1);
-            assertWalLockExistence(false, tableName, 1);
+            assertWalNotLocked(tableName, 1);
         });
     }
 
@@ -1239,11 +1254,10 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     private static class TestDeleter implements WalPurgeJob.Deleter {
-        public final LongList closedFds = new LongList();
         public final ObjList<DeletionEvent> events = new ObjList<>();
 
         @Override
-        public void deleteSegmentDirectory(int walId, int segmentId, long lockFd) {
+        public void deleteSegmentDirectory(int walId, int segmentId) {
             events.add(new DeletionEvent(walId, segmentId));
         }
 
@@ -1253,15 +1267,12 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         }
 
         @Override
-        public void deleteWalDirectory(int walId, long lockFd) {
+        public void deleteWalDirectory(int walId) {
             events.add(new DeletionEvent(walId));
         }
 
         @Override
-        public void unlock(long lockFd) {
-            if (lockFd > -1) {
-                closedFds.add(lockFd);
-            }
+        public void unlock(int walId) {
         }
     }
 }
