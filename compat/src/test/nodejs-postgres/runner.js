@@ -403,7 +403,11 @@ if (require.main === module) {
 
     const yamlFile = process.argv[2];
     const runner = new TestRunner();
-    runner.main(yamlFile).catch(error => {
+    runner.main(yamlFile).then(async () => {
+        // Run extra tests after YAML tests complete
+        const ExtraTests = require('./ExtraTests');
+        await ExtraTests.runAll();
+    }).catch(error => {
         console.error('Error:', error);
         process.exit(1);
     });
