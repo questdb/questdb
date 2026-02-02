@@ -1043,7 +1043,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         if (resumeHandlerId == HttpRequestProcessorSelector.REJECT_PROCESSOR_ID) {
             return rejectProcessor;
         }
-        return selector.resolveProcessorById(resumeHandlerId, headerParser);
+        HttpRequestProcessor processor = selector.resolveProcessorById(resumeHandlerId, headerParser);
+        return processor != null ? processor : rejectProcessor;
     }
 
     private boolean handleClientSend(HttpRequestProcessorSelector selector) throws PeerIsSlowToReadException, ServerDisconnectException {

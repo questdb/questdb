@@ -36,9 +36,7 @@ public interface HttpRequestProcessorSelector extends Closeable {
         return REJECT_PROCESSOR_ID;
     }
 
-    default HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
-        throw new UnsupportedOperationException();
-    }
+    HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header);
 
     HttpRequestProcessor select(HttpRequestHeader requestHeader);
 }

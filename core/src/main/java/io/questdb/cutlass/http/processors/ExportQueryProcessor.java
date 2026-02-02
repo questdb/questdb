@@ -1051,22 +1051,28 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             }
         }
 
-        if (exportModel.isParquetFormat()) { // parquet use export timeout
-            state.timeout = configuration.getExportTimeout();
-        } else { // csv use query timeout
+        final long defaultTimeout;
+        // Timeout policy:
+        // - Parquet uses the dedicated export timeout.
+        // - CSV uses the circuit breaker default (query timeout). This keeps the
+        //   historical behavior where CSV is bounded by general query limits,
+        //   at the cost of a format-specific difference. If we later decide to
+        //   unify exports under a single timeout, this is the place to change.
+        if (exportModel.isParquetFormat()) {
+            defaultTimeout = configuration.getExportTimeout();
+        } else {
             NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
-            state.timeout = circuitBreaker.getDefaultMaxTime();
+            defaultTimeout = circuitBreaker.getDefaultMaxTime();
         }
+        state.timeout = defaultTimeout;
 
         DirectUtf8Sequence timeoutSeq = request.getUrlParam(URL_PARAM_TIMEOUT);
         if (timeoutSeq != null) {
             try {
-                state.timeout = Numbers.parseLong(timeoutSeq) * 1000;
-                if (state.timeout <= 0) {
-                    state.timeout = configuration.getExportTimeout();
-                }
+                long parsedTimeout = Numbers.parseLong(timeoutSeq) * 1000;
+                state.timeout = parsedTimeout > 0 ? parsedTimeout : defaultTimeout;
             } catch (NumericException ex) {
-                // Skip or stop will have default value.
+                state.timeout = defaultTimeout;
             }
         }
 

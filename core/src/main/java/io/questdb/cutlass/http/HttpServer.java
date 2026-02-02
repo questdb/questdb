@@ -409,11 +409,22 @@ public class HttpServer implements Closeable {
         @Override
         public void close() {
             Misc.freeIfCloseable(defaultRequestProcessor);
+            // Handlers may be stored in both the map and handlersByIdList; close each unique instance once.
+            ObjHashSet<HttpRequestHandler> seen = new ObjHashSet<>();
+            for (int i = 0, n = handlersByIdList.size(); i < n; i++) {
+                HttpRequestHandler handler = handlersByIdList.getQuick(i);
+                if (handler != null && seen.add(handler)) {
+                    Misc.freeIfCloseable(handler);
+                }
+            }
             ObjList<Utf8String> requestHandlerKeys = requestHandlerMap.keys();
             for (int i = 0, n = requestHandlerKeys.size(); i < n; i++) {
                 IndexedHandler entry = requestHandlerMap.get(requestHandlerKeys.getQuick(i));
                 if (entry != null) {
-                    Misc.freeIfCloseable(entry.handler());
+                    HttpRequestHandler handler = entry.handler();
+                    if (handler != null && seen.add(handler)) {
+                        Misc.freeIfCloseable(handler);
+                    }
                 }
             }
         }
@@ -425,7 +436,10 @@ public class HttpServer implements Closeable {
 
         @Override
         public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
-            return handlersByIdList.getQuick(handlerId).getProcessor(header);
+            HttpRequestHandler handler = handlerId >= 0 && handlerId < handlersByIdList.size()
+                    ? handlersByIdList.getQuick(handlerId)
+                    : null;
+            return handler != null ? handler.getProcessor(header) : null;
         }
 
         @Override

@@ -95,7 +95,6 @@ public class HttpQueryTestBuilder {
     private SecurityContext securityContext = null;
     private int sendBufferSize = -1;
     private HttpServerConfigurationBuilder serverConfigBuilder;
-    private ObjList<SqlExecutionContextImpl> sqlExecutionContexts;
     private long startWriterWaitTimeout = 500;
     private boolean telemetry;
     private String temp;
