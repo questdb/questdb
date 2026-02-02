@@ -249,8 +249,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
     /**
      * Page frame reducer for filtered markout GROUP BY.
      * <p>
-     * Applies filter first, then for each filtered master row iterates through all sequence offsets,
-     * performs ASOF JOIN lookup using MarkoutTimeFrameHelper, and aggregates results.
+     * Applies filter first, then uses sorted horizon timestamp iteration for efficient
+     * sequential ASOF lookups on filtered rows.
      * Supports both keyed and timestamp-only ASOF JOIN modes.
      */
     private static void filterAndReduce(
@@ -284,7 +284,6 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             final Map partialMap = atom.getMap(slotId);
             final RecordSink groupByKeyCopier = atom.getGroupByKeyCopier();
             final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
-            final long masterTsScale = atom.getMasterTsScale();
             final MarkoutRecord markoutRecord = atom.getCombinedRecord(slotId);
             final CompiledFilter compiledFilter = atom.getCompiledFilter();
             final Function filter = atom.getFilter(slotId);
@@ -312,70 +311,60 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             final SingleRecordSink slaveSinkTarget = atom.getSlaveSinkTarget(slotId);
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
 
-            // Process filtered rows
+            // Get horizon timestamp iterator and initialize for filtered rows
+            final HorizonTimestampIterator horizonIterator = atom.getHorizonIterator(slotId);
             record.setRowIndex(0);
             long baseRowId = record.getRowId();
+            horizonIterator.ofFiltered(record, rows, masterTimestampColumnIndex);
 
-            // Track previous master row's first offset ASOF position
-            // (master rows move forward in time, so we can start from there)
-            long prevFirstOffsetAsOfRowId = atom.getPrevFirstOffsetAsOfRowId(slotId);
-
-            for (long i = 0; i < filteredRowCount; i++) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                final long r = rows.get(i);
-                record.setRowIndex(r);
-
-                // Set bookmark to previous master row's first offset position
-                if (prevFirstOffsetAsOfRowId != Long.MIN_VALUE) {
-                    slaveTimeFrameHelper.setBookmark(prevFirstOffsetAsOfRowId);
-                } else { // Reset to search from the beginning
-                    slaveTimeFrameHelper.toTop();
-                }
-
-                prevFirstOffsetAsOfRowId = processMarkoutRow(
-                        record,
-                        baseRowId + r,
-                        atom,
-                        slaveTimeFrameHelper,
-                        asOfJoinMap,
-                        masterKeyCopier,
-                        slaveKeyCopier,
-                        masterSinkTarget,
-                        slaveSinkTarget,
-                        slaveRecord,
-                        markoutRecord,
-                        partialMap,
-                        groupByKeyCopier,
-                        functionUpdater,
-                        masterTimestampColumnIndex,
-                        sequenceRowCount,
-                        masterTsScale
-                );
+            // Set bookmark from previous frame's last position
+            long prevAsOfRowId = atom.getPrevFirstOffsetAsOfRowId(slotId);
+            if (prevAsOfRowId != Long.MIN_VALUE) {
+                slaveTimeFrameHelper.setBookmark(prevAsOfRowId);
+            } else {
+                slaveTimeFrameHelper.toTop();
             }
 
-            // Cache previous master row's first offset ASOF position,
-            // so that we don't find position for the first offset for
-            // the next frame from scratch.
-            atom.setPrevFirstOffsetAsOfRowId(slotId, prevFirstOffsetAsOfRowId);
+            // Process horizon timestamps in sorted order for sequential ASOF lookups
+            processSortedHorizonTimestamps(
+                    slotId,
+                    horizonIterator,
+                    record,
+                    baseRowId,
+                    atom,
+                    slaveTimeFrameHelper,
+                    asOfJoinMap,
+                    masterKeyCopier,
+                    slaveKeyCopier,
+                    masterSinkTarget,
+                    slaveSinkTarget,
+                    slaveRecord,
+                    markoutRecord,
+                    partialMap,
+                    groupByKeyCopier,
+                    functionUpdater,
+                    circuitBreaker
+            );
         } finally {
             atom.release(slotId);
         }
     }
 
     /**
-     * Process a single master row through all offsets with ASOF JOIN semantics.
+     * Process all horizon timestamps in sorted order using forward scanning.
      * <p>
-     * Supports two modes:
-     * <ul>
-     *   <li>Keyed ASOF JOIN (when asOfJoinMap != null): finds ASOF position, then backward scans for key match</li>
-     *   <li>Timestamp-only ASOF JOIN: uses the ASOF position directly as the match (no key filtering)</li>
-     * </ul>
-     *
-     * @return the ASOF position (rowId) found for the first offset, for bookmark optimization
+     * This method iterates through pre-sorted (horizonTs, masterRowIdx, offsetIdx) tuples.
+     * Instead of backward-scanning from each ASOF position, it uses a forward scan approach
+     * similar to Dense ASOF: as horizon timestamps increase, scan forward through slave rows
+     * and maintain a map of (key -> latest rowId). Each slave row is scanned at most once.
+     * <p>
+     * Complexity: O(slave_rows + master_tuples) instead of O(master_tuples * avg_backward_scan).
      */
-    private static long processMarkoutRow(
+    private static void processSortedHorizonTimestamps(
+            int slotId,
+            HorizonTimestampIterator horizonIterator,
             PageFrameMemoryRecord masterRecord,
-            long masterRowId,
+            long baseRowId,
             AsyncHorizonJoinAtom atom,
             MarkoutTimeFrameHelper slaveTimeFrameHelper,
             Map asOfJoinMap,
@@ -388,149 +377,78 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             Map partialMap,
             RecordSink groupByKeyCopier,
             GroupByFunctionsUpdater functionUpdater,
-            int masterTimestampColumnIndex,
-            long sequenceRowCount,
-            long masterTsScale
+            SqlExecutionCircuitBreaker circuitBreaker
     ) {
-        final long masterTimestamp = masterRecord.getTimestamp(masterTimestampColumnIndex);
+        // Forward scan state: high water mark (last scanned slave rowId)
+        // Persisted across frames to avoid re-scanning already processed slave rows
+        long forwardScanHighWaterMark = atom.getForwardScanHighWaterMark(slotId);
 
-        // Look up cached rowId for master's join key
-        long cachedRowId = Long.MIN_VALUE;
-        if (asOfJoinMap != null && masterKeyCopier != null) {
-            MapKey cacheKey = asOfJoinMap.withKey();
-            cacheKey.put(masterRecord, masterKeyCopier);
-            MapValue cacheValue = cacheKey.findValue();
-            if (cacheValue != null) {
-                cachedRowId = cacheValue.getLong(0);
-            }
+        while (horizonIterator.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            horizonIterator.next();
 
-            // Copy master key to sink target for key comparison in backwardScanForKeyMatch
-            masterSinkTarget.clear();
-            masterKeyCopier.copy(masterRecord, masterSinkTarget);
-        }
+            final long horizonTs = horizonIterator.getHorizonTimestamp();
+            final long masterRowIdx = horizonIterator.getMasterRowIndex();
+            final int offsetIdx = horizonIterator.getOffsetIndex();
+            final long offset = atom.getOffset(offsetIdx);
 
-        // Track state across offsets
-        long prevMatchRowId = Long.MIN_VALUE;  // Last matched slave rowId (used for subsequent offsets)
-        long prevAsOfRowId = Long.MIN_VALUE;   // Last ASOF position (used when no match found)
+            // Position master record at the correct row
+            masterRecord.setRowIndex(masterRowIdx);
+            final long masterRowId = baseRowId + masterRowIdx;
 
-        // ========================================
-        // FIRST OFFSET (bootstrap) - handles cache lookup and update
-        // ========================================
-        long offset = atom.getOffset(0);
-        // Scale horizon timestamp to common unit (nanos) for cross-resolution support
-        long horizonTs0 = scaleTimestamp(masterTimestamp + offset, masterTsScale);
-
-        long match0RowId = Long.MIN_VALUE;
-        long asOfRowId0; // first offset's ASOF position for bookmark optimization
-        if (asOfJoinMap != null && masterKeyCopier != null) {
-            // Keyed ASOF JOIN: navigate to ASOF position, then backward scan for key match
-            asOfRowId0 = slaveTimeFrameHelper.findAsOfRow(horizonTs0);
-            prevAsOfRowId = asOfRowId0;
-
-            if (asOfRowId0 != Long.MIN_VALUE) {
-                // Backward scan for key match using memeq comparison, stop at cached position.
-                // Drive-by caching: cache all symbols encountered during the scan.
-                match0RowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
-                        masterSinkTarget,
-                        slaveSinkTarget,
-                        slaveKeyCopier,
-                        asOfJoinMap,
-                        cachedRowId
-                );
-
-                // Update cache with first offset's match
-                if (match0RowId != Long.MIN_VALUE) {
-                    MapKey newCacheKey = asOfJoinMap.withKey();
-                    newCacheKey.put(masterRecord, masterKeyCopier);
-                    newCacheKey.createValue().putLong(0, match0RowId);
-                    prevMatchRowId = match0RowId;
-                }
-            }
-        } else {
-            // Timestamp-only ASOF JOIN: the ASOF row IS the match (no key filtering)
-            match0RowId = slaveTimeFrameHelper.findAsOfRow(horizonTs0);
-            asOfRowId0 = match0RowId;
-            prevMatchRowId = match0RowId;
-        }
-
-        // Aggregate first offset
-        Record matchedSlaveRecord0 = null;
-        if (match0RowId != Long.MIN_VALUE) {
-            slaveTimeFrameHelper.recordAt(match0RowId);
-            matchedSlaveRecord0 = slaveRecord;
-        }
-        markoutRecord.of(masterRecord, offset, matchedSlaveRecord0);
-        aggregateRecord(markoutRecord, masterRowId, partialMap, groupByKeyCopier, functionUpdater);
-
-        // ========================================
-        // REMAINING OFFSETS
-        // ========================================
-        for (int seqIdx = 1; seqIdx < sequenceRowCount; seqIdx++) {
-            long offset0 = atom.getOffset(seqIdx);
-            // Scale horizon timestamp to common unit (nanos) for cross-resolution support
-            long horizonTs = scaleTimestamp(masterTimestamp + offset0, masterTsScale);
+            // Find ASOF row for this horizon timestamp (sequential due to sorted iteration)
+            long asOfRowId = slaveTimeFrameHelper.findAsOfRow(horizonTs);
 
             long matchRowId = Long.MIN_VALUE;
-            if (asOfJoinMap != null && masterKeyCopier != null) {
-                // Keyed ASOF JOIN: navigate forward to ASOF position, then backward scan for key match
-                long asOfRowId = slaveTimeFrameHelper.findAsOfRow(horizonTs);
-
+            if (asOfJoinMap != null && masterKeyCopier != null && slaveKeyCopier != null) {
+                // Keyed ASOF JOIN with forward scanning
                 if (asOfRowId != Long.MIN_VALUE) {
-                    // Determine stop position for backward scan
-                    long stopRowId;
-                    if (prevMatchRowId != Long.MIN_VALUE) {
-                        // Stop at previous match (can't be before it)
-                        stopRowId = prevMatchRowId;
-                    } else {
-                        // No previous match, stop at previous ASOF position (already scanned that range)
-                        stopRowId = prevAsOfRowId;
-                    }
-
-                    // Backward scan for key match using memeq comparison.
-                    // Drive-by caching: cache all symbols encountered during the scan.
-                    matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
-                            masterSinkTarget,
-                            slaveSinkTarget,
+                    // Forward scan: scan from high water mark to current ASOF position,
+                    // updating the map with all keys encountered (latest position wins)
+                    long scanResult = slaveTimeFrameHelper.forwardScanToPosition(
+                            asOfRowId,
+                            forwardScanHighWaterMark,
                             slaveKeyCopier,
-                            asOfJoinMap,
-                            stopRowId
+                            asOfJoinMap
                     );
-
-                    if (matchRowId != Long.MIN_VALUE) {
-                        // Found new match
-                        prevMatchRowId = matchRowId;
+                    if (scanResult >= 0) {
+                        forwardScanHighWaterMark = asOfRowId;
                     }
-                    // If no new match found, prevMatchRowId stays valid (its ts <= horizonTs0 < horizonTs)
 
-                    prevAsOfRowId = asOfRowId;
+                    // Look up the key in the map - O(1)
+                    MapKey cacheKey = asOfJoinMap.withKey();
+                    cacheKey.put(masterRecord, masterKeyCopier);
+                    MapValue cacheValue = cacheKey.findValue();
+
+                    if (cacheValue != null) {
+                        matchRowId = cacheValue.getLong(0);
+                    }
                 }
             } else {
-                // Timestamp-only ASOF JOIN: the ASOF row IS the match (no key filtering)
-                matchRowId = slaveTimeFrameHelper.findAsOfRow(horizonTs);
-                if (matchRowId != Long.MIN_VALUE) {
-                    prevMatchRowId = matchRowId;
-                }
+                // Timestamp-only ASOF JOIN: ASOF row IS the match
+                matchRowId = asOfRowId;
             }
 
-            // Aggregate with prevMatchRowId (may be from earlier offset or null)
+            // Aggregate the result
             Record matchedSlaveRecord = null;
-            long effectiveMatchRowId = (matchRowId != Long.MIN_VALUE) ? matchRowId : prevMatchRowId;
-            if (effectiveMatchRowId != Long.MIN_VALUE) {
-                slaveTimeFrameHelper.recordAt(effectiveMatchRowId);
+            if (matchRowId != Long.MIN_VALUE) {
+                slaveTimeFrameHelper.recordAt(matchRowId);
                 matchedSlaveRecord = slaveRecord;
             }
-            markoutRecord.of(masterRecord, offset0, matchedSlaveRecord);
+            markoutRecord.of(masterRecord, offset, matchedSlaveRecord);
             aggregateRecord(markoutRecord, masterRowId, partialMap, groupByKeyCopier, functionUpdater);
         }
 
-        return asOfRowId0;
+        // Save high water mark for next frame
+        atom.setForwardScanHighWaterMark(slotId, forwardScanHighWaterMark);
     }
 
     /**
      * Page frame reducer for markout GROUP BY.
      * <p>
-     * For each master row in the page frame, iterates through all sequence offsets,
-     * performs ASOF JOIN lookup using MarkoutTimeFrameHelper, and aggregates results.
+     * Uses sorted horizon timestamp iteration for efficient sequential ASOF lookups.
+     * For each (horizonTs, masterRowIdx, offsetIdx) tuple in sorted order,
+     * performs ASOF JOIN lookup and aggregates results.
      * Supports both keyed and timestamp-only ASOF JOIN modes.
      */
     private static void reduce(
@@ -564,7 +482,6 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             final Map partialMap = atom.getMap(slotId);
             final RecordSink groupByKeyCopier = atom.getGroupByKeyCopier();
             final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
-            final long masterTsScale = atom.getMasterTsScale();
             final MarkoutRecord markoutRecord = atom.getCombinedRecord(slotId);
 
             // Get ASOF join resources
@@ -576,50 +493,40 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             final SingleRecordSink slaveSinkTarget = atom.getSlaveSinkTarget(slotId);
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
 
-            // Process rows
+            // Get horizon timestamp iterator and initialize for this frame
+            final HorizonTimestampIterator horizonIterator = atom.getHorizonIterator(slotId);
             record.setRowIndex(0);
             long baseRowId = record.getRowId();
+            horizonIterator.of(record, 0, frameRowCount, masterTimestampColumnIndex);
 
-            // Track previous master row's first offset ASOF position
-            // (master rows move forward in time, so we can start from there)
-            long prevFirstOffsetAsOfRowId = atom.getPrevFirstOffsetAsOfRowId(slotId);
-
-            for (long r = 0; r < frameRowCount; r++) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                record.setRowIndex(r);
-
-                // Set bookmark to previous master row's first offset position
-                if (prevFirstOffsetAsOfRowId != Long.MIN_VALUE) {
-                    slaveTimeFrameHelper.setBookmark(prevFirstOffsetAsOfRowId);
-                } else { // Reset to search from the beginning
-                    slaveTimeFrameHelper.toTop();
-                }
-
-                prevFirstOffsetAsOfRowId = processMarkoutRow(
-                        record,
-                        baseRowId + r,
-                        atom,
-                        slaveTimeFrameHelper,
-                        asOfJoinMap,
-                        masterKeyCopier,
-                        slaveKeyCopier,
-                        masterSinkTarget,
-                        slaveSinkTarget,
-                        slaveRecord,
-                        markoutRecord,
-                        partialMap,
-                        groupByKeyCopier,
-                        functionUpdater,
-                        masterTimestampColumnIndex,
-                        sequenceRowCount,
-                        masterTsScale
-                );
+            // Set bookmark from previous frame's last position
+            long prevAsOfRowId = atom.getPrevFirstOffsetAsOfRowId(slotId);
+            if (prevAsOfRowId != Long.MIN_VALUE) {
+                slaveTimeFrameHelper.setBookmark(prevAsOfRowId);
+            } else {
+                slaveTimeFrameHelper.toTop();
             }
 
-            // Cache previous master row's first offset ASOF position,
-            // so that we don't find position for the first offset for
-            // the next frame from scratch.
-            atom.setPrevFirstOffsetAsOfRowId(slotId, prevFirstOffsetAsOfRowId);
+            // Process horizon timestamps in sorted order for sequential ASOF lookups
+            processSortedHorizonTimestamps(
+                    slotId,
+                    horizonIterator,
+                    record,
+                    baseRowId,
+                    atom,
+                    slaveTimeFrameHelper,
+                    asOfJoinMap,
+                    masterKeyCopier,
+                    slaveKeyCopier,
+                    masterSinkTarget,
+                    slaveSinkTarget,
+                    slaveRecord,
+                    markoutRecord,
+                    partialMap,
+                    groupByKeyCopier,
+                    functionUpdater,
+                    circuitBreaker
+            );
         } finally {
             atom.release(slotId);
         }

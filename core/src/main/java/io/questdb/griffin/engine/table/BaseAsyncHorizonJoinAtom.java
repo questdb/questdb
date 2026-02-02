@@ -109,6 +109,12 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     protected final long sequenceRowCount;
     protected final RecordSink slaveKeyCopier;
     protected final int slotCount;
+    // Per-worker horizon timestamp iterators for sorted processing
+    protected final HorizonTimestampIterator ownerHorizonIterator;
+    protected final ObjList<HorizonTimestampIterator> perWorkerHorizonIterators;
+    // Per-worker forward scan high water marks (furthest scanned slave rowId)
+    protected final LongList perWorkerForwardScanHighWaterMarks;
+    protected long ownerForwardScanHighWaterMark = Long.MIN_VALUE;
     protected long ownerPrevFirstOffsetAsOfRowId = Long.MIN_VALUE;
 
     protected BaseAsyncHorizonJoinAtom(
@@ -240,6 +246,19 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         // Used as the low boundary for the ASOF JOIN row search in the next reduced frame
         this.perWorkerPrevFirstOffsetAsOfRowIds = new LongList(slotCount);
         perWorkerPrevFirstOffsetAsOfRowIds.setAll(slotCount, Long.MIN_VALUE);
+
+        // Per-worker forward scan high water marks for sorted horizon processing;
+        // Tracks the furthest scanned slave rowId to avoid re-scanning across frames
+        this.perWorkerForwardScanHighWaterMarks = new LongList(slotCount);
+        perWorkerForwardScanHighWaterMarks.setAll(slotCount, Long.MIN_VALUE);
+        this.ownerForwardScanHighWaterMark = Long.MIN_VALUE;
+
+        // Per-worker horizon timestamp iterators for sorted processing
+        this.ownerHorizonIterator = new HorizonTimestampIterator(offsets, masterTsScale);
+        this.perWorkerHorizonIterators = new ObjList<>(slotCount);
+        for (int i = 0; i < slotCount; i++) {
+            perWorkerHorizonIterators.add(new HorizonTimestampIterator(offsets, masterTsScale));
+        }
     }
 
     @Override
@@ -266,6 +285,10 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         ownerPrevFirstOffsetAsOfRowId = Long.MIN_VALUE;
         perWorkerPrevFirstOffsetAsOfRowIds.setAll(perWorkerPrevFirstOffsetAsOfRowIds.size(), Long.MIN_VALUE);
 
+        // Clear forward scan high water marks
+        ownerForwardScanHighWaterMark = Long.MIN_VALUE;
+        perWorkerForwardScanHighWaterMarks.setAll(perWorkerForwardScanHighWaterMarks.size(), Long.MIN_VALUE);
+
         // Let subclass clear its resources
         clearAggregationState();
     }
@@ -288,6 +311,9 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         Misc.freeObjList(perWorkerSlaveSinkTargets);
         Misc.free(ownerSlaveTimeFrameCursor);
         Misc.freeObjList(perWorkerSlaveTimeFrameCursors);
+        // Horizon timestamp iterators
+        Misc.free(ownerHorizonIterator);
+        Misc.freeObjList(perWorkerHorizonIterators);
         // Filter resources
         Misc.free(compiledFilter);
         Misc.free(bindVarMemory);
@@ -339,6 +365,17 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         return perWorkerFunctionUpdaters.getQuick(slotId);
     }
 
+    /**
+     * Get the horizon timestamp iterator for the given slot.
+     * Used for sorted processing of horizon timestamps within a page frame.
+     */
+    public HorizonTimestampIterator getHorizonIterator(int slotId) {
+        if (slotId == -1) {
+            return ownerHorizonIterator;
+        }
+        return perWorkerHorizonIterators.getQuick(slotId);
+    }
+
     public RecordSink getMasterKeyCopier() {
         return masterKeyCopier;
     }
@@ -384,6 +421,21 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             return ownerPrevFirstOffsetAsOfRowId;
         }
         return perWorkerPrevFirstOffsetAsOfRowIds.getQuick(slotId);
+    }
+
+    public long getForwardScanHighWaterMark(int slotId) {
+        if (slotId == -1) {
+            return ownerForwardScanHighWaterMark;
+        }
+        return perWorkerForwardScanHighWaterMarks.getQuick(slotId);
+    }
+
+    public void setForwardScanHighWaterMark(int slotId, long rowId) {
+        if (slotId == -1) {
+            this.ownerForwardScanHighWaterMark = rowId;
+        } else {
+            perWorkerForwardScanHighWaterMarks.setQuick(slotId, rowId);
+        }
     }
 
     public long getSequenceRowCount() {
@@ -523,6 +575,10 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         // Clear previous master row's first offset ASOF positions
         ownerPrevFirstOffsetAsOfRowId = Long.MIN_VALUE;
         perWorkerPrevFirstOffsetAsOfRowIds.setAll(perWorkerPrevFirstOffsetAsOfRowIds.size(), Long.MIN_VALUE);
+
+        // Clear forward scan high water marks
+        ownerForwardScanHighWaterMark = Long.MIN_VALUE;
+        perWorkerForwardScanHighWaterMarks.setAll(perWorkerForwardScanHighWaterMarks.size(), Long.MIN_VALUE);
     }
 
     public int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {

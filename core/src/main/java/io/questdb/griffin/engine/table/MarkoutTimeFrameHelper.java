@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
@@ -44,7 +43,7 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  * (finding the last row with timestamp <= target) using a combination of
  * linear scan and binary search. Maintains bookmarks for efficient subsequent lookups.
  * <p>
- * Also supports backward scanning with key matching for proper keyed ASOF JOIN semantics.
+ * Also supports forward scanning to build key-to-rowId maps for keyed ASOF JOIN.
  */
 public class MarkoutTimeFrameHelper {
     private static final int LINEAR_SCAN_LIMIT = 64;
@@ -68,90 +67,127 @@ public class MarkoutTimeFrameHelper {
     }
 
     /**
-     * Backward scan from current position to find a row matching the given key,
-     * with drive-by caching of all symbols encountered during the scan.
+     * Forward scan from highWaterMark to targetRowId, updating the map with all keys encountered.
      * <p>
-     * The scan starts from the current position (set by findAsOfRow) and moves
-     * backward until a row with matching key is found or stopRowId is reached.
+     * This method is used for efficient sorted horizon timestamp processing. Since horizon
+     * timestamps are processed in ascending order, the ASOF positions also generally increase.
+     * By scanning forward and caching all keys, we ensure each slave row is scanned at most once.
      * <p>
-     * Drive-by caching: While scanning for the target symbol, this method caches
-     * the positions of ALL other symbols encountered. This optimization significantly
-     * improves performance when symbols are sparsely distributed, as future lookups
-     * for those symbols can use the cached positions as stop points instead of
-     * scanning from scratch.
+     * The map is updated with (key -> rowId), with later positions overwriting earlier ones.
+     * This means after scanning, the map contains the LATEST position for each key up to targetRowId.
      *
-     * @param masterSinkTarget sink containing serialized master key (already populated)
-     * @param slaveSinkTarget  sink for serializing slave key for comparison
-     * @param slaveKeyCopier   copier for slave's join key columns
-     * @param driveByCacheMap  map for drive-by caching (key -> rowId)
-     * @param stopRowId        don't scan past this rowId (exclusive), or Long.MIN_VALUE for no limit
-     * @return matched rowId, or Long.MIN_VALUE if no match found
+     * @param targetRowId     the ASOF position to scan up to (inclusive)
+     * @param highWaterMark   the last scanned position (exclusive), or Long.MIN_VALUE to start from beginning
+     * @param slaveKeyCopier  copier for slave's join key columns
+     * @param keyToRowIdMap   map to update with (key -> rowId) entries
+     * @return number of rows scanned, or -1 if targetRowId is before highWaterMark
      */
-    public long backwardScanForKeyMatch(
-            SingleRecordSink masterSinkTarget,
-            SingleRecordSink slaveSinkTarget,
+    public long forwardScanToPosition(
+            long targetRowId,
+            long highWaterMark,
             RecordSink slaveKeyCopier,
-            Map driveByCacheMap,
-            long stopRowId
+            Map keyToRowIdMap
     ) {
-        if (currentFrameIndex < 0 || currentRowIndex < 0) {
-            return Long.MIN_VALUE;
+        if (targetRowId == Long.MIN_VALUE) {
+            return 0;
         }
 
-        int frameIndex = currentFrameIndex;
-        long rowIndex = currentRowIndex;
-
-        // Make sure we're in the correct frame
-        timeFrameCursor.jumpTo(frameIndex);
-        if (timeFrameCursor.open() == 0) {
-            return Long.MIN_VALUE;
+        // If target is at or before high water mark, no scanning needed
+        if (highWaterMark != Long.MIN_VALUE && targetRowId <= highWaterMark) {
+            return 0;
         }
+
+        int targetFrameIndex = Rows.toPartitionIndex(targetRowId);
+        long targetRowIndex = Rows.toLocalRowID(targetRowId);
+
+        // Determine starting position
+        int startFrameIndex;
+        long startRowIndex;
+        if (highWaterMark == Long.MIN_VALUE) {
+            // Start from the beginning
+            timeFrameCursor.toTop();
+            if (!timeFrameCursor.next()) {
+                return 0;
+            }
+            if (timeFrameCursor.open() == 0) {
+                // Try to find first non-empty frame
+                while (timeFrameCursor.next()) {
+                    if (timeFrameCursor.open() > 0) {
+                        break;
+                    }
+                }
+                if (timeFrame.getRowHi() <= timeFrame.getRowLo()) {
+                    return 0;
+                }
+            }
+            startFrameIndex = timeFrame.getFrameIndex();
+            startRowIndex = timeFrame.getRowLo();
+        } else {
+            // Start from just after high water mark
+            startFrameIndex = Rows.toPartitionIndex(highWaterMark);
+            startRowIndex = Rows.toLocalRowID(highWaterMark) + 1;
+
+            timeFrameCursor.jumpTo(startFrameIndex);
+            if (timeFrameCursor.open() == 0) {
+                return 0;
+            }
+
+            // Check if we need to move to next frame
+            if (startRowIndex >= timeFrame.getRowHi()) {
+                if (!timeFrameCursor.next()) {
+                    return 0;
+                }
+                if (timeFrameCursor.open() == 0) {
+                    return 0;
+                }
+                startFrameIndex = timeFrame.getFrameIndex();
+                startRowIndex = timeFrame.getRowLo();
+            }
+        }
+
+        long rowsScanned = 0;
+        int frameIndex = startFrameIndex;
+        long rowIndex = startRowIndex;
 
         while (true) {
             long currentRowId = Rows.toRowID(frameIndex, rowIndex);
-            // Check if we're beyond the stop position
-            if (currentRowId < stopRowId) {
-                return Long.MIN_VALUE;
+
+            // Check if we've reached the target
+            if (currentRowId > targetRowId) {
+                break;
             }
 
-            // Position record and check key match using memeq comparison
+            // Position record and cache the key
             timeFrameCursor.recordAtRowIndex(record, rowIndex);
+            MapKey key = keyToRowIdMap.withKey();
+            key.put(record, slaveKeyCopier);
+            MapValue value = key.createValue();
+            // Always update (overwrite) - we want the LATEST position for each key
+            value.putLong(0, currentRowId);
+            rowsScanned++;
 
-            slaveSinkTarget.clear();
-            slaveKeyCopier.copy(record, slaveSinkTarget);
-            if (masterSinkTarget.memeq(slaveSinkTarget)) {
-                // Found a match!
-                setCurrentPosition(frameIndex, rowIndex);
-                return currentRowId;
+            // Check if we've reached the target
+            if (currentRowId == targetRowId) {
+                break;
             }
 
-            // Drive-by caching: cache this symbol's position for future lookups.
-            // Only cache if the key is new (first occurrence during backward scan is most recent).
-            if (driveByCacheMap != null) {
-                MapKey cacheKey = driveByCacheMap.withKey();
-                cacheKey.put(record, slaveKeyCopier);
-                MapValue cacheValue = cacheKey.createValue();
-                if (cacheValue.isNew()) {
-                    cacheValue.putLong(0, currentRowId);
-                }
-            }
-
-            // Move backward
-            rowIndex--;
-            if (rowIndex < timeFrame.getRowLo()) {
-                // Need to go to previous frame
-                if (!timeFrameCursor.prev()) {
-                    // No more frames
-                    return Long.MIN_VALUE;
+            // Move forward
+            rowIndex++;
+            if (rowIndex >= timeFrame.getRowHi()) {
+                // Move to next frame
+                if (!timeFrameCursor.next()) {
+                    break;
                 }
                 if (timeFrameCursor.open() == 0) {
-                    // Empty frame, try previous
+                    // Empty frame, try next
                     continue;
                 }
                 frameIndex = timeFrame.getFrameIndex();
-                rowIndex = timeFrame.getRowHi() - 1;
+                rowIndex = timeFrame.getRowLo();
             }
         }
+
+        return rowsScanned;
     }
 
     /**

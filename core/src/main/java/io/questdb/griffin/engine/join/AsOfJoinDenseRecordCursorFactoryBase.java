@@ -153,7 +153,6 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
         private boolean forwardScanExhausted;
         private boolean slaveCursorReadyForForwardScan;
 
-
         protected AsOfJoinDenseRecordCursorBase(
                 int columnSplit,
                 Map fwdScanKeyToRowId,
