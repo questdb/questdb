@@ -393,7 +393,8 @@ public class HttpServer implements Closeable {
         }
     }
 
-    private record IndexedHandler(HttpRequestHandler handler, int handlerId) {}
+    private record IndexedHandler(HttpRequestHandler handler, int handlerId) {
+    }
 
     private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {
 
