@@ -41,6 +41,8 @@ import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
@@ -373,6 +375,46 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         public char getChar(int col) {
             long dataPtr = dataPtrs.get(col);
             return Unsafe.getUnsafe().getChar(dataPtr + currentRowInRowGroup * 2L);
+        }
+
+        @Override
+        public void getDecimal128(int col, Decimal128 sink) {
+            long dataPtr = dataPtrs.get(col) + currentRowInRowGroup * 16L;
+            sink.ofRaw(
+                    Unsafe.getUnsafe().getLong(dataPtr),
+                    Unsafe.getUnsafe().getLong(dataPtr + 8L)
+            );
+        }
+
+        @Override
+        public short getDecimal16(int col) {
+            return getShort(col);
+        }
+
+        @Override
+        public void getDecimal256(int col, Decimal256 sink) {
+            long dataPtr = dataPtrs.get(col) + currentRowInRowGroup * 32L;
+            sink.ofRaw(
+                    Unsafe.getUnsafe().getLong(dataPtr),
+                    Unsafe.getUnsafe().getLong(dataPtr + 8L),
+                    Unsafe.getUnsafe().getLong(dataPtr + 16L),
+                    Unsafe.getUnsafe().getLong(dataPtr + 24L)
+            );
+        }
+
+        @Override
+        public int getDecimal32(int col) {
+            return getInt(col);
+        }
+
+        @Override
+        public long getDecimal64(int col) {
+            return getLong(col);
+        }
+
+        @Override
+        public byte getDecimal8(int col) {
+            return getByte(col);
         }
 
         @Override
