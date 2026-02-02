@@ -79,8 +79,8 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private final Function joinFilter;
     private final JoinRecordMetadata joinMetadata;
     private final RecordCursorFactory masterFactory;
-    private final SimpleMapValue simpleMapValue;
     private final RecordCursorFactory slaveFactory;
+    private final SimpleMapValue value;
     private final long windowHi;
     private final long windowLo;
 
@@ -109,7 +109,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             this.windowLo = windowLo;
             this.windowHi = windowHi;
             this.includePrevailing = includePrevailing;
-            this.simpleMapValue = new SimpleMapValue(columnTypes.getColumnCount());
+            this.value = new SimpleMapValue(columnTypes.getColumnCount());
             final int columnSplit = masterFactory.getMetadata().getColumnCount();
             final RecordMetadata masterMetadata = masterFactory.getMetadata();
             final RecordMetadata slaveMetadata = slaveFactory.getMetadata();
@@ -125,7 +125,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                         slaveMetadata.getTimestampType(),
                         groupByFunctions,
                         groupByFunctionsUpdater,
-                        simpleMapValue
+                        value
                 );
             } else {
                 this.cursor = new WindowJoinRecordCursor(
@@ -138,7 +138,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                         slaveMetadata.getTimestampType(),
                         groupByFunctions,
                         groupByFunctionsUpdater,
-                        simpleMapValue
+                        value
                 );
             }
         } catch (Throwable th) {
@@ -217,7 +217,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         Misc.free(cursor);
         Misc.free(joinFilter);
         Misc.free(joinMetadata);
-        Misc.free(simpleMapValue);
+        Misc.free(value);
     }
 
     private class WindowJoinRecordCursor implements NoRandomAccessRecordCursor {
@@ -225,10 +225,10 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         protected final JoinRecord internalJoinRecord;
         protected final int masterTimestampIndex;
         protected final long masterTimestampScale;
-        protected final SimpleMapValue simpleMapValue;
         protected final WindowJoinTimeFrameHelper slaveTimeFrameHelper;
         protected final int slaveTimestampIndex;
         protected final long slaveTimestampScale;
+        protected final SimpleMapValue value;
         private final GroupByAllocator allocator;
         private final int columnSplit;
         private final @Nullable IntList crossIndex;
@@ -253,7 +253,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 int slaveTimestampType,
                 @NotNull ObjList<GroupByFunction> groupByFunctions,
                 @NotNull GroupByFunctionsUpdater groupByFunctionsUpdater,
-                @NotNull SimpleMapValue simpleMapValue
+                @NotNull SimpleMapValue value
         ) {
             this.crossIndex = columnIndex;
             this.columnSplit = columnSplit;
@@ -261,7 +261,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
             GroupByUtils.setAllocator(groupByFunctions, allocator);
             this.groupByFunctionsUpdater = groupByFunctionsUpdater;
-            this.simpleMapValue = simpleMapValue;
+            this.value = value;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
             isOpen = true;
@@ -276,7 +276,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
             this.internalJoinRecord = new JoinRecord(columnSplit);
             this.groupByRecord = new VirtualRecord(groupByFunctions);
-            groupByRecord.of(simpleMapValue);
+            groupByRecord.of(value);
             this.joinRecord = new JoinRecord(columnSplit);
             if (columnIndex != null) {
                 SelectedRecord sr = new SelectedRecord(columnIndex);
@@ -330,8 +330,8 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
             long slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
 
-            groupByFunctionsUpdater.updateEmpty(simpleMapValue);
-            simpleMapValue.setNew(true);
+            groupByFunctionsUpdater.updateEmpty(value);
+            value.setNew(true);
 
             long slaveRowIndex;
             if (includePrevailing) {
@@ -354,11 +354,11 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
 
                 if (joinFilter == null || joinFilter.getBool(internalJoinRecord)) {
-                    if (simpleMapValue.isNew()) {
-                        groupByFunctionsUpdater.updateNew(simpleMapValue, internalJoinRecord, baseSlaveRowId + slaveRowIndex);
-                        simpleMapValue.setNew(false);
+                    if (value.isNew()) {
+                        groupByFunctionsUpdater.updateNew(value, internalJoinRecord, baseSlaveRowId + slaveRowIndex);
+                        value.setNew(false);
                     } else {
-                        groupByFunctionsUpdater.updateExisting(simpleMapValue, internalJoinRecord, baseSlaveRowId + slaveRowIndex);
+                        groupByFunctionsUpdater.updateExisting(value, internalJoinRecord, baseSlaveRowId + slaveRowIndex);
                     }
                 }
 
@@ -437,7 +437,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 int slaveTimestampType,
                 @NotNull ObjList<GroupByFunction> groupByFunctions,
                 @NotNull GroupByFunctionsUpdater groupByFunctionsUpdater,
-                @NotNull SimpleMapValue simpleMapValue
+                @NotNull SimpleMapValue value
         ) {
             super(
                     configuration,
@@ -449,7 +449,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                     slaveTimestampType,
                     groupByFunctions,
                     groupByFunctionsUpdater,
-                    simpleMapValue
+                    value
             );
         }
 
@@ -464,8 +464,8 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
             long slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
 
-            groupByFunctionsUpdater.updateEmpty(simpleMapValue);
-            simpleMapValue.setNew(true);
+            groupByFunctionsUpdater.updateEmpty(value);
+            value.setNew(true);
 
             long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
             final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
@@ -478,7 +478,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                         joinFilter,
                         internalJoinRecord,
                         groupByFunctionsUpdater,
-                        simpleMapValue
+                        value
                 );
                 return true;
             }
@@ -509,8 +509,8 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 slaveRowIndex++;
                 if (joinFilter.getBool(internalJoinRecord)) {
                     // - 1 is here to compensate the above increment.
-                    groupByFunctionsUpdater.updateNew(simpleMapValue, internalJoinRecord, baseSlaveRowId + slaveRowIndex - 1);
-                    simpleMapValue.setNew(false);
+                    groupByFunctionsUpdater.updateNew(value, internalJoinRecord, baseSlaveRowId + slaveRowIndex - 1);
+                    value.setNew(false);
                     needToFindPrevailing = false;
                     break;
                 }
@@ -525,7 +525,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                         joinFilter,
                         internalJoinRecord,
                         groupByFunctionsUpdater,
-                        simpleMapValue
+                        value
                 );
             }
 
@@ -548,11 +548,11 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
 
                 if (joinFilter.getBool(internalJoinRecord)) {
-                    if (simpleMapValue.isNew()) {
-                        groupByFunctionsUpdater.updateNew(simpleMapValue, internalJoinRecord, baseSlaveRowId + slaveRowIndex);
-                        simpleMapValue.setNew(false);
+                    if (value.isNew()) {
+                        groupByFunctionsUpdater.updateNew(value, internalJoinRecord, baseSlaveRowId + slaveRowIndex);
+                        value.setNew(false);
                     } else {
-                        groupByFunctionsUpdater.updateExisting(simpleMapValue, internalJoinRecord, baseSlaveRowId + slaveRowIndex);
+                        groupByFunctionsUpdater.updateExisting(value, internalJoinRecord, baseSlaveRowId + slaveRowIndex);
                     }
                 }
                 slaveRowIndex++;

@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.str.Utf8s;
 
 public class LengthVarcharFunctionFactory implements FunctionFactory {
@@ -45,8 +46,8 @@ public class LengthVarcharFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
@@ -75,5 +76,4 @@ public class LengthVarcharFunctionFactory implements FunctionFactory {
             return "length";
         }
     }
-
 }

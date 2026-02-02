@@ -95,7 +95,7 @@ public class FullBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 writer.commit();
                 Assert.assertEquals(N, writer.size());
 
-                try (FullPartitionFrameCursorFactory factory = new FullPartitionFrameCursorFactory(writer.getTableToken(), 0, GenericRecordMetadata.deepCopyOf(writer.getMetadata()), ORDER_DESC, null, 0, false)) {
+                try (FullPartitionFrameCursorFactory factory = new FullPartitionFrameCursorFactory(writer.getTableToken(), 0, GenericRecordMetadata.copyOfNew(writer.getMetadata()), ORDER_DESC, null, 0, false)) {
                     final TestTableReaderRecord record = new TestTableReaderRecord();
 
                     try (final PartitionFrameCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine), new IntList(), ORDER_DESC)) {

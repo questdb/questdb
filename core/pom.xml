@@ -37,7 +37,7 @@
         <argLine>-ea -Dfile.encoding=UTF-8 -XX:+UseParallelGC</argLine>
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
-        <web.console.version>1.1.12</web.console.version>
+        <web.console.version>1.1.13</web.console.version>
         <qdbr.path>rust/qdbr</qdbr.path>
         <qdbr.release>false</qdbr.release>
 
@@ -47,7 +47,7 @@
         <qdbr.rustflags>-D warnings</qdbr.rustflags>
     </properties>
 
-    <version>9.3.2-SNAPSHOT</version>
+    <version>9.3.3-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>

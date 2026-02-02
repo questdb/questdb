@@ -34,7 +34,7 @@ import io.questdb.std.ObjList;
 
 public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillRecordCursor {
     private final SimpleMapValuePeeker peeker;
-    private final SimpleMapValue simpleMapValue;
+    private final SimpleMapValue value;
     private boolean endFill = false;
     private boolean firstRun = true;
     private boolean gapFill = false;
@@ -50,7 +50,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
             int timestampIndex, // index of timestamp column in base cursor
             int timestampType,
             TimestampSampler timestampSampler,
-            SimpleMapValue simpleMapValue,
+            SimpleMapValue value,
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
@@ -78,9 +78,9 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
                 sampleToFunc,
                 sampleToFuncPos
         );
-        this.simpleMapValue = simpleMapValue;
-        record.of(simpleMapValue);
         this.peeker = peeker;
+        this.value = value;
+        record.of(value);
     }
 
     @Override
@@ -122,7 +122,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
             return peeker.reset();
         }
 
-        final boolean hasNext = notKeyedLoop(simpleMapValue);
+        final boolean hasNext = notKeyedLoop(value);
 
         if (baseRecord == null && sampleToFunc != timestampDriver.getTimestampConstantNull() && !endFill) {
             endFill = true;

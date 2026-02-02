@@ -25,6 +25,7 @@
 package io.questdb.network;
 
 public interface EpollFacade {
+
     int epollCreate();
 
     int epollCtl(long epfd, int op, long fd, long eventPtr);
@@ -33,11 +34,5 @@ public interface EpollFacade {
 
     int errno();
 
-    int eventFd();
-
     NetworkFacade getNetworkFacade();
-
-    long readEventFd(long fd);
-
-    int writeEventFd(long fd);
 }

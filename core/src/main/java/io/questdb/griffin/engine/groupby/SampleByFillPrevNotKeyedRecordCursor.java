@@ -30,7 +30,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.ObjList;
 
 public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordSampleByCursor {
-    private final SimpleMapValue simpleMapValue;
+    private final SimpleMapValue value;
 
     public SampleByFillPrevNotKeyedRecordCursor(
             CairoConfiguration configuration,
@@ -40,7 +40,7 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
             int timestampIndex, // index of timestamp column in base cursor
             int timestampType,
             TimestampSampler timestampSampler,
-            SimpleMapValue simpleMapValue,
+            SimpleMapValue value,
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
@@ -67,8 +67,8 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
                 sampleToFunc,
                 sampleToFuncPos
         );
-        this.simpleMapValue = simpleMapValue;
-        this.record.of(simpleMapValue);
+        this.value = value;
+        record.of(value);
     }
 
     @Override
@@ -90,6 +90,6 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
             return true;
         }
 
-        return notKeyedLoop(simpleMapValue);
+        return notKeyedLoop(value);
     }
 }

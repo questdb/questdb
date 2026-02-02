@@ -59,6 +59,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.PlanSink;
@@ -128,7 +129,6 @@ import org.junit.rules.Timeout;
 import org.junit.runner.Description;
 
 import java.io.File;
-import java.io.IOException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -1553,15 +1553,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         overrides.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, 1);
     }
 
-    protected static boolean couldObtainLock(Path path) {
-        final long lockFd = TableUtils.lock(TestFilesFacadeImpl.INSTANCE, path.$(), false);
-        if (lockFd != -1L) {
-            TestFilesFacadeImpl.INSTANCE.close(lockFd);
-            return true;  // Could lock/unlock.
-        }
-        return false;  // Could not obtain lock.
-    }
-
     protected static MatViewRefreshJob createMatViewRefreshJob() {
         return createMatViewRefreshJob(engine);
     }
@@ -2110,26 +2101,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected void assertSegmentLockEngagement(boolean expectLocked, String tableName, int walId, int segmentId) {
+    protected void assertSegmentLocked(TableToken tableToken, int walId, int segmentId) {
+        final WalLocker locker = engine.getWalLocker();
+        Assert.assertTrue(locker.isSegmentLocked(tableToken, walId, segmentId));
+    }
+
+    protected void assertSegmentLocked(String tableName, @SuppressWarnings("SameParameterValue") int walId, int segmentId) {
         TableToken tableToken = engine.verifyTableName(tableName);
-        assertSegmentLockEngagement(expectLocked, tableToken, walId, segmentId);
-    }
-
-    protected void assertSegmentLockEngagement(boolean expectLocked, TableToken tableToken, int walId, int segmentId) {
-        final CharSequence root = engine.getConfiguration().getDbRoot();
-        try (Path path = new Path()) {
-            path.of(root).concat(tableToken).concat("wal").put(walId).slash().put(segmentId).put(".lock").$();
-            final boolean could = couldObtainLock(path);
-            Assert.assertEquals(Utf8s.toString(path), expectLocked, !could);
-        }
-    }
-
-    protected void assertSegmentLockExistence(boolean expectExists, String tableName, @SuppressWarnings("SameParameterValue") int walId, int segmentId) {
-        final CharSequence root = engine.getConfiguration().getDbRoot();
-        try (Path path = new Path()) {
-            path.of(root).concat(engine.verifyTableName(tableName)).concat("wal").put(walId).slash().put(segmentId).put(".lock");
-            Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
-        }
+        assertSegmentLocked(tableToken, walId, segmentId);
     }
 
     protected void assertSql(CharSequence expected, CharSequence sql) throws SqlException {
@@ -2214,33 +2193,24 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected void assertWalLockEngagement(boolean expectLocked, String tableName, @SuppressWarnings("SameParameterValue") int walId) {
+    protected void assertWalLocked(String tableName, @SuppressWarnings("SameParameterValue") int walId) {
         TableToken tableToken = engine.verifyTableName(tableName);
-        assertWalLockEngagement(expectLocked, tableToken, walId);
+        assertWalLocked(tableToken, walId);
     }
 
-    protected void assertWalLockEngagement(boolean expectLocked, TableToken tableToken, int walId) {
-        final CharSequence root = engine.getConfiguration().getDbRoot();
-        try (Path path = new Path()) {
-            path.of(root).concat(tableToken).concat("wal").put(walId).put(".lock").$();
-            final boolean could = couldObtainLock(path);
-            Assert.assertEquals(Utf8s.toString(path), expectLocked, !could);
-        }
+    protected void assertWalLocked(TableToken tableToken, int walId) {
+        final WalLocker locker = engine.getWalLocker();
+        Assert.assertTrue(locker.isWalLocked(tableToken, walId));
     }
 
-    protected void assertWalLockExistence(boolean expectExists, String tableName, @SuppressWarnings("SameParameterValue") int walId) {
-        final CharSequence root = engine.getConfiguration().getDbRoot();
-        try (Path path = new Path()) {
-            TableToken tableToken = engine.verifyTableName(tableName);
-            path.of(root).concat(tableToken).concat("wal").put(walId).put(".lock");
-            Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
-        }
+    protected void assertWalNotLocked(String tableName, @SuppressWarnings("SameParameterValue") int walId) {
+        TableToken tableToken = engine.verifyTableName(tableName);
+        assertWalNotLocked(tableToken, walId);
     }
 
-    protected void configureForBackups() throws IOException {
-        String backupDir = temp.newFolder().getAbsolutePath();
-        node1.setProperty(PropertyKey.CAIRO_SQL_BACKUP_ROOT, backupDir);
-        node1.setProperty(PropertyKey.CAIRO_SQL_BACKUP_DIR_DATETIME_FORMAT, "ddMMMyyyy");
+    protected void assertWalNotLocked(TableToken tableToken, int walId) {
+        final WalLocker locker = engine.getWalLocker();
+        Assert.assertFalse(locker.isWalLocked(tableToken, walId));
     }
 
     protected void createPopulateTable(TableModel tableModel, int totalRows, String startDate, int partitionCount) throws NumericException, SqlException {

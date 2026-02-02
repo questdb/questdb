@@ -24,11 +24,10 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.MemoryCMARWImpl;
-import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
@@ -49,9 +48,10 @@ public final class DataID implements Sinkable {
     /**
      * The file that contains the serialized DataID value has a name that starts with a `.`
      * as this avoids a name clash with a potentially valid table name.
+     * The data within the file is stored as 16 bytes binary and follows the RFC 4122 big endian binary representation.
      */
-    public static final CharSequence FILENAME = ".data_id";
-    public static long FILE_SIZE = Long.BYTES * 2;  // Storing UUID as binary
+    public static final String FILENAME = ".data_id";
+    public static final long FILE_SIZE = Long.BYTES * 2;  // Storing UUID as binary
     private final CairoConfiguration configuration;
     private final Uuid id;
 
@@ -67,24 +67,32 @@ public final class DataID implements Sinkable {
      * @return a new data id instance.
      */
     public static DataID open(CairoConfiguration configuration) throws CairoException {
-        long lo, hi;
+        final Uuid id = readUuid(configuration.getFilesFacade(), configuration.getDbRoot());
+        return new DataID(configuration, id);
+    }
 
-        try (Path path = createDataIdPath(configuration)) {
-            final FilesFacade ff = configuration.getFilesFacade();
-            try (var mem = new MemoryCMRImpl(ff, path.$(), -1, MemoryTag.MMAP_DEFAULT)) {
-                if (mem.size() < FILE_SIZE) {
-                    // The file has an unexpected size, we represent this as a null UUID - our "uninitialized" state.
-                    lo = hi = Numbers.LONG_NULL;
-                } else {
-                    lo = mem.getLong(0);
-                    hi = mem.getLong(Long.BYTES);
-                }
-            } catch (CairoException e) {
-                // The file may not exist, we represent this as a null UUID - our "uninitialized" state.
-                lo = hi = Numbers.LONG_NULL;
-            }
+    /**
+     * Change the data id to a new value, overwriting any existing value.
+     * This should only be used after point-in-time recovery to give the
+     * recovered database a fresh identity.
+     * <p>
+     * Fails if the data id is not already initialized.
+     * </p>
+     *
+     * @param lo The low bits of the UUID value
+     * @param hi The high bits of the UUID value
+     * @throws CairoException if the data id is not initialized
+     */
+    public synchronized void change(long lo, long hi) {
+        if (!isInitialized()) {
+            throw CairoException.critical(0).put("cannot change DataID: not initialized");
         }
-        return new DataID(configuration, new Uuid(lo, hi));
+        writeUuid(configuration.getFilesFacade(), configuration.getDbRoot(), lo, hi);
+        this.id.of(lo, hi);
+    }
+
+    public Uuid get() {
+        return id;
     }
 
     public long getHi() {
@@ -96,6 +104,24 @@ public final class DataID implements Sinkable {
     }
 
     /**
+     * Initialize the data id to a new value and writes it to `.data_id`.
+     * This function should be used with care as it may lead to data losses from restore/replication.
+     *
+     * @param lo The low bits of the UUID value
+     * @param hi The high bits of the UUID value
+     * @return true if the value was initialized, or false if it could not be initialized
+     * because it was already set.
+     */
+    public boolean initialize(long lo, long hi) {
+        if (isInitialized()) {
+            return false;
+        }
+        writeUuid(configuration.getFilesFacade(), configuration.getDbRoot(), lo, hi);
+        this.id.of(lo, hi);
+        return true;
+    }
+
+    /**
      * Returns whether the data id has been initialized or not.
      *
      * @return true if the data id is initialized.
@@ -104,49 +130,91 @@ public final class DataID implements Sinkable {
         return !Uuid.isNull(id.getLo(), id.getHi());
     }
 
-    /**
-     * Set the data id to a new value and writes it to `.data_id`.
-     * This function should be used with care as it may lead to data losses from restore/replication.
-     *
-     * @param lo The low bits of the UUID value
-     * @param hi The high bits of the UUID value
-     */
-    public void set(long lo, long hi) {
-        if ((lo == id.getLo()) && (hi == id.getHi())) {
-            return;
-        }
-        try (Path path = createDataIdPath(configuration)) {
-            final FilesFacade ff = configuration.getFilesFacade();
-            try (var mem = new MemoryCMARWImpl(
-                    ff,
-                    path.$(),
-                    FILE_SIZE,
-                    -1,
-                    MemoryTag.MMAP_DEFAULT, configuration.getWriterFileOpenOpts()
-            )) {
-                mem.putLong(lo);
-                mem.putLong(hi);
-                mem.sync(false);
-                this.id.of(lo, hi);
-            }
-        }
-    }
-
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         id.toSink(sink);
     }
 
-    private static Path createDataIdPath(CairoConfiguration configuration) {
-        Path path = new Path();
-        try {
-            path.of(configuration.getDbRoot());
+    private static Uuid readUuid(FilesFacade ff, String dbRoot) {
+        final Uuid result = new Uuid(Numbers.LONG_NULL, Numbers.LONG_NULL);
+        long fd = -1;
+        long buf = 0;
+        try (
+                Path path = new Path()
+        ) {
+            path.of(dbRoot);
             path.concat(FILENAME);
-            return path;
-        } catch (Throwable t) {
-            path.close();
-            throw t;
+
+            fd = ff.openRO(path.$());
+            if (fd == -1) {
+                // File not found: Return NULL Uuid.
+                return result;
+            }
+
+            buf = Unsafe.malloc(FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+
+            // One-shot read since the file is tiny
+            final long readBytes = ff.read(fd, buf, FILE_SIZE, 0);
+            if (readBytes != FILE_SIZE) {
+                // File too small or read error: Return NULL Uuid.
+                return result;
+            }
+
+            // Read back the big-endian bytes and reverse them
+            final long hi = Long.reverseBytes(Unsafe.getUnsafe().getLong(buf));
+            final long lo = Long.reverseBytes(Unsafe.getUnsafe().getLong(buf + Long.BYTES));
+
+            result.of(lo, hi);
+            return result;
+        } finally {
+            if (fd != -1) {
+                ff.close(fd);
+            }
+
+            if (buf != 0) {
+                Unsafe.free(buf, FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
         }
     }
 
+    private static void writeUuid(FilesFacade ff, String dbRoot, long lo, long hi) {
+        long fd = -1;
+        long buf = 0;
+        try (
+                Path path = new Path()
+        ) {
+            path.of(dbRoot);
+            path.concat(FILENAME);
+
+            fd = TableUtils.openFileRWOrFail(ff, path.$(), 0);
+
+            // Truncate to nothing. This handles the case of a previous partial write.
+            if (!ff.truncate(fd, 0)) {
+                throw CairoException.critical(ff.errno())
+                        .put("cannot truncate DataID before writing [fd=").put(fd).put(", path=").put(path).put(']');
+            }
+
+            buf = Unsafe.malloc(FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.getUnsafe().putLong(buf, Long.reverseBytes(hi));
+            Unsafe.getUnsafe().putLong(buf + Long.BYTES, Long.reverseBytes(lo));
+
+            // One-shot, no partial-write loop since the file is tiny and significantly smaller than any OS file
+            // buffers, which would be at least one page.
+            final long written = ff.write(fd, buf, FILE_SIZE, 0);
+            if (written != FILE_SIZE) {
+                throw CairoException.critical(ff.errno())
+                        .put("cannot write DataID [fd=").put(fd).put(", path=").put(path).put(']');
+            }
+
+            ff.fsync(fd);
+        } finally {
+            if (fd != -1) {
+                ff.close(fd);
+            }
+
+            if (buf != 0) {
+                Unsafe.free(buf, FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
+    }
 }

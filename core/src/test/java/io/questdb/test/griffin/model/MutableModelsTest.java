@@ -276,6 +276,7 @@ public class MutableModelsTest {
         model.setFillFrom(newExpressionNode());
         model.setFillStride(newExpressionNode());
         model.setAllowPropagationOfOrderByAdvice(false);
+        model.getAliasSequenceMap().put("foobar", 1);
         assertDifferentFromFresh(model, QueryModel.FACTORY.newInstance());
 
         model.clear();

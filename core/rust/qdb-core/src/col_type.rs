@@ -21,7 +21,7 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-use crate::error::{fmt_err, CoreError, CoreErrorExt, CoreResult};
+use crate::error::{CoreError, CoreErrorExt, CoreResult, fmt_err};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt::{Debug, Display, Formatter};
 use std::num::NonZeroI32;
@@ -177,7 +177,7 @@ impl ColumnTypeTag {
     // of constructing an invalid `ColumnType`, e.g. one without the appropriate
     // extra type info for Geo types.
     #[cfg(test)]
-    pub(crate) fn into_type(self) -> ColumnType {
+    pub(crate) const fn into_type(self) -> ColumnType {
         ColumnType::new(self, 0)
     }
 }
@@ -267,7 +267,8 @@ impl ColumnType {
     }
 
     pub fn is_designated_timestamp_ascending(&self) -> bool {
-        self.is_designated() && (self.code.get() & TYPE_FLAG_DESIGNATED_TIMESTAMP_ORDER_DESCENDING) == 0
+        self.is_designated()
+            && (self.code.get() & TYPE_FLAG_DESIGNATED_TIMESTAMP_ORDER_DESCENDING) == 0
     }
 
     pub fn into_designated(self) -> CoreResult<ColumnType> {
@@ -298,7 +299,12 @@ impl ColumnType {
                 self
             ));
         }
-        let code = NonZeroI32::new(self.code() & !(TYPE_FLAG_DESIGNATED_TIMESTAMP | TYPE_FLAG_DESIGNATED_TIMESTAMP_ORDER_DESCENDING)).unwrap();
+        let code = NonZeroI32::new(
+            self.code()
+                & !(TYPE_FLAG_DESIGNATED_TIMESTAMP
+                    | TYPE_FLAG_DESIGNATED_TIMESTAMP_ORDER_DESCENDING),
+        )
+        .unwrap();
         Ok(Self { code })
     }
 
@@ -338,6 +344,10 @@ impl ColumnType {
     pub fn has_flag(&self, flag: i32) -> bool {
         let flag_shifted: i32 = flag << 8;
         self.code.get() & flag_shifted == flag_shifted
+    }
+
+    pub fn is_symbol(&self) -> bool {
+        self.tag() == ColumnTypeTag::Symbol
     }
 }
 

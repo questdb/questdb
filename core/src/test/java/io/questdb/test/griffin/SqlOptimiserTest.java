@@ -42,7 +42,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import static io.questdb.griffin.SqlOptimiser.aliasAppearsInFuncArgs;
-import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.*;
 
 public class SqlOptimiserTest extends AbstractSqlParserTest {
     private static final String orderByAdviceDdl = """
@@ -475,6 +475,35 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     Frame forward scan on: y
                             """
             );
+        });
+    }
+
+    @Test
+    public void testFirstLastTimestampFunctionAsArgument() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
+            String queryTemplate = "select dateadd('m', -15, %s(ts)) from y";
+            String[] functions = {"first", "last", "min", "max"};
+            String[] scanDirection = {"forward", "backward", "forward", "backward"};
+            String modelTemplate = "select-virtual dateadd('m', -(15), %s) dateadd from (select-choose [ts %s] ts %s from (select [ts] from y timestamp (ts))%s limit 1)";
+            String planTemplate = """
+                    VirtualRecord
+                      functions: [dateadd('m',-15,%s)]
+                        Limit value: 1 skip-rows: 0 take-rows: 0
+                            SelectedRecord
+                                PageFrame
+                                    Row %s scan
+                                    Frame %s scan on: y
+                    """;
+            for (int i = 0; i < functions.length; i++) {
+                String query = String.format(queryTemplate, functions[i]);
+                QueryModel model = compileModel(query);
+                TestUtils.assertEquals(String.format(modelTemplate, functions[i], functions[i], functions[i], i % 2 == 1 ? String.format(" order by %s desc", functions[i]) : ""), model.toString0());
+                assertPlanNoLeakCheck(
+                        query,
+                        String.format(planTemplate, functions[i], scanDirection[i], scanDirection[i])
+                );
+            }
         });
     }
 
@@ -5252,6 +5281,352 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testTimestampDateaddBasicQuery() throws Exception {
+        // Verify basic dateadd query works correctly and timestamp is auto-detected
+        // The dateadd on the designated timestamp is recognized and 'ts' becomes the timestamp column
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
+            execute("insert into trades values (100, 10, '2022-01-01T00:00:00.000000Z');");
+            execute("insert into trades values (150, 20, '2022-06-15T12:00:00.000000Z');");
+            execute("insert into trades values (200, 30, '2023-01-01T00:00:00.000000Z');");
+
+            // Query without explicit timestamp() annotation - timestamp is auto-detected from dateadd
+            final String query = "SELECT dateadd('h', -1, timestamp) as ts, price, amount FROM trades";
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tprice\tamount
+                            2021-12-31T23:00:00.000000Z\t100.0\t10.0
+                            2022-06-15T11:00:00.000000Z\t150.0\t20.0
+                            2022-12-31T23:00:00.000000Z\t200.0\t30.0
+                            """,
+                    query,
+                    "ts",  // ts is now the timestamp column (auto-detected from dateadd)
+                    true,  // supports random access
+                    true   // expect size
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampOffsetRewriteModelBasic() throws Exception {
+        // Test that and_offset wrapper appears in the model when pushing predicates through offset models
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
+
+            final String query = """
+                    SELECT * FROM (
+                        (SELECT dateadd('h', -1, timestamp) as ts, price, amount FROM trades)
+                        timestamp (ts)
+                    ) WHERE ts in '2022'
+                    """;
+
+            final QueryModel model = compileModel(query);
+            String modelStr = model.toString0();
+
+            // Verify that and_offset is present in the nested model's WHERE clause
+            // The predicate should be pushed with and_offset wrapper
+            assertTrue("Expected and_offset in model: " + modelStr,
+                    modelStr.contains("and_offset"));
+            assertTrue("Expected timestamp column reference in and_offset: " + modelStr,
+                    modelStr.contains("timestamp in '2022'") || modelStr.contains("timestamp in \"2022\""));
+        });
+    }
+
+    @Test
+    public void testTimestampOffsetRewriteModelDaysUnit() throws Exception {
+        // Test and_offset with day units
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
+
+            final String query = """
+                    SELECT * FROM (
+                        (SELECT dateadd('d', -3, timestamp) as ts, price, amount FROM trades)
+                        timestamp (ts)
+                    ) WHERE ts >= '2022-01-01' AND ts < '2022-12-31'
+                    """;
+
+            final QueryModel model = compileModel(query);
+            String modelStr = model.toString0();
+
+            // Verify and_offset with day unit
+            assertTrue("Expected and_offset in model: " + modelStr,
+                    modelStr.contains("and_offset"));
+            // The unit should be 'd' for days
+            assertTrue("Expected day unit 'd' in and_offset: " + modelStr,
+                    modelStr.contains("'d'") || modelStr.contains("d,"));
+        });
+    }
+
+    @Test
+    public void testTimestampOffsetRewriteModelNoOffsetNoPush() throws Exception {
+        // Test that without dateadd, predicates are NOT wrapped in and_offset
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
+
+            // Query without dateadd - just column rename
+            final String query = """
+                    SELECT * FROM (
+                        (SELECT timestamp as ts, price, amount FROM trades)
+                        timestamp (ts)
+                    ) WHERE ts in '2022'
+                    """;
+
+            final QueryModel model = compileModel(query);
+            String modelStr = model.toString0();
+
+            // Should NOT have and_offset since there's no dateadd transformation
+            assertFalse("Should NOT have and_offset without dateadd: " + modelStr,
+                    modelStr.contains("and_offset"));
+        });
+    }
+
+    @Test
+    public void testTimestampOffsetRewriteModelNonConstantNotWrapped() throws Exception {
+        // Test that non-constant dateadd offsets do NOT get and_offset wrapper
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, offset_val int, timestamp timestamp) timestamp(timestamp);");
+
+            // Query with non-constant offset
+            final String query = """
+                    SELECT * FROM (
+                        (SELECT dateadd('h', offset_val, timestamp) as ts, price, amount FROM trades)
+                        timestamp (ts)
+                    ) WHERE ts in '2022'
+                    """;
+
+            final QueryModel model = compileModel(query);
+            String modelStr = model.toString0();
+
+            // Should NOT have and_offset since offset is not constant
+            assertFalse("Should NOT have and_offset with non-constant offset: " + modelStr,
+                    modelStr.contains("and_offset"));
+        });
+    }
+
+    @Test
+    public void testTimestampOffsetRewriteModelWithPositiveOffset() throws Exception {
+        // Test and_offset with positive offset (+1 hour in dateadd means -1 in and_offset)
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
+
+            final String query = """
+                    SELECT * FROM (
+                        (SELECT dateadd('h', 1, timestamp) as ts, price, amount FROM trades)
+                        timestamp (ts)
+                    ) WHERE ts >= '2022-01-01'
+                    """;
+
+            final QueryModel model = compileModel(query);
+            String modelStr = model.toString0();
+
+            // Verify and_offset with offset value -1 (inverse of +1)
+            assertTrue("Expected and_offset in model: " + modelStr,
+                    modelStr.contains("and_offset"));
+        });
+    }
+
+    @Test
+    public void testTimestampPredicateNotPushedWithoutOffset() throws Exception {
+        // Test that regular timestamp predicates still work normally
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
+            execute("insert into trades values (100, 10, '2022-01-01T00:00:00.000000Z');");
+            execute("insert into trades values (150, 20, '2022-06-15T12:00:00.000000Z');");
+            execute("insert into trades values (200, 30, '2023-01-01T00:00:00.000000Z');");
+
+            // Query without dateadd - just a direct column rename
+            final String query = """
+                    SELECT * FROM (
+                        (SELECT timestamp as ts, price, amount FROM trades)
+                        timestamp (ts)
+                    ) WHERE ts in '2022'
+                    """;
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tprice\tamount
+                            2022-01-01T00:00:00.000000Z\t100.0\t10.0
+                            2022-06-15T12:00:00.000000Z\t150.0\t20.0
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampPredicatePushdownMultiplePredicates() throws Exception {
+        // Test with multiple timestamp predicates
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
+            execute("insert into trades values (100, 10, '2022-01-01T10:00:00.000000Z');");
+            execute("insert into trades values (150, 20, '2022-06-15T12:00:00.000000Z');");
+            execute("insert into trades values (200, 30, '2022-12-31T23:00:00.000000Z');");
+
+            final String query = """
+                    SELECT * FROM (
+                        (SELECT dateadd('h', -1, timestamp) as ts, price, amount FROM trades)
+                        timestamp (ts)
+                    ) WHERE ts >= '2022-01-01T08:00:00' AND ts < '2022-06-15T12:00:00'
+                    """;
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tprice\tamount
+                            2022-01-01T09:00:00.000000Z\t100.0\t10.0
+                            2022-06-15T11:00:00.000000Z\t150.0\t20.0
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampPredicatePushdownNonConstantOffsetNotPushed() throws Exception {
+        // Test that non-constant dateadd offsets are not pushed
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, offset_val int, timestamp timestamp) timestamp(timestamp);");
+            execute("insert into trades values (100, 10, 1, '2022-01-01T00:00:00.000000Z');");
+
+            // Query with non-constant offset (should not be pushed)
+            final String query = """
+                    SELECT * FROM (
+                        (SELECT dateadd('h', offset_val, timestamp) as ts, price, amount FROM trades)
+                        timestamp (ts)
+                    ) WHERE ts in '2022'
+                    """;
+
+            // This query should still work, just without optimization
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tprice\tamount
+                            2022-01-01T01:00:00.000000Z\t100.0\t10.0
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampPredicatePushdownWithDateaddOffset() throws Exception {
+        // Basic test: predicate on virtual timestamp column derived from dateadd should be pushed down
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
+            execute("insert into trades values (100, 10, '2022-01-01T00:00:00.000000Z');");
+            execute("insert into trades values (150, 20, '2022-06-15T12:00:00.000000Z');");
+            execute("insert into trades values (200, 30, '2023-01-01T00:00:00.000000Z');");
+
+            // Query with dateadd -1 hour offset on timestamp
+            // When ts = dateadd('h', -1, timestamp), a row with timestamp = '2023-01-01T00:00:00' has ts = '2022-12-31T23:00:00'
+            // So ts in '2022' should include the row with timestamp = '2023-01-01T00:00:00'
+            final String query = """
+                    SELECT * FROM (
+                        (SELECT dateadd('h', -1, timestamp) as ts, price, amount FROM trades)
+                        timestamp (ts)
+                    ) WHERE ts in '2022'
+                    """;
+
+            // Verify the query returns the expected results
+            // Row 1: timestamp='2022-01-01', ts='2021-12-31T23:00' - NOT in '2022', excluded
+            // Row 2: timestamp='2022-06-15T12:00', ts='2022-06-15T11:00' - in '2022', included
+            // Row 3: timestamp='2023-01-01', ts='2022-12-31T23:00' - in '2022', included
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tprice\tamount
+                            2022-06-15T11:00:00.000000Z\t150.0\t20.0
+                            2022-12-31T23:00:00.000000Z\t200.0\t30.0
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true,
+                    true  // sizeCanBeVariable = true for virtual timestamp columns
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampPredicatePushdownWithDateaddOffsetDays() throws Exception {
+        // Test with day offset
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
+            execute("insert into trades values (100, 10, '2022-01-05T00:00:00.000000Z');");
+            execute("insert into trades values (150, 20, '2022-06-15T12:00:00.000000Z');");
+            execute("insert into trades values (200, 30, '2022-12-30T00:00:00.000000Z');");
+
+            // Query with dateadd -3 days offset
+            final String query = """
+                    SELECT * FROM (
+                        (SELECT dateadd('d', -3, timestamp) as ts, price, amount FROM trades)
+                        timestamp (ts)
+                    ) WHERE ts >= '2022-01-01' AND ts < '2022-01-03'
+                    """;
+
+            // First row: timestamp = 2022-01-05, ts = 2022-01-02 (in range)
+            // Second row: timestamp = 2022-06-15, ts = 2022-06-12 (NOT in range)
+            // Third row: timestamp = 2022-12-30, ts = 2022-12-27 (NOT in range)
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tprice\tamount
+                            2022-01-02T00:00:00.000000Z\t100.0\t10.0
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampPredicatePushdownWithDateaddOffsetNegative() throws Exception {
+        // Test with positive offset (dateadd adds time)
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
+            execute("insert into trades values (100, 10, '2022-01-01T00:00:00.000000Z');");
+            execute("insert into trades values (150, 20, '2022-06-15T12:00:00.000000Z');");
+            execute("insert into trades values (200, 30, '2022-12-31T23:00:00.000000Z');");
+
+            // Query with dateadd +1 hour offset on timestamp
+            final String query = """
+                    SELECT * FROM (
+                        (SELECT dateadd('h', 1, timestamp) as ts, price, amount FROM trades)
+                        timestamp (ts)
+                    ) WHERE ts in '2022'
+                    """;
+
+            // First row's ts = 2022-01-01T01:00:00 (in 2022)
+            // Second row's ts = 2022-06-15T13:00:00 (in 2022)
+            // Third row's ts = 2023-01-01T00:00:00 (NOT in 2022)
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tprice\tamount
+                            2022-01-01T01:00:00.000000Z\t100.0\t10.0
+                            2022-06-15T13:00:00.000000Z\t150.0\t20.0
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testUnaryMinusInAggregateFunction() throws Exception {
         assertMemoryLeak(() -> {
                     execute(tradesDdl);
@@ -5360,6 +5735,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             );
         });
     }
+
+    // ==================== Timestamp Predicate Pushdown Through Virtual Models with Offset ====================
 
     @Test
     public void testWhereClauseOnNestedModelWithFirstAggregateFunctionOnParentModel() throws Exception {
@@ -5549,6 +5926,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
+    //
+    // Tests for verifying the and_offset rewrite in the query model
+    //
+
     @Test
     public void testWhereClauseWithMinAggregateFunctions() throws Exception {
         assertMemoryLeak(() -> {
@@ -5570,6 +5951,77 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: y
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testWindowFunctionDeduplicationWhenNestedInExpression() throws Exception {
+        // This test verifies that when a window function appears first inside an expression
+        // (e.g., abs(row_number() over(...))) and then as a top-level window column
+        // (e.g., row_number() over(...)), they are properly deduplicated.
+        // Bug: replaceIfWindowFunction() (called via emitWindowFunctions) adds window functions
+        // to windowModel but doesn't register them in windowFunctionHashMap, causing
+        // findDuplicateWindowFunction() to miss them when processing later identical windows.
+        assertMemoryLeak(() -> {
+            execute("create table t ( x int, ts timestamp) timestamp(ts);");
+            execute("insert into t select x, x::timestamp from long_sequence(3)");
+
+            // Case 1: Window function nested in expression appears BEFORE the same top-level window function
+            // If deduplication works correctly, there should be only ONE window function in the plan
+            String q1 = "select abs(row_number() over(order by x)), row_number() over(order by x) from t";
+
+            assertPlanNoLeakCheck(
+                    q1,
+                    """
+                            VirtualRecord
+                              functions: [abs(row_number),row_number]
+                                CachedWindow
+                                  orderedFunctions: [[x] => [row_number()]]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """
+            );
+
+            // Verify the result is correct
+            assertSql("""
+                    abs\trow_number
+                    1\t1
+                    2\t2
+                    3\t3
+                    """, q1);
+
+            // Case 2: Same test but with partition by clause
+            String q2 = "select abs(row_number() over(partition by x order by ts)), row_number() over(partition by x order by ts) from t";
+
+            assertPlanNoLeakCheck(
+                    q2,
+                    """
+                            VirtualRecord
+                              functions: [abs(row_number),row_number]
+                                Window
+                                  functions: [row_number() over (partition by [x])]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """
+            );
+
+            // Case 3: Multiple nested window functions that are the same
+            String q3 = "select abs(row_number() over(order by x)) + abs(row_number() over(order by x)), row_number() over(order by x) from t";
+
+            assertPlanNoLeakCheck(
+                    q3,
+                    """
+                            VirtualRecord
+                              functions: [abs(row_number)+abs(row_number),row_number]
+                                CachedWindow
+                                  orderedFunctions: [[x] => [row_number()]]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
                             """
             );
         });
@@ -5867,76 +6319,5 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertEquals(ExecutionModel.QUERY, model.getModelType());
             return (QueryModel) model;
         }
-    }
-
-    @Test
-    public void testWindowFunctionDeduplicationWhenNestedInExpression() throws Exception {
-        // This test verifies that when a window function appears first inside an expression
-        // (e.g., abs(row_number() over(...))) and then as a top-level window column
-        // (e.g., row_number() over(...)), they are properly deduplicated.
-        // Bug: replaceIfWindowFunction() (called via emitWindowFunctions) adds window functions
-        // to windowModel but doesn't register them in windowFunctionHashMap, causing
-        // findDuplicateWindowFunction() to miss them when processing later identical windows.
-        assertMemoryLeak(() -> {
-            execute("create table t ( x int, ts timestamp) timestamp(ts);");
-            execute("insert into t select x, x::timestamp from long_sequence(3)");
-
-            // Case 1: Window function nested in expression appears BEFORE the same top-level window function
-            // If deduplication works correctly, there should be only ONE window function in the plan
-            String q1 = "select abs(row_number() over(order by x)), row_number() over(order by x) from t";
-
-            assertPlanNoLeakCheck(
-                    q1,
-                    """
-                            VirtualRecord
-                              functions: [abs(row_number),row_number]
-                                CachedWindow
-                                  orderedFunctions: [[x] => [row_number()]]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                            """
-            );
-
-            // Verify the result is correct
-            assertSql("""
-                    abs\trow_number
-                    1\t1
-                    2\t2
-                    3\t3
-                    """, q1);
-
-            // Case 2: Same test but with partition by clause
-            String q2 = "select abs(row_number() over(partition by x order by ts)), row_number() over(partition by x order by ts) from t";
-
-            assertPlanNoLeakCheck(
-                    q2,
-                    """
-                            VirtualRecord
-                              functions: [abs(row_number),row_number]
-                                Window
-                                  functions: [row_number() over (partition by [x])]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                            """
-            );
-
-            // Case 3: Multiple nested window functions that are the same
-            String q3 = "select abs(row_number() over(order by x)) + abs(row_number() over(order by x)), row_number() over(order by x) from t";
-
-            assertPlanNoLeakCheck(
-                    q3,
-                    """
-                            VirtualRecord
-                              functions: [abs(row_number)+abs(row_number),row_number]
-                                CachedWindow
-                                  orderedFunctions: [[x] => [row_number()]]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                            """
-            );
-        });
     }
 }

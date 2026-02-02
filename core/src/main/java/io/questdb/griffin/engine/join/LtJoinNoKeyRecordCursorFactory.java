@@ -111,9 +111,7 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFact
         private final int slaveTimestampIndex;
         private final long slaveTimestampScale;
         private final long toleranceInterval;
-        private boolean isMasterHasNextPending;
         private long latestSlaveRowID = Long.MIN_VALUE;
-        private boolean masterHasNext;
         private Record masterRecord;
         private long slaveATimestamp = Long.MIN_VALUE;
         private long slaveBTimestamp = Long.MIN_VALUE;
@@ -154,20 +152,14 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFact
 
         @Override
         public boolean hasNext() {
-            if (isMasterHasNextPending) {
-                masterHasNext = masterCursor.hasNext();
-                isMasterHasNextPending = false;
-            }
-            if (masterHasNext) {
+            if (masterCursor.hasNext()) {
                 // great, we have a record no matter what
                 final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
                 if (masterTimestamp <= slaveATimestamp) {
-                    isMasterHasNextPending = true;
                     adjustForTolerance(masterTimestamp);
                     return true;
                 }
                 nextSlave(masterTimestamp);
-                isMasterHasNextPending = true;
                 return true;
             }
             return false;
@@ -191,7 +183,6 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFact
             record.hasSlave(false);
             masterCursor.toTop();
             slaveCursor.toTop();
-            isMasterHasNextPending = true;
         }
 
         private void adjustForTolerance(long masterTimestamp) {
@@ -238,7 +229,6 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFact
             slaveRecB = slaveCursor.getRecordB();
             record.of(masterRecord, slaveRecB);
             record.hasSlave(false);
-            isMasterHasNextPending = true;
         }
     }
 }

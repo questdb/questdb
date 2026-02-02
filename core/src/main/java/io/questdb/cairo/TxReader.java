@@ -48,6 +48,9 @@ public class TxReader implements Closeable, Mutable {
     public static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
     public static final long PARTITION_FLAGS_MASK = 0x7FFFF00000000000L;
     public static final long PARTITION_SIZE_MASK = 0x80000FFFFFFFFFFFL;
+    public static final int PARTITION_SQUASH_COUNTER_MAX = 0xFFFF;
+    protected static final int PARTITION_SQUASH_COUNTER_BIT_OFFSET = 44;
+    protected static final long PARTITION_SQUASH_COUNTER_MASK = 0xFFFFL << PARTITION_SQUASH_COUNTER_BIT_OFFSET;
     protected static final int NONE_COL_STRUCTURE_VERSION = Integer.MIN_VALUE;
     protected static final int PARTITION_MASKED_SIZE_OFFSET = 1;
     protected static final int PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET = 61;
@@ -56,9 +59,9 @@ public class TxReader implements Closeable, Mutable {
     protected static final int PARTITION_PARQUET_FILE_SIZE_OFFSET = 3;
     // partition size's highest possible value is 0xFFFFFFFFFFFL (15 Tera Rows):
     //
-    // | reserved | read-only | parquet format | available bits | partition size |
-    // +----------+-----------+----------------+----------------+----------------+
-    // |  1 bit   |  1 bit    |  1 bit         |  17 bits       |      44 bits   |
+    // | reserved | read-only | parquet format | reserved | squash counter | partition size |
+    // +----------+-----------+----------------+----------+----------------+----------------+
+    // |  1 bit   |  1 bit    |  1 bit         |  1 bit   |   16 bit       |      44 bits   |
     //
     // when read-only bit is set, the partition is read only.
     // we reserve the highest bit to allow negative values to
@@ -347,6 +350,10 @@ public class TxReader implements Closeable, Mutable {
 
     public long getPartitionSizeByRawIndex(int index) {
         return getPartitionSizeByRawIndex(attachedPartitions, index);
+    }
+
+    public int getPartitionSquashCount(int i) {
+        return getPartitionSquashCountByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
     public long getPartitionTableVersion() {
@@ -806,6 +813,11 @@ public class TxReader implements Closeable, Mutable {
     int findAttachedPartitionRawIndexByLoTimestamp(long ts) {
         // Start from the end, usually it will be last partition searched / appended
         return attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts, Vect.BIN_SEARCH_SCAN_UP);
+    }
+
+    int getPartitionSquashCountByRawIndex(int indexRaw) {
+        long partitionSizeMasked = attachedPartitions.getQuick(indexRaw + PARTITION_MASKED_SIZE_OFFSET);
+        return (int) ((partitionSizeMasked >>> PARTITION_SQUASH_COUNTER_BIT_OFFSET) & PARTITION_SQUASH_COUNTER_MAX);
     }
 
     protected void initPartitionAt(int index, long partitionTimestampLo, long partitionSize, long partitionNameTxn) {

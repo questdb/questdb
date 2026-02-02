@@ -27,13 +27,21 @@ package io.questdb.test.cairo.o3;
 import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolCountProvider;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.Overrides;
@@ -135,6 +143,113 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     "select name,numRows from table_partitions('x')");
 
             assertRowCount(211, rowCount);
+        });
+    }
+
+    @Test
+    public void testPartitionSquashCounterOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "backup_squash_test";
+            long start = MicrosTimestampDriver.floor("2020-02-03");
+
+            execute(
+                    "create table " + tableName + " as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " -x j," +
+                            " rnd_str(5,16,2) as str," +
+                            " rnd_varchar(1,40,5) as varc1," +
+                            " rnd_varchar(1, 1,5) as varc2," +
+                            " rnd_double_array(1,1) arr," +
+                            " cast(" + start + " + x * 60 * 1000000L  as timestamp) ts" +
+                            " from long_sequence(1000)" +
+                            ") timestamp (ts) partition by DAY WAL dedup upsert keys (ts)"
+            );
+
+            drainWalQueue();
+
+            execute(
+                    "insert into " + tableName +
+                            " select" +
+                            " cast(x as int) i," +
+                            " -x j," +
+                            " rnd_str(5,16,2) as str," +
+                            " rnd_varchar(1,40,5) as varc1," +
+                            " rnd_varchar(1, 1,5) as varc2," +
+                            " rnd_double_array(1,1) arr," +
+                            " cast(" + start + " + (x + 800) * 60 * 1000000L as timestamp) ts" +
+                            " from long_sequence(200)"
+            );
+
+            drainWalQueue();
+
+            execute("alter table " + tableName + " squash partitions");
+
+            drainWalQueue();
+
+            var tableToken = engine.verifyTableName(tableName);
+
+            // Manually set the squash counter to max (0xFFFF) to trigger overflow on next squash
+            FilesFacade ff = configuration.getFilesFacade();
+            try (TxWriter txWriter = new TxWriter(ff, configuration); Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME);
+                txWriter.ofRW(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+
+                // Increment the squash counter until overflow
+                while (txWriter.incrementPartitionSquashCounter(0)) {
+                    // Keep incrementing
+                }
+
+                // Update partition size and commit to persist the counter
+                txWriter.updatePartitionSizeByTimestamp(
+                        txWriter.getPartitionTimestampByIndex(0),
+                        txWriter.getPartitionSize(0)
+                );
+
+                ObjList<SymbolCountProvider> symbolCountSnapshot = new ObjList<>();
+                for (int i = 0, n = txWriter.getSymbolColumnCount(); i < n; i++) {
+                    int symbolCount = txWriter.getSymbolValueCount(i);
+                    symbolCountSnapshot.add(() -> symbolCount);
+                }
+                txWriter.commit(symbolCountSnapshot);
+            }
+
+            // Force reload updated _txn file
+            engine.releaseInactive();
+
+            execute(
+                    "insert into " + tableName +
+                            " select" +
+                            " cast(x as int) i," +
+                            " -x j," +
+                            " rnd_str(5,16,2) as str," +
+                            " rnd_varchar(1,40,5) as varc1," +
+                            " rnd_varchar(1, 1,5) as varc2," +
+                            " rnd_double_array(1,1) arr," +
+                            " cast(" + start + " + (x + 800) * 60 * 1000000L as timestamp) ts" +
+                            " from long_sequence(200)"
+            );
+
+            drainWalQueue();
+
+            execute("alter table " + tableName + " squash partitions");
+
+            drainWalQueue();
+
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(tableToken).concat("2020-02-03");
+                int plen = path.size();
+
+                path.concat(TableUtils.PARTITION_LAST_SQUASH_TIMESTAMP_FILE).$();
+                long squashFileFd = configuration.getFilesFacade().openRO(path.$());
+                Assert.assertTrue("Expected .squash_ts file to exist after squash counter overflow", squashFileFd != -1);
+
+                long squashTimestamp = configuration.getFilesFacade().readNonNegativeLong(squashFileFd, 0);
+                Assert.assertTrue("Expected valid squash timestamp, got: " + squashTimestamp, squashTimestamp > 0);
+                configuration.getFilesFacade().close(squashFileFd);
+
+                path.trimTo(plen);
+            }
         });
     }
 
@@ -650,12 +765,31 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " from long_sequence(200)"
             );
 
+            Assert.assertEquals(1, getSquashCount("x", "2020-02-04"));
+
             assertSql(replaceTimestampSuffix1("""
                     minTimestamp\tnumRows\tname
                     2020-02-04T00:00:00.000000Z\t2040\t2020-02-04
                     2020-02-05T00:00:00.000000Z\t720\t2020-02-05
                     """, timestampType.getTypeName()), partitionsSql);
 
+            // Append to partition 2020-02-04 and check that squash count is persisted
+            execute(
+                    sqlPrefix +
+                            " timestamp_sequence('2020-02-04T23:59', 1000000L) ts," +
+                            " x + 2 as k" +
+                            " from long_sequence(1)"
+            );
+            Assert.assertEquals(1, getSquashCount("x", "2020-02-04"));
+
+            // Replace partition 2020-02-04 with a new verion and check that squash count is reset
+            execute(
+                    sqlPrefix +
+                            " timestamp_sequence('2020-02-04', 1000000L) ts," +
+                            " x + 2 as k" +
+                            " from long_sequence(1)"
+            );
+            Assert.assertEquals(0, getSquashCount("x", "2020-02-04"));
         });
     }
 
@@ -969,6 +1103,19 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     private long getPhysicalRowsSinceLastCommit() {
         try (TableWriter tw = getWriter("x")) {
             return tw.getPhysicallyWrittenRowsSinceLastCommit();
+        }
+    }
+
+    private int getSquashCount(String tableName, String partitionDate) {
+        try (TableReader reader = getReader(tableName)) {
+            long timestamp = MicrosTimestampDriver.floor(partitionDate);
+            int partitionIndex = reader.getPartitionIndexByTimestamp(timestamp);
+            if (partitionIndex >= 0) {
+                return reader.getTxFile().getPartitionSquashCount(partitionIndex);
+            }
+            return 0;
+        } catch (NumericException e) {
+            throw new RuntimeException(e);
         }
     }
 

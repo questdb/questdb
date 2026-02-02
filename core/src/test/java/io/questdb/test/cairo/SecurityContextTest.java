@@ -41,7 +41,10 @@ import java.lang.reflect.Method;
 
 import static org.junit.Assert.*;
 
-public class SecurityContextTest {
+public class
+
+
+SecurityContextTest {
     private static final Object[] NO_PARAM_ARGS = {};
     private static final ObjList<CharSequence> columns = new ObjList<>();
     private static final LongList permissions = new LongList();
@@ -112,8 +115,6 @@ public class SecurityContextTest {
                         case 1:
                             if (name.equals("authorizeCopyCancel")) {
                                 method.invoke(sc, sc);
-                            } else if (name.equals("authorizeTableBackup")) {
-                                method.invoke(sc, new ObjHashSet<CharSequence>());
                             } else if (name.equals("authorizeTableCreate")) {
                                 method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
                             } else if (name.equals("authorizeSelect") && parameters[0] == ViewDefinition.class) {

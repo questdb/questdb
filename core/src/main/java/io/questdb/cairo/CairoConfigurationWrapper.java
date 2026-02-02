@@ -112,26 +112,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public DateFormat getBackupDirTimestampFormat() {
-        return getDelegate().getBackupDirTimestampFormat();
-    }
-
-    @Override
-    public int getBackupMkDirMode() {
-        return getDelegate().getBackupMkDirMode();
-    }
-
-    @Override
-    public CharSequence getBackupRoot() {
-        return getDelegate().getBackupRoot();
-    }
-
-    @Override
-    public @NotNull CharSequence getBackupTempDirName() {
-        return getDelegate().getBackupTempDirName();
-    }
-
-    @Override
     public int getBinaryEncodingMaxLength() {
         return getDelegate().getBinaryEncodingMaxLength();
     }
@@ -149,6 +129,21 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean getCairoSqlLegacyOperatorPrecedence() {
         return getDelegate().getCairoSqlLegacyOperatorPrecedence();
+    }
+
+    @Override
+    public boolean getCheckpointRecoveryRebuildColumnIndexes() {
+        return getDelegate().getCheckpointRecoveryRebuildColumnIndexes();
+    }
+
+    @Override
+    public int getCheckpointRecoveryThreadpoolMax() {
+        return getDelegate().getCheckpointRecoveryThreadpoolMax();
+    }
+
+    @Override
+    public int getCheckpointRecoveryThreadpoolMin() {
+        return getDelegate().getCheckpointRecoveryThreadpoolMin();
     }
 
     @Override
@@ -1157,6 +1152,21 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlIntervalIncrementalMergeThreshold() {
+        return getDelegate().getSqlIntervalIncrementalMergeThreshold();
+    }
+
+    @Override
+    public int getSqlIntervalMaxBracketDepth() {
+        return getDelegate().getSqlIntervalMaxBracketDepth();
+    }
+
+    @Override
+    public int getSqlIntervalMaxIntervalsAfterMerge() {
+        return getDelegate().getSqlIntervalMaxIntervalsAfterMerge();
+    }
+
+    @Override
     public int getStrFunctionMaxBufferLength() {
         return getDelegate().getStrFunctionMaxBufferLength();
     }
@@ -1414,6 +1424,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isMatViewParallelSqlEnabled() {
         return getDelegate().isMatViewParallelSqlEnabled();
+    }
+
+    @Override
+    public boolean isMatViewRefreshMissingWalFilesFatal() {
+        return getDelegate().isMatViewRefreshMissingWalFilesFatal();
     }
 
     @Override

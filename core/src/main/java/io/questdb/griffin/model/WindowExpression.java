@@ -195,7 +195,7 @@ public final class WindowExpression extends QueryColumn {
     }
 
     @Override
-    public boolean isWindowColumn() {
+    public boolean isWindowExpression() {
         return true;
     }
 

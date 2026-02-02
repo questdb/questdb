@@ -52,6 +52,8 @@ public class WindowJoinTest extends AbstractCairoTest {
     private final TestTimestampType rightTableTimestampType;
     private final StringSink sink = new StringSink();
     private boolean includePrevailing;
+    private boolean leftConvertParquet;
+    private boolean rightConvertParquet;
 
     public WindowJoinTest(TestTimestampType leftTimestampType, TestTimestampType rightTimestampType) {
         this.leftTableTimestampType = leftTimestampType;
@@ -76,6 +78,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         AsyncWindowJoinAtom.GROUP_BY_VALUE_USE_COMPACT_DIRECT_MAP = rnd.nextBoolean();
         sink.clear();
         includePrevailing = rnd.nextBoolean();
+        leftConvertParquet = rnd.nextBoolean();
+        rightConvertParquet = rnd.nextBoolean();
     }
 
     @Test
@@ -2237,7 +2241,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             2023-01-01T09:16:00.000000Z\tTSLA\t401.5\t802.0
                             2023-01-01T09:17:00.000000Z\tAMZN\t501.5\t1002.0
                             2023-01-01T09:18:00.000000Z\tMETA\t601.5\t1202.0
-                            2023-01-01T09:19:00.000000Z\tNFLX\t699.5\t699.5
+                            2023-01-02T09:19:00.000000Z\tNFLX\t699.5\t699.5
                             """, leftTableTimestampType.getTypeName())
                     : replaceTimestampSuffix("""
                     ts	sym	window_price1	window_price2
@@ -2260,7 +2264,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     2023-01-01T09:16:00.000000Z	TSLA	401.5	401.5
                     2023-01-01T09:17:00.000000Z	AMZN	501.5	501.5
                     2023-01-01T09:18:00.000000Z	META	601.5	601.5
-                    2023-01-01T09:19:00.000000Z	NFLX	699.5	699.5
+                    2023-01-02T09:19:00.000000Z	NFLX	699.5	699.5
                     """, leftTableTimestampType.getTypeName());
             assertQueryAndPlan(
                     expect,
@@ -2321,7 +2325,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             2023-01-01T09:16:00.000000Z\tTSLA\t802.0
                             2023-01-01T09:17:00.000000Z\tAMZN\t1002.0
                             2023-01-01T09:18:00.000000Z\tMETA\t1202.0
-                            2023-01-01T09:19:00.000000Z\tNFLX\t699.5
+                            2023-01-02T09:19:00.000000Z\tNFLX\t699.5
                             """, leftTableTimestampType.getTypeName())
                     : replaceTimestampSuffix("""
                     ts	sym	window_price2
@@ -2344,7 +2348,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     2023-01-01T09:16:00.000000Z	TSLA	401.5
                     2023-01-01T09:17:00.000000Z	AMZN	501.5
                     2023-01-01T09:18:00.000000Z	META	601.5
-                    2023-01-01T09:19:00.000000Z	NFLX	699.5
+                    2023-01-02T09:19:00.000000Z	NFLX	699.5
                     """, leftTableTimestampType.getTypeName());
             assertQueryAndPlan(
                     expect,
@@ -2402,9 +2406,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                     2023-01-01T09:14:00.000000Z	META	1601.5	null
                     2023-01-01T09:15:00.000000Z	META	1503.5	null
                     2023-01-01T09:16:00.000000Z	TSLA	1504.5	null
-                    2023-01-01T09:17:00.000000Z	AMZN	1802.5	null
-                    2023-01-01T09:18:00.000000Z	META	1301.0	null
-                    2023-01-01T09:19:00.000000Z	NFLX	699.5	null
+                    2023-01-01T09:17:00.000000Z	AMZN	1103.0	null
+                    2023-01-01T09:18:00.000000Z	META	601.5	null
+                    2023-01-02T09:19:00.000000Z	NFLX	699.5	null
                     """, leftTableTimestampType.getTypeName());
             assertQueryAndPlan(
                     expect,
@@ -2457,7 +2461,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             2023-01-01T09:16:00.000000Z	TSLA	null	802.0
                             2023-01-01T09:17:00.000000Z	AMZN	null	1002.0
                             2023-01-01T09:18:00.000000Z	META	null	1202.0
-                            2023-01-01T09:19:00.000000Z	NFLX	null	699.5
+                            2023-01-02T09:19:00.000000Z	NFLX	null	699.5
                             """, leftTableTimestampType.getTypeName())
                     : replaceTimestampSuffix("""
                     ts	sym	window_price1	window_price2
@@ -2480,7 +2484,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     2023-01-01T09:16:00.000000Z	TSLA	null	401.5
                     2023-01-01T09:17:00.000000Z	AMZN	null	501.5
                     2023-01-01T09:18:00.000000Z	META	null	601.5
-                    2023-01-01T09:19:00.000000Z	NFLX	null	699.5
+                    2023-01-02T09:19:00.000000Z	NFLX	null	699.5
                     """, leftTableTimestampType.getTypeName());
             assertQueryAndPlan(
                     expect,
@@ -2535,7 +2539,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             2023-01-01T09:16:00.000000Z	TSLA	401.5	401.5	1
                             2023-01-01T09:17:00.000000Z	AMZN	501.5	501.5	1
                             2023-01-01T09:18:00.000000Z	META	601.5	601.5	1
-                            2023-01-01T09:19:00.000000Z	NFLX	699.5	699.5	1
+                            2023-01-02T09:19:00.000000Z	NFLX	699.5	699.5	1
                             """,
                     leftTableTimestampType.getTypeName()
             );
@@ -4448,6 +4452,66 @@ public class WindowJoinTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testWindowJoinSelfJoinWithAggregatesInSelectAndWhere() throws Exception {
+        // Reproducer for: https://demo.questdb.io error "Invalid column: price" at position 0
+        // Query: SELECT t.timestamp, t.order_id, t.symbol, t.side, t.price AS fill_price,
+        //        sum(w.price * w.quantity) / sum(w.quantity) AS vwap_5m, ...
+        //        FROM fx_trades t WINDOW JOIN fx_trades w ON (t.symbol = w.symbol)
+        //        RANGE BETWEEN 5 minutes PRECEDING AND 1 microseconds PRECEDING EXCLUDE PREVAILING
+        //        WHERE t.symbol = 'EURUSD' ORDER BY t.timestamp LIMIT 100
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fx_trades (" +
+                    "timestamp TIMESTAMP, " +
+                    "symbol SYMBOL, " +
+                    "side SYMBOL, " +
+                    "price DOUBLE, " +
+                    "quantity DOUBLE, " +
+                    "order_id UUID" +
+                    ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            execute("INSERT INTO fx_trades VALUES " +
+                    "('2025-01-01T00:00:00.000000Z', 'EURUSD', 'buy', 1.05, 1000, rnd_uuid4())," +
+                    "('2025-01-01T00:01:00.000000Z', 'EURUSD', 'sell', 1.051, 500, rnd_uuid4())," +
+                    "('2025-01-01T00:02:00.000000Z', 'EURUSD', 'buy', 1.052, 750, rnd_uuid4())," +
+                    "('2025-01-01T00:03:00.000000Z', 'GBPUSD', 'buy', 1.25, 1000, rnd_uuid4())," +
+                    "('2025-01-01T00:04:00.000000Z', 'EURUSD', 'sell', 1.053, 250, rnd_uuid4())," +
+                    "('2025-01-01T00:05:00.000000Z', 'EURUSD', 'buy', 1.054, 600, rnd_uuid4())");
+            drainWalQueue();
+
+            // Self-join with aggregates and WHERE clause - this was reproducing the "Invalid column: price" error
+            assertQueryNoLeakCheck(
+                    """
+                            timestamp\torder_id\tsymbol\tside\tfill_price\tvwap_5m\tslippage_bps
+                            2025-01-01T00:00:00.000000Z\t0010cde8-12ce-40ee-8010-a928bb8b9650\tEURUSD\tbuy\t1.05\tnull\tnull
+                            2025-01-01T00:01:00.000000Z\t9f9b2131-d49f-4d1d-ab81-39815c50d341\tEURUSD\tsell\t1.051\t1.05\t9.523809523808474
+                            2025-01-01T00:02:00.000000Z\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\tEURUSD\tbuy\t1.052\t1.0503333333333333\t15.867978419549715
+                            2025-01-01T00:04:00.000000Z\te8beef38-cd7b-43d8-9b2d-34586f6275fa\tEURUSD\tsell\t1.053\t1.050888888888889\t20.088813702684046
+                            2025-01-01T00:05:00.000000Z\t322a2198-864b-4b14-b97f-a69eb8fec6cc\tEURUSD\tbuy\t1.054\t1.0511\t27.590143659025067
+                            """,
+                    "SELECT " +
+                            "t.timestamp, " +
+                            "t.order_id, " +
+                            "t.symbol, " +
+                            "t.side, " +
+                            "t.price AS fill_price, " +
+                            "sum(w.price * w.quantity) / sum(w.quantity) AS vwap_5m, " +
+                            "(t.price - sum(w.price * w.quantity) / sum(w.quantity)) " +
+                            "    / (sum(w.price * w.quantity) / sum(w.quantity)) * 10000 AS slippage_bps " +
+                            "FROM fx_trades t " +
+                            "WINDOW JOIN fx_trades w " +
+                            "    ON (t.symbol = w.symbol) " +
+                            "    RANGE BETWEEN 5 minutes PRECEDING AND 1 microseconds PRECEDING " +
+                            "    EXCLUDE PREVAILING " +
+                            "WHERE t.symbol = 'EURUSD' " +
+                            "ORDER BY t.timestamp " +
+                            "LIMIT 100",
+                    "timestamp",
+                    false,
+                    false
+            );
+        });
+    }
+
     private void prepareTable() throws SqlException {
         executeWithRewriteTimestamp(
                 "create table trades (" +
@@ -4507,7 +4571,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                         "('TSLA', 402.0, cast('2023-01-01T09:16:00.000000Z' as #TIMESTAMP))," +
                         "('AMZN', 502.0, cast('2023-01-01T09:17:00.000000Z' as #TIMESTAMP))," +
                         "('META', 602.0, cast('2023-01-01T09:18:00.000000Z' as #TIMESTAMP))," +
-                        "('NFLX', 700.0, cast('2023-01-01T09:19:00.000000Z' as #TIMESTAMP));",
+                        "('NFLX', 700.0, cast('2023-01-02T09:19:00.000000Z' as #TIMESTAMP));",
                 leftTableTimestampType.getTypeName()
         );
         executeWithRewriteTimestamp(
@@ -4521,8 +4585,15 @@ public class WindowJoinTest extends AbstractCairoTest {
                         "('TSLA', 401.5, cast('2023-01-01T09:15:00.000000Z' as #TIMESTAMP))," +
                         "('AMZN', 501.5, cast('2023-01-01T09:16:00.000000Z' as #TIMESTAMP))," +
                         "('META', 601.5, cast('2023-01-01T09:17:00.000000Z' as #TIMESTAMP))," +
-                        "('NFLX', 699.5, cast('2023-01-01T09:18:00.000000Z' as #TIMESTAMP));",
+                        "('NFLX', 699.5, cast('2023-01-02T09:18:00.000000Z' as #TIMESTAMP));",
                 rightTableTimestampType.getTypeName()
         );
+        if (leftConvertParquet) {
+            execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+        }
+        if (rightConvertParquet) {
+            execute("ALTER TABLE prices CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+        }
+        drainWalQueue();
     }
 }

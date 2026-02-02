@@ -1706,18 +1706,12 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWindowFunctionDivision() throws SqlException {
-        // Two window functions divided by each other
-        x("x sum over (partition by y) x count over (partition by y) /",
-                "sum(x) over (partition by y) / count(x) over (partition by y)");
-    }
-
-    @Test
-    public void testWindowFunctionDivisionWithCastInPartitionBy() throws SqlException {
-        // VWAP-style: two window functions with :: cast in partition by
-        // RPN for ts::date is "ts date ::" (operand, type, cast operator)
-        x("price volume * sum over (partition by symbol, ts date :: order by ts) volume sum over (partition by symbol, ts date :: order by ts) /",
-                "sum(price * volume) over (partition by symbol, ts::date order by ts) / sum(volume) over (partition by symbol, ts::date order by ts)");
+    public void testWindowFunctionAsArgumentToWindowFunction() throws SqlException {
+        // Window function as argument to another window function
+        // sum(row_number() OVER ()) OVER ()
+        // Expected RPN: the inner window function is parsed first, then becomes argument to outer
+        x("row_number over () sum over ()",
+                "sum(row_number() OVER ()) OVER ()");
     }
 
     @Test
@@ -1772,28 +1766,36 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWindowFunctionIgnoreNullTypo() {
-        // Common typo: "null" instead of "nulls"
+    public void testWindowFunctionDivision() throws SqlException {
+        // Two window functions divided by each other
+        x("x sum over (partition by y) x count over (partition by y) /",
+                "sum(x) over (partition by y) / count(x) over (partition by y)");
+    }
+
+    @Test
+    public void testWindowFunctionDivisionWithCastInPartitionBy() throws SqlException {
+        // VWAP-style: two window functions with :: cast in partition by
+        // RPN for ts::date is "ts date ::" (operand, type, cast operator)
+        x("price volume * sum over (partition by symbol, ts date :: order by ts) volume sum over (partition by symbol, ts date :: order by ts) /",
+                "sum(price * volume) over (partition by symbol, ts::date order by ts) / sum(volume) over (partition by symbol, ts::date order by ts)");
+    }
+
+    @Test
+    public void testWindowFunctionFrameBoundAbruptEnd() {
         assertFail(
-                "lag(d, 1) ignore null over () from tab",
-                17,
-                "'nulls' expected, not 'null'"
+                "sum(x) over (order by ts rows between",
+                30,
+                "'unbounded', 'current' or expression expected"
         );
     }
 
     @Test
-    public void testWindowFunctionMultipleArithmetic() throws SqlException {
-        // Multiple window functions in arithmetic expression
-        x("x sum over (order by ts) x lag over (order by ts) - x avg over (order by ts) /",
-                "(sum(x) over (order by ts) - lag(x) over (order by ts)) / avg(x) over (order by ts)");
-    }
-
-    @Test
-    public void testWindowFunctionInCaseExpression() throws SqlException {
-        // Window function inside CASE WHEN expression - two occurrences
-        // Both window functions should be parsed with their OVER clauses
-        x(" row_number over (order by ts) 1 = 'first' row_number over (order by ts) 3 = 'last' 'middle' case",
-                "CASE WHEN row_number() OVER (ORDER BY ts) = 1 THEN 'first' WHEN row_number() OVER (ORDER BY ts) = 3 THEN 'last' ELSE 'middle' END");
+    public void testWindowFunctionFrameBoundExprAbruptEnd() {
+        assertFail(
+                "sum(x) over (order by ts rows",
+                25,
+                "'between', 'unbounded', 'current' or expression expected"
+        );
     }
 
     // Tests for window function argument ordering
@@ -1801,34 +1803,22 @@ public class ExpressionParserTest extends AbstractCairoTest {
     // Window functions should follow the same pattern
 
     @Test
-    public void testWindowFunctionTwoArgs() throws SqlException {
-        // lag(x, 1) should produce RPN: "x 1 lag over (...)"
-        x("x 1 lag over (order by ts)", "lag(x, 1) over (order by ts)");
+    public void testWindowFunctionFrameBoundInvalidOperator() {
+        assertFail(
+                "sum(x) over (order by ts rows between + preceding and current row)",
+                38,
+                "too few arguments for '+'"
+        );
     }
 
     @Test
-    public void testWindowFunctionThreeArgs() throws SqlException {
-        // lag(x, 1, 0) should produce RPN: "x 1 0 lag over (...)"
-        // This tests if 3+ argument window functions have correct arg order
-        x("x 1 0 lag over (order by ts)", "lag(x, 1, 0) over (order by ts)");
-    }
-
-    @Test
-    public void testWindowFunctionThreeArgsWithExpressions() throws SqlException {
-        // lag(a + b, 1, c * 2) - more complex expressions as arguments
-        x("a b + 1 c 2 * lag over (order by ts)", "lag(a + b, 1, c * 2) over (order by ts)");
-    }
-
-    @Test
-    public void testWindowFunctionNthValueTwoArgs() throws SqlException {
-        // nth_value(x, 2) should produce RPN: "x 2 nth_value over (...)"
-        x("x 2 nth_value over (order by ts)", "nth_value(x, 2) over (order by ts)");
-    }
-
-    @Test
-    public void testWindowFunctionLeadThreeArgs() throws SqlException {
-        // lead(x, 2, -1) should produce RPN: "x 2 -1 lead over (...)"
-        x("x 2 1 - lead over (order by ts)", "lead(x, 2, -1) over (order by ts)");
+    public void testWindowFunctionIgnoreNullTypo() {
+        // Common typo: "null" instead of "nulls"
+        assertFail(
+                "lag(d, 1) ignore null over () from tab",
+                17,
+                "'nulls' expected, not 'null'"
+        );
     }
 
     @Test
@@ -1870,6 +1860,21 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionInCaseDifferentOverSpecs() throws SqlException {
+        // Window functions with different OVER specs in THEN vs ELSE
+        x(" x 0 > x sum over (partition by a order by ts) x sum over (order by ts) case",
+                "CASE WHEN x > 0 THEN sum(x) OVER (PARTITION BY a ORDER BY ts) ELSE sum(x) OVER (ORDER BY ts) END");
+    }
+
+    @Test
+    public void testWindowFunctionInCaseExpression() throws SqlException {
+        // Window function inside CASE WHEN expression - two occurrences
+        // Both window functions should be parsed with their OVER clauses
+        x(" row_number over (order by ts) 1 = 'first' row_number over (order by ts) 3 = 'last' 'middle' case",
+                "CASE WHEN row_number() OVER (ORDER BY ts) = 1 THEN 'first' WHEN row_number() OVER (ORDER BY ts) = 3 THEN 'last' ELSE 'middle' END");
+    }
+
+    @Test
     public void testWindowFunctionInCaseThenClause() throws SqlException {
         // Window function in THEN clause (x argument appears before sum in RPN)
         x(" x 0 > x sum over (partition by y) 0 case", "case when x > 0 then sum(x) over (partition by y) else 0 end");
@@ -1879,6 +1884,13 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testWindowFunctionInCaseWhenCondition() throws SqlException {
         // Window function in WHEN condition (comparing with a value)
         x(" row_number over (partition by x) 5 > 1 0 case", "case when row_number() over (partition by x) > 5 then 1 else 0 end");
+    }
+
+    @Test
+    public void testWindowFunctionInCaseWithCast() throws SqlException {
+        // Window function with cast inside CASE
+        x(" x 0 > row_number over (order by ts) string :: 'N/A' case",
+                "CASE WHEN x > 0 THEN row_number() OVER (ORDER BY ts)::string ELSE 'N/A' END");
     }
 
     @Test
@@ -1902,17 +1914,26 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWindowFunctionInCaseDifferentOverSpecs() throws SqlException {
-        // Window functions with different OVER specs in THEN vs ELSE
-        x(" x 0 > x sum over (partition by a order by ts) x sum over (order by ts) case",
-                "CASE WHEN x > 0 THEN sum(x) OVER (PARTITION BY a ORDER BY ts) ELSE sum(x) OVER (ORDER BY ts) END");
+    public void testWindowFunctionInvalidFrameKeyword() {
+        // Invalid frame keyword should give a helpful error message listing valid options
+        assertFail(
+                "sum(x) over (order by ts invalid_keyword)",
+                25,
+                "'rows', 'range', 'groups', 'cumulative' or ')' expected"
+        );
     }
 
     @Test
-    public void testWindowFunctionWithArithmeticInCaseBranches() throws SqlException {
-        // Window function with arithmetic operations in CASE branches
-        x(" x 0 > row_number over (order by ts) 1 + row_number over (order by ts) 1 - case",
-                "CASE WHEN x > 0 THEN row_number() OVER (ORDER BY ts) + 1 ELSE row_number() OVER (ORDER BY ts) - 1 END");
+    public void testWindowFunctionLeadThreeArgs() throws SqlException {
+        // lead(x, 2, -1) should produce RPN: "x 2 -1 lead over (...)"
+        x("x 2 1 - lead over (order by ts)", "lead(x, 2, -1) over (order by ts)");
+    }
+
+    @Test
+    public void testWindowFunctionMultipleArithmetic() throws SqlException {
+        // Multiple window functions in arithmetic expression
+        x("x sum over (order by ts) x lag over (order by ts) - x avg over (order by ts) /",
+                "(sum(x) over (order by ts) - lag(x) over (order by ts)) / avg(x) over (order by ts)");
     }
 
     @Test
@@ -1922,152 +1943,20 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWindowFunctionInCaseWithCast() throws SqlException {
-        // Window function with cast inside CASE
-        x(" x 0 > row_number over (order by ts) string :: 'N/A' case",
-                "CASE WHEN x > 0 THEN row_number() OVER (ORDER BY ts)::string ELSE 'N/A' END");
+    public void testWindowFunctionNthValueTwoArgs() throws SqlException {
+        // nth_value(x, 2) should produce RPN: "x 2 nth_value over (...)"
+        x("x 2 nth_value over (order by ts)", "nth_value(x, 2) over (order by ts)");
     }
 
     @Test
-    public void testWindowFunctionPartitionByExpression() throws SqlException {
-        x("i avg over (partition by sym '%aaa%' like order by ts)", "avg(i) over (partition by sym like '%aaa%' order by ts)");
-    }
-
-    @Test
-    public void testWindowFunctionPartitionByFunctionCall() throws SqlException {
-        x("row_number over (partition by 'y' ts timestamp_floor order by temp desc)",
-                "row_number() over (partition by timestamp_floor('y', ts) order by temp desc)");
-    }
-
-    @Test
-    public void testWindowFunctionRangeFrameWithTimeUnit() throws SqlException {
-        x("ts max over (order by ts range between '12' hour preceding and current row)",
-                "max(ts) over (order by ts range between '12' hour preceding and current row)");
-    }
-
-    @Test
-    public void testWindowFunctionRespectWithoutNulls() {
-        // RESPECT must be followed by NULLS
+    public void testWindowFunctionOrderByAbruptEnd() {
+        // ORDER BY has explicit null check
         assertFail(
-                "lag(d, 1) respect over () from tab",
-                18,
-                "'nulls' expected after 'respect'"
+                "sum(x) over (order by",
+                19,
+                "Expression expected"
         );
     }
-
-    @Test
-    public void testWindowFunctionRowsFrame() throws SqlException {
-        x("ts max over (order by ts rows between unbounded preceding and current row)",
-                "max(ts) over (order by ts rows between unbounded preceding and current row)");
-    }
-
-    @Test
-    public void testWindowFunctionRowsFrameExcludeCurrentRow() throws SqlException {
-        x("j avg over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row)",
-                "avg(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row)");
-    }
-
-    // Window function tests
-    @Test
-    public void testWindowFunctionSimple() throws SqlException {
-        x("row_number over ()", "row_number() over ()");
-    }
-
-    @Test
-    public void testWindowFunctionUnterminatedOverClause() {
-        // Missing closing parenthesis for OVER clause
-        assertFail(
-                "f(c) over (partition by b order by ts",
-                35,
-                "')' expected to close OVER clause"
-        );
-    }
-
-    @Test
-    public void testWindowFunctionWithOrderBy() throws SqlException {
-        x("ts max over (order by ts)", "max(ts) over (order by ts)");
-    }
-
-    @Test
-    public void testWindowFunctionWithOrderByDesc() throws SqlException {
-        x("ts max over (order by ts desc)", "max(ts) over (order by ts desc)");
-    }
-
-    @Test
-    public void testWindowFunctionWithPartitionAndOrder() throws SqlException {
-        x("x row_number over (partition by sym order by ts)", "row_number(x) over (partition by sym order by ts)");
-    }
-
-    @Test
-    public void testWindowFunctionWithPartitionBy() throws SqlException {
-        x("x row_number over (partition by x)", "row_number(x) over (partition by x)");
-    }
-
-    // Tests to prove PARTITION BY parsing bug - empty lists and trailing commas should be rejected
-    // See https://github.com/questdb/questdb/pull/6626
-
-    @Test
-    public void testWindowFunctionPartitionByEmptyList() {
-        // Empty PARTITION BY list should fail - "partition by" followed immediately by ORDER
-        assertFail(
-                "sum(x) over (partition by order by ts)",
-                26,
-                "column name expected"
-        );
-    }
-
-    @Test
-    public void testWindowFunctionPartitionByEmptyListWithCloseParen() {
-        // Empty PARTITION BY list should fail - "partition by" followed immediately by ')'
-        assertFail(
-                "sum(x) over (partition by )",
-                26,
-                "column name expected"
-        );
-    }
-
-    @Test
-    public void testWindowFunctionPartitionByTrailingComma() {
-        // Trailing comma in PARTITION BY should fail - "partition by a," followed by ')'
-        assertFail(
-                "sum(x) over (partition by a,)",
-                28,
-                "column name expected"
-        );
-    }
-
-    @Test
-    public void testWindowFunctionPartitionByTrailingCommaBeforeOrder() {
-        // Trailing comma in PARTITION BY should fail - "partition by a," followed by ORDER
-        assertFail(
-                "sum(x) over (partition by a, order by ts)",
-                29,
-                "column name expected"
-        );
-    }
-
-    @Test
-    public void testWindowFunctionPartitionByMultipleTrailingCommas() {
-        // Multiple trailing commas should fail
-        assertFail(
-                "sum(x) over (partition by a,,)",
-                29,
-                "column name expected"
-        );
-    }
-
-    @Test
-    public void testWindowFunctionPartitionByOnlyComma() {
-        // Just a comma after PARTITION BY should fail
-        assertFail(
-                "sum(x) over (partition by ,)",
-                27,
-                "column name expected"
-        );
-    }
-
-    // Tests to check if ORDER BY has the same bug as PARTITION BY
-    // (empty lists and trailing commas)
 
     @Test
     public void testWindowFunctionOrderByEmptyList() {
@@ -2077,6 +1966,55 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 22,
                 "Expression expected"
         );
+    }
+
+    @Test
+    public void testWindowFunctionOrderByFourArgFunction() throws SqlException {
+        // ORDER BY with a 4-argument function
+        x("x sum over (order by d c b a func)", "sum(x) over (order by func(a, b, c, d))");
+    }
+
+    @Test
+    public void testWindowFunctionOrderByMultipleThreeArgFunctions() throws SqlException {
+        // ORDER BY with multiple 3-argument functions
+        x("x sum over (order by c b a f1, f e d f2 desc)",
+                "sum(x) over (order by f1(a, b, c), f2(d, e, f) desc)");
+    }
+
+    @Test
+    public void testWindowFunctionOrderByNestedThreeArgFunction() throws SqlException {
+        // ORDER BY with nested function calls
+        x("x sum over (order by a b inner c outer)",
+                "sum(x) over (order by outer(inner(a, b), c))");
+    }
+
+    @Test
+    public void testWindowFunctionOrderByOnlyComma() {
+        // Just a comma after ORDER BY should fail
+        assertFail(
+                "sum(x) over (order by ,)",
+                22,
+                "Expression expected"
+        );
+    }
+
+    @Test
+    public void testWindowFunctionOrderByThreeArgFunction() throws SqlException {
+        // ORDER BY with a 3-argument function - args should be in correct order
+        x("x sum over (order by c b a func)", "sum(x) over (order by func(a, b, c))");
+    }
+
+    @Test
+    public void testWindowFunctionOrderByThreeArgFunctionDesc() throws SqlException {
+        // ORDER BY with a 3-argument function and DESC
+        x("x sum over (order by c b a func desc)", "sum(x) over (order by func(a, b, c) desc)");
+    }
+
+    @Test
+    public void testWindowFunctionOrderByThreeArgFunctionWithExpressions() throws SqlException {
+        // ORDER BY with 3-arg function containing expressions
+        x("x sum over (order by c 3 - b 2 * a 1 + func)",
+                "sum(x) over (order by func(a + 1, b * 2, c - 3))");
     }
 
     @Test
@@ -2100,89 +2038,14 @@ public class ExpressionParserTest extends AbstractCairoTest {
         );
     }
 
-    @Test
-    public void testWindowFunctionOrderByOnlyComma() {
-        // Just a comma after ORDER BY should fail
-        assertFail(
-                "sum(x) over (order by ,)",
-                22,
-                "Expression expected"
-        );
-    }
-
-    // Tests for ORDER BY with multi-argument function expressions
+    // Tests to prove PARTITION BY parsing bug - empty lists and trailing commas should be rejected
+    // See https://github.com/questdb/questdb/pull/6626
 
     @Test
     public void testWindowFunctionOrderByTwoArgFunction() throws SqlException {
         // ORDER BY with a 2-argument function
         x("x sum over (order by a b func)", "sum(x) over (order by func(a, b))");
     }
-
-    @Test
-    public void testWindowFunctionOrderByThreeArgFunction() throws SqlException {
-        // ORDER BY with a 3-argument function - args should be in correct order
-        x("x sum over (order by a b c func)", "sum(x) over (order by func(a, b, c))");
-    }
-
-    @Test
-    public void testWindowFunctionOrderByThreeArgFunctionDesc() throws SqlException {
-        // ORDER BY with a 3-argument function and DESC
-        x("x sum over (order by a b c func desc)", "sum(x) over (order by func(a, b, c) desc)");
-    }
-
-    @Test
-    public void testWindowFunctionOrderByFourArgFunction() throws SqlException {
-        // ORDER BY with a 4-argument function
-        x("x sum over (order by a b c d func)", "sum(x) over (order by func(a, b, c, d))");
-    }
-
-    @Test
-    public void testWindowFunctionOrderByMultipleThreeArgFunctions() throws SqlException {
-        // ORDER BY with multiple 3-argument functions
-        x("x sum over (order by a b c f1, d e f f2 desc)",
-                "sum(x) over (order by f1(a, b, c), f2(d, e, f) desc)");
-    }
-
-    @Test
-    public void testWindowFunctionOrderByNestedThreeArgFunction() throws SqlException {
-        // ORDER BY with nested function calls
-        x("x sum over (order by a b inner c outer)",
-                "sum(x) over (order by outer(inner(a, b), c))");
-    }
-
-    @Test
-    public void testWindowFunctionOrderByThreeArgFunctionWithExpressions() throws SqlException {
-        // ORDER BY with 3-arg function containing expressions
-        x("x sum over (order by a 1 + b 2 * c 3 - func)",
-                "sum(x) over (order by func(a + 1, b * 2, c - 3))");
-    }
-
-    // Tests for PARTITION BY with multi-argument function expressions
-
-    @Test
-    public void testWindowFunctionPartitionByThreeArgFunction() throws SqlException {
-        // PARTITION BY with a 3-argument function - args should be in correct order
-        x("x sum over (partition by a b c func)", "sum(x) over (partition by func(a, b, c))");
-    }
-
-    @Test
-    public void testWindowFunctionPartitionByFourArgFunction() throws SqlException {
-        // PARTITION BY with a 4-argument function
-        x("x sum over (partition by a b c d func)", "sum(x) over (partition by func(a, b, c, d))");
-    }
-
-    @Test
-    public void testWindowFunctionInvalidFrameKeyword() {
-        // Invalid frame keyword should give a helpful error message listing valid options
-        assertFail(
-                "sum(x) over (order by ts invalid_keyword)",
-                25,
-                "'rows', 'range', 'groups', 'cumulative' or ')' expected"
-        );
-    }
-
-    // Tests to verify parseWindowExpr error handling
-    // All these produce proper SqlException errors (no NPEs)
 
     @Test
     public void testWindowFunctionPartitionByAbruptEnd() {
@@ -2194,31 +2057,43 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWindowFunctionOrderByAbruptEnd() {
-        // ORDER BY has explicit null check
+    public void testWindowFunctionPartitionByEmptyList() {
+        // Empty PARTITION BY list should fail - "partition by" followed immediately by ORDER
         assertFail(
-                "sum(x) over (order by",
-                19,
-                "Expression expected"
+                "sum(x) over (partition by order by ts)",
+                26,
+                "column name expected"
         );
     }
 
     @Test
-    public void testWindowFunctionFrameBoundAbruptEnd() {
+    public void testWindowFunctionPartitionByEmptyListWithCloseParen() {
+        // Empty PARTITION BY list should fail - "partition by" followed immediately by ')'
         assertFail(
-                "sum(x) over (order by ts rows between",
-                30,
-                "'unbounded', 'current' or expression expected"
+                "sum(x) over (partition by )",
+                26,
+                "column name expected"
         );
     }
 
     @Test
-    public void testWindowFunctionFrameBoundExprAbruptEnd() {
-        assertFail(
-                "sum(x) over (order by ts rows",
-                25,
-                "'between', 'unbounded', 'current' or expression expected"
-        );
+    public void testWindowFunctionPartitionByExpression() throws SqlException {
+        x("i avg over (partition by sym '%aaa%' like order by ts)", "avg(i) over (partition by sym like '%aaa%' order by ts)");
+    }
+
+    @Test
+    public void testWindowFunctionPartitionByFourArgFunction() throws SqlException {
+        // PARTITION BY with a 4-argument function
+        x("x sum over (partition by d c b a func)", "sum(x) over (partition by func(a, b, c, d))");
+    }
+
+    // Tests to check if ORDER BY has the same bug as PARTITION BY
+    // (empty lists and trailing commas)
+
+    @Test
+    public void testWindowFunctionPartitionByFunctionCall() throws SqlException {
+        x("row_number over (partition by 'y' ts timestamp_floor order by temp desc)",
+                "row_number() over (partition by timestamp_floor('y', ts) order by temp desc)");
     }
 
     @Test
@@ -2240,20 +2115,33 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWindowFunctionFrameBoundInvalidOperator() {
-        assertFail(
-                "sum(x) over (order by ts rows between + preceding and current row)",
-                38,
-                "too few arguments for '+'"
-        );
-    }
-
-    @Test
     public void testWindowFunctionPartitionByKeywordAsExpr() {
         assertFail(
                 "sum(x) over (partition by from)",
                 26,
                 "table and column names that are SQL keywords have to be enclosed in double quotes"
+        );
+    }
+
+    // Tests for ORDER BY with multi-argument function expressions
+
+    @Test
+    public void testWindowFunctionPartitionByMultipleTrailingCommas() {
+        // Multiple trailing commas should fail
+        assertFail(
+                "sum(x) over (partition by a,,)",
+                29,
+                "column name expected"
+        );
+    }
+
+    @Test
+    public void testWindowFunctionPartitionByOnlyComma() {
+        // Just a comma after PARTITION BY should fail
+        assertFail(
+                "sum(x) over (partition by ,)",
+                27,
+                "column name expected"
         );
     }
 
@@ -2266,8 +2154,106 @@ public class ExpressionParserTest extends AbstractCairoTest {
         );
     }
 
-    // Tests for window function with cast operator
-    // ExpressionParser correctly parses these - the bug is in SqlParser
+    @Test
+    public void testWindowFunctionPartitionByThreeArgFunction() throws SqlException {
+        // PARTITION BY with a 3-argument function - args should be in correct order
+        x("x sum over (partition by c b a func)", "sum(x) over (partition by func(a, b, c))");
+    }
+
+    @Test
+    public void testWindowFunctionPartitionByTrailingComma() {
+        // Trailing comma in PARTITION BY should fail - "partition by a," followed by ')'
+        assertFail(
+                "sum(x) over (partition by a,)",
+                28,
+                "column name expected"
+        );
+    }
+
+    @Test
+    public void testWindowFunctionPartitionByTrailingCommaBeforeOrder() {
+        // Trailing comma in PARTITION BY should fail - "partition by a," followed by ORDER
+        assertFail(
+                "sum(x) over (partition by a, order by ts)",
+                29,
+                "column name expected"
+        );
+    }
+
+    @Test
+    public void testWindowFunctionRangeFrameWithTimeUnit() throws SqlException {
+        x("ts max over (order by ts range between '12' hour preceding and current row)",
+                "max(ts) over (order by ts range between '12' hour preceding and current row)");
+    }
+
+    // Tests for PARTITION BY with multi-argument function expressions
+
+    @Test
+    public void testWindowFunctionRespectWithoutNulls() {
+        // RESPECT must be followed by NULLS
+        assertFail(
+                "lag(d, 1) respect over () from tab",
+                18,
+                "'nulls' expected after 'respect'"
+        );
+    }
+
+    @Test
+    public void testWindowFunctionRowsFrame() throws SqlException {
+        x("ts max over (order by ts rows between unbounded preceding and current row)",
+                "max(ts) over (order by ts rows between unbounded preceding and current row)");
+    }
+
+    @Test
+    public void testWindowFunctionRowsFrameExcludeCurrentRow() throws SqlException {
+        x("j avg over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row)",
+                "avg(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row)");
+    }
+
+    // Tests to verify parseWindowExpr error handling
+    // All these produce proper SqlException errors (no NPEs)
+
+    // Window function tests
+    @Test
+    public void testWindowFunctionSimple() throws SqlException {
+        x("row_number over ()", "row_number() over ()");
+    }
+
+    @Test
+    public void testWindowFunctionThreeArgs() throws SqlException {
+        // lag(x, 1, 0) should produce RPN: "x 1 0 lag over (...)"
+        // This tests if 3+ argument window functions have correct arg order
+        x("x 1 0 lag over (order by ts)", "lag(x, 1, 0) over (order by ts)");
+    }
+
+    @Test
+    public void testWindowFunctionThreeArgsWithExpressions() throws SqlException {
+        // lag(a + b, 1, c * 2) - more complex expressions as arguments
+        x("a b + 1 c 2 * lag over (order by ts)", "lag(a + b, 1, c * 2) over (order by ts)");
+    }
+
+    @Test
+    public void testWindowFunctionTwoArgs() throws SqlException {
+        // lag(x, 1) should produce RPN: "x 1 lag over (...)"
+        x("x 1 lag over (order by ts)", "lag(x, 1) over (order by ts)");
+    }
+
+    @Test
+    public void testWindowFunctionUnterminatedOverClause() {
+        // Missing closing parenthesis for OVER clause
+        assertFail(
+                "f(c) over (partition by b order by ts",
+                35,
+                "')' expected to close OVER clause"
+        );
+    }
+
+    @Test
+    public void testWindowFunctionWithArithmeticInCaseBranches() throws SqlException {
+        // Window function with arithmetic operations in CASE branches
+        x(" x 0 > row_number over (order by ts) 1 + row_number over (order by ts) 1 - case",
+                "CASE WHEN x > 0 THEN row_number() OVER (ORDER BY ts) + 1 ELSE row_number() OVER (ORDER BY ts) - 1 END");
+    }
 
     @Test
     public void testWindowFunctionWithCast() throws SqlException {
@@ -2285,12 +2271,26 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWindowFunctionAsArgumentToWindowFunction() throws SqlException {
-        // Window function as argument to another window function
-        // sum(row_number() OVER ()) OVER ()
-        // Expected RPN: the inner window function is parsed first, then becomes argument to outer
-        x("row_number over () sum over ()",
-                "sum(row_number() OVER ()) OVER ()");
+    public void testWindowFunctionWithOrderBy() throws SqlException {
+        x("ts max over (order by ts)", "max(ts) over (order by ts)");
+    }
+
+    // Tests for window function with cast operator
+    // ExpressionParser correctly parses these - the bug is in SqlParser
+
+    @Test
+    public void testWindowFunctionWithOrderByDesc() throws SqlException {
+        x("ts max over (order by ts desc)", "max(ts) over (order by ts desc)");
+    }
+
+    @Test
+    public void testWindowFunctionWithPartitionAndOrder() throws SqlException {
+        x("x row_number over (partition by sym order by ts)", "row_number(x) over (partition by sym order by ts)");
+    }
+
+    @Test
+    public void testWindowFunctionWithPartitionBy() throws SqlException {
+        x("x row_number over (partition by x)", "row_number(x) over (partition by x)");
     }
 
     private void assertFail(String content, int pos, String contains) {

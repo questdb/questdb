@@ -26,6 +26,8 @@ package io.questdb.test;
 
 import io.questdb.Bootstrap;
 import io.questdb.BootstrapConfiguration;
+import io.questdb.ConfigPropertyKey;
+import io.questdb.ConfigReloader;
 import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.DynamicPropServerConfiguration;
@@ -47,6 +49,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cutlass.http.TestHttpClient;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
@@ -67,6 +70,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static org.junit.Assert.assertFalse;
@@ -127,6 +131,82 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
                 int capacity = serverMain.getConfiguration().getCairoConfiguration().getSqlAsOfJoinShortCircuitCacheCapacity();
                 Assert.assertEquals(1000, capacity);
+            }
+        });
+    }
+
+    @Test
+    public void testConfigChangeListener() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicLong configChangedCalledCounter = new AtomicLong(0);
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                final var listener = new ConfigReloader.Listener() {
+                    private final ConfigPropertyKey[] WATCHED_PROPERTIES = new ConfigPropertyKey[]{
+                            PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD
+                    };
+
+                    @Override
+                    public void configChanged() {
+                        configChangedCalledCounter.incrementAndGet();
+                    }
+
+                    @Override
+                    public @NotNull ConfigPropertyKey[] getWatchedConfigKeys() {
+                        return WATCHED_PROPERTIES;
+                    }
+                };
+                final long watchId = serverMain.getEngine().getConfigReloader().watch(listener);
+
+                Assert.assertTrue("watchId should be non-negative", watchId >= 0);
+                Assert.assertEquals(0, configChangedCalledCounter.get());
+
+                // [1] First, reload config after changing a watched setting.
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.sql.asof.join.evacuation.threshold=1000\n");
+                }
+
+                assertReloadConfigEventually();
+
+                Assert.assertEquals(1, configChangedCalledCounter.get());
+
+                final int threshold = serverMain.getConfiguration().getCairoConfiguration().getSqlAsOfJoinMapEvacuationThreshold();
+                Assert.assertEquals(1000, threshold);
+
+                // [2] Now again, reload config after changing a setting which is reloadable but not watched.
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.sql.asof.join.evacuation.threshold=1000\n");
+                    w.write("cairo.sql.asof.join.short.circuit.cache.capacity=4000\n");
+                }
+
+                assertReloadConfigEventually();
+
+                final int capacity = serverMain.getConfiguration().getCairoConfiguration().getSqlAsOfJoinShortCircuitCacheCapacity();
+                Assert.assertEquals(4000, capacity);
+
+                // Note! The listener was _not_ notified. The `cairo.sql.asof.join.short.circuit.cache.capacity` is of no interest.
+                Assert.assertEquals(1, configChangedCalledCounter.get());
+
+                // [3] Now we test _removing_ keys. Should get notified.
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    // Not going to `w.write("cairo.sql.asof.join.evacuation.threshold=1000\n");`, i.e. removed.
+                    w.write("cairo.sql.asof.join.short.circuit.cache.capacity=4000\n");
+                }
+                assertReloadConfigEventually();
+                Assert.assertEquals(2, configChangedCalledCounter.get());
+
+                // [4] Finally, we test unregistering from config changes.
+                // We should not get notified, despite adding back the key of interest.
+                serverMain.getEngine().getConfigReloader().unwatch(watchId);
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.sql.asof.join.evacuation.threshold=2000\n");
+                }
+                assertReloadConfigEventually();
+                Assert.assertEquals(2, configChangedCalledCounter.get());
+
+                // [5] Should we re-register, we'll get a different ID.
+                final long watchId2 = serverMain.getEngine().getConfigReloader().watch(listener);
+                Assert.assertNotEquals("re-register should return a new watchId", watchId, watchId2);
             }
         });
     }

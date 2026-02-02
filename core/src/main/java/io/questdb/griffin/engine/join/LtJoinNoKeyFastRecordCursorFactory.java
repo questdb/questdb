@@ -106,7 +106,6 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
     }
 
     private static class LtJoinFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
-
         private final long toleranceInterval;
         private long slaveTimestamp = Numbers.LONG_NULL;
 
@@ -118,24 +117,20 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
                 int masterTimestampType,
                 int slaveTimestampType,
                 int lookahead,
-                long toleranceInterval) {
+                long toleranceInterval
+        ) {
             super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead);
             this.toleranceInterval = toleranceInterval;
         }
 
         @Override
         public boolean hasNext() {
-            if (isMasterHasNextPending) {
-                masterHasNext = masterCursor.hasNext();
-                isMasterHasNextPending = false;
-            }
-            if (masterHasNext) {
+            if (masterCursor.hasNext()) {
                 final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
                 if (masterTimestamp <= lookaheadTimestamp) {
                     if (toleranceInterval != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceInterval) {
                         record.hasSlave(false);
                     }
-                    isMasterHasNextPending = true;
                     return true;
                 }
                 nextSlave(masterTimestamp - 1);
@@ -143,7 +138,6 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
                     slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                     record.hasSlave(slaveTimestamp >= masterTimestamp - toleranceInterval);
                 }
-                isMasterHasNextPending = true;
                 return true;
             }
             return false;

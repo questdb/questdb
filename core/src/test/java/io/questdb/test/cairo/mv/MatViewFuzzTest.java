@@ -876,6 +876,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 0.1,
                 0.0
         );
+        setProperty(PropertyKey.DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL, String.valueOf(rnd.nextBoolean()));
     }
 
     private Thread startRefreshJob(int workerId, AtomicBoolean stop, Rnd outsideRnd) {

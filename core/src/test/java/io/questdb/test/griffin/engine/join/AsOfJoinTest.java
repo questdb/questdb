@@ -1850,47 +1850,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAsOfJoinWithSymbolAndTimestampInOnClause() throws Exception {
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp(
-                    """
-                            CREATE TABLE t1 (
-                                sym SYMBOL,
-                                ts #TIMESTAMP
-                            ) timestamp(ts) partition by DAY
-                            """,
-                    leftTableTimestampType.getTypeName()
-            );
-
-            executeWithRewriteTimestamp(
-                    """
-                            CREATE TABLE t2 (
-                                sym SYMBOL,
-                                ts #TIMESTAMP
-                            ) timestamp(ts) partition by DAY
-                            """,
-                    rightTableTimestampType.getTypeName()
-            );
-
-            execute("INSERT INTO t1 VALUES ('A', '2024-01-01T10:00:00.000000Z')");
-            execute("INSERT INTO t2 VALUES ('A', '2024-01-01T10:00:00.000000Z')");
-
-            // ASOF JOIN with symbol AND timestamp in ON clause.
-            // The subquery with LIMIT forces "AsOf Join Light" factory (disables TimeFrameCursor optimization).
-            String query = "SELECT * FROM t1 ASOF JOIN (SELECT * FROM t2 LIMIT 1000) t2 ON (t1.sym = t2.sym) AND (t1.ts = t2.ts)";
-
-            String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
-            String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
-            var expected = String.format("""
-                    sym\tts\tsym1\tts1
-                    A\t2024-01-01T10:00:00.000000%1$s\tA\t2024-01-01T10:00:00.000000%2$s
-                    """, leftSuffix, rightSuffix);
-
-            assertQueryNoLeakCheck(expected, query, "ts", false, true);
-        });
-    }
-
-    @Test
     public void testCursorToTop() throws Exception {
         assertMemoryLeak(() -> {
             // Verifies that toTop() properly clears the memoization state in AsOfJoinMemoizedRecordCursor.
@@ -2246,6 +2205,46 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     4\t2000-01-01T00:00:04.000000%1$s\t\t
                     """, leftSuffix, rightSuffix);
             assertQueryNoLeakCheck(expected, query, null, false, false);
+        });
+    }
+
+    @Test
+    public void testJoinOnTimestampAndSomethingElseNotAllowed() throws Exception {
+        // Test for https://github.com/questdb/questdb/issues/6637
+        // Using designated timestamp as join key is not allowed for ASOF/LT joins
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE t1 (
+                                sym SYMBOL,
+                                ts #TIMESTAMP
+                            ) timestamp(ts) partition by DAY
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE t2 (
+                                sym SYMBOL,
+                                ts #TIMESTAMP
+                            ) timestamp(ts) partition by DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("INSERT INTO t1 VALUES ('A', '2024-01-01T10:00:00.000000Z')");
+            execute("INSERT INTO t2 VALUES ('A', '2024-01-01T10:00:00.000000Z')");
+
+            // ASOF JOIN with symbol AND timestamp in ON clause - timestamp as join key is not allowed
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM t1 ASOF JOIN (SELECT * FROM t2 LIMIT 1000) t2 ON (t1.sym = t2.sym) AND (t1.ts = t2.ts)",
+                    17,
+                    "ASOF/LT JOIN cannot use designated timestamp as a join key");
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM t1 LT JOIN (SELECT * FROM t2 LIMIT 1000) t2 ON (t1.sym = t2.sym) AND (t1.ts = t2.ts)",
+                    17,
+                    "ASOF/LT JOIN cannot use designated timestamp as a join key");
         });
     }
 

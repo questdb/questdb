@@ -51,6 +51,7 @@ import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256FromCharSequenceDecoder;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -74,7 +75,6 @@ import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TI
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT;
 
 public class SqlUtil {
-
     static final LowerCaseCharSequenceHashSet disallowedAliases = new LowerCaseCharSequenceHashSet();
     private static final DateFormat[] IMPLICIT_CAST_FORMATS;
     private static final int IMPLICIT_CAST_FORMATS_SIZE;
@@ -251,19 +251,15 @@ public class SqlUtil {
         } while (m != null);
     }
 
-    public static CharSequence createExprColumnAlias(
-            CharacterStore store,
-            CharSequence base,
-            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
-            int maxLength
-    ) {
-        return createExprColumnAlias(store, base, aliasToColumnMap, maxLength, false);
-    }
-
+    /**
+     * Creates a unique column alias for expressions with O(1) amortized complexity by tracking
+     * the next sequence number for each base alias in the provided map.
+     */
     public static CharSequence createExprColumnAlias(
             CharacterStore store,
             CharSequence base,
             AbstractLowerCaseCharSequenceHashSet aliasToColumnMap,
+            LowerCaseCharSequenceIntHashMap nextAliasSequenceMap,
             int maxLength,
             boolean nonLiteral
     ) {
@@ -291,13 +287,22 @@ public class SqlUtil {
         }
         entry.put(base, start, baseLen);
 
-        int sequence = 1;
+        final int truncatedLen = Math.min(len, maxLength - (quote ? 1 : 0));
+        // Save the base entry length for sequence tracking (before any sequence suffix)
+        final int baseEntryLen = entry.length();
+
+        // Look up the starting sequence for this base alias
+        int sequence = nextAliasSequenceMap.get(entry.toImmutable());
+        if (sequence == -1) {
+            sequence = 1;
+        }
+
         int seqSize = 0;
         while (true) {
             if (sequence > 1) {
                 seqSize = (int) Math.log10(sequence) + 2; // Remember the _
             }
-            len = Math.min(len, maxLength - seqSize - (quote ? 1 : 0));
+            len = Math.min(truncatedLen, maxLength - seqSize - (quote ? 1 : 0));
 
             // We don't want the alias to finish with a space.
             if (!quote && len > 0 && base.charAt(start + len - 1) == ' ') {
@@ -315,9 +320,15 @@ public class SqlUtil {
             if (quote) {
                 entry.put('"');
             }
-            CharSequence alias = entry.toImmutable();
+            final CharSequence alias = entry.toImmutable();
             if (len > 0 && aliasToColumnMap.excludes(alias)) {
-                return alias;
+                // Update the sequence tracker for next time
+                final int aliasLen = entry.length();
+                entry.trimTo(baseEntryLen);
+                nextAliasSequenceMap.put(entry.toImmutable(), sequence + 1);
+                // Revert entry to the alias
+                entry.trimTo(aliasLen);
+                return entry.toImmutable();
             }
             sequence++;
         }
@@ -1390,25 +1401,29 @@ public class SqlUtil {
         return k;
     }
 
-    static CharSequence createColumnAlias(
-            CharacterStore store,
-            CharSequence base,
-            int indexOfDot,
-            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap
-    ) {
-        return createColumnAlias(store, base, indexOfDot, aliasToColumnMap, false);
-    }
-
+    /**
+     * Creates a unique column alias with O(1) amortized complexity by tracking the next sequence
+     * number for each base alias in the provided map.
+     *
+     * @param store                character store for creating the alias string
+     * @param base                 base name for the alias
+     * @param indexOfDot           index of the last dot in base, or -1 if none
+     * @param aliasToColumnMap     set of existing aliases to check for uniqueness
+     * @param nextAliasSequenceMap map tracking next sequence number for each base alias (updated in place)
+     * @param nonLiteral           whether this is a non-literal expression
+     * @return unique alias
+     */
     static CharSequence createColumnAlias(
             CharacterStore store,
             CharSequence base,
             int indexOfDot,
             AbstractLowerCaseCharSequenceHashSet aliasToColumnMap,
+            LowerCaseCharSequenceIntHashMap nextAliasSequenceMap,
             boolean nonLiteral
     ) {
         final boolean disallowed = nonLiteral && disallowedAliases.contains(base);
 
-        // short and sweet version
+        // early exit for simple cases
         if (indexOfDot == -1 && !disallowed && aliasToColumnMap.excludes(base)) {
             return base;
         }
@@ -1429,17 +1444,28 @@ public class SqlUtil {
             }
         }
 
-        int len = characterStoreEntry.length();
-        int sequence = 0;
+        final int baseAliasLen = characterStoreEntry.length();
+
+        // Look up the starting sequence for this base alias
+        int sequence = nextAliasSequenceMap.get(characterStoreEntry.toImmutable());
+        if (sequence == -1) {
+            sequence = 0;
+        }
+
         while (true) {
             if (sequence > 0) {
-                characterStoreEntry.trimTo(len);
+                characterStoreEntry.trimTo(baseAliasLen);
                 characterStoreEntry.put(sequence);
             }
             sequence++;
-            CharSequence alias = characterStoreEntry.toImmutable();
-            if (aliasToColumnMap.excludes(alias)) {
-                return alias;
+            if (aliasToColumnMap.excludes(characterStoreEntry.toImmutable())) {
+                // Update the sequence tracker for next time
+                final int aliasLen = characterStoreEntry.length();
+                characterStoreEntry.trimTo(baseAliasLen);
+                nextAliasSequenceMap.put(characterStoreEntry.toImmutable(), sequence);
+                // Revert entry to the alias
+                characterStoreEntry.trimTo(aliasLen);
+                return characterStoreEntry.toImmutable();
             }
         }
     }

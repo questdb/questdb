@@ -264,7 +264,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private boolean areTimestampsInitialized;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long fixedOffset;
-        private boolean hasNextPending;
         private long hiSample = -1;
         private boolean isMapBuilt;
         private boolean isMapFilled;
@@ -347,7 +346,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             hiSample = -1;
             prevSample = -1;
             rowId = 0;
-            hasNextPending = false;
             isMapInitialized = false;
             isMapFilled = false;
             isMapBuilt = false;
@@ -376,7 +374,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 hiSample = -1;
                 prevSample = -1;
                 rowId = 0;
-                hasNextPending = false;
                 isMapInitialized = false;
                 isMapFilled = false;
             }
@@ -573,49 +570,39 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             do {
                 circuitBreaker.statefulThrowExceptionIfTripped();
 
-                if (!hasNextPending) {
-                    // this seems inefficient, but we only double-sample
-                    // very first record and nothing else
-                    long sample = sampler.round(managedRecord.getTimestamp(timestampIndex));
-                    if (sample != prevSample) {
-                        // before we continue with next interval
-                        // we need to fill gaps in current interval
-                        // we will go over unique keys and attempt to
-                        // find them in data map with current timestamp
+                // this seems inefficient, but we only double-sample
+                // very first record and nothing else
+                long sample = sampler.round(managedRecord.getTimestamp(timestampIndex));
+                if (sample != prevSample) {
+                    // before we continue with next interval
+                    // we need to fill gaps in current interval
+                    // we will go over unique keys and attempt to
+                    // find them in data map with current timestamp
 
-                        fillGaps(prevSample, sample);
-                        prevSample = sample;
-                        GroupByUtils.toTop(groupByFunctions);
-                    }
-
-                    // same data group - evaluate group-by functions
-                    MapKey key = dataMap.withKey();
-                    mapSink.copy(managedRecord, key);
-                    key.putLong(sample);
-
-                    MapValue value = key.createValue();
-                    if (value.isNew()) {
-                        value.putByte(0, (byte) 0); // not a gap
-                        for (int i = 0; i < groupByFunctionCount; i++) {
-                            groupByFunctions.getQuick(i).computeFirst(value, managedRecord, rowId++);
-                        }
-                    } else {
-                        for (int i = 0; i < groupByFunctionCount; i++) {
-                            groupByFunctions.getQuick(i).computeNext(value, managedRecord, rowId++);
-                        }
-                    }
+                    fillGaps(prevSample, sample);
+                    prevSample = sample;
+                    GroupByUtils.toTop(groupByFunctions);
                 }
 
-                hasNextPending = true;
-                boolean hasNext = managedCursor.hasNext();
-                hasNextPending = false;
+                // same data group - evaluate group-by functions
+                MapKey key = dataMap.withKey();
+                mapSink.copy(managedRecord, key);
+                key.putLong(sample);
 
-                if (!hasNext) {
-                    hiSample = sampler.nextTimestamp(prevSample);
-                    break;
+                MapValue value = key.createValue();
+                if (value.isNew()) {
+                    value.putByte(0, (byte) 0); // not a gap
+                    for (int i = 0; i < groupByFunctionCount; i++) {
+                        groupByFunctions.getQuick(i).computeFirst(value, managedRecord, rowId++);
+                    }
+                } else {
+                    for (int i = 0; i < groupByFunctionCount; i++) {
+                        groupByFunctions.getQuick(i).computeNext(value, managedRecord, rowId++);
+                    }
                 }
-            } while (true);
+            } while (managedCursor.hasNext());
 
+            hiSample = sampler.nextTimestamp(prevSample);
             // fill gaps if any at the end of base cursor
             fillGaps(prevSample, hiSample);
         }

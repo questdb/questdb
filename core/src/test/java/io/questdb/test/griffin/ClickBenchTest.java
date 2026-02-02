@@ -525,14 +525,14 @@ public class ClickBenchTest extends AbstractCairoTest {
                 ),
                 new TestCase(
                         "Q27",
-                        "SELECT * FROM (SELECT CounterID, AVG(length(URL)) AS l, COUNT(*) AS c FROM hits WHERE URL IS NOT NULL GROUP BY CounterID) WHERE c > 100000 ORDER BY l DESC LIMIT 25;",
+                        "SELECT * FROM (SELECT CounterID, AVG(length_bytes(URL)) AS l, COUNT(*) AS c FROM hits WHERE URL IS NOT NULL GROUP BY CounterID) WHERE c > 100000 ORDER BY l DESC LIMIT 25;",
                         """
                                 Sort light lo: 25
                                   keys: [l desc]
                                     Filter filter: 100000<c
                                         Async JIT Group By workers: 1
                                           keys: [CounterID]
-                                          values: [avg(length(URL)),count(*)]
+                                          values: [avg(length_bytes(URL)),count(*)]
                                           filter: URL is not null
                                             PageFrame
                                                 Row forward scan
@@ -541,7 +541,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                 ),
                 new TestCase(
                         "Q28",
-                        "SELECT * FROM (SELECT REGEXP_REPLACE(Referer, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') AS k, AVG(length(Referer)) AS l, COUNT(*) AS c, MIN(Referer) FROM hits WHERE Referer IS NOT NULL GROUP BY k) WHERE c > 100000 ORDER BY l DESC LIMIT 25;",
+                        "SELECT * FROM (SELECT REGEXP_REPLACE(Referer, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') AS k, AVG(length_bytes(Referer)) AS l, COUNT(*) AS c, MIN(Referer) FROM hits WHERE Referer IS NOT NULL GROUP BY k) WHERE c > 100000 ORDER BY l DESC LIMIT 25;",
                         "Sort light lo: 25\n" +
                                 "  keys: [l desc]\n" +
                                 "    VirtualRecord\n" +
@@ -549,7 +549,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                                 "        Filter filter: 100000<c\n" +
                                 "            Async JIT Group By workers: 1\n" +
                                 "              keys: [k]\n" +
-                                "              values: [avg(length(Referer)),count(*),min(Referer)]\n" +
+                                "              values: [avg(length_bytes(Referer)),count(*),min(Referer)]\n" +
                                 "              filter: Referer is not null\n" +
                                 "                PageFrame\n" +
                                 "                    Row forward scan\n" +

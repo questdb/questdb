@@ -29,7 +29,6 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.catalogue.Constants;
-import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
@@ -123,6 +122,11 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeDatabaseBackup() {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
     public void authorizeDatabaseSnapshot() {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
@@ -189,11 +193,6 @@ public class ReadOnlySecurityContext implements SecurityContext {
 
     @Override
     public void authorizeSystemAdmin() {
-    }
-
-    @Override
-    public void authorizeTableBackup(ObjHashSet<TableToken> tableTokens) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
     @Override

@@ -7312,11 +7312,11 @@ public class JoinTest extends AbstractCairoTest {
                 FROM
                 (
                   SELECT *
-                  FROM trades b\s
-                  #JOIN_TYPE#\s
+                  FROM trades b
+                  #JOIN_TYPE#
                   (
-                    SELECT *\s
-                    FROM trades\s
+                    SELECT *
+                    FROM trades
                     WHERE price > 1
                       AND symbol = 'ETH-USD'
                   ) a ON #JOIN_CLAUSE#
@@ -7328,7 +7328,9 @@ public class JoinTest extends AbstractCairoTest {
         assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "symbol"), null, false, false);
         assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol"), null, false, false);
         assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol and a.price = b.price"), null, false, false);
-        assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "b.symbol = a.symbol and a.timestamp = b.timestamp"), null, false, false);
+        if (!joinType.contains("LT") && !joinType.contains("ASOF")) {
+            assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "b.symbol = a.symbol and a.timestamp = b.timestamp"), null, false, false);
+        }
     }
 
     private void testJoinConstantFalse0(boolean fullFatJoin) throws Exception {

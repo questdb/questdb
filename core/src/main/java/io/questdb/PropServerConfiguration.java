@@ -96,7 +96,6 @@ import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.Micros;
-import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.datetime.millitime.Dates;
@@ -147,10 +146,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
     private final boolean allowTableRegistrySharedWrite;
     private final boolean asyncMunmapEnabled;
-    private final DateFormat backupDirTimestampFormat;
-    private final int backupMkdirMode;
-    private final String backupRoot;
-    private final CharSequence backupTempDirName;
     private final int binaryEncodingMaxLength;
     private final BuildInformation buildInformation;
     private final boolean cairoAttachPartitionCopy;
@@ -185,6 +180,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoTableRegistryCompactionThreshold;
     private final long cairoWriteBackOffTimeoutOnMemPressureMs;
     private final boolean checkpointRecoveryEnabled;
+    private final boolean checkpointRecoveryRebuildColumnIndexes;
+    private final int checkpointRecoveryThreadpoolMax;
+    private final int checkpointRecoveryThreadpoolMin;
     private final String checkpointRoot;
     private final PropSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new PropSqlExecutionCircuitBreakerConfiguration();
     private final int circuitBreakerThrottle;
@@ -195,7 +193,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double columnPurgeRetryDelayMultiplier;
     private final int columnPurgeTaskPoolCapacity;
     private final int commitMode;
-    private final MicrosFormatCompiler compiler = new MicrosFormatCompiler();
     private final String confRoot;
     private final boolean configReloadEnabled;
     private final boolean copierChunkedEnabled;
@@ -321,6 +318,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long matViewMaxRefreshStepUs;
     private final boolean matViewParallelExecutionEnabled;
     private final long matViewRefreshIntervalsUpdatePeriod;
+    private final boolean matViewRefreshMissingWalFilesFatal;
     private final long matViewRefreshOomRetryTimeout;
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewsRefreshPoolConfiguration();
     private final long matViewRefreshSleepTimeout;
@@ -466,8 +464,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelReadParquetEnabled;
     private final boolean sqlParallelTopKEnabled;
     private final boolean sqlParallelWindowJoinEnabled;
-    private final int sqlParallelWorkStealingThreshold;
     private final long sqlParallelWorkStealingSpinTimeout;
+    private final int sqlParallelWorkStealingThreshold;
     private final int sqlParquetFrameCacheCapacity;
     private final int sqlPivotForColumnPoolCapacity;
     private final int sqlPivotMaxProducedColumns;
@@ -499,6 +497,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlWindowStorePageSize;
     private final int sqlWindowTreeKeyMaxPages;
     private final int sqlWindowTreeKeyPageSize;
+    private final int sqlIntervalIncrementalMergeThreshold;
+    private final int sqlIntervalMaxBracketDepth;
+    private final int sqlIntervalMaxIntervalsAfterMerge;
     private final int sqlWithClauseModelPoolCapacity;
     private final long symbolTableMaxAllocationPageSize;
     private final long symbolTableMinAllocationPageSize;
@@ -825,6 +826,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walPurgeInterval = getMillis(properties, env, PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 30_000);
         this.matViewRefreshIntervalsUpdatePeriod = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, walPurgeInterval / 2);
         this.matViewMaxRefreshStepUs = getMicros(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_STEP, Micros.YEAR_MICROS_NONLEAP);
+        this.matViewRefreshMissingWalFilesFatal = getBoolean(properties, env, PropertyKey.DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL, false);
         this.walPurgeWaitBeforeDelete = getInt(properties, env, PropertyKey.DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE, 0);
         this.walTxnNotificationQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 4096);
         this.walRecreateDistressedSequencerAttempts = getInt(properties, env, PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, 3);
@@ -900,7 +902,11 @@ public class PropServerConfiguration implements ServerConfiguration {
                     || pathEquals(this.dbRoot, this.cairoSqlCopyWorkRoot)
                     || pathEquals(this.confRoot, this.cairoSqlCopyWorkRoot)
                     || pathEquals(this.checkpointRoot, this.cairoSqlCopyWorkRoot)) {
-                throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + " can't point to root, data, conf or snapshot dirs. ");
+                throw new ServerConfigurationException(
+                        "Configuration value for "
+                                + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath()
+                                + " can't point to root, data, conf or snapshot dirs."
+                );
             }
         } else {
             this.cairoSqlCopyRoot = null;
@@ -949,6 +955,20 @@ public class PropServerConfiguration implements ServerConfiguration {
                         true
                 )
         );
+        this.checkpointRecoveryRebuildColumnIndexes = getBoolean(properties, env, PropertyKey.CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES, false);
+        int checkpointRecoveryThreadpoolMinRaw = getInt(properties, env, PropertyKey.CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MIN, 4);
+        int checkpointRecoveryThreadpoolMaxRaw = getInt(properties, env, PropertyKey.CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MAX, 12);
+        if (checkpointRecoveryThreadpoolMinRaw < 2 || checkpointRecoveryThreadpoolMinRaw > 32) {
+            throw new ServerConfigurationException(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MIN.getPropertyPath() + " must be between 2 and 32");
+        }
+        if (checkpointRecoveryThreadpoolMaxRaw < 2 || checkpointRecoveryThreadpoolMaxRaw > 32) {
+            throw new ServerConfigurationException(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MAX.getPropertyPath() + " must be between 2 and 32");
+        }
+        if (checkpointRecoveryThreadpoolMinRaw > checkpointRecoveryThreadpoolMaxRaw) {
+            throw new ServerConfigurationException(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MIN.getPropertyPath() + " must be less than or equal to " + PropertyKey.CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MAX.getPropertyPath());
+        }
+        this.checkpointRecoveryThreadpoolMin = checkpointRecoveryThreadpoolMinRaw;
+        this.checkpointRecoveryThreadpoolMax = checkpointRecoveryThreadpoolMaxRaw;
         this.devModeEnabled = getBoolean(properties, env, PropertyKey.DEV_MODE_ENABLED, false);
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
@@ -1504,7 +1524,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.parquetExportCopyReportFrequencyLines = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_COPY_REPORT_FREQUENCY_LINES, 500_000);
             this.parquetExportVersion = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_VERSION, ParquetVersion.PARQUET_VERSION_V1);
             this.parquetExportStatisticsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_STATISTICS_ENABLED, true);
-            this.parquetExportCompressionCodec = ParquetCompression.getCompressionCodec(getString(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_COMPRESSION_CODEC, "ZSTD"));
+            this.parquetExportCompressionCodec = ParquetCompression.getCompressionCodec(getString(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_COMPRESSION_CODEC, "LZ4_RAW"));
 
             this.parquetExportRawArrayEncoding = getBoolean(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_RAW_ARRAY_ENCODING_ENABLED, false);
             int defaultCompressionLevel = parquetExportCompressionCodec == ParquetCompression.COMPRESSION_ZSTD ? 9 : 0;
@@ -1599,10 +1619,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoSqlCopyLogRetentionDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_LOG_RETENTION_DAYS, 3);
             this.o3MinLagUs = getMicros(properties, env, PropertyKey.CAIRO_O3_MIN_LAG, 1_000) * 1_000L;
 
-            this.backupRoot = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_ROOT, null);
-            this.backupDirTimestampFormat = getTimestampFormat(properties, env);
-            this.backupTempDirName = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_DIR_TMP_NAME, "tmp");
-            this.backupMkdirMode = getInt(properties, env, PropertyKey.CAIRO_SQL_BACKUP_MKDIR_MODE, 509);
             this.detachedMkdirMode = getInt(properties, env, PropertyKey.CAIRO_DETACHED_MKDIR_MODE, 509);
             this.columnIndexerQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_COLUMN_INDEXER_QUEUE_CAPACITY, 64);
             this.o3CallbackQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_CALLBACK_QUEUE_CAPACITY, 128);
@@ -1640,6 +1656,17 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlWindowTreeKeyPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE, sqlWindowTreeKeyPageSize));
             int sqlWindowTreeKeyMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlWindowTreeKeyMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_PAGES, sqlWindowTreeKeyMaxPages);
+            this.sqlIntervalMaxBracketDepth = getInt(properties, env, PropertyKey.CAIRO_SQL_INTERVAL_MAX_BRACKET_DEPTH, 8);
+            this.sqlIntervalMaxIntervalsAfterMerge = getInt(properties, env, PropertyKey.CAIRO_SQL_INTERVAL_MAX_INTERVALS_AFTER_MERGE, 1024);
+            this.sqlIntervalIncrementalMergeThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_INTERVAL_INCREMENTAL_MERGE_THRESHOLD, 256);
+            if (this.sqlIntervalMaxIntervalsAfterMerge <= this.sqlIntervalIncrementalMergeThreshold) {
+                throw new ServerConfigurationException(
+                        PropertyKey.CAIRO_SQL_INTERVAL_MAX_INTERVALS_AFTER_MERGE.getPropertyPath()
+                                + " (" + this.sqlIntervalMaxIntervalsAfterMerge + ") must be greater than "
+                                + PropertyKey.CAIRO_SQL_INTERVAL_INCREMENTAL_MERGE_THRESHOLD.getPropertyPath()
+                                + " (" + this.sqlIntervalIncrementalMergeThreshold + ")"
+                );
+            }
             this.cairoSqlLegacyOperatorPrecedence = getBoolean(properties, env, PropertyKey.CAIRO_SQL_LEGACY_OPERATOR_PRECEDENCE, false);
             this.sqlWindowInitialRangeBufferSize = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_INITIAL_RANGE_BUFFER_SIZE, 32);
             this.sqlTxnScoreboardEntryCount = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, 16384));
@@ -1904,8 +1931,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewParallelExecutionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, true);
             this.sqlParallelWorkStealingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 16);
             this.sqlParallelWorkStealingSpinTimeout = getNanos(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT, 50_000);
-            // TODO(puzpuzpuz): consider increasing default Parquet cache capacity
-            this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 3), 3);
+            this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 8), 8);
             this.sqlOrderBySortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
             this.sqlOrderByRadixSortThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_THRESHOLD, 600);
             this.copierChunkedEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_COPIER_CHUNKED, true);
@@ -1930,7 +1956,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.partitionEncoderParquetVersion = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_VERSION, ParquetVersion.PARQUET_VERSION_V1);
         this.partitionEncoderParquetStatisticsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, true);
-        this.partitionEncoderParquetCompressionCodec = ParquetCompression.getCompressionCodec(getString(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, "ZSTD"));
+        this.partitionEncoderParquetCompressionCodec = ParquetCompression.getCompressionCodec(getString(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, "LZ4_RAW"));
         this.partitionEncoderParquetRawArrayEncoding = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, false);
         int defaultCompressionLevel = partitionEncoderParquetCompressionCodec == ParquetCompression.COMPRESSION_ZSTD ? 9 : 0;
         this.partitionEncoderParquetCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, defaultCompressionLevel);
@@ -2207,10 +2233,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         return SqlJitMode.JIT_MODE_ENABLED;
     }
 
-    private DateFormat getTimestampFormat(Properties properties, @Nullable Map<String, String> env) {
-        return compiler.compile(getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_DIR_DATETIME_FORMAT, "yyyy-MM-dd"));
-    }
-
     // The enterprise version needs to add tcps and https
     private String initIlpTransport() {
         StringSink sink = Misc.getThreadLocalSink();
@@ -2247,7 +2269,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     .equals(new File(p2).getCanonicalPath().replace(File.separatorChar, '/'));
         } catch (IOException e) {
             log.info().$("Can't validate configuration property [key=").$(PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath())
-                    .$(", value=").$(p2).$("]");
+                    .$(", value=").$(p2).I$();
             return false;
         }
     }
@@ -3056,26 +3078,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public DateFormat getBackupDirTimestampFormat() {
-            return backupDirTimestampFormat;
-        }
-
-        @Override
-        public int getBackupMkDirMode() {
-            return backupMkdirMode;
-        }
-
-        @Override
-        public CharSequence getBackupRoot() {
-            return backupRoot;
-        }
-
-        @Override
-        public @NotNull CharSequence getBackupTempDirName() {
-            return backupTempDirName;
-        }
-
-        @Override
         public int getBinaryEncodingMaxLength() {
             return binaryEncodingMaxLength;
         }
@@ -3093,6 +3095,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getCairoSqlLegacyOperatorPrecedence() {
             return cairoSqlLegacyOperatorPrecedence;
+        }
+
+        @Override
+        public boolean getCheckpointRecoveryRebuildColumnIndexes() {
+            return checkpointRecoveryRebuildColumnIndexes;
+        }
+
+        @Override
+        public int getCheckpointRecoveryThreadpoolMax() {
+            return checkpointRecoveryThreadpoolMax;
+        }
+
+        @Override
+        public int getCheckpointRecoveryThreadpoolMin() {
+            return checkpointRecoveryThreadpoolMin;
         }
 
         @Override
@@ -3984,13 +4001,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlParallelWorkStealingThreshold() {
-            return sqlParallelWorkStealingThreshold;
+        public long getSqlParallelWorkStealingSpinTimeout() {
+            return sqlParallelWorkStealingSpinTimeout;
         }
 
         @Override
-        public long getSqlParallelWorkStealingSpinTimeout() {
-            return sqlParallelWorkStealingSpinTimeout;
+        public int getSqlParallelWorkStealingThreshold() {
+            return sqlParallelWorkStealingThreshold;
         }
 
         @Override
@@ -4096,6 +4113,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlWindowTreeKeyPageSize() {
             return sqlWindowTreeKeyPageSize;
+        }
+
+        @Override
+        public int getSqlIntervalIncrementalMergeThreshold() {
+            return sqlIntervalIncrementalMergeThreshold;
+        }
+
+        @Override
+        public int getSqlIntervalMaxBracketDepth() {
+            return sqlIntervalMaxBracketDepth;
+        }
+
+        @Override
+        public int getSqlIntervalMaxIntervalsAfterMerge() {
+            return sqlIntervalMaxIntervalsAfterMerge;
         }
 
         @Override
@@ -4356,6 +4388,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isMatViewParallelSqlEnabled() {
             return matViewParallelExecutionEnabled;
+        }
+
+        @Override
+        public boolean isMatViewRefreshMissingWalFilesFatal() {
+            return matViewRefreshMissingWalFilesFatal;
         }
 
         @Override

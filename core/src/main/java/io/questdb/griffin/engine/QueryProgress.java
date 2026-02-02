@@ -28,7 +28,6 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -559,15 +558,12 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
-        public boolean hasNext() throws DataUnavailableException {
+        public boolean hasNext() {
             try {
                 return base.hasNext();
-            } catch (DataUnavailableException e) {
-                // this workflow is not yet in production and is incomplete
-                throw e;
-            } catch (Throwable e) {
-                close0(e);
-                throw e;
+            } catch (Throwable th) {
+                close0(th);
+                throw th;
             }
         }
 
@@ -597,12 +593,12 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
-        public long size() throws DataUnavailableException {
+        public long size() {
             return base.size();
         }
 
         @Override
-        public void skipRows(Counter rowCount) throws DataUnavailableException {
+        public void skipRows(Counter rowCount) {
             base.skipRows(rowCount);
         }
 

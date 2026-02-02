@@ -37,6 +37,17 @@ public class SqlKeywords {
     protected static final LowerCaseCharSequenceHashSet KEYWORDS = new LowerCaseCharSequenceHashSet();
     private static final LowerCaseCharSequenceHashSet TIMESTAMP_PART_SET = new LowerCaseCharSequenceHashSet();
 
+    // Used to abort enterprise backups
+    @SuppressWarnings("unused")
+    public static boolean isAbortKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'a'
+                && (tok.charAt(1) | 32) == 'b'
+                && (tok.charAt(2) | 32) == 'o'
+                && (tok.charAt(3) | 32) == 'r'
+                && (tok.charAt(4) | 32) == 't';
+    }
+
     public static boolean isAddKeyword(CharSequence tok) {
         return tok.length() == 3
                 && (tok.charAt(0) | 32) == 'a'
@@ -374,6 +385,31 @@ public class SqlKeywords {
                 ;
     }
 
+    // Used by SqlOptimiser for timestamp predicate pushdown validation.
+    // Time functions like current_timestamp() cannot be pushed through dateadd transformations.
+    public static boolean isCurrentTimestampKeyword(CharSequence tok) {
+        return tok.length() == 17
+                && (tok.charAt(0) | 32) == 'c'
+                && (tok.charAt(1) | 32) == 'u'
+                && (tok.charAt(2) | 32) == 'r'
+                && (tok.charAt(3) | 32) == 'r'
+                && (tok.charAt(4) | 32) == 'e'
+                && (tok.charAt(5) | 32) == 'n'
+                && (tok.charAt(6) | 32) == 't'
+                && tok.charAt(7) == '_'
+                && (tok.charAt(8) | 32) == 't'
+                && (tok.charAt(9) | 32) == 'i'
+                && (tok.charAt(10) | 32) == 'm'
+                && (tok.charAt(11) | 32) == 'e'
+                && (tok.charAt(12) | 32) == 's'
+                && (tok.charAt(13) | 32) == 't'
+                && (tok.charAt(14) | 32) == 'a'
+                && (tok.charAt(15) | 32) == 'm'
+                && (tok.charAt(16) | 32) == 'p';
+    }
+
+    // Used in enterprise backups
+    @SuppressWarnings("unused")
     public static boolean isDatabaseKeyword(CharSequence tok) {
         return tok.length() == 8
                 && (tok.charAt(0) | 32) == 'd'
@@ -1431,6 +1467,15 @@ public class SqlKeywords {
                 && (tok.charAt(2) | 32) == 't';
     }
 
+    // Used by SqlOptimiser for timestamp predicate pushdown validation.
+    // Time functions like now() cannot be pushed through dateadd transformations.
+    public static boolean isNowKeyword(CharSequence tok) {
+        return tok.length() == 3
+                && (tok.charAt(0) | 32) == 'n'
+                && (tok.charAt(1) | 32) == 'o'
+                && (tok.charAt(2) | 32) == 'w';
+    }
+
     public static boolean isNullKeyword(CharSequence tok) {
         return tok.length() == 4
                 && (tok.charAt(0) | 32) == 'n'
@@ -2038,6 +2083,37 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'b'
                 && (tok.charAt(4) | 32) == 'o'
                 && (tok.charAt(5) | 32) == 'l';
+    }
+
+    // Used by SqlOptimiser for timestamp predicate pushdown validation.
+    // Time functions like sysdate() cannot be pushed through dateadd transformations.
+    public static boolean isSysdateKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 's'
+                && (tok.charAt(1) | 32) == 'y'
+                && (tok.charAt(2) | 32) == 's'
+                && (tok.charAt(3) | 32) == 'd'
+                && (tok.charAt(4) | 32) == 'a'
+                && (tok.charAt(5) | 32) == 't'
+                && (tok.charAt(6) | 32) == 'e';
+    }
+
+    // Used by SqlOptimiser for timestamp predicate pushdown validation.
+    // Time functions like systimestamp() cannot be pushed through dateadd transformations.
+    public static boolean isSystimestampKeyword(CharSequence tok) {
+        return tok.length() == 12
+                && (tok.charAt(0) | 32) == 's'
+                && (tok.charAt(1) | 32) == 'y'
+                && (tok.charAt(2) | 32) == 's'
+                && (tok.charAt(3) | 32) == 't'
+                && (tok.charAt(4) | 32) == 'i'
+                && (tok.charAt(5) | 32) == 'm'
+                && (tok.charAt(6) | 32) == 'e'
+                && (tok.charAt(7) | 32) == 's'
+                && (tok.charAt(8) | 32) == 't'
+                && (tok.charAt(9) | 32) == 'a'
+                && (tok.charAt(10) | 32) == 'm'
+                && (tok.charAt(11) | 32) == 'p';
     }
 
     public static boolean isTableKeyword(CharSequence tok) {

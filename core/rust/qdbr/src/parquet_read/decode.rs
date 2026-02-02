@@ -15,8 +15,9 @@ use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::dict_decoder::{FixedDictDecoder, VarDictDecoder};
 use crate::parquet_read::slicer::rle::{RleDictionarySlicer, RleLocalIsGlobalSymbolDecoder};
 use crate::parquet_read::slicer::{
-    BooleanBitmapSlicer, DataPageFixedSlicer, DataPageSlicer, DeltaBinaryPackedSlicer,
-    DeltaBytesArraySlicer, DeltaLengthArraySlicer, PlainVarSlicer, ValueConvertSlicer,
+    BooleanBitmapSlicer, DataPageFixedSlicer, DataPageSlicer, DaysToMillisConverter,
+    DeltaBinaryPackedSlicer, DeltaBytesArraySlicer, DeltaLengthArraySlicer, PlainVarSlicer,
+    ValueConvertSlicer,
 };
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnChunkStats, DecodeContext, ParquetDecoder, RowGroupBuffers,
@@ -570,15 +571,8 @@ pub fn decode_page(
                         row_lo,
                         row_hi,
                         &mut FixedLongColumnSink::new(
-                            &mut ValueConvertSlicer::<8, _, _>::new(
+                            &mut ValueConvertSlicer::<8, _, DaysToMillisConverter>::new(
                                 DataPageFixedSlicer::<4>::new(values_buffer, row_count),
-                                |int_val: &[u8], buff: &mut [u8; 8]| {
-                                    let days_since_epoch = unsafe {
-                                        ptr::read_unaligned(int_val.as_ptr() as *const i32)
-                                    };
-                                    let date = days_since_epoch as i64 * 24 * 60 * 60 * 1000;
-                                    buff.copy_from_slice(&date.to_le_bytes());
-                                },
                             ),
                             bufs,
                             &LONG_NULL,
@@ -1243,12 +1237,30 @@ fn decode_page0<T: Pushable>(
                     }
                     sink.skip(to_skip);
                     // next, copy the remaining values, if any
+                    // consecutive true/false values together
+                    let mut consecutive_true = 0usize;
+                    let mut consecutive_false = 0usize;
                     while let Some(item) = iter.next() {
                         if item {
-                            sink.push()?;
+                            if consecutive_false > 0 {
+                                sink.push_nulls(consecutive_false)?;
+                                consecutive_false = 0;
+                            }
+                            consecutive_true += 1;
                         } else {
-                            sink.push_null()?;
+                            if consecutive_true > 0 {
+                                sink.push_slice(consecutive_true)?;
+                                consecutive_true = 0;
+                            }
+                            consecutive_false += 1;
                         }
+                    }
+
+                    if consecutive_true > 0 {
+                        sink.push_slice(consecutive_true)?;
+                    }
+                    if consecutive_false > 0 {
+                        sink.push_nulls(consecutive_false)?;
                     }
                 }
                 HybridEncoded::Repeated(is_set, length) => {
@@ -1368,6 +1380,7 @@ fn append_array<T: DataPageSlicer>(
         // first, calculate and write shape
         let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
         calculate_array_shape(&mut shape, max_rep_level, rep_levels);
+        data_mem.reserve(value_size)?;
         let mut num_elements: usize = 1;
         for &dim in shape.iter().take(max_rep_level as usize) {
             num_elements *= dim as usize;
@@ -1387,10 +1400,9 @@ fn append_array<T: DataPageSlicer>(
         }
 
         // next, copy elements
-        data_mem.reserve(value_size)?;
         for &def_level in def_levels {
             if def_level == max_def_level {
-                data_mem.extend_from_slice(slicer.next())?;
+                slicer.next_into(data_mem)?;
             } else {
                 data_mem.extend_from_slice(&f64::NAN.to_le_bytes())?;
             }

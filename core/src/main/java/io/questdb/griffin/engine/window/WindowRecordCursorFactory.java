@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
@@ -180,7 +179,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void skipRows(Counter rowCount) throws DataUnavailableException {
+        public void skipRows(Counter rowCount) {
             // we can't skip to an arbitrary result set point because current window function value might depend
             // on values in other rows that could be located anywhere
             RecordCursor.skipRows(this, rowCount);

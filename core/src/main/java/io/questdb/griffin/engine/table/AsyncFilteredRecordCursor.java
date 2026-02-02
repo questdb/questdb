@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -249,7 +248,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void skipRows(Counter rowCount) throws DataUnavailableException {
+    public void skipRows(Counter rowCount) {
         if (frameIndex == -1) {
             fetchNextFrame(dispatchLimit, false);
         }

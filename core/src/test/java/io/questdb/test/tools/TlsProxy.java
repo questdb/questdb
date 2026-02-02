@@ -168,6 +168,8 @@ public final class TlsProxy {
         }
 
         private void shutDown() {
+            closeQuietly(frontend);
+            closeQuietly(backend);
             frontendToBackend.shutdown();
             backendToFrontend.shutdown();
         }

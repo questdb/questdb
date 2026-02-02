@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import static org.junit.Assert.assertFalse;
@@ -317,6 +318,95 @@ public class RandomSelectGeneratorTest extends AbstractCairoTest {
                 // Execute to verify validity
                 assertQueryNoLeakCheck(query);
             }
+        });
+    }
+
+    @Test
+    public void testGroupByBooleanAvoidsLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE bool_only (" +
+                    "flag BOOLEAN" +
+                    ")");
+
+            execute("INSERT INTO bool_only VALUES " +
+                    "(true), (false), (true), (false)");
+
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            RandomSelectGenerator generator = new RandomSelectGenerator(engine, rnd, "bool_only")
+                    .setAggregationProbability(1.0) // always aggregate
+                    .setSampleByProbability(0.0)
+                    .setOrderByProbability(1.0) // always attempt ORDER BY / LIMIT
+                    .setLimitProbability(1.0)
+                    .setWhereClauseProbability(0.0)
+                    .setJoinProbability(0.0);
+
+            String query = generator.generate();
+            LOG.info().$("Query with boolean GROUP BY key (no LIMIT expected): ").$(query).$();
+
+            assertTrue(query.contains("GROUP BY"));
+            assertFalse("LIMIT should not be generated when grouping on boolean key", query.contains("LIMIT"));
+            assertQueryNoLeakCheck(query);
+        });
+    }
+
+    @Test
+    public void testGroupByOrderableKeyAllowsLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ints_only (" +
+                    "v INT" +
+                    ")");
+
+            execute("INSERT INTO ints_only VALUES (1), (2), (3), (4)");
+
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            RandomSelectGenerator generator = new RandomSelectGenerator(engine, rnd, "ints_only")
+                    .setAggregationProbability(1.0)
+                    .setSampleByProbability(0.0)
+                    .setOrderByProbability(1.0)
+                    .setLimitProbability(1.0)
+                    .setWhereClauseProbability(0.0)
+                    .setJoinProbability(0.0);
+
+            String query = generator.generate();
+            LOG.info().$("Query with orderable GROUP BY key (LIMIT expected): ").$(query).$();
+
+            assertTrue(query.contains("GROUP BY"));
+            assertTrue("LIMIT should be generated when grouping on orderable key", query.contains("LIMIT"));
+            assertTrue("ORDER BY should be present when LIMIT is generated", query.contains("ORDER BY"));
+            assertQueryNoLeakCheck(query);
+        });
+    }
+
+    @Test
+    public void testSampleByOrderEnforcesAscWithLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sample_table (" +
+                    "ts TIMESTAMP, " +
+                    "v INT" +
+                    ") TIMESTAMP(ts)");
+
+            execute("INSERT INTO sample_table SELECT " +
+                    "timestamp_sequence('2024-01-01', 1000000L) ts, " +
+                    "x::int v " +
+                    "FROM long_sequence(10)");
+
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            RandomSelectGenerator generator = new RandomSelectGenerator(engine, rnd, "sample_table")
+                    .setAggregationProbability(1.0)
+                    .setSampleByProbability(1.0) // always SAMPLE BY
+                    .setOrderByProbability(1.0)
+                    .setLimitProbability(1.0)
+                    .setWhereClauseProbability(0.0)
+                    .setJoinProbability(0.0);
+
+            String query = generator.generate();
+            LOG.info().$("SAMPLE BY query with LIMIT: ").$(query).$();
+
+            assertTrue(query.contains("SAMPLE BY"));
+            assertTrue(query.contains("ORDER BY 1"));
+            assertFalse("DESC should not be used with SAMPLE BY ordering", query.contains("DESC"));
+            assertTrue(query.contains("LIMIT"));
+            assertQueryNoLeakCheck(query);
         });
     }
 

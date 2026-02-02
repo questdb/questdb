@@ -613,7 +613,6 @@ public class TableReader implements Closeable, SymbolTableSource {
      *
      * @param partitionIndex partition index
      * @return partition size in rows
-     * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
     public long openPartition(int partitionIndex) {
         final long size = getPartitionRowCount(partitionIndex);
@@ -1446,7 +1445,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 }
                             }
                         }
-                    } else {
+                    } else if (openPartitionSize > -1) {
                         prepareForLazyOpen(partitionIndex);
                     }
                     changed = true;

@@ -309,7 +309,7 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelReadParquetEnabled());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getSqlParallelWorkStealingThreshold());
         Assert.assertEquals(50_000, configuration.getCairoConfiguration().getSqlParallelWorkStealingSpinTimeout());
-        Assert.assertEquals(3, configuration.getCairoConfiguration().getSqlParquetFrameCacheCapacity());
+        Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlParquetFrameCacheCapacity());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlPageFrameMaxRows());
         Assert.assertEquals(100_000, configuration.getCairoConfiguration().getSqlPageFrameMinRows());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getPageFrameReduceRowIdListCapacity());
@@ -2128,7 +2128,9 @@ public class PropServerConfigurationTest {
                     String key = uncommented.substring(0, equalsIndex).trim();
                     String value = uncommented.substring(equalsIndex + 1).trim();
                     if (!key.contains(".") || key.startsWith("http.redirect") || key.contains(" ")
-                            || key.startsWith("replication") || key.startsWith("acl") || key.contains("tls") || key.startsWith("cold.storage") || key.startsWith("native.")) { // Enterprise confs
+                            || key.startsWith("replication") || key.startsWith("acl") || key.contains("tls")
+                            || key.startsWith("cold.storage") || key.startsWith("native.")
+                            || key.startsWith("backup.")) { // Enterprise confs
                         continue;
                     }
                     properties.clear();

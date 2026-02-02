@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.LongList;
@@ -130,8 +132,16 @@ public class IntrinsicModel implements Mutable {
         runtimeIntervalBuilder.merge(model, loOffset, hiOffset);
     }
 
-    public void of(int timestampType, int partitionBy) {
-        this.runtimeIntervalBuilder.of(timestampType, partitionBy);
+    /**
+     * Merges intervals from another IntrinsicModel with calendar-aware offset adjustment.
+     * This avoids allocating an intermediate RuntimeIntervalModel.
+     */
+    public void mergeIntervalModelWithAddMethod(IntrinsicModel other, TimestampDriver.TimestampAddMethod addMethod, int offset) throws SqlException {
+        runtimeIntervalBuilder.mergeWithAddMethod(other.runtimeIntervalBuilder, addMethod, offset);
+    }
+
+    public void of(int timestampType, int partitionBy, CairoConfiguration configuration) {
+        this.runtimeIntervalBuilder.of(timestampType, partitionBy, configuration);
     }
 
     public void setBetweenBoundary(long timestamp) {
@@ -189,6 +199,10 @@ public class IntrinsicModel implements Mutable {
 
     public void unionIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
         runtimeIntervalBuilder.unionIntervals(seq, lo, lim, position);
+    }
+
+    public void unionRuntimeTimestamp(Function function) {
+        runtimeIntervalBuilder.unionRuntimeTimestamp(function);
     }
 
     static {

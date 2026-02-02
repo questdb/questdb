@@ -63,7 +63,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
     ) {
         // Deep copy all mutable objects to avoid retaining references
         this.fromTypes = copyColumnTypes(fromTypes);
-        this.toMetadata = GenericRecordMetadata.deepCopyOf(toMetadata);
+        this.toMetadata = GenericRecordMetadata.copyOfNew(toMetadata);
         this.toColumnFilter = copyColumnFilter(toColumnFilter);
         this.timestampIndex = toMetadata.getTimestampIndex();
 

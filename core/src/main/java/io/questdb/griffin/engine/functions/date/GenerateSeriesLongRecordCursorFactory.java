@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
@@ -119,11 +118,10 @@ public class GenerateSeriesLongRecordCursorFactory extends AbstractGenerateSerie
         }
 
         @Override
-        public void skipRows(Counter rowCount) throws DataUnavailableException {
+        public void skipRows(Counter rowCount) {
             long currentRowId = recordA.getRowId()
-                    - 1 // one-indexed
-                    - 1 // we increment at the start of hasNext()
-                    ;
+                    - 1  // one-indexed
+                    - 1; // we increment at the start of hasNext()
             long rowsToSkip = Math.min(rowCount.get(), size() - currentRowId);
             long newRowId = currentRowId + rowsToSkip;
             recordAt(recordA, newRowId);

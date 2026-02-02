@@ -46,7 +46,6 @@ import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
@@ -55,7 +54,6 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.network.SuspendEvent;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -133,10 +131,10 @@ import java.util.stream.Stream;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
-import static io.questdb.test.tools.TestUtils.*;
 import static io.questdb.test.tools.TestUtils.assertEquals;
-import static org.junit.Assert.*;
+import static io.questdb.test.tools.TestUtils.*;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.*;
 
 /**
  * This class contains tests which replay PGWIRE traffic.
@@ -8993,170 +8991,6 @@ nodejs code:
                     && descCount == descLimitCount && descCount == ascCount && descCount == ascLimitCount;
 
             Assert.assertTrue(message, allEqual);
-        });
-    }
-
-    @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
-        maxQueryTime = 100;
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
-            TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-            try {
-                String query = "select * from test_data_unavailable(1, 10)";
-                String expected = """
-                        x[BIGINT],y[BIGINT],z[BIGINT]
-                        1,1,1
-                        """;
-                try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
-                    sink.clear();
-                    assertResultSet(expected, sink, resultSet);
-                    Assert.fail();
-                } catch (SQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
-                }
-            } finally {
-                // Make sure to close the event on the producer side.
-                Misc.free(eventRef.get());
-            }
-        });
-    }
-
-    @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredAfterDelay() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            int totalRows = 3;
-            int backoffCount = 3;
-
-            final AtomicInteger totalEvents = new AtomicInteger();
-            final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
-            final AtomicBoolean stopDelayThread = new AtomicBoolean();
-            final AtomicInteger errorCount = new AtomicInteger();
-
-            final Thread delayThread = new Thread(() -> {
-                while (!stopDelayThread.get()) {
-                    SuspendEvent event = eventRef.getAndSet(null);
-                    if (event != null) {
-                        Os.sleep(1);
-                        try {
-                            event.trigger();
-                            event.close();
-                            totalEvents.incrementAndGet();
-                        } catch (Exception e) {
-                            errorCount.incrementAndGet();
-                        }
-                    } else {
-                        Os.pause();
-                    }
-                }
-            });
-            delayThread.start();
-
-            TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-
-            String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
-            String expected = """
-                    x[BIGINT],y[BIGINT],z[BIGINT]
-                    1,1,1
-                    2,2,2
-                    3,3,3
-                    """;
-            try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
-                sink.clear();
-                assertResultSet(expected, sink, resultSet);
-            }
-            stopDelayThread.set(true);
-
-            delayThread.join();
-            Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
-            Assert.assertEquals(0, errorCount.get());
-        });
-    }
-
-    @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            int totalRows = 3;
-            int backoffCount = 10;
-
-            final AtomicInteger totalEvents = new AtomicInteger();
-            TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                event.trigger();
-                event.close();
-                totalEvents.incrementAndGet();
-            };
-
-            String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
-            String expected = """
-                    x[BIGINT],y[BIGINT],z[BIGINT]
-                    1,1,1
-                    2,2,2
-                    3,3,3
-                    """;
-            try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
-                sink.clear();
-                assertResultSet(expected, sink, resultSet);
-            }
-
-            Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
-        });
-    }
-
-    @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableSmallSendBuffer() throws Exception {
-        assertMemoryLeak(() -> {
-            PGConfiguration configuration = new Port0PGConfiguration() {
-                @Override
-                public int getSendBufferSize() {
-                    return 192;
-                }
-            };
-
-            try (
-                    PGServer server = createPGServer(configuration);
-                    WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                int port = server.getPort();
-                try (Connection connection = getConnection(Mode.EXTENDED, port, true)) {
-                    int totalRows = 16;
-                    int backoffCount = 3;
-
-                    final AtomicInteger totalEvents = new AtomicInteger();
-                    TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                        event.trigger();
-                        event.close();
-                        totalEvents.incrementAndGet();
-                    };
-
-                    String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
-                    String expected = """
-                            x[BIGINT],y[BIGINT],z[BIGINT]
-                            1,1,1
-                            2,2,2
-                            3,3,3
-                            4,4,4
-                            5,5,5
-                            6,6,6
-                            7,7,7
-                            8,8,8
-                            9,9,9
-                            10,10,10
-                            11,11,11
-                            12,12,12
-                            13,13,13
-                            14,14,14
-                            15,15,15
-                            16,16,16
-                            """;
-                    try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
-                        sink.clear();
-                        assertResultSet(expected, sink, resultSet);
-                    }
-
-                    Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
-                }
-            }
         });
     }
 

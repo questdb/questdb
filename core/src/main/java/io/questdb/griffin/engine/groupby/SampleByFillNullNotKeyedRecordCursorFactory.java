@@ -41,8 +41,8 @@ import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
     private final SampleByFillValueNotKeyedRecordCursor cursor;
-    private final SimpleMapValue simpleMapValue;
-    private final SimpleMapValue simpleMapValueB;
+    private final SimpleMapValue value;
+    private final SimpleMapValue valueB;
 
     public SampleByFillNullNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -67,9 +67,9 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
     ) throws SqlException {
         super(base, groupByMetadata, recordFunctions);
         try {
-            this.simpleMapValue = new SimpleMapValue(valueCount);
-            this.simpleMapValueB = new SimpleMapValue(valueCount);
-            final SimpleMapValuePeeker peeker = new SimpleMapValuePeeker(simpleMapValue, simpleMapValueB);
+            this.value = new SimpleMapValue(valueCount);
+            this.valueB = new SimpleMapValue(valueCount);
+            final SimpleMapValuePeeker peeker = new SimpleMapValuePeeker(value, valueB);
             final GroupByFunctionsUpdater groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             cursor = new SampleByFillValueNotKeyedRecordCursor(
                     configuration,
@@ -81,7 +81,7 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
                     timestampIndex,
                     timestampType,
                     timestampSampler,
-                    simpleMapValue,
+                    value,
                     timezoneNameFunc,
                     timezoneNameFuncPos,
                     offsetFunc,
@@ -113,8 +113,8 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
     @Override
     protected void _close() {
         super._close();
-        Misc.free(simpleMapValue);
-        Misc.free(simpleMapValueB);
+        Misc.free(value);
+        Misc.free(valueB);
         Misc.free(cursor);
     }
 

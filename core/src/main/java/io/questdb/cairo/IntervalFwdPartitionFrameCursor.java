@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Misc;
 
 public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFrameCursor {
     private static final Log LOG = LogFactory.getLog(IntervalFwdPartitionFrameCursor.class);
@@ -60,15 +59,7 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
         while (intervalsLo1 < intervalsHi1 && partitionLo1 < partitionHi1) {
             // We don't need to worry about column tops and null column because we
             // are working with timestamp. Timestamp column cannot be added to existing table.
-            long rowCount;
-            try {
-                rowCount = reader.getPartitionRowCountFromMetadata(partitionLo1);
-            } catch (DataUnavailableException e) {
-                // The data is in cold storage, close the event and give up on size calculation.
-                Misc.free(e.getEvent());
-                return;
-            }
-
+            final long rowCount = reader.getPartitionRowCountFromMetadata(partitionLo1);
             if (rowCount > 0) {
                 final TimestampFinder timestampFinder = initTimestampFinder(partitionLo1, rowCount);
 

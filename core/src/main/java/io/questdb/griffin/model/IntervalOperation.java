@@ -33,4 +33,7 @@ public final class IntervalOperation {
     public static final short SUBTRACT = 5;
     public static final short SUBTRACT_BETWEEN = 6;
     public static final short SUBTRACT_INTERVALS = 7;
+    // UNION is used for bracket expansion in dynamic mode: subsequent intervals
+    // are unioned with the first before applying the overall operation
+    public static final short UNION = 8;
 }

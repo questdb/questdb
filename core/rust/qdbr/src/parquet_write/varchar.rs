@@ -1,7 +1,7 @@
 use std::mem;
 
 use super::util::ExactSizedIter;
-use crate::allocator::AcVec;
+use crate::allocator::{AcVec, AcVecSetLen};
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
@@ -127,6 +127,7 @@ pub fn varchar_to_page(
         primitive_type,
         options,
         encoding,
+        false,
     )
     .map(Page::Data)
 }
@@ -233,9 +234,48 @@ pub fn append_varchar_nulls(
     data_mem: &[u8],
     count: usize,
 ) -> ParquetResult<()> {
-    // TODO: optimize, inserting same values
-    for _ in 0..count {
-        append_varchar_null(aux_mem, data_mem)?;
+    match count {
+        0 => Ok(()),
+        1 => append_varchar_null(aux_mem, data_mem),
+        2 => {
+            append_varchar_null(aux_mem, data_mem)?;
+            append_varchar_null(aux_mem, data_mem)
+        }
+        3 => {
+            append_varchar_null(aux_mem, data_mem)?;
+            append_varchar_null(aux_mem, data_mem)?;
+            append_varchar_null(aux_mem, data_mem)
+        }
+        4 => {
+            append_varchar_null(aux_mem, data_mem)?;
+            append_varchar_null(aux_mem, data_mem)?;
+            append_varchar_null(aux_mem, data_mem)?;
+            append_varchar_null(aux_mem, data_mem)
+        }
+        _ => {
+            const ENTRY_SIZE: usize = 16; // 10 bytes header + 6 bytes offset
+            let offset = data_mem.len();
+            assert!(offset < VARCHAR_MAX_COLUMN_SIZE);
+
+            let mut null_entry = [0u8; ENTRY_SIZE];
+            null_entry[..10].copy_from_slice(&VARCHAR_HEADER_FLAG_NULL);
+            null_entry[10..12].copy_from_slice(&(offset as u16).to_le_bytes());
+            null_entry[12..16].copy_from_slice(&((offset >> 16) as u32).to_le_bytes());
+
+            let base = aux_mem.len();
+            aux_mem.reserve(count * ENTRY_SIZE)?;
+            unsafe {
+                let ptr = aux_mem.as_mut_ptr().add(base);
+                for i in 0..count {
+                    std::ptr::copy_nonoverlapping(
+                        null_entry.as_ptr(),
+                        ptr.add(i * ENTRY_SIZE),
+                        ENTRY_SIZE,
+                    );
+                }
+                aux_mem.set_len(base + count * ENTRY_SIZE);
+            }
+            Ok(())
+        }
     }
-    Ok(())
 }

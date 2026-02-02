@@ -25,7 +25,6 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.std.QuietCloseable;
 
 /**
@@ -91,9 +90,8 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
      * Opens frame rows for record navigation and updates frame's row lo/hi fields.
      *
      * @return frame size in rows
-     * @throws DataUnavailableException when the queried frame belongs to a partition in the cold storage
      */
-    long open() throws DataUnavailableException;
+    long open();
 
     boolean prev();
 

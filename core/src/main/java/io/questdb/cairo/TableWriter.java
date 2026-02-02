@@ -1466,9 +1466,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     if (columnRowCount > 0) {
                         if (ColumnType.isSymbol(columnType)) {
+                            final MapWriter symbolMapWriter = getSymbolMapWriter(columnIndex);
+                            int encodeColumnType = columnType;
+                            if (!symbolMapWriter.getNullFlag()) {
+                                encodeColumnType |= Integer.MIN_VALUE;
+                            }
+
                             partitionDescriptor.addColumn(
                                     columnName,
-                                    columnType,
+                                    encodeColumnType,
                                     columnId,
                                     columnTop
                             );
@@ -1492,7 +1498,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
                             }
 
-                            final int symbolCount = getSymbolMapWriter(columnIndex).getSymbolCount();
+                            final int symbolCount = symbolMapWriter.getSymbolCount();
                             final long offsetsMemSize = SymbolMapWriter.keyToOffset(symbolCount + 1);
                             final long symbolOffsetsAddr = mapRO(ff, path.$(), LOG, offsetsMemSize, memoryTag);
                             partitionDescriptor.setSymbolOffsetsAddr(symbolOffsetsAddr + HEADER_SIZE, symbolCount);
@@ -5358,7 +5364,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         if (metadata.getPartitionBy() == PartitionBy.NONE) {
-            LOG.error().$("TTL set on a non-partitioned table. Ignoring");
+            LOG.error().$("TTL set on a non-partitioned table. Ignoring").$();
             return;
         }
         if (getPartitionCount() < 2) {
@@ -10103,6 +10109,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             txWriter.updatePartitionSizeByTimestamp(targetPartition, targetFrame.getRowCount());
+            if (!txWriter.incrementPartitionSquashCounter(targetPartitionIndex)) {
+                // The squash counter overflew its 16 bits
+                // To help back to detect partition changes we will save a file inside the partition with the current timestamp
+                // to indicate the squash timing. When squash timing/version has changed, even when the partitition has
+                // the same version and row count it will be included in a backup.
+                // It is OK to overwrite the file, it is not read by backup process at the moment
+                // because backup locks scoreboard to not allow to squash into the partitions it operates on
+                squashSplitPartitions_updateSquashTimestampFile(targetPartition, targetPartitionNameTxn);
+            }
+
+
             if (lastPartitionSquashed) {
                 // last partition is squashed, adjust fixed/transient row sizes
                 long newTransientRowCount = targetFrame.getRowCount() - txWriter.getLagRowCount();
@@ -10133,6 +10150,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return -partitionIndex - 1;
         }
         return partitionIndex;
+    }
+
+    private void squashSplitPartitions_updateSquashTimestampFile(long targetPartition, long targetPartitionNameTxn) {
+        try {
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, targetPartition, targetPartitionNameTxn);
+            other.concat(TableUtils.PARTITION_LAST_SQUASH_TIMESTAMP_FILE);
+            long squashCounterFileFd = TableUtils.openRW(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
+            Unsafe.getUnsafe().putLong(tempMem16b, configuration.getMicrosecondClock().getTicks());
+
+            if (ff.write(squashCounterFileFd, tempMem16b, Long.BYTES, 0) != Long.BYTES) {
+                // Log as critical, this is not fatal
+                LOG.critical().$("cannot write partition squash timestamp, " +
+                                "incremental backup may not be able to track partition update [path=")
+                        .$(other).$(", errno=").$(ff.errno())
+                        .I$();
+
+            }
+            ff.close(squashCounterFileFd);
+        } finally {
+            other.trimTo(pathSize);
+        }
     }
 
     private void swapO3ColumnsExcept(int timestampIndex) {

@@ -459,7 +459,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             case 0:
                                 throw CairoException.critical(0)
                                         .put("broken table transaction record in sequencer log, walId cannot be 0 [table=")
-                                        .put(tableToken.getTableName()).put(", seqTxn=").put(seqTxn).put(']');
+                                        .put(tableToken).put(", seqTxn=").put(seqTxn).put(']');
 
                             default:
                                 // Always set full path when using thread static path

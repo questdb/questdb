@@ -43,7 +43,6 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.QueryPausedException;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -335,9 +334,8 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                                             @Override
                                             public void onRequestComplete(
                                                     HttpConnectionContext context
-                                            ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
+                                            ) throws PeerDisconnectedException, PeerIsSlowToReadException {
                                                 super.onRequestComplete(context);
-
                                                 await(limitBarrier);
                                                 await(endBarrier);
                                             }

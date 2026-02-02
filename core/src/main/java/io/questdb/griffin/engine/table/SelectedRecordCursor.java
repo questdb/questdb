@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -113,7 +112,7 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void skipRows(Counter rowCount) throws DataUnavailableException {
+    public void skipRows(Counter rowCount) {
         baseCursor.skipRows(rowCount);
     }
 

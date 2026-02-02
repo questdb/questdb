@@ -47,17 +47,14 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
-import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.network.Socket;
 import io.questdb.network.SocketFactory;
-import io.questdb.network.SuspendEvent;
 import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -122,7 +119,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private long recvPos;
     private HttpRequestProcessor resumeProcessor = null;
     private SecurityContext securityContext;
-    private SuspendEvent suspendEvent;
     private long totalBytesSent;
     private long totalReceived;
 
@@ -197,11 +193,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
         this.forceDisconnectOnComplete = false;
         this.localValueMap.disconnect();
-    }
-
-    @Override
-    public void clearSuspendEvent() {
-        suspendEvent = Misc.free(suspendEvent);
     }
 
     @Override
@@ -304,11 +295,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return sessionIdSink;
     }
 
-    @Override
-    public SuspendEvent getSuspendEvent() {
-        return suspendEvent;
-    }
-
     public long getTotalBytesSent() {
         return totalBytesSent;
     }
@@ -368,7 +354,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.chunkedContentParser.clear();
         this.recvPos = recvBuffer;
         this.rejectProcessor.clear();
-        clearSuspendEvent();
     }
 
     public void resumeResponseSend() throws PeerIsSlowToReadException, PeerDisconnectedException {
@@ -423,13 +408,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         .$(", thread=").$(Thread.currentThread().getId()).I$();
                 processor.parkRequest(this, false);
                 resumeProcessor = processor;
-                throw registerDispatcherWrite();
-            } catch (QueryPausedException e) {
-                LOG.info().$("partition is in cold storage, suspending query [fd=").$(getFd())
-                        .$(", thread=").$(Thread.currentThread().getId()).I$();
-                processor.parkRequest(this, true);
-                resumeProcessor = processor;
-                suspendEvent = e.getEvent();
                 throw registerDispatcherWrite();
             } catch (ServerDisconnectException e) {
                 LOG.info().$("kicked out [fd=").$(getFd()).I$();
@@ -492,7 +470,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private void completeRequest(
             HttpRequestProcessor processor,
             RescheduleContext rescheduleContext
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         LOG.debug().$("complete [fd=").$(getFd()).I$();
         try {
             processor.onRequestComplete(this);
@@ -556,7 +534,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return true;
     }
 
-    private boolean consumeChunked(HttpPostPutProcessor processor, long headerEnd, long read, boolean newRequest) throws PeerIsSlowToReadException, ServerDisconnectException, PeerDisconnectedException, QueryPausedException, PeerIsSlowToWriteException {
+    private boolean consumeChunked(
+            HttpPostPutProcessor processor,
+            long headerEnd,
+            long read,
+            boolean newRequest
+    ) throws PeerIsSlowToReadException, ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToWriteException {
         if (!newRequest) {
             processor.resumeRecv(this);
         }
@@ -621,7 +604,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             long headerEnd,
             int read,
             boolean newRequest
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException, PeerIsSlowToWriteException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
         if (!newRequest) {
             processor.resumeRecv(this);
         }
@@ -690,7 +673,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             int read,
             boolean newRequest,
             RescheduleContext rescheduleContext
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException, PeerIsSlowToWriteException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
         if (newRequest) {
             if (!headerParser.hasBoundary()) {
                 LOG.error().$("Bad request. Form data in multipart POST expected.").$(". Disconnecting [fd=").$(getFd()).I$();
@@ -732,7 +715,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             int bufRemaining,
             HttpMultipartContentProcessor processor,
             RescheduleContext rescheduleContext
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException, PeerIsSlowToWriteException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
         boolean keepGoing = false;
 
         if (buf > start) {
@@ -1000,14 +983,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 processor.parkRequest(this, false);
                 resumeProcessor = processor;
                 throw registerDispatcherWrite();
-            } catch (QueryPausedException e) {
-                LOG.debug().$("partition is in cold storage").$();
-                // it is important to assign resume processor before we fire
-                // event off to dispatcher
-                processor.parkRequest(this, true);
-                resumeProcessor = processor;
-                suspendEvent = e.getEvent();
-                throw registerDispatcherWrite();
             }
         } catch (ServerDisconnectException | PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
             throw e;
@@ -1031,11 +1006,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 resumeProcessor.parkRequest(this, false);
                 LOG.debug().$("peer is slow reader").$();
                 throw registerDispatcherWrite();
-            } catch (QueryPausedException e) {
-                resumeProcessor.parkRequest(this, true);
-                suspendEvent = e.getEvent();
-                LOG.debug().$("partition is in cold storage").$();
-                throw registerDispatcherWrite();
             } catch (PeerDisconnectedException ignore) {
                 throw registerDispatcherDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
             } catch (ServerDisconnectException ignore) {
@@ -1058,7 +1028,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             int bufRemaining,
             HttpMultipartContentProcessor processor,
             RescheduleContext rescheduleContext
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException, TooFewBytesReceivedException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, TooFewBytesReceivedException {
         boolean parseResult;
         try {
             parseResult = multipartContentParser.parse(start, buf, processor);

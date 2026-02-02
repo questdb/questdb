@@ -43,8 +43,8 @@ import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
     private final SampleByFillValueNotKeyedRecordCursor cursor;
-    private final SimpleMapValue simpleMapValue;
-    private final SimpleMapValue simpleMapValueB;
+    private final SimpleMapValue value;
+    private final SimpleMapValue valueB;
 
     public SampleByFillValueNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -78,9 +78,9 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
                     fillValues,
                     true
             );
-            this.simpleMapValue = new SimpleMapValue(valueCount);
-            this.simpleMapValueB = new SimpleMapValue(valueCount);
-            final SimpleMapValuePeeker peeker = new SimpleMapValuePeeker(simpleMapValue, simpleMapValueB);
+            this.value = new SimpleMapValue(valueCount);
+            this.valueB = new SimpleMapValue(valueCount);
+            final SimpleMapValuePeeker peeker = new SimpleMapValuePeeker(value, valueB);
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             cursor = new SampleByFillValueNotKeyedRecordCursor(
                     configuration,
@@ -92,7 +92,7 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
                     timestampIndex,
                     timestampType,
                     timestampSampler,
-                    simpleMapValue,
+                    value,
                     timezoneNameFunc,
                     timezoneNameFuncPos,
                     offsetFunc,
@@ -125,8 +125,8 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
     @Override
     protected void _close() {
         super._close();
-        Misc.free(simpleMapValue);
-        Misc.free(simpleMapValueB);
+        Misc.free(value);
+        Misc.free(valueB);
         Misc.free(cursor);
     }
 
