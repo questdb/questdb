@@ -37,6 +37,7 @@ import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -93,6 +94,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     private ObjList<MemoryCMR> parquetPartitions;
     private int partitionCount;
     private long rowCount;
+    // When streaming mode is enabled, partitions are opened with MADV_DONTNEED hint
+    // to release page cache after reading. Used by Parquet export to avoid page cache exhaustion.
+    private boolean streamingMode = false;
     private TableToken tableToken;
     private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
     private long txColumnVersion;
@@ -587,6 +591,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             checkSchedulePurgeO3Partitions();
         }
         closeExcessPartitions();
+        streamingMode = false;
     }
 
     public boolean isActive() {
@@ -645,6 +650,18 @@ public class TableReader implements Closeable, SymbolTableSource {
             releaseTxn();
             throw e;
         }
+    }
+
+    /**
+     * Enables or disables streaming mode for this reader.
+     * When streaming mode is enabled, partitions are opened with MADV_DONTNEED hint
+     * to release page cache after reading. This is useful for large sequential scans
+     * like Parquet export to avoid page cache exhaustion under memory pressure.
+     *
+     * @param enabled true to enable streaming mode, false to disable
+     */
+    public void setStreamingMode(boolean enabled) {
+        this.streamingMode = enabled;
     }
 
     public long size() {
@@ -1149,12 +1166,15 @@ public class TableReader implements Closeable, SymbolTableSource {
             long columnSize,
             boolean keepFdOpen
     ) {
+        // When streaming mode is enabled, use MADV_DONTNEED to hint the kernel
+        // to release page cache after reading, avoiding memory pressure during large scans
+        final int madviseOpts = streamingMode ? Files.POSIX_MADV_DONTNEED | Files.POSIX_MADV_SEQUENTIAL : -1;
         MemoryCMRDetachedImpl memory;
         if (mem != null && mem != NullMemoryCMR.INSTANCE) {
             memory = (MemoryCMRDetachedImpl) mem;
-            memory.of(ff, path.$(), columnSize, columnSize, MemoryTag.MMAP_TABLE_READER, 0, -1, keepFdOpen);
+            memory.of(ff, path.$(), columnSize, columnSize, MemoryTag.MMAP_TABLE_READER, 0, madviseOpts, keepFdOpen);
         } else {
-            memory = new MemoryCMRDetachedImpl(ff, path.$(), columnSize, MemoryTag.MMAP_TABLE_READER, keepFdOpen);
+            memory = new MemoryCMRDetachedImpl(ff, path.$(), columnSize, MemoryTag.MMAP_TABLE_READER, keepFdOpen, madviseOpts);
             columns.setQuick(primaryIndex, memory);
         }
         return memory;

@@ -57,12 +57,12 @@ public final class Files {
     public static final long PAGE_SIZE;
     public static final int POSIX_FADV_RANDOM;
     public static final int POSIX_FADV_SEQUENTIAL;
+    public static final int POSIX_MADV_DONTNEED;
     // Apart from obvious random read use case, MADV_RANDOM/FADV_RANDOM should be used for write-only
     // append-only files. Otherwise, OS starts reading adjacent pages under memory pressure generating
     // wasted disk read ops.
     public static final int POSIX_MADV_RANDOM;
     public static final int POSIX_MADV_SEQUENTIAL;
-    public static final int POSIX_MADV_DONTNEED;
     public static final char SEPARATOR;
     // https://github.com/torvalds/linux/blob/e2f48c48090dea172c0c571101041de64634dae5/include/uapi/linux/magic.h#L18
     public static final int TMPFS_MAGIC = 0x01021994;
@@ -372,10 +372,29 @@ public final class Files {
         return mmapCache.cacheMmap(osFd, mmapCacheKey, len, offset, flags, memoryTag);
     }
 
+    /**
+     * Memory map without using the MmapCache. Useful for streaming reads where
+     * we want each mapping to be independent and release page cache via madvise.
+     */
+    public static long mmapNoCache(long fd, long len, long offset, int flags, int memoryTag) {
+        int osFd = fdCache.toOsFd(fd, (flags & MAP_RW) != 0);
+        // Pass mmapCacheKey=0 to bypass the mmap cache
+        return mmapCache.cacheMmap(osFd, 0, len, offset, flags, memoryTag);
+    }
+
     public static long mremap(long fd, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
         int osFd = fdCache.toOsFd(fd, (flags & MAP_RW) != 0);
         long mmapCacheKey = fdCache.toMmapCacheKey(fd);
         return mmapCache.mremap(osFd, mmapCacheKey, address, previousSize, newSize, offset, flags, memoryTag);
+    }
+
+    /**
+     * Remap memory without using the MmapCache. Useful for streaming reads.
+     */
+    public static long mremapNoCache(long fd, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
+        int osFd = fdCache.toOsFd(fd, (flags & MAP_RW) != 0);
+        // Pass mmapCacheKey=0 to bypass the mmap cache
+        return mmapCache.mremap(osFd, 0, address, previousSize, newSize, offset, flags, memoryTag);
     }
 
     public static native int msync(long addr, long len, boolean async);
@@ -628,11 +647,11 @@ public final class Files {
 
     private native static int getPosixFadvSequential();
 
+    private native static int getPosixMadvDontneed();
+
     private native static int getPosixMadvRandom();
 
     private native static int getPosixMadvSequential();
-
-    private native static int getPosixMadvDontneed();
 
     private native static int getStdOutFd();
 

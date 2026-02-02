@@ -40,11 +40,9 @@ import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
-import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -230,6 +228,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     public void setUpStreamPartitionParquetExporter() {
         if (pageFrameCursor != null) {
+            // Enable streaming mode to use MADV_DONTNEED on mmap, avoiding page cache exhaustion
+            pageFrameCursor.setStreamingMode(true);
             streamPartitionParquetExporter.setUp();
         }
     }
@@ -240,6 +240,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.pageFrameCursor = pageFrameCursor;
         this.metadata = metadata;
         this.descending = descending;
+        // Enable streaming mode to use MADV_DONTNEED on mmap, avoiding page cache exhaustion
+        pageFrameCursor.setStreamingMode(true);
         streamPartitionParquetExporter.setUp();
     }
 
@@ -433,21 +435,6 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 columnData.clear();
                 final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
 
-                // Hint sequential access and collect addresses for later DONTNEED
-                final int columnCount = frame.getColumnCount();
-                for (int i = 0; i < columnCount; i++) {
-                    long addr = frame.getPageAddress(i);
-                    long size = frame.getPageSize(i);
-                    if (addr > 0 && size > 0) {
-                        madvise(addr, size, Files.POSIX_MADV_SEQUENTIAL);
-                    }
-                    long auxAddr = frame.getAuxPageAddress(i);
-                    long auxSize = frame.getAuxPageSize(i);
-                    if (auxAddr > 0 && auxSize > 0) {
-                        madvise(auxAddr, auxSize, Files.POSIX_MADV_SEQUENTIAL);
-                    }
-                }
-
                 for (int i = 0, n = frame.getColumnCount(); i < n; i++) {
                     long localColTop = frame.getPageAddress(i) > 0 ? 0 : frameRowCount;
                     final int columnType = metadata.getColumnType(i);
@@ -484,20 +471,6 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                             0,
                             0
                     );
-                }
-
-                // Release page cache for processed frame data
-                for (int i = 0; i < columnCount; i++) {
-                    long addr = frame.getPageAddress(i);
-                    long size = frame.getPageSize(i);
-                    if (addr > 0 && size > 0) {
-                        madvise(addr, size, Files.POSIX_MADV_DONTNEED);
-                    }
-                    long auxAddr = frame.getAuxPageAddress(i);
-                    long auxSize = frame.getAuxPageSize(i);
-                    if (auxAddr > 0 && auxSize > 0) {
-                        madvise(auxAddr, auxSize, Files.POSIX_MADV_DONTNEED);
-                    }
                 }
             } else {
                 columnData.clear();
@@ -552,16 +525,6 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             if (streamWriter != -1) {
                 closeStreamingParquetWriter(streamWriter);
                 streamWriter = -1;
-            }
-        }
-
-        /**
-         * Advise the kernel about memory access patterns for mmap'd regions.
-         * Only effective on Linux; no-op on other platforms.
-         */
-        private static void madvise(long address, long length, int advice) {
-            if (Os.isLinux() && address > 0 && length > 0 && advice >= 0) {
-                Files.madvise(address, length, advice);
             }
         }
     }

@@ -494,6 +494,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
+        public void setStreamingMode(boolean enabled) {
+            baseCursor.setStreamingMode(enabled);
+        }
+
+        @Override
         public long size() {
             return baseCursor.size();
         }

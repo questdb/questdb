@@ -347,6 +347,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         public void toTop() {
             baseCursor.toTop();
         }
+
+        @Override
+        public void setStreamingMode(boolean enabled) {
+            baseCursor.setStreamingMode(enabled);
+        }
     }
 
     public static final class ExtraNullColumnTimeFrameCursor implements TimeFrameCursor {
