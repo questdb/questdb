@@ -51,14 +51,7 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.Net;
-import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.CharSequenceHashSet;
-import io.questdb.std.CharSequenceIntHashMap;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.Os;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Path;
@@ -71,11 +64,7 @@ import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Assume;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
 
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
@@ -375,15 +364,15 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             Assert.assertTrue(isWalTable(tablePartitioned));
             String expected = isMicro
                     ? """
-                            ts\twindspeed\ttimetocycle
-                            1990-01-01T02:13:20.000000Z\t3.0\t0.0
-                            1990-01-01T05:00:00.000000Z\t4.0\tnull
-                            """
+                    ts\twindspeed\ttimetocycle
+                    1990-01-01T02:13:20.000000Z\t3.0\t0.0
+                    1990-01-01T05:00:00.000000Z\t4.0\tnull
+                    """
                     : """
-                            ts\twindspeed\ttimetocycle
-                            1990-01-01T02:13:20.000000000Z\t3.0\t0.0
-                            1990-01-01T05:00:00.000000000Z\t4.0\tnull
-                            """;
+                    ts\twindspeed\ttimetocycle
+                    1990-01-01T02:13:20.000000000Z\t3.0\t0.0
+                    1990-01-01T05:00:00.000000000Z\t4.0\tnull
+                    """;
             assertTable(expected, tablePartitioned);
 
             // WAL is not supported on non-partitioned tables, so we create a non-WAL table
@@ -452,15 +441,15 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
                     ? """
-                            ts\tdt
-                            1989-12-31T23:26:40.000000Z\t1989-12-31T23:26:40.000Z
-                            1990-01-01T02:13:20.000000Z\t1990-01-01T02:13:20.000Z
-                            """
+                    ts\tdt
+                    1989-12-31T23:26:40.000000Z\t1989-12-31T23:26:40.000Z
+                    1990-01-01T02:13:20.000000Z\t1990-01-01T02:13:20.000Z
+                    """
                     : """
-                            ts\tdt
-                            1989-12-31T23:26:40.000000000Z\t1989-12-31T23:26:40.000Z
-                            1990-01-01T02:13:20.000000000Z\t1990-01-01T02:13:20.000Z
-                            """;
+                    ts\tdt
+                    1989-12-31T23:26:40.000000000Z\t1989-12-31T23:26:40.000Z
+                    1990-01-01T02:13:20.000000000Z\t1990-01-01T02:13:20.000Z
+                    """;
             assertTable(expected, tableName);
         });
     }
@@ -568,17 +557,17 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
                     ? """
-                            windspeed\ttimestamp\ttimetocycle
-                            2.0\t1989-12-31T23:26:40.000000Z\tnull
-                            3.0\t1990-01-01T02:13:20.000000Z\t0.0
-                            4.0\t1990-01-01T05:00:00.000000Z\tnull
-                            """
+                    windspeed\ttimestamp\ttimetocycle
+                    2.0\t1989-12-31T23:26:40.000000Z\tnull
+                    3.0\t1990-01-01T02:13:20.000000Z\t0.0
+                    4.0\t1990-01-01T05:00:00.000000Z\tnull
+                    """
                     : """
-                            windspeed\ttimestamp\ttimetocycle
-                            2.0\t1989-12-31T23:26:40.000000000Z\tnull
-                            3.0\t1990-01-01T02:13:20.000000000Z\t0.0
-                            4.0\t1990-01-01T05:00:00.000000000Z\tnull
-                            """;
+                    windspeed\ttimestamp\ttimetocycle
+                    2.0\t1989-12-31T23:26:40.000000000Z\tnull
+                    3.0\t1990-01-01T02:13:20.000000000Z\t0.0
+                    4.0\t1990-01-01T05:00:00.000000000Z\tnull
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -868,7 +857,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     weather + ",location=west2 temperature=20 1465839830100500200\n" +
                     weather + ",location=east3 temperature=30 1465839830100600200\n" +
                     weather + ",location=west4,source=sensor1 temp=40 1465839830100700200\n" + // <- this is where the
-                                                                                               // split should happen
+                    // split should happen
                     weather + ",location=east5,source=sensor2 temp=50 1465839830100800200\n" +
                     weather + ",location=west6,source=sensor3 temp=60 1465839830100900200\n" +
                     weather + ",location=north,source=sensor4 temp=70 1465839830101000200\n" +
@@ -1065,9 +1054,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 mayDrainWalQueue();
 
                 String header = "location\ttemperature\ttimestamp\n";
-                String[] lines = { "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n",
+                String[] lines = {"us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n",
                         "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n",
-                        "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n" };
+                        "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"};
                 String expected = header + lines[0] + lines[1] + lines[2];
                 assertTable(expected, "weather");
                 if (walEnabled) {
@@ -1558,25 +1547,25 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             String expected = timestampType.getTimestampType() == ColumnType.TIMESTAMP_NANO
                     ? """
-                            location\ttimestamp\ttemperature
-                            us-midwest\t2016-06-13T17:43:50.100400000Z\t82.0
-                            us-midwest\t2016-06-13T17:43:50.100500000Z\t83.0
-                            us-eastcoast\t2016-06-13T17:43:50.101600000Z\t81.0
-                            us-midwest\t2016-06-13T17:43:50.102300000Z\t85.0
-                            us-eastcoast\t2016-06-13T17:43:50.102400000Z\t89.0
-                            us-eastcoast\t2016-06-13T17:43:50.102400000Z\t80.0
-                            us-westcost\t2016-06-13T17:43:50.102500000Z\t82.0
-                            """
+                    location\ttimestamp\ttemperature
+                    us-midwest\t2016-06-13T17:43:50.100400000Z\t82.0
+                    us-midwest\t2016-06-13T17:43:50.100500000Z\t83.0
+                    us-eastcoast\t2016-06-13T17:43:50.101600000Z\t81.0
+                    us-midwest\t2016-06-13T17:43:50.102300000Z\t85.0
+                    us-eastcoast\t2016-06-13T17:43:50.102400000Z\t89.0
+                    us-eastcoast\t2016-06-13T17:43:50.102400000Z\t80.0
+                    us-westcost\t2016-06-13T17:43:50.102500000Z\t82.0
+                    """
                     : """
-                            location\ttimestamp\ttemperature
-                            us-midwest\t2016-06-13T17:43:50.100400Z\t82.0
-                            us-midwest\t2016-06-13T17:43:50.100500Z\t83.0
-                            us-eastcoast\t2016-06-13T17:43:50.101600Z\t81.0
-                            us-midwest\t2016-06-13T17:43:50.102300Z\t85.0
-                            us-eastcoast\t2016-06-13T17:43:50.102400Z\t89.0
-                            us-eastcoast\t2016-06-13T17:43:50.102400Z\t80.0
-                            us-westcost\t2016-06-13T17:43:50.102500Z\t82.0
-                            """;
+                    location\ttimestamp\ttemperature
+                    us-midwest\t2016-06-13T17:43:50.100400Z\t82.0
+                    us-midwest\t2016-06-13T17:43:50.100500Z\t83.0
+                    us-eastcoast\t2016-06-13T17:43:50.101600Z\t81.0
+                    us-midwest\t2016-06-13T17:43:50.102300Z\t85.0
+                    us-eastcoast\t2016-06-13T17:43:50.102400Z\t89.0
+                    us-eastcoast\t2016-06-13T17:43:50.102400Z\t80.0
+                    us-westcost\t2016-06-13T17:43:50.102500Z\t82.0
+                    """;
             assertTable(expected, table);
         });
     }
@@ -1672,13 +1661,13 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
             String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
                     ? """
-                            ReceiveTime\tSequenceNumber\tMessageType\tLength\ttest
-                            2016-06-13T17:43:50.100400Z\t1\tB\t92\t1.5
-                            """
+                    ReceiveTime\tSequenceNumber\tMessageType\tLength\ttest
+                    2016-06-13T17:43:50.100400Z\t1\tB\t92\t1.5
+                    """
                     : """
-                            ReceiveTime\tSequenceNumber\tMessageType\tLength\ttest
-                            2016-06-13T17:43:50.100400000Z\t1\tB\t92\t1.5
-                            """;
+                    ReceiveTime\tSequenceNumber\tMessageType\tLength\ttest
+                    2016-06-13T17:43:50.100400000Z\t1\tB\t92\t1.5
+                    """;
             assertTable(expected, "table_a");
         });
     }
@@ -2266,7 +2255,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         this.authKeyId = authKeyId;
         this.msgBufferSize = msgBufferSize;
         assertMemoryLeak(() -> {
-            final String[] locations = { "x london", "paris", "rome" };
+            final String[] locations = {"x london", "paris", "rome"};
 
             final CharSequenceHashSet tables = new CharSequenceHashSet();
             tables.add("weather1");
