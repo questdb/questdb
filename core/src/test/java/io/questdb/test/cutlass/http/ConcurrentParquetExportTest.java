@@ -67,12 +67,11 @@ public class ConcurrentParquetExportTest extends AbstractBootstrapTest {
                     MemoryCARWImpl[] buffers = new MemoryCARWImpl[threadCount];
                     int[] limits = new int[threadCount];
 
-                    for (int t = 0; t < threadCount; t++) {
-                        buffers[t] = new MemoryCARWImpl(1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                        limits[t] = rnd.nextInt(totalRows) + 10;
-                    }
-
                     try {
+                        for (int t = 0; t < threadCount; t++) {
+                            buffers[t] = new MemoryCARWImpl(1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                            limits[t] = rnd.nextInt(totalRows) + 10;
+                        }
                         for (int t = 0; t < threadCount; t++) {
                             final int threadId = t;
                             final int limit = limits[t];
