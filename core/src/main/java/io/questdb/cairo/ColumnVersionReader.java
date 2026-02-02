@@ -72,6 +72,8 @@ public class ColumnVersionReader implements Closeable, Mutable {
         if (ownMem) {
             mem.close();
         }
+        cachedColumnVersionList.clear();
+        version = -1;
     }
 
     @Override
