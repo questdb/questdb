@@ -101,14 +101,12 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     protected final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     protected final ObjList<HorizonTimestampIterator> perWorkerHorizonIterators;
     protected final PerWorkerLocks perWorkerLocks;
-    protected final LongList perWorkerPrevFirstOffsetAsOfRowIds;
     protected final ObjList<ConcurrentTimeFrameCursor> perWorkerSlaveTimeFrameCursors;
     protected final ObjList<MarkoutTimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
     protected final long sequenceRowCount;
     protected final RecordSink slaveKeyCopier;
     protected final int slotCount;
     protected long ownerForwardScanHighWaterMark;
-    protected long ownerPrevFirstOffsetAsOfRowId = Long.MIN_VALUE;
 
     protected BaseAsyncHorizonJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -224,11 +222,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             perWorkerCombinedRecords.add(record);
         }
 
-        // Per-worker previous master row's first offset ASOF position;
-        // Used as the low boundary for the ASOF JOIN row search in the next reduced frame
-        this.perWorkerPrevFirstOffsetAsOfRowIds = new LongList(slotCount);
-        perWorkerPrevFirstOffsetAsOfRowIds.setAll(slotCount, Long.MIN_VALUE);
-
         // Per-worker forward scan high watermarks for sorted horizon processing;
         // Tracks the furthest scanned slave rowId to avoid re-scanning across frames
         this.perWorkerForwardScanHighWaterMarks = new LongList(slotCount);
@@ -262,10 +255,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         // Clear time frame cursors
         Misc.free(ownerSlaveTimeFrameCursor);
         Misc.freeObjListAndKeepObjects(perWorkerSlaveTimeFrameCursors);
-
-        // Clear previous master row's first offset ASOF positions
-        ownerPrevFirstOffsetAsOfRowId = Long.MIN_VALUE;
-        perWorkerPrevFirstOffsetAsOfRowIds.setAll(perWorkerPrevFirstOffsetAsOfRowIds.size(), Long.MIN_VALUE);
 
         // Clear forward scan high watermarks
         ownerForwardScanHighWaterMark = Long.MIN_VALUE;
@@ -378,13 +367,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
 
     public ObjList<GroupByFunction> getOwnerGroupByFunctions() {
         return ownerGroupByFunctions;
-    }
-
-    public long getPrevFirstOffsetAsOfRowId(int slotId) {
-        if (slotId == -1) {
-            return ownerPrevFirstOffsetAsOfRowId;
-        }
-        return perWorkerPrevFirstOffsetAsOfRowIds.getQuick(slotId);
     }
 
     public long getSequenceRowCount() {
@@ -503,10 +485,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
                 }
             }
         }
-
-        // Clear previous master row's first offset ASOF positions
-        ownerPrevFirstOffsetAsOfRowId = Long.MIN_VALUE;
-        perWorkerPrevFirstOffsetAsOfRowIds.setAll(perWorkerPrevFirstOffsetAsOfRowIds.size(), Long.MIN_VALUE);
 
         // Clear forward scan high watermarks
         ownerForwardScanHighWaterMark = Long.MIN_VALUE;

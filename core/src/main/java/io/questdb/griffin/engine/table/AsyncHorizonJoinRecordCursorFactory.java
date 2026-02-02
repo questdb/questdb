@@ -313,14 +313,6 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             long baseRowId = record.getRowId();
             horizonIterator.ofFiltered(record, rows, masterTimestampColumnIndex);
 
-            // Set bookmark from previous frame's last position
-            long prevAsOfRowId = atom.getPrevFirstOffsetAsOfRowId(slotId);
-            if (prevAsOfRowId != Long.MIN_VALUE) {
-                slaveTimeFrameHelper.setBookmark(prevAsOfRowId);
-            } else {
-                slaveTimeFrameHelper.toTop();
-            }
-
             // Process horizon timestamps in sorted order for sequential ASOF lookups
             processSortedHorizonTimestamps(
                     slotId,
@@ -488,14 +480,6 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             record.setRowIndex(0);
             long baseRowId = record.getRowId();
             horizonIterator.of(record, 0, frameRowCount, masterTimestampColumnIndex);
-
-            // Set bookmark from previous frame's last position
-            long prevAsOfRowId = atom.getPrevFirstOffsetAsOfRowId(slotId);
-            if (prevAsOfRowId != Long.MIN_VALUE) {
-                slaveTimeFrameHelper.setBookmark(prevAsOfRowId);
-            } else {
-                slaveTimeFrameHelper.toTop();
-            }
 
             // Process horizon timestamps in sorted order for sequential ASOF lookups
             processSortedHorizonTimestamps(
