@@ -32,6 +32,7 @@ import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Interval;
+import io.questdb.std.LongGroupSort;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -1393,23 +1394,7 @@ public final class IntervalUtils {
         }
 
         // Sort query intervals by lo value before intersection (intersectInPlace requires sorted input)
-        // Using insertion sort since interval lists are typically small
-        for (int i = 1; i < queryIntervalCount; i++) {
-            int idx = startIndex + 2 * i;
-            long lo = out.getQuick(idx);
-            long hi = out.getQuick(idx + 1);
-            int j = i - 1;
-            while (j >= 0 && out.getQuick(startIndex + 2 * j) > lo) {
-                int srcIdx = startIndex + 2 * j;
-                int dstIdx = startIndex + 2 * (j + 1);
-                out.setQuick(dstIdx, out.getQuick(srcIdx));
-                out.setQuick(dstIdx + 1, out.getQuick(srcIdx + 1));
-                j--;
-            }
-            int insertIdx = startIndex + 2 * (j + 1);
-            out.setQuick(insertIdx, lo);
-            out.setQuick(insertIdx + 1, hi);
-        }
+        LongGroupSort.quickSort(2, out, startIndex / 2, startIndex / 2 + queryIntervalCount);
 
         // Determine the query time range to narrow the schedule scan.
         // Query intervals are sorted by lo at this point.
@@ -3465,23 +3450,8 @@ public final class IntervalUtils {
         int bracketCount = (out.size() - startIndex) / 2;
         // Note: caller guarantees bracketCount >= 2 via the guard: out.size() > outSize + 2
 
-        // Sort intervals in-place by lo value (insertion sort - bracket lists are typically small)
-        for (int i = 1; i < bracketCount; i++) {
-            int idx = startIndex + 2 * i;
-            long lo = out.getQuick(idx);
-            long hi = out.getQuick(idx + 1);
-            int j = i - 1;
-            while (j >= 0 && out.getQuick(startIndex + 2 * j) > lo) {
-                int srcIdx = startIndex + 2 * j;
-                int dstIdx = startIndex + 2 * (j + 1);
-                out.setQuick(dstIdx, out.getQuick(srcIdx));
-                out.setQuick(dstIdx + 1, out.getQuick(srcIdx + 1));
-                j--;
-            }
-            int insertIdx = startIndex + 2 * (j + 1);
-            out.setQuick(insertIdx, lo);
-            out.setQuick(insertIdx + 1, hi);
-        }
+        // Sort intervals in-place by lo value
+        LongGroupSort.quickSort(2, out, startIndex / 2, startIndex / 2 + bracketCount);
 
         // Merge overlapping intervals in-place (single linear pass since sorted)
         int writeIdx = startIndex + 2;  // First interval is already in place
