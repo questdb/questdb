@@ -2530,6 +2530,18 @@ public class PropServerConfiguration implements ServerConfiguration {
      * @throws CairoException if the file is too large or cannot be read
      */
     protected String readSecretFromFile(String filePath) {
+        // Minimal path hardening to prevent accidental misconfigurations
+        // /dev/ - prevents reading devices, FIFOs (can cause hangs)
+        // /proc/, /sys/ - blocks common info-disclosure paths
+        // .. - rejects obvious path traversal
+        if (filePath.contains("..") ||
+                filePath.startsWith("/dev/") ||
+                filePath.startsWith("/proc/") ||
+                filePath.startsWith("/sys/")) {
+            throw CairoException.critical(0)
+                    .put("secret file path not allowed [path=").put(filePath).put(']');
+        }
+
         long fd = -1;
         long address = 0;
         long size = 0;

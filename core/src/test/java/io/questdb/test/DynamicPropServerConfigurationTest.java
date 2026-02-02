@@ -1224,6 +1224,78 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testSecretFilePathTraversalRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            // Configure pg.password.file with path traversal
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.password.file=/etc/../etc/passwd\n");
+            }
+
+            try {
+                new ServerMain(getBootstrap()).close();
+                Assert.fail("Expected exception for path traversal in secret file");
+            } catch (Exception e) {
+                String message = e.getMessage();
+                TestUtils.assertContains(message, "secret file path not allowed");
+            }
+        });
+    }
+
+    @Test
+    public void testSecretFileDevPathRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            // Configure pg.password.file to /dev/ path
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.password.file=/dev/null\n");
+            }
+
+            try {
+                new ServerMain(getBootstrap()).close();
+                Assert.fail("Expected exception for /dev/ path in secret file");
+            } catch (Exception e) {
+                String message = e.getMessage();
+                TestUtils.assertContains(message, "secret file path not allowed");
+            }
+        });
+    }
+
+    @Test
+    public void testSecretFileProcPathRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            // Configure pg.password.file to /proc/ path
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.password.file=/proc/self/environ\n");
+            }
+
+            try {
+                new ServerMain(getBootstrap()).close();
+                Assert.fail("Expected exception for /proc/ path in secret file");
+            } catch (Exception e) {
+                String message = e.getMessage();
+                TestUtils.assertContains(message, "secret file path not allowed");
+            }
+        });
+    }
+
+    @Test
+    public void testSecretFileSysPathRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            // Configure pg.password.file to /sys/ path
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.password.file=/sys/kernel/hostname\n");
+            }
+
+            try {
+                new ServerMain(getBootstrap()).close();
+                Assert.fail("Expected exception for /sys/ path in secret file");
+            } catch (Exception e) {
+                String message = e.getMessage();
+                TestUtils.assertContains(message, "secret file path not allowed");
+            }
+        });
+    }
+
+    @Test
     public void testSecretFileNotFound() throws Exception {
         assertMemoryLeak(() -> {
             // Configure pg.password.file to point to a non-existent file
