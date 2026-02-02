@@ -27,11 +27,11 @@ extern crate core;
 pub extern crate jni;
 
 mod allocator;
-mod cairo;
 mod files;
 mod parquet;
 mod parquet_read;
 mod parquet_write;
+mod wal_lock;
 
 use jni::sys::jlong;
 use jni::{objects::JClass, JNIEnv};
