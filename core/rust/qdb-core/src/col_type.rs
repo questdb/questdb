@@ -402,6 +402,10 @@ impl ColumnType {
         );
         ((self.code.get() >> DECIMAL_PRECISION_FIELD_POS) & DECIMAL_PRECISION_FIELD_MASK) as u8
     }
+  
+    pub fn is_symbol(&self) -> bool {
+        self.tag() == ColumnTypeTag::Symbol
+    }
 }
 
 impl Display for ColumnType {

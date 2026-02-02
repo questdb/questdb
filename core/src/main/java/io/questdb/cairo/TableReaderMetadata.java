@@ -121,6 +121,14 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         Misc.free(metaCopyMem);
         Misc.free(transitionMeta);
         isCopy = false;
+        partitionBy = 0;
+        walEnabled = false;
+        metadataVersion = 0;
+        tableId = 0;
+        maxUncommittedRows = 0;
+        o3MaxLag = 0;
+        ttlHoursOrMonths = 0;
+        writerColumnCount = 0;
     }
 
     @Override

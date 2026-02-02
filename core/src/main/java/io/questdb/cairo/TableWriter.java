@@ -5364,7 +5364,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         if (metadata.getPartitionBy() == PartitionBy.NONE) {
-            LOG.error().$("TTL set on a non-partitioned table. Ignoring");
+            LOG.error().$("TTL set on a non-partitioned table. Ignoring").$();
             return;
         }
         if (getPartitionCount() < 2) {
