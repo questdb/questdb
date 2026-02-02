@@ -436,9 +436,10 @@ public class HttpServer implements Closeable {
 
         @Override
         public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
-            HttpRequestHandler handler = handlerId >= 0 && handlerId < handlersByIdList.size()
-                    ? handlersByIdList.getQuick(handlerId)
-                    : null;
+            // handlerId is always produced internally by bind() (sequential non-negative int)
+            // and the REJECT_PROCESSOR_ID sentinel (-1) is filtered out by the caller.
+            // No bounds check: a bad ID here means a bug that should surface immediately.
+            HttpRequestHandler handler = handlersByIdList.getQuick(handlerId);
             return handler != null ? handler.getProcessor(header) : null;
         }
 
