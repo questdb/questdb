@@ -330,7 +330,12 @@ pub fn i64_slice_to_page_simd(
     };
 
     let result = encode_i64_def_levels(&mut buffer, slice, column_top, options.write_statistics)
-        .map_err(|e| fmt_err!(Io(std::sync::Arc::new(e)), "failed to encode definition levels"))?;
+        .map_err(|e| {
+            fmt_err!(
+                Io(std::sync::Arc::new(e)),
+                "failed to encode definition levels"
+            )
+        })?;
 
     // For V1, write the definition levels length
     if matches!(options.version, parquet2::write::Version::V1) {
@@ -373,7 +378,7 @@ pub fn i64_slice_to_page_simd(
         encoding,
         false,
     )
-        .map(Page::Data)
+    .map(Page::Data)
 }
 
 fn encode_i64_plain(slice: &[i64], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8> {
@@ -412,7 +417,12 @@ pub fn i32_slice_to_page_simd(
     };
 
     let result = encode_i32_def_levels(&mut buffer, slice, column_top, options.write_statistics)
-        .map_err(|e| fmt_err!(Io(std::sync::Arc::new(e)), "failed to encode definition levels"))?;
+        .map_err(|e| {
+            fmt_err!(
+                Io(std::sync::Arc::new(e)),
+                "failed to encode definition levels"
+            )
+        })?;
 
     if matches!(options.version, parquet2::write::Version::V1) {
         let def_levels_len = (buffer.len() - def_levels_start) as i32;
@@ -453,7 +463,7 @@ pub fn i32_slice_to_page_simd(
         encoding,
         false,
     )
-        .map(Page::Data)
+    .map(Page::Data)
 }
 
 fn encode_i32_plain(slice: &[i32], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8> {
@@ -465,10 +475,7 @@ fn encode_i32_plain(slice: &[i32], null_count: usize, mut buffer: Vec<u8>) -> Ve
 }
 
 fn encode_i32_delta(slice: &[i32], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8> {
-    let iterator = slice
-        .iter()
-        .filter(|&&x| x != i32::MIN)
-        .map(|&x| x as i64);
+    let iterator = slice.iter().filter(|&&x| x != i32::MIN).map(|&x| x as i64);
     let iterator = ExactSizedIter::new(iterator, slice.len() - null_count);
     encode(iterator, &mut buffer);
     buffer
@@ -494,7 +501,12 @@ pub fn f64_slice_to_page_simd(
     };
 
     let result = encode_f64_def_levels(&mut buffer, slice, column_top, options.write_statistics)
-        .map_err(|e| fmt_err!(Io(std::sync::Arc::new(e)), "failed to encode definition levels"))?;
+        .map_err(|e| {
+            fmt_err!(
+                Io(std::sync::Arc::new(e)),
+                "failed to encode definition levels"
+            )
+        })?;
 
     if matches!(options.version, parquet2::write::Version::V1) {
         let def_levels_len = (buffer.len() - def_levels_start) as i32;
@@ -530,7 +542,7 @@ pub fn f64_slice_to_page_simd(
         Encoding::Plain,
         false,
     )
-        .map(Page::Data)
+    .map(Page::Data)
 }
 
 /// SIMD-optimized version for f32 slices (Float columns).
@@ -553,7 +565,12 @@ pub fn f32_slice_to_page_simd(
     };
 
     let result = encode_f32_def_levels(&mut buffer, slice, column_top, options.write_statistics)
-        .map_err(|e| fmt_err!(Io(std::sync::Arc::new(e)), "failed to encode definition levels"))?;
+        .map_err(|e| {
+            fmt_err!(
+                Io(std::sync::Arc::new(e)),
+                "failed to encode definition levels"
+            )
+        })?;
 
     if matches!(options.version, parquet2::write::Version::V1) {
         let def_levels_len = (buffer.len() - def_levels_start) as i32;
@@ -589,5 +606,5 @@ pub fn f32_slice_to_page_simd(
         Encoding::Plain,
         false,
     )
-        .map(Page::Data)
+    .map(Page::Data)
 }
