@@ -90,6 +90,27 @@ public interface ColumnarRowAppender {
                         int valueSize, long nullBitmapAddress, int rowCount);
 
     /**
+     * Writes a fixed-width column with type narrowing conversion.
+     * <p>
+     * Used when the wire value size is wider than the target column size.
+     * For example: DOUBLE (8 bytes) → FLOAT (4 bytes), LONG (8 bytes) → SHORT (2 bytes).
+     * <p>
+     * The conversion reads values at sourceValueSize width and writes them at the
+     * target column's native width, performing appropriate casts.
+     *
+     * @param columnIndex       the column index in the table
+     * @param valuesAddress     address of packed non-null values (at source width)
+     * @param valueCount        number of non-null values
+     * @param sourceValueSize   size of each value in the wire format (bytes)
+     * @param nullBitmapAddress address of null bitmap (0 if no nulls)
+     * @param rowCount          total number of rows (including nulls)
+     * @param columnType        target QuestDB column type
+     */
+    void putFixedColumnNarrowing(int columnIndex, long valuesAddress, int valueCount,
+                                 int sourceValueSize, long nullBitmapAddress, int rowCount,
+                                 int columnType);
+
+    /**
      * Writes the designated timestamp column.
      * <p>
      * The designated timestamp has special handling: in WAL format, it stores 128-bit
@@ -104,6 +125,19 @@ public interface ColumnarRowAppender {
      */
     void putTimestampColumn(int columnIndex, long valuesAddress, int valueCount,
                             long nullBitmapAddress, int rowCount, long startRowId);
+
+    /**
+     * Writes a CHAR column from string data.
+     * <p>
+     * Extracts the first character from each string value and writes it as a 2-byte char.
+     * For single ASCII bytes, the byte is cast directly to char. For multi-byte UTF-8,
+     * the first codepoint is decoded.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the string column cursor
+     * @param rowCount    total number of rows
+     */
+    void putCharColumn(int columnIndex, IlpV4StringColumnCursor cursor, int rowCount);
 
     /**
      * Writes a VARCHAR column.

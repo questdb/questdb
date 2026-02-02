@@ -126,6 +126,48 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
+    public void putFixedColumnNarrowing(int columnIndex, long valuesAddress, int valueCount,
+                                        int sourceValueSize, long nullBitmapAddress, int rowCount,
+                                        int columnType) {
+        checkInColumnarWrite();
+
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        int valueIdx = 0;
+
+        for (int row = 0; row < rowCount; row++) {
+            if (nullBitmapAddress != 0 && IlpV4NullBitmap.isNull(nullBitmapAddress, row)) {
+                writeNullSentinel(dataMem, columnType);
+            } else {
+                long addr = valuesAddress + (long) valueIdx * sourceValueSize;
+                switch (ColumnType.tagOf(columnType)) {
+                    case ColumnType.BYTE:
+                        // LONG (8 bytes) → BYTE (1 byte)
+                        dataMem.putByte((byte) Unsafe.getUnsafe().getLong(addr));
+                        break;
+                    case ColumnType.SHORT:
+                        // LONG (8 bytes) → SHORT (2 bytes)
+                        dataMem.putShort((short) Unsafe.getUnsafe().getLong(addr));
+                        break;
+                    case ColumnType.INT:
+                        // LONG (8 bytes) → INT (4 bytes)
+                        dataMem.putInt((int) Unsafe.getUnsafe().getLong(addr));
+                        break;
+                    case ColumnType.FLOAT:
+                        // DOUBLE (8 bytes) → FLOAT (4 bytes)
+                        dataMem.putFloat((float) Unsafe.getUnsafe().getDouble(addr));
+                        break;
+                    default:
+                        throw new UnsupportedOperationException(
+                                "Narrowing not supported for column type: " + ColumnType.nameOf(columnType));
+                }
+                valueIdx++;
+            }
+        }
+
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
     public void putTimestampColumn(int columnIndex, long valuesAddress, int valueCount,
                                    long nullBitmapAddress, int rowCount, long startRowId) {
         checkInColumnarWrite();
@@ -165,6 +207,43 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         }
 
         walWriter.setRowValueNotNullColumnar(columnIndex, this.startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putCharColumn(int columnIndex, IlpV4StringColumnCursor cursor, int rowCount) {
+        checkInColumnarWrite();
+
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    dataMem.putChar((char) 0);
+                } else {
+                    DirectUtf8Sequence value = cursor.getUtf8Value();
+                    if (value.size() == 0) {
+                        dataMem.putChar((char) 0);
+                    } else if (value.size() == 1 && value.byteAt(0) > -1) {
+                        // Single ASCII byte
+                        dataMem.putChar((char) value.byteAt(0));
+                    } else {
+                        // Multi-byte UTF-8: decode first codepoint
+                        int encodedResult = Utf8s.utf8CharDecode(value);
+                        if (Numbers.decodeLowShort(encodedResult) > 0) {
+                            dataMem.putChar((char) Numbers.decodeHighShort(encodedResult));
+                        } else {
+                            dataMem.putChar((char) 0);
+                        }
+                    }
+                }
+            }
+        } catch (IlpV4ParseException e) {
+            throw new RuntimeException("Failed to parse CHAR column", e);
+        }
+
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override

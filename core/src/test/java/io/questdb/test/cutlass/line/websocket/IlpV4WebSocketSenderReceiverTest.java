@@ -320,6 +320,104 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
+    // ==================== CHAR Column Tests ====================
+
+    /**
+     * Tests that a STRING value sent via ILP is correctly stored in a pre-created CHAR column.
+     * CHAR is stored as a 16-bit UTF-16 code unit; the server must extract the first character
+     * from the incoming string.
+     */
+    @Test
+    public void testCharColumnFromString() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Pre-create table with CHAR column
+                serverMain.execute("CREATE TABLE ws_char_test (" +
+                        "tag SYMBOL, " +
+                        "x CHAR, " +
+                        "timestamp TIMESTAMP" +
+                        ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_char_test")
+                            .symbol("tag", "test")
+                            .stringColumn("x", "A")
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_char_test");
+                serverMain.assertSql("select count() from ws_char_test", "count\n1\n");
+                serverMain.assertSql("select x from ws_char_test", "x\nA\n");
+            }
+        });
+    }
+
+    /**
+     * Tests ingestion into a pre-created STAC-like quotes table with narrow column types:
+     * SYMBOL, CHAR, FLOAT, SHORT, BOOLEAN.
+     * This exercises the columnar write path for all these types simultaneously.
+     */
+    @Test
+    public void testStacQuotesSchema() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Pre-create STAC quotes table with narrow types
+                serverMain.execute("CREATE TABLE ws_stac_q (" +
+                        "s SYMBOL, " +
+                        "x CHAR, " +
+                        "b FLOAT, " +
+                        "a FLOAT, " +
+                        "v SHORT, " +
+                        "w SHORT, " +
+                        "m BOOLEAN, " +
+                        "T TIMESTAMP" +
+                        ") TIMESTAMP(T) PARTITION BY DAY WAL");
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_stac_q")
+                            .symbol("s", "AAPL")
+                            .stringColumn("x", "N")
+                            .doubleColumn("b", 150.25)
+                            .doubleColumn("a", 150.50)
+                            .longColumn("v", 100)
+                            .longColumn("w", 200)
+                            .boolColumn("m", true)
+                            .at(1704067200000000L, ChronoUnit.MICROS);
+
+                    sender.table("ws_stac_q")
+                            .symbol("s", "MSFT")
+                            .stringColumn("x", "Q")
+                            .doubleColumn("b", 380.10)
+                            .doubleColumn("a", 380.30)
+                            .longColumn("v", 50)
+                            .longColumn("w", 75)
+                            .boolColumn("m", false)
+                            .at(1704067200000001L, ChronoUnit.MICROS);
+
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_stac_q");
+                serverMain.assertSql("select count() from ws_stac_q", "count\n2\n");
+                serverMain.assertSql(
+                        "select s, x, b, a, v, w, m from ws_stac_q order by T",
+                        "s\tx\tb\ta\tv\tw\tm\n" +
+                                "AAPL\tN\t150.25\t150.5\t100\t200\ttrue\n" +
+                                "MSFT\tQ\t380.1\t380.3\t50\t75\tfalse\n"
+                );
+            }
+        });
+    }
+
     // ==================== Timestamp Tests ====================
 
     @Test

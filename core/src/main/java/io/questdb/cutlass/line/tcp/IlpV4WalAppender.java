@@ -345,9 +345,18 @@ public class IlpV4WalAppender implements QuietCloseable {
                         if (cursor instanceof IlpV4GeoHashColumnCursor geoHashCursor) {
                             appender.putGeoHashColumn(columnIndex, geoHashCursor, rowCount, columnType);
                         } else if (cursor instanceof IlpV4FixedWidthColumnCursor fixedCursor) {
-                            appender.putFixedColumn(columnIndex, fixedCursor.getValuesAddress(),
-                                    fixedCursor.getValueCount(), fixedCursor.getValueSize(),
-                                    fixedCursor.getNullBitmapAddress(), rowCount);
+                            int wireSize = fixedCursor.getValueSize();
+                            int columnSize = ColumnType.sizeOf(columnType);
+                            if (wireSize != columnSize && columnSize > 0) {
+                                // Type narrowing: wire is wider than column (e.g. DOUBLE→FLOAT, LONG→SHORT)
+                                appender.putFixedColumnNarrowing(columnIndex, fixedCursor.getValuesAddress(),
+                                        fixedCursor.getValueCount(), wireSize,
+                                        fixedCursor.getNullBitmapAddress(), rowCount, columnType);
+                            } else {
+                                appender.putFixedColumn(columnIndex, fixedCursor.getValuesAddress(),
+                                        fixedCursor.getValueCount(), fixedCursor.getValueSize(),
+                                        fixedCursor.getNullBitmapAddress(), rowCount);
+                            }
                         } else {
                             throw typeMismatchException(ilpType, columnType, tableBlock, col);
                         }
@@ -371,6 +380,14 @@ public class IlpV4WalAppender implements QuietCloseable {
                         } else if (cursor instanceof IlpV4FixedWidthColumnCursor fixedCursor) {
                             appender.putFixedColumn(columnIndex, fixedCursor.getValuesAddress(),
                                     fixedCursor.getValueCount(), 8, fixedCursor.getNullBitmapAddress(), rowCount);
+                        } else {
+                            throw typeMismatchException(ilpType, columnType, tableBlock, col);
+                        }
+                        break;
+
+                    case ColumnType.CHAR:
+                        if (cursor instanceof IlpV4StringColumnCursor strCursor) {
+                            appender.putCharColumn(columnIndex, strCursor, rowCount);
                         } else {
                             throw typeMismatchException(ilpType, columnType, tableBlock, col);
                         }
@@ -558,6 +575,7 @@ public class IlpV4WalAppender implements QuietCloseable {
             case ColumnType.LONG -> TYPE_LONG;
             case ColumnType.FLOAT -> TYPE_FLOAT;
             case ColumnType.DOUBLE -> TYPE_DOUBLE;
+            case ColumnType.CHAR -> TYPE_STRING;
             case ColumnType.STRING -> TYPE_STRING;
             case ColumnType.VARCHAR -> TYPE_VARCHAR;
             case ColumnType.SYMBOL -> TYPE_SYMBOL;
