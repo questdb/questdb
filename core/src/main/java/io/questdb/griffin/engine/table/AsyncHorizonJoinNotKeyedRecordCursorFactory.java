@@ -31,7 +31,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
@@ -66,7 +65,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
-import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
@@ -299,8 +297,6 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             final Map asOfJoinMap = atom.getAsOfJoinMap(slotId);  // Cache: joinKey -> rowId
             final RecordSink masterKeyCopier = atom.getMasterKeyCopier();
             final RecordSink slaveKeyCopier = atom.getSlaveKeyCopier();
-            final SingleRecordSink masterSinkTarget = atom.getMasterSinkTarget(slotId);
-            final SingleRecordSink slaveSinkTarget = atom.getSlaveSinkTarget(slotId);
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
 
             // Get horizon timestamp iterator and initialize for filtered rows
@@ -328,8 +324,6 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     asOfJoinMap,
                     masterKeyCopier,
                     slaveKeyCopier,
-                    masterSinkTarget,
-                    slaveSinkTarget,
                     slaveRecord,
                     markoutRecord,
                     value,
@@ -361,8 +355,6 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             Map asOfJoinMap,
             RecordSink masterKeyCopier,
             RecordSink slaveKeyCopier,
-            SingleRecordSink masterSinkTarget,
-            SingleRecordSink slaveSinkTarget,
             Record slaveRecord,
             MarkoutRecord markoutRecord,
             SimpleMapValue value,
@@ -428,7 +420,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             aggregateRecord(markoutRecord, masterRowId, value, functionUpdater);
         }
 
-        // Save high water mark for next frame
+        // Save high watermark for next frame
         atom.setForwardScanHighWaterMark(slotId, forwardScanHighWaterMark);
     }
 
@@ -477,8 +469,6 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             final Map asOfJoinMap = atom.getAsOfJoinMap(slotId);  // Cache: joinKey -> rowId
             final RecordSink masterKeyCopier = atom.getMasterKeyCopier();
             final RecordSink slaveKeyCopier = atom.getSlaveKeyCopier();
-            final SingleRecordSink masterSinkTarget = atom.getMasterSinkTarget(slotId);
-            final SingleRecordSink slaveSinkTarget = atom.getSlaveSinkTarget(slotId);
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
 
             // Get horizon timestamp iterator and initialize for this frame
@@ -506,8 +496,6 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     asOfJoinMap,
                     masterKeyCopier,
                     slaveKeyCopier,
-                    masterSinkTarget,
-                    slaveSinkTarget,
                     slaveRecord,
                     markoutRecord,
                     value,

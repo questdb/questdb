@@ -53,9 +53,6 @@ public class MarkoutTimeFrameHelper {
     // Bookmark position: where to start the next findAsOfRow search (optimization for sequential access)
     private int bookmarkedFrameIndex = -1;
     private long bookmarkedRowIndex = Long.MIN_VALUE;
-    // Current position: result of the last findAsOfRow or backwardScanForKeyMatch call
-    private int currentFrameIndex = -1;
-    private long currentRowIndex = -1;
     private Record record;
     private TimeFrame timeFrame;
     private TimeFrameCursor timeFrameCursor;
@@ -64,6 +61,141 @@ public class MarkoutTimeFrameHelper {
     public MarkoutTimeFrameHelper(long lookahead, long slaveTsScale) {
         this.lookahead = lookahead;
         this.slaveTsScale = slaveTsScale;
+    }
+
+    /**
+     * Finds the row with the largest timestamp <= targetTimestamp (ASOF semantics).
+     * Returns the row ID, or Long.MIN_VALUE if not found.
+     * <p>
+     * After a successful call, the helper is positioned at the found row.
+     *
+     * @param targetTimestamp the target timestamp to search for
+     * @return rowId if found, Long.MIN_VALUE otherwise
+     */
+    public long findAsOfRow(long targetTimestamp) {
+        // Start from bookmarked position if available
+        long rowLo = Long.MIN_VALUE;
+        if (bookmarkedFrameIndex != -1) {
+            timeFrameCursor.jumpTo(bookmarkedFrameIndex);
+            if (timeFrameCursor.open() > 0) {
+                long frameTsHi = scaleTimestamp(timeFrame.getTimestampHi() - 1, slaveTsScale); // timestampHi is exclusive
+                if (frameTsHi <= targetTimestamp) {
+                    // Bookmarked frame is entirely <= target, use as candidate
+                    rowLo = bookmarkedRowIndex;
+                } else if (scaleTimestamp(timeFrame.getTimestampLo(), slaveTsScale) <= targetTimestamp) {
+                    // Target is within this frame
+                    rowLo = bookmarkedRowIndex;
+                }
+            }
+        }
+
+        // Track the best ASOF match found so far
+        int bestFrameIndex = -1;
+        long bestRowIndex = Long.MIN_VALUE;
+
+        for (; ; ) {
+            if (rowLo == Long.MIN_VALUE) {
+                // Navigate through frames to find one containing or before the target
+                while (timeFrameCursor.next()) {
+                    long frameEstimateHi = scaleTimestamp(timeFrame.getTimestampEstimateHi(), slaveTsScale);
+
+                    if (frameEstimateHi <= targetTimestamp) {
+                        // Frame is entirely before target, record as candidate
+                        if (timeFrameCursor.open() > 0) {
+                            bestFrameIndex = timeFrame.getFrameIndex();
+                            bestRowIndex = timeFrame.getRowHi() - 1;
+                            bookmarkCurrentFrame(0);
+                        }
+                        continue;
+                    }
+
+                    // Frame may contain or straddle the target
+                    if (scaleTimestamp(timeFrame.getTimestampEstimateLo(), slaveTsScale) <= targetTimestamp) {
+                        if (timeFrameCursor.open() == 0) {
+                            continue;
+                        }
+
+                        // Scale slave frame timestamps to common unit
+                        long frameTsLo = scaleTimestamp(timeFrame.getTimestampLo(), slaveTsScale);
+                        long frameTsHi = scaleTimestamp(timeFrame.getTimestampHi() - 1, slaveTsScale);
+
+                        if (frameTsHi <= targetTimestamp) {
+                            // Entire frame is <= target
+                            bestFrameIndex = timeFrame.getFrameIndex();
+                            bestRowIndex = timeFrame.getRowHi() - 1;
+                            bookmarkCurrentFrame(0);
+                            continue;
+                        }
+
+                        if (frameTsLo <= targetTimestamp) {
+                            // Target is within this frame, need to search
+                            rowLo = timeFrame.getRowLo();
+                            break;
+                        }
+
+                        // Frame is entirely after target, return best found so far
+                        if (bestRowIndex != Long.MIN_VALUE) {
+                            bookmarkedFrameIndex = bestFrameIndex;
+                            bookmarkedRowIndex = bestRowIndex;
+                            return Rows.toRowID(bestFrameIndex, bestRowIndex);
+                        }
+                        // Bookmark current frame so subsequent searches with larger timestamps can find it
+                        bookmarkCurrentFrame(0);
+                        return Long.MIN_VALUE;
+                    }
+
+                    // Frame is entirely after target
+                    if (bestRowIndex != Long.MIN_VALUE) {
+                        bookmarkedFrameIndex = bestFrameIndex;
+                        bookmarkedRowIndex = bestRowIndex;
+                        return Rows.toRowID(bestFrameIndex, bestRowIndex);
+                    }
+                    // Bookmark current frame so subsequent searches with larger timestamps can find it
+                    bookmarkCurrentFrame(0);
+                    return Long.MIN_VALUE;
+                }
+
+                if (rowLo == Long.MIN_VALUE) {
+                    // No more frames, return best found
+                    if (bestRowIndex != Long.MIN_VALUE) {
+                        bookmarkedFrameIndex = bestFrameIndex;
+                        bookmarkedRowIndex = bestRowIndex;
+                        return Rows.toRowID(bestFrameIndex, bestRowIndex);
+                    }
+                    return Long.MIN_VALUE;
+                }
+            }
+
+            // Search within the current frame for the ASOF row
+            bookmarkCurrentFrame(rowLo);
+            timeFrameCursor.recordAt(record, Rows.toRowID(timeFrame.getFrameIndex(), timeFrame.getRowLo()));
+
+            // Try linear scan first
+            long scanResult = linearScanAsOf(targetTimestamp, rowLo);
+            if (scanResult >= 0) {
+                bookmarkCurrentFrame(scanResult);
+                return Rows.toRowID(timeFrame.getFrameIndex(), scanResult);
+            } else if (scanResult == Long.MIN_VALUE) {
+                // All rows in scan range are > target, check if we have a previous best
+                if (bestRowIndex != Long.MIN_VALUE) {
+                    bookmarkedFrameIndex = bestFrameIndex;
+                    bookmarkedRowIndex = bestRowIndex;
+                    return Rows.toRowID(bestFrameIndex, bestRowIndex);
+                }
+                return Long.MIN_VALUE;
+            }
+
+            // Need binary search
+            long searchStart = -scanResult - 1;
+            long searchResult = binarySearchAsOf(targetTimestamp, searchStart);
+            if (searchResult != Long.MIN_VALUE) {
+                bookmarkCurrentFrame(searchResult);
+                return Rows.toRowID(timeFrame.getFrameIndex(), searchResult);
+            }
+
+            // No match in this frame, try next
+            rowLo = Long.MIN_VALUE;
+        }
     }
 
     /**
@@ -76,10 +208,10 @@ public class MarkoutTimeFrameHelper {
      * The map is updated with (key -> rowId), with later positions overwriting earlier ones.
      * This means after scanning, the map contains the LATEST position for each key up to targetRowId.
      *
-     * @param targetRowId     the ASOF position to scan up to (inclusive)
-     * @param highWaterMark   the last scanned position (exclusive), or Long.MIN_VALUE to start from beginning
-     * @param slaveKeyCopier  copier for slave's join key columns
-     * @param keyToRowIdMap   map to update with (key -> rowId) entries
+     * @param targetRowId    the ASOF position to scan up to (inclusive)
+     * @param highWaterMark  the last scanned position (exclusive), or Long.MIN_VALUE to start from beginning
+     * @param slaveKeyCopier copier for slave's join key columns
+     * @param keyToRowIdMap  map to update with (key -> rowId) entries
      * @return number of rows scanned, or -1 if targetRowId is before highWaterMark
      */
     public long forwardScanToPosition(
@@ -96,9 +228,6 @@ public class MarkoutTimeFrameHelper {
         if (highWaterMark != Long.MIN_VALUE && targetRowId <= highWaterMark) {
             return 0;
         }
-
-        int targetFrameIndex = Rows.toPartitionIndex(targetRowId);
-        long targetRowIndex = Rows.toLocalRowID(targetRowId);
 
         // Determine starting position
         int startFrameIndex;
@@ -190,147 +319,6 @@ public class MarkoutTimeFrameHelper {
         return rowsScanned;
     }
 
-    /**
-     * Finds the row with the largest timestamp <= targetTimestamp (ASOF semantics).
-     * Returns the row ID, or Long.MIN_VALUE if not found.
-     * <p>
-     * After a successful call, the helper is positioned at the found row.
-     *
-     * @param targetTimestamp the target timestamp to search for
-     * @return rowId if found, Long.MIN_VALUE otherwise
-     */
-    public long findAsOfRow(long targetTimestamp) {
-        // Start from bookmarked position if available
-        long rowLo = Long.MIN_VALUE;
-        if (bookmarkedFrameIndex != -1) {
-            timeFrameCursor.jumpTo(bookmarkedFrameIndex);
-            if (timeFrameCursor.open() > 0) {
-                long frameTsHi = scaleTimestamp(timeFrame.getTimestampHi() - 1, slaveTsScale); // timestampHi is exclusive
-                if (frameTsHi <= targetTimestamp) {
-                    // Bookmarked frame is entirely <= target, use as candidate
-                    rowLo = bookmarkedRowIndex;
-                } else if (scaleTimestamp(timeFrame.getTimestampLo(), slaveTsScale) <= targetTimestamp) {
-                    // Target is within this frame
-                    rowLo = bookmarkedRowIndex;
-                }
-            }
-        }
-
-        // Track the best ASOF match found so far
-        int bestFrameIndex = -1;
-        long bestRowIndex = Long.MIN_VALUE;
-
-        for (; ; ) {
-            if (rowLo == Long.MIN_VALUE) {
-                // Navigate through frames to find one containing or before the target
-                while (timeFrameCursor.next()) {
-                    long frameEstimateHi = scaleTimestamp(timeFrame.getTimestampEstimateHi(), slaveTsScale);
-
-                    if (frameEstimateHi <= targetTimestamp) {
-                        // Frame is entirely before target, record as candidate
-                        if (timeFrameCursor.open() > 0) {
-                            bestFrameIndex = timeFrame.getFrameIndex();
-                            bestRowIndex = timeFrame.getRowHi() - 1;
-                            bookmarkCurrentFrame(0);
-                        }
-                        continue;
-                    }
-
-                    // Frame may contain or straddle the target
-                    if (scaleTimestamp(timeFrame.getTimestampEstimateLo(), slaveTsScale) <= targetTimestamp) {
-                        if (timeFrameCursor.open() == 0) {
-                            continue;
-                        }
-
-                        // Scale slave frame timestamps to common unit
-                        long frameTsLo = scaleTimestamp(timeFrame.getTimestampLo(), slaveTsScale);
-                        long frameTsHi = scaleTimestamp(timeFrame.getTimestampHi() - 1, slaveTsScale);
-
-                        if (frameTsHi <= targetTimestamp) {
-                            // Entire frame is <= target
-                            bestFrameIndex = timeFrame.getFrameIndex();
-                            bestRowIndex = timeFrame.getRowHi() - 1;
-                            bookmarkCurrentFrame(0);
-                            continue;
-                        }
-
-                        if (frameTsLo <= targetTimestamp) {
-                            // Target is within this frame, need to search
-                            rowLo = timeFrame.getRowLo();
-                            break;
-                        }
-
-                        // Frame is entirely after target, return best found so far
-                        if (bestRowIndex != Long.MIN_VALUE) {
-                            bookmarkedFrameIndex = bestFrameIndex;
-                            bookmarkedRowIndex = bestRowIndex;
-                            setCurrentPosition(bestFrameIndex, bestRowIndex);
-                            return Rows.toRowID(bestFrameIndex, bestRowIndex);
-                        }
-                        // Bookmark current frame so subsequent searches with larger timestamps can find it
-                        bookmarkCurrentFrame(0);
-                        return Long.MIN_VALUE;
-                    }
-
-                    // Frame is entirely after target
-                    if (bestRowIndex != Long.MIN_VALUE) {
-                        bookmarkedFrameIndex = bestFrameIndex;
-                        bookmarkedRowIndex = bestRowIndex;
-                        setCurrentPosition(bestFrameIndex, bestRowIndex);
-                        return Rows.toRowID(bestFrameIndex, bestRowIndex);
-                    }
-                    // Bookmark current frame so subsequent searches with larger timestamps can find it
-                    bookmarkCurrentFrame(0);
-                    return Long.MIN_VALUE;
-                }
-
-                if (rowLo == Long.MIN_VALUE) {
-                    // No more frames, return best found
-                    if (bestRowIndex != Long.MIN_VALUE) {
-                        bookmarkedFrameIndex = bestFrameIndex;
-                        bookmarkedRowIndex = bestRowIndex;
-                        setCurrentPosition(bestFrameIndex, bestRowIndex);
-                        return Rows.toRowID(bestFrameIndex, bestRowIndex);
-                    }
-                    return Long.MIN_VALUE;
-                }
-            }
-
-            // Search within the current frame for the ASOF row
-            bookmarkCurrentFrame(rowLo);
-            timeFrameCursor.recordAt(record, Rows.toRowID(timeFrame.getFrameIndex(), timeFrame.getRowLo()));
-
-            // Try linear scan first
-            long scanResult = linearScanAsOf(targetTimestamp, rowLo);
-            if (scanResult >= 0) {
-                bookmarkCurrentFrame(scanResult);
-                setCurrentPosition(timeFrame.getFrameIndex(), scanResult);
-                return Rows.toRowID(timeFrame.getFrameIndex(), scanResult);
-            } else if (scanResult == Long.MIN_VALUE) {
-                // All rows in scan range are > target, check if we have a previous best
-                if (bestRowIndex != Long.MIN_VALUE) {
-                    bookmarkedFrameIndex = bestFrameIndex;
-                    bookmarkedRowIndex = bestRowIndex;
-                    setCurrentPosition(bestFrameIndex, bestRowIndex);
-                    return Rows.toRowID(bestFrameIndex, bestRowIndex);
-                }
-                return Long.MIN_VALUE;
-            }
-
-            // Need binary search
-            long searchStart = -scanResult - 1;
-            long searchResult = binarySearchAsOf(targetTimestamp, searchStart);
-            if (searchResult != Long.MIN_VALUE) {
-                bookmarkCurrentFrame(searchResult);
-                setCurrentPosition(timeFrame.getFrameIndex(), searchResult);
-                return Rows.toRowID(timeFrame.getFrameIndex(), searchResult);
-            }
-
-            // No match in this frame, try next
-            rowLo = Long.MIN_VALUE;
-        }
-    }
-
     public Record getRecord() {
         return record;
     }
@@ -349,7 +337,6 @@ public class MarkoutTimeFrameHelper {
         timeFrameCursor.jumpTo(frameIndex);
         timeFrameCursor.open();
         timeFrameCursor.recordAtRowIndex(record, rowIndex);
-        setCurrentPosition(frameIndex, rowIndex);
     }
 
     /**
@@ -372,8 +359,6 @@ public class MarkoutTimeFrameHelper {
         }
         bookmarkedFrameIndex = -1;
         bookmarkedRowIndex = Long.MIN_VALUE;
-        currentFrameIndex = -1;
-        currentRowIndex = -1;
     }
 
     /**
@@ -448,10 +433,5 @@ public class MarkoutTimeFrameHelper {
 
         // Scanned entire frame
         return result;
-    }
-
-    private void setCurrentPosition(int frameIndex, long rowIndex) {
-        this.currentFrameIndex = frameIndex;
-        this.currentRowIndex = rowIndex;
     }
 }
