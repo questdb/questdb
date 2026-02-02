@@ -95,8 +95,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     protected final ObjList<Map> perWorkerAsOfJoinMaps;
     protected final ObjList<MarkoutRecord> perWorkerCombinedRecords;
     protected final ObjList<Function> perWorkerFilters;
-    // Per-worker forward scan high watermarks (furthest scanned slave rowId)
-    protected final LongList perWorkerForwardScanHighWaterMarks;
     protected final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     protected final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     protected final ObjList<HorizonTimestampIterator> perWorkerHorizonIterators;
@@ -106,7 +104,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     protected final long sequenceRowCount;
     protected final RecordSink slaveKeyCopier;
     protected final int slotCount;
-    protected long ownerForwardScanHighWaterMark;
 
     protected BaseAsyncHorizonJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -222,12 +219,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             perWorkerCombinedRecords.add(record);
         }
 
-        // Per-worker forward scan high watermarks for sorted horizon processing;
-        // Tracks the furthest scanned slave rowId to avoid re-scanning across frames
-        this.perWorkerForwardScanHighWaterMarks = new LongList(slotCount);
-        perWorkerForwardScanHighWaterMarks.setAll(slotCount, Long.MIN_VALUE);
-        this.ownerForwardScanHighWaterMark = Long.MIN_VALUE;
-
         // Per-worker horizon timestamp iterators for sorted processing
         this.ownerHorizonIterator = new HorizonTimestampIterator(offsets, masterTsScale);
         this.perWorkerHorizonIterators = new ObjList<>(slotCount);
@@ -255,10 +246,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         // Clear time frame cursors
         Misc.free(ownerSlaveTimeFrameCursor);
         Misc.freeObjListAndKeepObjects(perWorkerSlaveTimeFrameCursors);
-
-        // Clear forward scan high watermarks
-        ownerForwardScanHighWaterMark = Long.MIN_VALUE;
-        perWorkerForwardScanHighWaterMarks.setAll(perWorkerForwardScanHighWaterMarks.size(), Long.MIN_VALUE);
 
         // Let subclass clear its resources
         clearAggregationState();
@@ -323,13 +310,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             return ownerFilter;
         }
         return perWorkerFilters.getQuick(slotId);
-    }
-
-    public long getForwardScanHighWaterMark(int slotId) {
-        if (slotId == -1) {
-            return ownerForwardScanHighWaterMark;
-        }
-        return perWorkerForwardScanHighWaterMarks.getQuick(slotId);
     }
 
     public GroupByFunctionsUpdater getFunctionUpdater(int slotId) {
@@ -486,9 +466,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             }
         }
 
-        // Clear forward scan high watermarks
-        ownerForwardScanHighWaterMark = Long.MIN_VALUE;
-        perWorkerForwardScanHighWaterMarks.setAll(perWorkerForwardScanHighWaterMarks.size(), Long.MIN_VALUE);
     }
 
     public int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -510,14 +487,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             for (int i = 0, n = perWorkerAllocators.size(); i < n; i++) {
                 perWorkerAllocators.getQuick(i).reopen();
             }
-        }
-    }
-
-    public void setForwardScanHighWaterMark(int slotId, long rowId) {
-        if (slotId == -1) {
-            this.ownerForwardScanHighWaterMark = rowId;
-        } else {
-            perWorkerForwardScanHighWaterMarks.setQuick(slotId, rowId);
         }
     }
 

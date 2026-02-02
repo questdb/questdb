@@ -43,16 +43,21 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  * (finding the last row with timestamp <= target) using a combination of
  * linear scan and binary search. Maintains bookmarks for efficient subsequent lookups.
  * <p>
- * Also supports forward scanning to build key-to-rowId maps for keyed ASOF JOIN.
+ * Also supports forward and backward scanning to build key-to-rowId maps for keyed ASOF JOIN.
+ * Watermarks are maintained internally to track scanning progress within a frame.
  */
 public class MarkoutTimeFrameHelper {
     private static final int LINEAR_SCAN_LIMIT = 64;
     private final long lookahead;
     // Scale factor for slave timestamps to normalize to nanoseconds (1 if no scaling needed)
     private final long slaveTsScale;
+    // Backward watermark: lowest rowId we've backward-scanned (inclusive)
+    private long backwardWatermark = Long.MAX_VALUE;
     // Bookmark position: where to start the next findAsOfRow search (optimization for sequential access)
     private int bookmarkedFrameIndex = -1;
     private long bookmarkedRowIndex = Long.MIN_VALUE;
+    // Forward watermark: highest rowId we've forward-scanned (inclusive)
+    private long forwardWatermark = Long.MIN_VALUE;
     private Record record;
     private TimeFrame timeFrame;
     private TimeFrameCursor timeFrameCursor;
@@ -61,6 +66,109 @@ public class MarkoutTimeFrameHelper {
     public MarkoutTimeFrameHelper(long lookahead, long slaveTsScale) {
         this.lookahead = lookahead;
         this.slaveTsScale = slaveTsScale;
+    }
+
+    /**
+     * Backward scan from current backward watermark toward smaller rowIds, looking for a matching key.
+     * <p>
+     * Adds all keys encountered to the map (only if not already present, since we want
+     * the latest/highest rowId for each key). Stops when the target key is found.
+     * <p>
+     * This is used for the "dense ASOF" algorithm: when a key is not in the cache,
+     * we scan backward from the current position to find earlier occurrences.
+     * <p>
+     * Updates the internal backward watermark after scanning.
+     *
+     * @param startRowId      starting position for backward scan (inclusive), typically the ASOF position
+     * @param masterRecord    master record containing the target key
+     * @param masterKeyCopier copier for master's join key columns
+     * @param slaveKeyCopier  copier for slave's join key columns
+     * @param keyToRowIdMap   map to update with (key -> rowId) entries
+     * @return the rowId where target key was found, or Long.MIN_VALUE if not found
+     */
+    public long backwardScanForKeyMatch(
+            long startRowId,
+            Record masterRecord,
+            RecordSink masterKeyCopier,
+            RecordSink slaveKeyCopier,
+            Map keyToRowIdMap
+    ) {
+        if (startRowId == Long.MIN_VALUE) {
+            return Long.MIN_VALUE;
+        }
+
+        // Don't scan beyond what we've already scanned
+        // Start from min(startRowId, backwardWatermark - 1)
+        long effectiveStart = startRowId;
+        if (backwardWatermark != Long.MAX_VALUE && backwardWatermark > 0) {
+            effectiveStart = Math.min(startRowId, backwardWatermark - 1);
+        }
+
+        if (backwardWatermark != Long.MAX_VALUE && effectiveStart < backwardWatermark) {
+            // Already scanned this region, just look up in map
+            MapKey targetKey = keyToRowIdMap.withKey();
+            targetKey.put(masterRecord, masterKeyCopier);
+            MapValue targetValue = targetKey.findValue();
+            return targetValue != null ? targetValue.getLong(0) : Long.MIN_VALUE;
+        }
+
+        int frameIndex = Rows.toPartitionIndex(effectiveStart);
+        long rowIndex = Rows.toLocalRowID(effectiveStart);
+
+        // Jump to the starting frame
+        timeFrameCursor.jumpTo(frameIndex);
+        if (timeFrameCursor.open() == 0) {
+            return Long.MIN_VALUE;
+        }
+
+        while (true) {
+            long currentRowId = Rows.toRowID(frameIndex, rowIndex);
+
+            // Update backward watermark
+            if (backwardWatermark == Long.MAX_VALUE || currentRowId < backwardWatermark) {
+                backwardWatermark = currentRowId;
+            }
+
+            // Position record at current row
+            timeFrameCursor.recordAtRowIndex(record, rowIndex);
+
+            // Add key to map only if not already present (we want latest/highest rowId)
+            MapKey key = keyToRowIdMap.withKey();
+            key.put(record, slaveKeyCopier);
+            MapValue value = key.createValue();
+            if (value.isNew()) {
+                value.putLong(0, currentRowId);
+            }
+
+            // Check if this matches the target key
+            MapKey targetKey = keyToRowIdMap.withKey();
+            targetKey.put(masterRecord, masterKeyCopier);
+            MapValue targetValue = targetKey.findValue();
+            if (targetValue != null) {
+                // Found the target key in the map
+                return targetValue.getLong(0);
+            }
+
+            // Move backward
+            rowIndex--;
+            if (rowIndex < timeFrame.getRowLo()) {
+                // Move to previous frame
+                if (frameIndex == 0) {
+                    // No more frames, update watermark to indicate we've scanned everything
+                    backwardWatermark = 0;
+                    break;
+                }
+                frameIndex--;
+                timeFrameCursor.jumpTo(frameIndex);
+                if (timeFrameCursor.open() == 0) {
+                    // Empty frame, try previous
+                    continue;
+                }
+                rowIndex = timeFrame.getRowHi() - 1;
+            }
+        }
+
+        return Long.MIN_VALUE;
     }
 
     /**
@@ -199,7 +307,7 @@ public class MarkoutTimeFrameHelper {
     }
 
     /**
-     * Forward scan from highWaterMark to targetRowId, updating the map with all keys encountered.
+     * Forward scan from current forward watermark to targetRowId, updating the map with all keys encountered.
      * <p>
      * This method is used for efficient sorted horizon timestamp processing. Since horizon
      * timestamps are processed in ascending order, the ASOF positions also generally increase.
@@ -207,36 +315,35 @@ public class MarkoutTimeFrameHelper {
      * <p>
      * The map is updated with (key -> rowId), with later positions overwriting earlier ones.
      * This means after scanning, the map contains the LATEST position for each key up to targetRowId.
+     * <p>
+     * Updates the internal forward watermark to targetRowId after successful scan.
      *
      * @param targetRowId    the ASOF position to scan up to (inclusive)
-     * @param highWaterMark  the last scanned position (exclusive), or Long.MIN_VALUE to start from beginning
      * @param slaveKeyCopier copier for slave's join key columns
      * @param keyToRowIdMap  map to update with (key -> rowId) entries
-     * @return number of rows scanned, or -1 if targetRowId is before highWaterMark
      */
-    public long forwardScanToPosition(
+    public void forwardScanToPosition(
             long targetRowId,
-            long highWaterMark,
             RecordSink slaveKeyCopier,
             Map keyToRowIdMap
     ) {
         if (targetRowId == Long.MIN_VALUE) {
-            return 0;
+            return;
         }
 
-        // If target is at or before high water mark, no scanning needed
-        if (highWaterMark != Long.MIN_VALUE && targetRowId <= highWaterMark) {
-            return 0;
+        // If target is at or before forward watermark, no scanning needed
+        if (forwardWatermark != Long.MIN_VALUE && targetRowId <= forwardWatermark) {
+            return;
         }
 
         // Determine starting position
         int startFrameIndex;
         long startRowIndex;
-        if (highWaterMark == Long.MIN_VALUE) {
+        if (forwardWatermark == Long.MIN_VALUE) {
             // Start from the beginning
             timeFrameCursor.toTop();
             if (!timeFrameCursor.next()) {
-                return 0;
+                return;
             }
             if (timeFrameCursor.open() == 0) {
                 // Try to find first non-empty frame
@@ -246,35 +353,34 @@ public class MarkoutTimeFrameHelper {
                     }
                 }
                 if (timeFrame.getRowHi() <= timeFrame.getRowLo()) {
-                    return 0;
+                    return;
                 }
             }
             startFrameIndex = timeFrame.getFrameIndex();
             startRowIndex = timeFrame.getRowLo();
         } else {
-            // Start from just after high water mark
-            startFrameIndex = Rows.toPartitionIndex(highWaterMark);
-            startRowIndex = Rows.toLocalRowID(highWaterMark) + 1;
+            // Start from just after forward watermark
+            startFrameIndex = Rows.toPartitionIndex(forwardWatermark);
+            startRowIndex = Rows.toLocalRowID(forwardWatermark) + 1;
 
             timeFrameCursor.jumpTo(startFrameIndex);
             if (timeFrameCursor.open() == 0) {
-                return 0;
+                return;
             }
 
             // Check if we need to move to next frame
             if (startRowIndex >= timeFrame.getRowHi()) {
                 if (!timeFrameCursor.next()) {
-                    return 0;
+                    return;
                 }
                 if (timeFrameCursor.open() == 0) {
-                    return 0;
+                    return;
                 }
                 startFrameIndex = timeFrame.getFrameIndex();
                 startRowIndex = timeFrame.getRowLo();
             }
         }
 
-        long rowsScanned = 0;
         int frameIndex = startFrameIndex;
         long rowIndex = startRowIndex;
 
@@ -293,7 +399,9 @@ public class MarkoutTimeFrameHelper {
             MapValue value = key.createValue();
             // Always update (overwrite) - we want the LATEST position for each key
             value.putLong(0, currentRowId);
-            rowsScanned++;
+
+            // Update forward watermark
+            forwardWatermark = currentRowId;
 
             // Check if we've reached the target
             if (currentRowId == targetRowId) {
@@ -315,12 +423,26 @@ public class MarkoutTimeFrameHelper {
                 rowIndex = timeFrame.getRowLo();
             }
         }
+    }
 
-        return rowsScanned;
+    /**
+     * Returns the current forward watermark (highest rowId we've forward-scanned).
+     * Returns Long.MIN_VALUE if no forward scanning has been done yet.
+     */
+    public long getForwardWatermark() {
+        return forwardWatermark;
     }
 
     public Record getRecord() {
         return record;
+    }
+
+    /**
+     * Initialize the forward watermark. Called after the first backward scan
+     * to set the starting point for subsequent forward scans.
+     */
+    public void initForwardWatermark(long rowId) {
+        this.forwardWatermark = rowId;
     }
 
     public void of(TimeFrameCursor timeFrameCursor) {
@@ -328,6 +450,9 @@ public class MarkoutTimeFrameHelper {
         this.record = timeFrameCursor.getRecord();
         this.timeFrame = timeFrameCursor.getTimeFrame();
         this.timestampIndex = timeFrameCursor.getTimestampIndex();
+        // Reset all state for new query
+        bookmarkedFrameIndex = -1;
+        bookmarkedRowIndex = Long.MIN_VALUE;
         toTop();
     }
 
@@ -340,25 +465,22 @@ public class MarkoutTimeFrameHelper {
     }
 
     /**
-     * Set the bookmark to a specific row ID.
-     * This allows external code to control where findAsOfRow starts searching.
+     * Reset state for processing a new frame.
+     * <p>
+     * Resets the forward/backward watermarks (used for key caching within a frame),
+     * but preserves the bookmark position (used by findAsOfRow) to speed up
+     * ASOF lookups when timestamps increase across frames.
      */
-    public void setBookmark(long rowId) {
-        if (rowId == Long.MIN_VALUE) {
-            bookmarkedFrameIndex = -1;
-            bookmarkedRowIndex = Long.MIN_VALUE;
-        } else {
-            bookmarkedFrameIndex = Rows.toPartitionIndex(rowId);
-            bookmarkedRowIndex = Rows.toLocalRowID(rowId);
-        }
-    }
-
     public void toTop() {
         if (timeFrameCursor != null) {
             timeFrameCursor.toTop();
         }
-        bookmarkedFrameIndex = -1;
-        bookmarkedRowIndex = Long.MIN_VALUE;
+        // Note: bookmarkedFrameIndex/bookmarkedRowIndex are intentionally NOT reset.
+        // They help findAsOfRow() start closer to the target when processing subsequent frames.
+
+        // Reset watermarks for new frame processing (caching is per-frame)
+        forwardWatermark = Long.MIN_VALUE;
+        backwardWatermark = Long.MAX_VALUE;
     }
 
     /**

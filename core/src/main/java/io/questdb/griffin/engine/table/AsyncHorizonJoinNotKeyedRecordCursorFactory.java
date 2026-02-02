@@ -307,7 +307,6 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
 
             // Process horizon timestamps in sorted order for sequential ASOF lookups
             processSortedHorizonTimestamps(
-                    slotId,
                     horizonIterator,
                     record,
                     baseRowId,
@@ -328,17 +327,20 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
     }
 
     /**
-     * Process all horizon timestamps in sorted order using forward scanning.
+     * Process all horizon timestamps in sorted order using bidirectional scanning.
      * <p>
      * This method iterates through pre-sorted (horizonTs, masterRowIdx, offsetIdx) tuples.
-     * Instead of backward-scanning from each ASOF position, it uses a forward scan approach
-     * similar to Dense ASOF: as horizon timestamps increase, scan forward through slave rows
-     * and maintain a map of (key -> latest rowId). Each slave row is scanned at most once.
+     * It uses a "dense ASOF" approach optimized for the common case where most keys
+     * appear in the "recent" slave rows:
      * <p>
-     * Complexity: O(slave_rows + master_tuples) instead of O(master_tuples * avg_backward_scan).
+     * 1. First tuple: Find ASOF position, backward scan until key match, set watermarks
+     * 2. Subsequent tuples: Forward scan to new ASOF position (caching keys),
+     *    then lookup in cache. On cache miss, continue backward scan.
+     * <p>
+     * Each slave row is scanned at most once per frame (either forward or backward).
+     * Watermarks are tracked internally by the helper and reset via toTop().
      */
     private static void processSortedHorizonTimestamps(
-            int slotId,
             HorizonTimestampIterator horizonIterator,
             PageFrameMemoryRecord masterRecord,
             long baseRowId,
@@ -353,9 +355,13 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             GroupByFunctionsUpdater functionUpdater,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
-        // Forward scan state: high water mark (last scanned slave rowId)
-        // Persisted across frames to avoid re-scanning already processed slave rows
-        long forwardScanHighWaterMark = atom.getForwardScanHighWaterMark(slotId);
+        final boolean keyedAsOfJoin = asOfJoinMap != null && masterKeyCopier != null && slaveKeyCopier != null;
+
+        // Reset helper state and clear the ASOF join map for this frame
+        slaveTimeFrameHelper.toTop();
+        if (keyedAsOfJoin) {
+            asOfJoinMap.clear();
+        }
 
         while (horizonIterator.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
@@ -374,27 +380,45 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             long asOfRowId = slaveTimeFrameHelper.findAsOfRow(horizonTs);
 
             long matchRowId = Long.MIN_VALUE;
-            if (asOfJoinMap != null && masterKeyCopier != null && slaveKeyCopier != null) {
-                // Keyed ASOF JOIN with forward scanning
+            if (keyedAsOfJoin) {
+                // Keyed ASOF JOIN with bidirectional scanning
                 if (asOfRowId != Long.MIN_VALUE) {
-                    // Forward scan from high water mark to current ASOF position
-                    long scanResult = slaveTimeFrameHelper.forwardScanToPosition(
-                            asOfRowId,
-                            forwardScanHighWaterMark,
-                            slaveKeyCopier,
-                            asOfJoinMap
-                    );
-                    if (scanResult >= 0) {
-                        forwardScanHighWaterMark = asOfRowId;
-                    }
+                    if (slaveTimeFrameHelper.getForwardWatermark() == Long.MIN_VALUE) {
+                        // First tuple: backward scan from ASOF position to find matching key
+                        matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
+                                asOfRowId,
+                                masterRecord,
+                                masterKeyCopier,
+                                slaveKeyCopier,
+                                asOfJoinMap
+                        );
+                        // Initialize forward watermark to ASOF position for subsequent forward scans
+                        slaveTimeFrameHelper.initForwardWatermark(asOfRowId);
+                    } else {
+                        // Subsequent tuples: forward scan first (updates internal watermark)
+                        slaveTimeFrameHelper.forwardScanToPosition(
+                                asOfRowId,
+                                slaveKeyCopier,
+                                asOfJoinMap
+                        );
 
-                    // Look up the key in the map - O(1)
-                    MapKey cacheKey = asOfJoinMap.withKey();
-                    cacheKey.put(masterRecord, masterKeyCopier);
-                    MapValue cacheValue = cacheKey.findValue();
+                        // Look up the key in the cache
+                        MapKey cacheKey = asOfJoinMap.withKey();
+                        cacheKey.put(masterRecord, masterKeyCopier);
+                        MapValue cacheValue = cacheKey.findValue();
 
-                    if (cacheValue != null) {
-                        matchRowId = cacheValue.getLong(0);
+                        if (cacheValue != null) {
+                            matchRowId = cacheValue.getLong(0);
+                        } else {
+                            // Cache miss: continue backward scan (uses internal watermark)
+                            matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
+                                    asOfRowId,
+                                    masterRecord,
+                                    masterKeyCopier,
+                                    slaveKeyCopier,
+                                    asOfJoinMap
+                            );
+                        }
                     }
                 }
             } else {
@@ -411,9 +435,6 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             markoutRecord.of(masterRecord, offset, matchedSlaveRecord);
             aggregateRecord(markoutRecord, masterRowId, value, functionUpdater);
         }
-
-        // Save high watermark for next frame
-        atom.setForwardScanHighWaterMark(slotId, forwardScanHighWaterMark);
     }
 
     /**
@@ -471,7 +492,6 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
 
             // Process horizon timestamps in sorted order for sequential ASOF lookups
             processSortedHorizonTimestamps(
-                    slotId,
                     horizonIterator,
                     record,
                     baseRowId,
