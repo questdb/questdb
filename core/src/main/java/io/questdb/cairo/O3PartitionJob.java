@@ -132,6 +132,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 // partitionUpdater is the owner of the partitionDecoder descriptor
                 final int opts = cairoConfiguration.getWriterFileOpenOpts();
+                final double bloomFilterFpp = 0.01; // TODO: add to CairoConfiguration
                 partitionUpdater.of(
                         path.$(),
                         opts,
@@ -141,7 +142,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         statisticsEnabled,
                         rawArrayEncoding,
                         rowGroupSize,
-                        dataPageSize
+                        dataPageSize,
+                        bloomFilterFpp
                 );
 
                 // The O3 range [srcOooLo, srcOooHi] has been split into intervals between row group minimums: [rowGroupN-1.min, rowGroupN.min].

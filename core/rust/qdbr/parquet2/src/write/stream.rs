@@ -119,12 +119,18 @@ impl<W: AsyncWrite + Unpin + Send> FileStreamer<W> {
         }
 
         let ordinal = self.row_groups.len();
+        let empty_bloom: Vec<
+            Option<std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u64>>>>,
+        > = vec![];
         let (group, specs, size) = write_row_group_async(
             &mut self.writer,
             self.offset,
             self.schema.columns(),
             row_group,
+            &None,
             ordinal,
+            self.options.bloom_filter_fpp,
+            &empty_bloom,
         )
         .await?;
         self.offset += size;

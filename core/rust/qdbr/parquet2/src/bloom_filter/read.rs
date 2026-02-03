@@ -57,9 +57,9 @@ pub fn read_from_slice<'a>(
     };
     let offset = offset as usize;
 
-    let remaining = data.get(offset..).ok_or_else(|| {
-        Error::oos("bloom filter offset exceeds data length")
-    })?;
+    let remaining = data
+        .get(offset..)
+        .ok_or_else(|| Error::oos("bloom filter offset exceeds data length"))?;
 
     let mut cursor = Cursor::new(remaining);
     let header = {
@@ -78,7 +78,6 @@ pub fn read_from_slice<'a>(
 
     let length: usize = header.num_bytes.try_into()?;
     let start = offset + header_size;
-    data.get(start..start + length).ok_or_else(|| {
-        Error::oos("bloom filter bitset exceeds data length")
-    })
+    data.get(start..start + length)
+        .ok_or_else(|| Error::oos("bloom filter bitset exceeds data length"))
 }

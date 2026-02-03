@@ -22,8 +22,10 @@
  *
  ******************************************************************************/
 
+use std::collections::HashSet;
 use std::mem::size_of;
 
+use parquet2::bloom_filter::hash_byte;
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
@@ -41,6 +43,7 @@ pub fn binary_to_page(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     let num_rows = column_top + offsets.len();
     let mut buffer = vec![];
@@ -66,11 +69,24 @@ pub fn binary_to_page(
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
     match encoding {
         Encoding::Plain => {
-            encode_plain(offsets, data, &mut buffer, &mut stats);
+            encode_plain(
+                offsets,
+                data,
+                &mut buffer,
+                &mut stats,
+                bloom_hashes.as_deref_mut(),
+            );
             Ok(())
         }
         Encoding::DeltaLengthByteArray => {
-            encode_delta(offsets, data, null_count, &mut buffer, &mut stats);
+            encode_delta(
+                offsets,
+                data,
+                null_count,
+                &mut buffer,
+                &mut stats,
+                bloom_hashes,
+            );
             Ok(())
         }
         _ => Err(fmt_err!(
@@ -102,6 +118,7 @@ fn encode_plain(
     values: &[u8],
     buffer: &mut Vec<u8>,
     stats: &mut BinaryMaxMinStats,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) {
     let size_of_header = size_of::<i64>();
 
@@ -117,6 +134,9 @@ fn encode_plain(
         buffer.extend_from_slice(&encoded_len);
         buffer.extend_from_slice(value);
         stats.update(value);
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_byte(value));
+        }
     }
 }
 
@@ -126,6 +146,7 @@ fn encode_delta(
     null_count: usize,
     buffer: &mut Vec<u8>,
     stats: &mut BinaryMaxMinStats,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) {
     let size_of_header = size_of::<i64>();
     let row_count = offsets.len();
@@ -166,5 +187,8 @@ fn encode_delta(
         let value = &values[value_offset..value_offset + len as usize];
         buffer.extend_from_slice(value);
         stats.update(value);
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_byte(value));
+        }
     }
 }

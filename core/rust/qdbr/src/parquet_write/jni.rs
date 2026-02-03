@@ -2,6 +2,7 @@ use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResul
 use crate::parquet_write::file::{ChunkedWriter, ParquetWriter, DEFAULT_ROW_GROUP_SIZE};
 use crate::parquet_write::schema::{Column, Partition};
 use crate::parquet_write::update::ParquetUpdater;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::Write;
 use std::ops::Sub;
@@ -11,7 +12,7 @@ use std::slice;
 use crate::allocator::QdbAllocator;
 use crate::parquet::io::FromRawFdI32Ext;
 use jni::objects::JClass;
-use jni::sys::{jboolean, jint, jlong, jshort};
+use jni::sys::{jboolean, jdouble, jint, jlong, jshort};
 use jni::JNIEnv;
 use parquet2::compression::{BrotliLevel, CompressionOptions, GzipLevel, ZstdLevel};
 use parquet2::metadata::{KeyValue, SortingColumn};
@@ -32,6 +33,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     raw_array_encoding: jboolean,
     row_group_size: jlong,
     data_page_size: jlong,
+    bloom_filter_fpp: jdouble,
 ) -> *mut ParquetUpdater {
     let create = || -> ParquetResult<ParquetUpdater> {
         let compression_options =
@@ -69,6 +71,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             compression_options,
             row_group_size,
             data_page_size,
+            bloom_filter_fpp,
         )
     };
 
@@ -202,6 +205,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     row_group_size: jlong,
     data_page_size: jlong,
     version: jint,
+    bloom_filter_column_indexes: *const jint,
+    bloom_filter_column_count: jint,
+    bloom_filter_fpp: jdouble,
 ) {
     let encode = || -> ParquetResult<()> {
         let partition = create_partition_descriptor(
@@ -236,8 +242,15 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         } else {
             None
         };
-
         let version = version_from_i32(version)?;
+
+        let bloom_filter_cols =
+            build_bloom_filter_set(bloom_filter_column_indexes, bloom_filter_column_count);
+        let bloom_fpp = if bloom_filter_fpp > 0.0 {
+            bloom_filter_fpp
+        } else {
+            0.01
+        };
 
         let file: ParquetResult<_> = File::create(dest_path).map_err(|e| e.into());
         let mut file = file.with_context(|_| {
@@ -262,6 +275,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .with_row_group_size(row_group_size)
             .with_data_page_size(data_page_size)
             .with_sorting_columns(sorting_columns)
+            .with_bloom_filter_columns(bloom_filter_cols)
+            .with_bloom_filter_fpp(bloom_fpp)
             .finish(partition)
             .map(|_| ())
             .context("ParquetWriter::finish failed")
@@ -364,6 +379,14 @@ fn create_partition_descriptor(
 
     let partition = Partition { table, columns };
     Ok(partition)
+}
+
+fn build_bloom_filter_set(indexes_ptr: *const jint, count: jint) -> HashSet<usize> {
+    if indexes_ptr.is_null() || count <= 0 {
+        return HashSet::new();
+    }
+    let indexes = unsafe { slice::from_raw_parts(indexes_ptr, count as usize) };
+    indexes.iter().map(|&i| i as usize).collect()
 }
 
 fn version_from_i32(value: i32) -> Result<Version, ParquetError> {
@@ -481,6 +504,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     row_group_size: jlong,
     data_page_size: jlong,
     version: jint,
+    bloom_filter_column_indexes: *const jint,
+    bloom_filter_column_count: jint,
+    bloom_filter_fpp: jdouble,
 ) -> *mut StreamingParquetWriter {
     let create = || -> ParquetResult<StreamingParquetWriter> {
         let partition_template = create_partition_template(
@@ -528,6 +554,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         let buffer_writer = unsafe {
             BufferWriter::new_with_offset(&mut *current_buffer as *mut Vec<u8, QdbAllocator>, 8)
         };
+        let bloom_filter_cols =
+            build_bloom_filter_set(bloom_filter_column_indexes, bloom_filter_column_count);
+        let bloom_fpp = if bloom_filter_fpp > 0.0 {
+            bloom_filter_fpp
+        } else {
+            0.01
+        };
+
         let parquet_writer = ParquetWriter::new(buffer_writer)
             .with_version(version_from_i32(version)?)
             .with_compression(compression_options)
@@ -535,7 +569,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .with_raw_array_encoding(raw_array_encoding != 0)
             .with_row_group_size(row_group_size_opt)
             .with_data_page_size(data_page_size_opt)
-            .with_sorting_columns(sorting_columns.clone());
+            .with_sorting_columns(sorting_columns.clone())
+            .with_bloom_filter_columns(bloom_filter_cols)
+            .with_bloom_filter_fpp(bloom_fpp);
         let chunked_writer = parquet_writer.chunked(parquet_schema, encodings)?;
 
         let effective_row_group_size = row_group_size_opt.unwrap_or(DEFAULT_ROW_GROUP_SIZE);

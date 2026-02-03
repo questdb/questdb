@@ -26,6 +26,7 @@ fn basic() -> Result<(), Error> {
             WriteOptions {
                 write_statistics: true,
                 version: Version::V2,
+                bloom_filter_fpp: 0.01,
             },
             None,
         );

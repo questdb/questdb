@@ -765,4 +765,245 @@ mod tests {
             assert_eq!(collected, expected);
         }
     }
+
+    #[test]
+    fn test_bloom_filter_roundtrip_i64() {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_read::{ColumnFilterValues, ParquetDecoder};
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1: Vec<i64> = (100..110).collect();
+        let row_count = col1.len();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Long.into_type().code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * size_of::<i64>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+        )
+        .expect("column");
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_bloom_filter_columns(bloom_cols)
+            .with_bloom_filter_fpp(0.01)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let data = buf.into_inner();
+
+        // Read it back with parquet2 and verify bloom filter works
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut reader = Cursor::new(data.as_slice());
+        let decoder =
+            ParquetDecoder::read(allocator, &mut reader, data.len() as u64).expect("decoder");
+
+        // Values NOT in the data: should skip
+        let absent_vals: Vec<i64> = vec![0, 1, 50, 999];
+        let filters = [(
+            0i32,
+            ColumnFilterValues {
+                count: absent_vals.len() as u32,
+                ptr: absent_vals.as_ptr() as u64,
+            },
+        )];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters)
+            .expect("can_skip");
+        assert!(
+            can_skip,
+            "should skip: none of the filter values are in the row group"
+        );
+
+        // Values IN the data: should not skip
+        let present_vals: Vec<i64> = vec![0, 105, 999];
+        let filters = [(
+            0i32,
+            ColumnFilterValues {
+                count: present_vals.len() as u32,
+                ptr: present_vals.as_ptr() as u64,
+            },
+        )];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters)
+            .expect("can_skip");
+        assert!(!can_skip, "should not skip: 105 is in the row group");
+    }
+
+    #[test]
+    fn test_bloom_filter_roundtrip_i32() {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_read::{ColumnFilterValues, ParquetDecoder};
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1: Vec<i32> = (200..210).collect();
+        let row_count = col1.len();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Int.into_type().code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * size_of::<i32>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+        )
+        .expect("column");
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_bloom_filter_columns(bloom_cols)
+            .with_bloom_filter_fpp(0.01)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let data = buf.into_inner();
+
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut reader = Cursor::new(data.as_slice());
+        let decoder =
+            ParquetDecoder::read(allocator, &mut reader, data.len() as u64).expect("decoder");
+
+        // Verify metadata has bloom filter offset
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+        let bf_offset = meta.row_groups[0].columns()[0]
+            .metadata()
+            .bloom_filter_offset;
+        assert!(
+            bf_offset.is_some(),
+            "bloom filter offset should be present in metadata"
+        );
+
+        // Values not in the data
+        let absent_vals: Vec<i64> = vec![0, 1, 50, 999];
+        let filters = [(
+            0i32,
+            ColumnFilterValues {
+                count: absent_vals.len() as u32,
+                ptr: absent_vals.as_ptr() as u64,
+            },
+        )];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters)
+            .expect("can_skip");
+        assert!(
+            can_skip,
+            "should skip: none of the filter values are in the row group"
+        );
+    }
+
+    #[test]
+    fn test_bloom_filter_not_written_for_unselected_columns() {
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1: Vec<i64> = (0..10).collect();
+        let col2: Vec<i32> = (0..10).collect();
+        let row_count = col1.len();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "col1",
+            ColumnTypeTag::Long.into_type().code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * size_of::<i64>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+        )
+        .expect("column");
+
+        let col2_w = Column::from_raw_data(
+            1,
+            "col2",
+            ColumnTypeTag::Int.into_type().code(),
+            0,
+            row_count,
+            col2.as_ptr() as *const u8,
+            row_count * size_of::<i32>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+        )
+        .expect("column");
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w, col2_w],
+        };
+
+        // Only enable bloom filter for column 0
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_bloom_filter_columns(bloom_cols)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let data = buf.into_inner();
+
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+        let bf_offset_col0 = meta.row_groups[0].columns()[0]
+            .metadata()
+            .bloom_filter_offset;
+        let bf_offset_col1 = meta.row_groups[0].columns()[1]
+            .metadata()
+            .bloom_filter_offset;
+
+        assert!(bf_offset_col0.is_some(), "col0 should have bloom filter");
+        assert!(
+            bf_offset_col1.is_none(),
+            "col1 should not have bloom filter"
+        );
+    }
 }

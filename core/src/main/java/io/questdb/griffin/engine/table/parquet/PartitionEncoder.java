@@ -55,7 +55,10 @@ public class PartitionEncoder {
             boolean rawArrayEncoding,
             long rowGroupSize,
             long dataPageSize,
-            int version
+            int version,
+            long bloomFilterColumnIndexesPtr,
+            int bloomFilterColumnCount,
+            double bloomFilterFpp
     ) throws CairoException;
 
     public static void encode(PartitionDescriptor descriptor, Path destPath) {
@@ -81,6 +84,34 @@ public class PartitionEncoder {
             long dataPageSize,
             int version
     ) {
+        encodeWithOptions(
+                descriptor,
+                destPath,
+                compressionCodec,
+                statisticsEnabled,
+                rawArrayEncoding,
+                rowGroupSize,
+                dataPageSize,
+                version,
+                0,
+                0,
+                0.01
+        );
+    }
+
+    public static void encodeWithOptions(
+            PartitionDescriptor descriptor,
+            Path destPath,
+            long compressionCodec,
+            boolean statisticsEnabled,
+            boolean rawArrayEncoding,
+            long rowGroupSize,
+            long dataPageSize,
+            int version,
+            long bloomFilterColumnIndexesPtr,
+            int bloomFilterColumnCount,
+            double bloomFilterFpp
+    ) {
         final Utf8Sequence tableName = descriptor.getTableName();
         final int columnCount = descriptor.getColumnCount();
         final long partitionSize = descriptor.getPartitionRowCount();
@@ -103,7 +134,10 @@ public class PartitionEncoder {
                     rawArrayEncoding,
                     rowGroupSize,
                     dataPageSize,
-                    version
+                    version,
+                    bloomFilterColumnIndexesPtr,
+                    bloomFilterColumnCount,
+                    bloomFilterFpp
             );
         } finally {
             descriptor.clear();
@@ -247,7 +281,10 @@ public class PartitionEncoder {
             boolean rawArrayEncoding,
             long rowGroupSize,
             long dataPageSize,
-            int version
+            int version,
+            long bloomFilterColumnIndexesPtr,
+            int bloomFilterColumnCount,
+            double bloomFilterFpp
     ) throws CairoException;
 
     static {
