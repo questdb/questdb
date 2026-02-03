@@ -3362,7 +3362,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // Build ASOF join key types and configure symbol/string handling
             asofJoinKeyTypes = new ArrayColumnTypes();
-            BitSet asofWriteSymbolAsString = new BitSet();
+            BitSet asOfWriteSymbolAsString = new BitSet();
             BitSet asOfWriteStringAsVarcharA = new BitSet();
             BitSet asOfWriteStringAsVarcharB = new BitSet();
 
@@ -3380,17 +3380,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     } else {
                         asOfWriteStringAsVarcharA.set(columnIndexA);
                     }
-                    asofWriteSymbolAsString.set(columnIndexA);
-                    asofWriteSymbolAsString.set(columnIndexB);
+                    asOfWriteSymbolAsString.set(columnIndexA);
+                    asOfWriteSymbolAsString.set(columnIndexB);
                 } else if (columnTypeB == ColumnType.SYMBOL || columnTypeA == ColumnType.SYMBOL) {
                     // Different tables have different symbol tables, so write as STRING
                     asofJoinKeyTypes.add(ColumnType.STRING);
-                    asofWriteSymbolAsString.set(columnIndexA);
-                    asofWriteSymbolAsString.set(columnIndexB);
+                    asOfWriteSymbolAsString.set(columnIndexA);
+                    asOfWriteSymbolAsString.set(columnIndexB);
                 } else if (ColumnType.isString(columnTypeA) || ColumnType.isString(columnTypeB)) {
                     asofJoinKeyTypes.add(columnTypeB);
-                    asofWriteSymbolAsString.set(columnIndexA);
-                    asofWriteSymbolAsString.set(columnIndexB);
+                    asOfWriteSymbolAsString.set(columnIndexA);
+                    asOfWriteSymbolAsString.set(columnIndexB);
                 } else {
                     asofJoinKeyTypes.add(columnTypeA);
                 }
@@ -3402,7 +3402,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     asm,
                     masterMetadata,
                     listColumnFilterB,
-                    asofWriteSymbolAsString,
+                    asOfWriteSymbolAsString,
                     asOfWriteStringAsVarcharB,
                     writeTimestampAsNanosB
             );
@@ -3411,7 +3411,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     asm,
                     slaveMetadata,
                     listColumnFilterA,
-                    asofWriteSymbolAsString,
+                    asOfWriteSymbolAsString,
                     asOfWriteStringAsVarcharA,
                     writeTimestampAsNanosA
             );
@@ -8303,7 +8303,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     columnIndex = metadata.getColumnIndexQuiet(columnName, dot + 1, columnName.length());
                     if (columnIndex > -1) {
                         filter.add(columnIndex + 1);
-                        return;
+                        continue;
                     }
                 }
                 throw SqlException.invalidColumn(columnNames.getQuick(i).position, columnName);
