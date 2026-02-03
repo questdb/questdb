@@ -1107,6 +1107,233 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
+    // ==================== Type Narrowing Tests ====================
+
+    /**
+     * Tests LONG to BYTE narrowing by pre-creating a table with BYTE column
+     * and sending LONG values over ILP v4.
+     */
+    @Test
+    public void testNarrowing_LongToByte() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Pre-create table with BYTE column
+                serverMain.execute("CREATE TABLE ws_narrow_byte (" +
+                        "value BYTE, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_narrow_byte")
+                            .longColumn("value", 0)
+                            .at(1704067200000000L, ChronoUnit.MICROS);
+                    sender.table("ws_narrow_byte")
+                            .longColumn("value", 127)
+                            .at(1704067200000001L, ChronoUnit.MICROS);
+                    sender.table("ws_narrow_byte")
+                            .longColumn("value", -128)
+                            .at(1704067200000002L, ChronoUnit.MICROS);
+                    sender.table("ws_narrow_byte")
+                            .longColumn("value", -1)
+                            .at(1704067200000003L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_narrow_byte");
+                serverMain.assertSql("select count() from ws_narrow_byte", "count\n4\n");
+                serverMain.assertSql(
+                        "select value from ws_narrow_byte order by ts",
+                        "value\n0\n127\n-128\n-1\n"
+                );
+            }
+        });
+    }
+
+    /**
+     * Tests LONG to SHORT narrowing by pre-creating a table with SHORT column
+     * and sending LONG values over ILP v4.
+     */
+    @Test
+    public void testNarrowing_LongToShort() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Pre-create table with SHORT column
+                serverMain.execute("CREATE TABLE ws_narrow_short (" +
+                        "value SHORT, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_narrow_short")
+                            .longColumn("value", 0)
+                            .at(1704067200000000L, ChronoUnit.MICROS);
+                    sender.table("ws_narrow_short")
+                            .longColumn("value", 32767)
+                            .at(1704067200000001L, ChronoUnit.MICROS);
+                    sender.table("ws_narrow_short")
+                            .longColumn("value", -32768)
+                            .at(1704067200000002L, ChronoUnit.MICROS);
+                    sender.table("ws_narrow_short")
+                            .longColumn("value", 1000)
+                            .at(1704067200000003L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_narrow_short");
+                serverMain.assertSql("select count() from ws_narrow_short", "count\n4\n");
+                serverMain.assertSql(
+                        "select value from ws_narrow_short order by ts",
+                        "value\n0\n32767\n-32768\n1000\n"
+                );
+            }
+        });
+    }
+
+    /**
+     * Tests LONG to INT narrowing by pre-creating a table with INT column
+     * and sending LONG values over ILP v4.
+     */
+    @Test
+    public void testNarrowing_LongToInt() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Pre-create table with INT column
+                serverMain.execute("CREATE TABLE ws_narrow_int (" +
+                        "value INT, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_narrow_int")
+                            .longColumn("value", 0)
+                            .at(1704067200000000L, ChronoUnit.MICROS);
+                    sender.table("ws_narrow_int")
+                            .longColumn("value", 2147483647)
+                            .at(1704067200000001L, ChronoUnit.MICROS);
+                    sender.table("ws_narrow_int")
+                            .longColumn("value", -2147483648) // interpreted as null when INT
+                            .at(1704067200000002L, ChronoUnit.MICROS);
+                    sender.table("ws_narrow_int")
+                            .longColumn("value", 123456789)
+                            .at(1704067200000003L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_narrow_int");
+                serverMain.assertSql("select count() from ws_narrow_int", "count\n4\n");
+                serverMain.assertSql(
+                        "select value from ws_narrow_int order by ts",
+                        "value\n0\n2147483647\nnull\n123456789\n"
+                );
+            }
+        });
+    }
+
+    /**
+     * Tests DOUBLE to FLOAT narrowing by pre-creating a table with FLOAT column
+     * and sending DOUBLE values over ILP v4.
+     */
+    @Test
+    public void testNarrowing_DoubleToFloat() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Pre-create table with FLOAT column
+                serverMain.execute("CREATE TABLE ws_narrow_float (" +
+                        "value FLOAT, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_narrow_float")
+                            .doubleColumn("value", 0.0)
+                            .at(1704067200000000L, ChronoUnit.MICROS);
+                    sender.table("ws_narrow_float")
+                            .doubleColumn("value", 3.14159)
+                            .at(1704067200000001L, ChronoUnit.MICROS);
+                    sender.table("ws_narrow_float")
+                            .doubleColumn("value", -2.71828)
+                            .at(1704067200000002L, ChronoUnit.MICROS);
+                    sender.table("ws_narrow_float")
+                            .doubleColumn("value", 1000.5)
+                            .at(1704067200000003L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_narrow_float");
+                serverMain.assertSql("select count() from ws_narrow_float", "count\n4\n");
+                // Note: FLOAT has less precision than DOUBLE, so values are rounded
+                serverMain.assertSql(
+                        "select value from ws_narrow_float order by ts",
+                        "value\n0.0\n3.14159\n-2.71828\n1000.5\n"
+                );
+            }
+        });
+    }
+
+    /**
+     * Tests all narrowing paths together in a single table with multiple rows.
+     */
+    @Test
+    public void testNarrowing_AllTypesMultipleRows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Pre-create table with all narrow types
+                serverMain.execute("CREATE TABLE ws_narrow_all (" +
+                        "byte_val BYTE, " +
+                        "short_val SHORT, " +
+                        "int_val INT, " +
+                        "float_val FLOAT, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (IlpV4WebSocketSender sender = createSender(httpPort)) {
+                    for (int i = 0; i < 100; i++) {
+                        sender.table("ws_narrow_all")
+                                .longColumn("byte_val", i % 128)
+                                .longColumn("short_val", i * 100)
+                                .longColumn("int_val", i * 10000)
+                                .doubleColumn("float_val", i * 1.5)
+                                .at(1704067200000000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_narrow_all");
+                serverMain.assertSql("select count() from ws_narrow_all", "count\n100\n");
+
+                // Verify first and last rows
+                serverMain.assertSql(
+                        "select byte_val, short_val, int_val, float_val from ws_narrow_all order by ts limit 1",
+                        "byte_val\tshort_val\tint_val\tfloat_val\n0\t0\t0\t0.0\n"
+                );
+                serverMain.assertSql(
+                        "select byte_val, short_val, int_val, float_val from ws_narrow_all order by ts desc limit 1",
+                        "byte_val\tshort_val\tint_val\tfloat_val\n99\t9900\t990000\t148.5\n"
+                );
+            }
+        });
+    }
+
     // ==================== Column Name Tests ====================
 
     @Test

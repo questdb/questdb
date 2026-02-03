@@ -1046,6 +1046,502 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
         });
     }
 
+    // ==================== 1.4 Fixed-Width Column Tests - Narrowing ====================
+
+    @Test
+    public void testPutFixedColumnNarrowing_Byte_NoNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_narrow_byte", PartitionBy.HOUR)
+                    .col("value", ColumnType.BYTE)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 5;
+            // Source data: LONG (8 bytes each)
+            long valuesAddr = Unsafe.malloc((long) rowCount * 8, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().putLong(valuesAddr, 0L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 8, 1L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 16, 127L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 24, -128L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 32, -1L);
+
+                long baseTimestamp = 1000000000L;
+                long[] timestamps = new long[rowCount];
+                for (int i = 0; i < rowCount; i++) {
+                    timestamps[i] = baseTimestamp + i * 1000000L;
+                }
+
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedColumnNarrowing(0, valuesAddr, rowCount, 8, 0, rowCount, ColumnType.BYTE);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+
+                    assertTrue(cursor.hasNext());
+                    assertEquals((byte) 0, record.getByte(0));
+                    assertTrue(cursor.hasNext());
+                    assertEquals((byte) 1, record.getByte(0));
+                    assertTrue(cursor.hasNext());
+                    assertEquals((byte) 127, record.getByte(0));
+                    assertTrue(cursor.hasNext());
+                    assertEquals((byte) -128, record.getByte(0));
+                    assertTrue(cursor.hasNext());
+                    assertEquals((byte) -1, record.getByte(0));
+                    assertFalse(cursor.hasNext());
+                }
+            } finally {
+                Unsafe.free(valuesAddr, (long) rowCount * 8, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFixedColumnNarrowing_Byte_WithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_narrow_byte_nulls", PartitionBy.HOUR)
+                    .col("value", ColumnType.BYTE)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 5;
+            int valueCount = 3; // Only 3 non-null values
+            // Values: [NULL, 42, NULL, 100, -50]
+            long valuesAddr = Unsafe.malloc((long) valueCount * 8, MemoryTag.NATIVE_DEFAULT);
+            int bitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
+            long nullBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                IlpV4NullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
+                IlpV4NullBitmap.setNull(nullBitmapAddr, 0);
+                IlpV4NullBitmap.setNull(nullBitmapAddr, 2);
+
+                // Packed values (no gaps for nulls)
+                Unsafe.getUnsafe().putLong(valuesAddr, 42L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 8, 100L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 16, -50L);
+
+                long baseTimestamp = 1000000000L;
+                long[] timestamps = new long[rowCount];
+                for (int i = 0; i < rowCount; i++) {
+                    timestamps[i] = baseTimestamp + i * 1000000L;
+                }
+
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedColumnNarrowing(0, valuesAddr, valueCount, 8, nullBitmapAddr, rowCount, ColumnType.BYTE);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+
+                    assertTrue(cursor.hasNext());
+                    assertEquals((byte) 0, record.getByte(0)); // NULL sentinel for BYTE
+                    assertTrue(cursor.hasNext());
+                    assertEquals((byte) 42, record.getByte(0));
+                    assertTrue(cursor.hasNext());
+                    assertEquals((byte) 0, record.getByte(0)); // NULL sentinel for BYTE
+                    assertTrue(cursor.hasNext());
+                    assertEquals((byte) 100, record.getByte(0));
+                    assertTrue(cursor.hasNext());
+                    assertEquals((byte) -50, record.getByte(0));
+                    assertFalse(cursor.hasNext());
+                }
+            } finally {
+                Unsafe.free(valuesAddr, (long) valueCount * 8, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(nullBitmapAddr, bitmapSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFixedColumnNarrowing_Short_NoNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_narrow_short", PartitionBy.HOUR)
+                    .col("value", ColumnType.SHORT)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 5;
+            long valuesAddr = Unsafe.malloc((long) rowCount * 8, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().putLong(valuesAddr, 0L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 8, 1000L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 16, 32767L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 24, -32768L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 32, -1L);
+
+                long baseTimestamp = 1000000000L;
+                long[] timestamps = new long[rowCount];
+                for (int i = 0; i < rowCount; i++) {
+                    timestamps[i] = baseTimestamp + i * 1000000L;
+                }
+
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedColumnNarrowing(0, valuesAddr, rowCount, 8, 0, rowCount, ColumnType.SHORT);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+
+                    assertTrue(cursor.hasNext());
+                    assertEquals((short) 0, record.getShort(0));
+                    assertTrue(cursor.hasNext());
+                    assertEquals((short) 1000, record.getShort(0));
+                    assertTrue(cursor.hasNext());
+                    assertEquals((short) 32767, record.getShort(0));
+                    assertTrue(cursor.hasNext());
+                    assertEquals((short) -32768, record.getShort(0));
+                    assertTrue(cursor.hasNext());
+                    assertEquals((short) -1, record.getShort(0));
+                    assertFalse(cursor.hasNext());
+                }
+            } finally {
+                Unsafe.free(valuesAddr, (long) rowCount * 8, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFixedColumnNarrowing_Short_WithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_narrow_short_nulls", PartitionBy.HOUR)
+                    .col("value", ColumnType.SHORT)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 4;
+            int valueCount = 2;
+            // Values: [NULL, 1234, NULL, -5678]
+            long valuesAddr = Unsafe.malloc((long) valueCount * 8, MemoryTag.NATIVE_DEFAULT);
+            int bitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
+            long nullBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                IlpV4NullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
+                IlpV4NullBitmap.setNull(nullBitmapAddr, 0);
+                IlpV4NullBitmap.setNull(nullBitmapAddr, 2);
+
+                Unsafe.getUnsafe().putLong(valuesAddr, 1234L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 8, -5678L);
+
+                long baseTimestamp = 1000000000L;
+                long[] timestamps = new long[rowCount];
+                for (int i = 0; i < rowCount; i++) {
+                    timestamps[i] = baseTimestamp + i * 1000000L;
+                }
+
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedColumnNarrowing(0, valuesAddr, valueCount, 8, nullBitmapAddr, rowCount, ColumnType.SHORT);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+
+                    assertTrue(cursor.hasNext());
+                    assertEquals((short) 0, record.getShort(0)); // NULL sentinel for SHORT
+                    assertTrue(cursor.hasNext());
+                    assertEquals((short) 1234, record.getShort(0));
+                    assertTrue(cursor.hasNext());
+                    assertEquals((short) 0, record.getShort(0)); // NULL sentinel for SHORT
+                    assertTrue(cursor.hasNext());
+                    assertEquals((short) -5678, record.getShort(0));
+                    assertFalse(cursor.hasNext());
+                }
+            } finally {
+                Unsafe.free(valuesAddr, (long) valueCount * 8, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(nullBitmapAddr, bitmapSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFixedColumnNarrowing_Int_NoNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_narrow_int", PartitionBy.HOUR)
+                    .col("value", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 5;
+            long valuesAddr = Unsafe.malloc((long) rowCount * 8, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().putLong(valuesAddr, 0L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 8, 123456789L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 16, 2147483647L); // INT_MAX
+                Unsafe.getUnsafe().putLong(valuesAddr + 24, -2147483648L); // INT_MIN
+                Unsafe.getUnsafe().putLong(valuesAddr + 32, -1L);
+
+                long baseTimestamp = 1000000000L;
+                long[] timestamps = new long[rowCount];
+                for (int i = 0; i < rowCount; i++) {
+                    timestamps[i] = baseTimestamp + i * 1000000L;
+                }
+
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedColumnNarrowing(0, valuesAddr, rowCount, 8, 0, rowCount, ColumnType.INT);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+
+                    assertTrue(cursor.hasNext());
+                    assertEquals(0, record.getInt(0));
+                    assertTrue(cursor.hasNext());
+                    assertEquals(123456789, record.getInt(0));
+                    assertTrue(cursor.hasNext());
+                    assertEquals(Integer.MAX_VALUE, record.getInt(0));
+                    assertTrue(cursor.hasNext());
+                    assertEquals(Integer.MIN_VALUE, record.getInt(0));
+                    assertTrue(cursor.hasNext());
+                    assertEquals(-1, record.getInt(0));
+                    assertFalse(cursor.hasNext());
+                }
+            } finally {
+                Unsafe.free(valuesAddr, (long) rowCount * 8, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFixedColumnNarrowing_Int_WithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_narrow_int_nulls", PartitionBy.HOUR)
+                    .col("value", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 4;
+            int valueCount = 2;
+            // Values: [NULL, 999, NULL, -888]
+            long valuesAddr = Unsafe.malloc((long) valueCount * 8, MemoryTag.NATIVE_DEFAULT);
+            int bitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
+            long nullBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                IlpV4NullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
+                IlpV4NullBitmap.setNull(nullBitmapAddr, 0);
+                IlpV4NullBitmap.setNull(nullBitmapAddr, 2);
+
+                Unsafe.getUnsafe().putLong(valuesAddr, 999L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 8, -888L);
+
+                long baseTimestamp = 1000000000L;
+                long[] timestamps = new long[rowCount];
+                for (int i = 0; i < rowCount; i++) {
+                    timestamps[i] = baseTimestamp + i * 1000000L;
+                }
+
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedColumnNarrowing(0, valuesAddr, valueCount, 8, nullBitmapAddr, rowCount, ColumnType.INT);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+
+                    assertTrue(cursor.hasNext());
+                    assertEquals(Numbers.INT_NULL, record.getInt(0)); // NULL sentinel for INT
+                    assertTrue(cursor.hasNext());
+                    assertEquals(999, record.getInt(0));
+                    assertTrue(cursor.hasNext());
+                    assertEquals(Numbers.INT_NULL, record.getInt(0)); // NULL sentinel for INT
+                    assertTrue(cursor.hasNext());
+                    assertEquals(-888, record.getInt(0));
+                    assertFalse(cursor.hasNext());
+                }
+            } finally {
+                Unsafe.free(valuesAddr, (long) valueCount * 8, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(nullBitmapAddr, bitmapSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFixedColumnNarrowing_Float_NoNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_narrow_float", PartitionBy.HOUR)
+                    .col("value", ColumnType.FLOAT)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 5;
+            // Source data: DOUBLE (8 bytes each)
+            long valuesAddr = Unsafe.malloc((long) rowCount * 8, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().putDouble(valuesAddr, 0.0);
+                Unsafe.getUnsafe().putDouble(valuesAddr + 8, 3.14159);
+                Unsafe.getUnsafe().putDouble(valuesAddr + 16, -2.71828);
+                Unsafe.getUnsafe().putDouble(valuesAddr + 24, Float.MAX_VALUE);
+                Unsafe.getUnsafe().putDouble(valuesAddr + 32, Float.MIN_VALUE);
+
+                long baseTimestamp = 1000000000L;
+                long[] timestamps = new long[rowCount];
+                for (int i = 0; i < rowCount; i++) {
+                    timestamps[i] = baseTimestamp + i * 1000000L;
+                }
+
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedColumnNarrowing(0, valuesAddr, rowCount, 8, 0, rowCount, ColumnType.FLOAT);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+
+                    assertTrue(cursor.hasNext());
+                    assertEquals(0.0f, record.getFloat(0), 0.0001f);
+                    assertTrue(cursor.hasNext());
+                    assertEquals(3.14159f, record.getFloat(0), 0.0001f);
+                    assertTrue(cursor.hasNext());
+                    assertEquals(-2.71828f, record.getFloat(0), 0.0001f);
+                    assertTrue(cursor.hasNext());
+                    assertEquals(Float.MAX_VALUE, record.getFloat(0), 0.0001f);
+                    assertTrue(cursor.hasNext());
+                    assertEquals(Float.MIN_VALUE, record.getFloat(0), 0.0001f);
+                    assertFalse(cursor.hasNext());
+                }
+            } finally {
+                Unsafe.free(valuesAddr, (long) rowCount * 8, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFixedColumnNarrowing_Float_WithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_narrow_float_nulls", PartitionBy.HOUR)
+                    .col("value", ColumnType.FLOAT)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 4;
+            int valueCount = 2;
+            // Values: [NULL, 1.5, NULL, -2.5]
+            long valuesAddr = Unsafe.malloc((long) valueCount * 8, MemoryTag.NATIVE_DEFAULT);
+            int bitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
+            long nullBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                IlpV4NullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
+                IlpV4NullBitmap.setNull(nullBitmapAddr, 0);
+                IlpV4NullBitmap.setNull(nullBitmapAddr, 2);
+
+                Unsafe.getUnsafe().putDouble(valuesAddr, 1.5);
+                Unsafe.getUnsafe().putDouble(valuesAddr + 8, -2.5);
+
+                long baseTimestamp = 1000000000L;
+                long[] timestamps = new long[rowCount];
+                for (int i = 0; i < rowCount; i++) {
+                    timestamps[i] = baseTimestamp + i * 1000000L;
+                }
+
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedColumnNarrowing(0, valuesAddr, valueCount, 8, nullBitmapAddr, rowCount, ColumnType.FLOAT);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+
+                    assertTrue(cursor.hasNext());
+                    assertTrue(Float.isNaN(record.getFloat(0))); // NULL sentinel for FLOAT
+                    assertTrue(cursor.hasNext());
+                    assertEquals(1.5f, record.getFloat(0), 0.0001f);
+                    assertTrue(cursor.hasNext());
+                    assertTrue(Float.isNaN(record.getFloat(0))); // NULL sentinel for FLOAT
+                    assertTrue(cursor.hasNext());
+                    assertEquals(-2.5f, record.getFloat(0), 0.0001f);
+                    assertFalse(cursor.hasNext());
+                }
+            } finally {
+                Unsafe.free(valuesAddr, (long) valueCount * 8, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(nullBitmapAddr, bitmapSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
     // ==================== 2. Designated Timestamp Column Tests ====================
 
     @Test

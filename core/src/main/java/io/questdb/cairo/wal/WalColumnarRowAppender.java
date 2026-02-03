@@ -132,36 +132,53 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        final boolean hasNulls = nullBitmapAddress != 0;
         int valueIdx = 0;
 
-        for (int row = 0; row < rowCount; row++) {
-            if (nullBitmapAddress != 0 && IlpV4NullBitmap.isNull(nullBitmapAddress, row)) {
-                writeNullSentinel(dataMem, columnType);
-            } else {
-                long addr = valuesAddress + (long) valueIdx * sourceValueSize;
-                switch (ColumnType.tagOf(columnType)) {
-                    case ColumnType.BYTE:
-                        // LONG (8 bytes) → BYTE (1 byte)
-                        dataMem.putByte((byte) Unsafe.getUnsafe().getLong(addr));
-                        break;
-                    case ColumnType.SHORT:
-                        // LONG (8 bytes) → SHORT (2 bytes)
-                        dataMem.putShort((short) Unsafe.getUnsafe().getLong(addr));
-                        break;
-                    case ColumnType.INT:
-                        // LONG (8 bytes) → INT (4 bytes)
-                        dataMem.putInt((int) Unsafe.getUnsafe().getLong(addr));
-                        break;
-                    case ColumnType.FLOAT:
-                        // DOUBLE (8 bytes) → FLOAT (4 bytes)
-                        dataMem.putFloat((float) Unsafe.getUnsafe().getDouble(addr));
-                        break;
-                    default:
-                        throw new UnsupportedOperationException(
-                                "Narrowing not supported for column type: " + ColumnType.nameOf(columnType));
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BYTE:
+                for (int row = 0; row < rowCount; row++) {
+                    if (hasNulls && IlpV4NullBitmap.isNull(nullBitmapAddress, row)) {
+                        dataMem.putByte((byte) 0);
+                    } else {
+                        dataMem.putByte((byte) Unsafe.getUnsafe().getLong(valuesAddress + (long) valueIdx * sourceValueSize));
+                        valueIdx++;
+                    }
                 }
-                valueIdx++;
-            }
+                break;
+            case ColumnType.SHORT:
+                for (int row = 0; row < rowCount; row++) {
+                    if (hasNulls && IlpV4NullBitmap.isNull(nullBitmapAddress, row)) {
+                        dataMem.putShort((short) 0);
+                    } else {
+                        dataMem.putShort((short) Unsafe.getUnsafe().getLong(valuesAddress + (long) valueIdx * sourceValueSize));
+                        valueIdx++;
+                    }
+                }
+                break;
+            case ColumnType.INT:
+                for (int row = 0; row < rowCount; row++) {
+                    if (hasNulls && IlpV4NullBitmap.isNull(nullBitmapAddress, row)) {
+                        dataMem.putInt(Numbers.INT_NULL);
+                    } else {
+                        dataMem.putInt((int) Unsafe.getUnsafe().getLong(valuesAddress + (long) valueIdx * sourceValueSize));
+                        valueIdx++;
+                    }
+                }
+                break;
+            case ColumnType.FLOAT:
+                for (int row = 0; row < rowCount; row++) {
+                    if (hasNulls && IlpV4NullBitmap.isNull(nullBitmapAddress, row)) {
+                        dataMem.putFloat(Float.NaN);
+                    } else {
+                        dataMem.putFloat((float) Unsafe.getUnsafe().getDouble(valuesAddress + (long) valueIdx * sourceValueSize));
+                        valueIdx++;
+                    }
+                }
+                break;
+            default:
+                throw new UnsupportedOperationException(
+                        "Narrowing not supported for column type: " + ColumnType.nameOf(columnType));
         }
 
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
