@@ -1012,26 +1012,13 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::Int => {
             let data: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
-            #[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
-            {
-                primitive::i32_slice_to_page_simd(
-                    &data[lower_bound..upper_bound],
-                    adjusted_column_top,
-                    options,
-                    primitive_type,
-                    encoding,
-                )
-            }
-            #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-            {
-                primitive::int_slice_to_page_nullable::<i32, i32>(
-                    &data[lower_bound..upper_bound],
-                    adjusted_column_top,
-                    options,
-                    primitive_type,
-                    encoding,
-                )
-            }
+            primitive::i32_slice_to_page_simd(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+                encoding,
+            )
         }
         ColumnTypeTag::IPv4 => {
             let data: &[IPv4] = unsafe { util::transmute_slice(column.primary_data) };
@@ -1045,26 +1032,13 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::Long | ColumnTypeTag::Date => {
             let data: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
-            #[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
-            {
-                primitive::i64_slice_to_page_simd(
-                    &data[lower_bound..upper_bound],
-                    adjusted_column_top,
-                    options,
-                    primitive_type,
-                    encoding,
-                )
-            }
-            #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-            {
-                primitive::int_slice_to_page_nullable::<i64, i64>(
-                    &data[lower_bound..upper_bound],
-                    adjusted_column_top,
-                    options,
-                    primitive_type,
-                    encoding,
-                )
-            }
+            primitive::i64_slice_to_page_simd(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+                encoding,
+            )
         }
         ColumnTypeTag::Timestamp => {
             let data: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
@@ -1078,26 +1052,13 @@ fn chunk_to_primitive_page(
                     encoding,
                 )
             } else {
-                #[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
-                {
-                    primitive::i64_slice_to_page_simd(
-                        &data[lower_bound..upper_bound],
-                        adjusted_column_top,
-                        options,
-                        primitive_type,
-                        encoding,
-                    )
-                }
-                #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-                {
-                    primitive::int_slice_to_page_nullable::<i64, i64>(
-                        &data[lower_bound..upper_bound],
-                        adjusted_column_top,
-                        options,
-                        primitive_type,
-                        encoding,
-                    )
-                }
+                primitive::i64_slice_to_page_simd(
+                    &data[lower_bound..upper_bound],
+                    adjusted_column_top,
+                    options,
+                    primitive_type,
+                    encoding,
+                )
             }
         }
         ColumnTypeTag::GeoByte => {
@@ -1142,45 +1103,21 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::Float => {
             let data: &[f32] = unsafe { util::transmute_slice(column.primary_data) };
-            #[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
-            {
-                primitive::f32_slice_to_page_simd(
-                    &data[lower_bound..upper_bound],
-                    adjusted_column_top,
-                    options,
-                    primitive_type,
-                )
-            }
-            #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-            {
-                primitive::float_slice_to_page_plain::<f32, f32>(
-                    &data[lower_bound..upper_bound],
-                    adjusted_column_top,
-                    options,
-                    primitive_type,
-                )
-            }
+            primitive::f32_slice_to_page_simd(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
         }
         ColumnTypeTag::Double => {
             let data: &[f64] = unsafe { util::transmute_slice(column.primary_data) };
-            #[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
-            {
-                primitive::f64_slice_to_page_simd(
-                    &data[lower_bound..upper_bound],
-                    adjusted_column_top,
-                    options,
-                    primitive_type,
-                )
-            }
-            #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-            {
-                primitive::float_slice_to_page_plain::<f64, f64>(
-                    &data[lower_bound..upper_bound],
-                    adjusted_column_top,
-                    options,
-                    primitive_type,
-                )
-            }
+            primitive::f64_slice_to_page_simd(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
         }
         ColumnTypeTag::Binary => {
             let aux: &[i64] = unsafe { util::transmute_slice(column.secondary_data) };
