@@ -302,6 +302,7 @@ public class TableMetadataMigration {
 
             TableMetadataFileBlock.write(
                     writer,
+                    ColumnType.VERSION,
                     legacy.tableId,
                     legacy.partitionBy,
                     legacy.timestampIndex,
@@ -320,7 +321,7 @@ public class TableMetadataMigration {
             reader.of(metaPath.$());
 
             TableMetadataFileBlock.MetadataHolder actual = new TableMetadataFileBlock.MetadataHolder();
-            TableMetadataFileBlock.read(reader, actual, metaPath);
+            TableMetadataFileBlock.read(reader, actual, metaPath.$());
 
             // Validate core fields
             if (actual.tableId != expected.tableId) {

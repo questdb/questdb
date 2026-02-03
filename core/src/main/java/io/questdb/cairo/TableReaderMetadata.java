@@ -241,8 +241,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     public void loadMetadata(LPSZ path) {
         try {
             blockFileReader.of(path);
-            Path pathWrapper = Path.getThreadLocal(path);
-            TableMetadataFileBlock.read(blockFileReader, holder, pathWrapper);
+            TableMetadataFileBlock.read(blockFileReader, holder, path);
             // Close reader after reading - we have all data in holder
             blockFileReader.close();
             readFromHolder(holder);
@@ -292,7 +291,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     public boolean prepareTransition(long txnMetadataVersion) {
         path.trimTo(plen).concat(TableUtils.META_FILE_NAME);
         blockFileReader.of(path.$());
-        TableMetadataFileBlock.read(blockFileReader, transitionHolder, path);
+        TableMetadataFileBlock.read(blockFileReader, transitionHolder, path.$());
         // Close reader after reading - we have all data in transitionHolder
         blockFileReader.close();
 

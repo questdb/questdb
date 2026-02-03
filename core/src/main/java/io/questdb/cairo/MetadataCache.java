@@ -164,7 +164,7 @@ public class MetadataCache implements QuietCloseable {
             }
             blockFileReader.of(path.$());
             TableMetadataFileBlock.MetadataHolder holder = new TableMetadataFileBlock.MetadataHolder();
-            TableMetadataFileBlock.read(blockFileReader, holder, path);
+            TableMetadataFileBlock.read(blockFileReader, holder, path.$());
             // Close reader after reading - we have all data in holder
             blockFileReader.close();
 

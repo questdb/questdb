@@ -2073,6 +2073,7 @@ public final class TableUtils {
 
             TableMetadataFileBlock.write(
                     writer,
+                    ColumnType.VERSION,
                     tableId,
                     structure.getPartitionBy(),
                     structure.getTimestampIndex(),

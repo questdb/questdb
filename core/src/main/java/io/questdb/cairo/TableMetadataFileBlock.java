@@ -34,7 +34,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Path;
+import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -66,6 +66,7 @@ public class TableMetadataFileBlock {
      * Writes table metadata to a BlockFileWriter.
      *
      * @param writer          the BlockFileWriter to write to (must already be opened)
+     * @param formatVersion   metadata format version (ColumnType.VERSION)
      * @param tableId         unique table identifier
      * @param partitionBy     partition mode (e.g., PartitionBy.DAY)
      * @param timestampIndex  index of the designated timestamp column (-1 if none)
@@ -78,6 +79,7 @@ public class TableMetadataFileBlock {
      */
     public static void write(
             @NotNull BlockFileWriter writer,
+            int formatVersion,
             int tableId,
             int partitionBy,
             int timestampIndex,
@@ -90,7 +92,7 @@ public class TableMetadataFileBlock {
     ) {
         // Block 0: CORE metadata
         AppendableBlock block = writer.append();
-        writeCoreBlock(block, tableId, partitionBy, timestampIndex, columns.size(), metadataVersion, walEnabled);
+        writeCoreBlock(block, formatVersion, tableId, partitionBy, timestampIndex, columns.size(), metadataVersion, walEnabled);
         block.commit(BLOCK_TYPE_CORE);
 
         // Block 1: COLUMNS
@@ -116,7 +118,7 @@ public class TableMetadataFileBlock {
     public static void read(
             @NotNull BlockFileReader reader,
             @NotNull MetadataHolder holder,
-            @NotNull Path path
+            @NotNull LPSZ path
     ) {
         holder.clear();
 
@@ -157,6 +159,7 @@ public class TableMetadataFileBlock {
 
     private static void writeCoreBlock(
             AppendableBlock block,
+            int formatVersion,
             int tableId,
             int partitionBy,
             int timestampIndex,
@@ -164,6 +167,7 @@ public class TableMetadataFileBlock {
             long metadataVersion,
             boolean walEnabled
     ) {
+        block.putInt(formatVersion);
         block.putInt(tableId);
         block.putInt(partitionBy);
         block.putInt(timestampIndex);
@@ -174,6 +178,8 @@ public class TableMetadataFileBlock {
 
     private static void readCoreBlock(ReadableBlock block, MetadataHolder holder) {
         long offset = 0;
+        holder.formatVersion = block.getInt(offset);
+        offset += Integer.BYTES;
         holder.tableId = block.getInt(offset);
         offset += Integer.BYTES;
         holder.partitionBy = block.getInt(offset);
@@ -210,6 +216,7 @@ public class TableMetadataFileBlock {
 
             block.putInt(col.getIndexValueBlockCapacity());
             block.putInt(col.getSymbolCapacity());
+            block.putInt(col.getWriterIndex());
             block.putInt(col.getReplacingIndex());
             block.putStr(col.getColumnName());
         }
@@ -236,6 +243,9 @@ public class TableMetadataFileBlock {
             int symbolCapacity = block.getInt(offset);
             offset += Integer.BYTES;
 
+            int writerIndex = block.getInt(offset);
+            offset += Integer.BYTES;
+
             int replacingIndex = block.getInt(offset);
             offset += Integer.BYTES;
 
@@ -255,7 +265,7 @@ public class TableMetadataFileBlock {
                     indexValueBlockCapacity,
                     true, // symbolTableStatic (always true when reading from file)
                     null, // RecordMetadata (not stored in file)
-                    i,    // writerIndex
+                    writerIndex,
                     dedupKey,
                     replacingIndex,
                     symbolCached,
@@ -293,6 +303,7 @@ public class TableMetadataFileBlock {
      */
     public static class MetadataHolder {
         // Core block fields
+        public int formatVersion;
         public int tableId;
         public int partitionBy;
         public int timestampIndex;
@@ -310,6 +321,7 @@ public class TableMetadataFileBlock {
         public final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
 
         public void clear() {
+            formatVersion = 0;
             tableId = 0;
             partitionBy = 0;
             timestampIndex = -1;

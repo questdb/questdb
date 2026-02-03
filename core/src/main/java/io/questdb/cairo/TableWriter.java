@@ -272,7 +272,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private ColumnVersionReader attachColumnVersionReader;
     private IndexBuilder attachIndexBuilder;
     private long attachMaxTimestamp;
-    private MemoryCMR attachMetaMem;
     private TableWriterMetadata attachMetadata;
     private long attachMinTimestamp;
     private long attachPartitionTimestamp;
@@ -3310,11 +3309,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             blockFileReader.of(path.$());
 
             TableMetadataFileBlock.MetadataHolder holder = new TableMetadataFileBlock.MetadataHolder();
-            TableMetadataFileBlock.read(blockFileReader, holder, path);
+            TableMetadataFileBlock.read(blockFileReader, holder, path.$());
             metadata.reloadFromBlockFile(holder);
         } finally {
             // Close reader after reading - we have all data in holder/metadata
-            blockFileReader.close();
+            Misc.free(blockFileReader);
             path.trimTo(rootLen);
         }
     }
@@ -3753,11 +3752,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             if (attachMetadata == null) {
-                attachMetaMem = Vm.getCMRInstance();
                 attachMetadata = new TableWriterMetadata(tableToken);
             }
-            attachMetaMem.smallFile(ff, detachedPath.$(), MemoryTag.MMAP_TABLE_WRITER);
-            attachMetadata.reload(detachedPath, attachMetaMem);
+            if (blockFileReader == null) {
+                blockFileReader = new BlockFileReader(configuration);
+            }
+            blockFileReader.of(detachedPath.$());
+            TableMetadataFileBlock.MetadataHolder holder = new TableMetadataFileBlock.MetadataHolder();
+            TableMetadataFileBlock.read(blockFileReader, holder, detachedPath.$());
+            blockFileReader.close();
+            attachMetadata.reloadFromBlockFile(holder);
 
             if (metadata.getTableId() != attachMetadata.getTableId()) {
                 // very same table, attaching foreign partitions is not allowed
@@ -3843,7 +3847,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Do not remove _dmeta and _dcv to keep partition attachable in case of fs copy / rename failure
         } finally {
             Misc.free(attachColumnVersionReader);
-            Misc.free(attachMetaMem);
             Misc.free(attachIndexBuilder);
         }
     }
@@ -5245,7 +5248,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(ddlMem);
         Misc.free(other);
         Misc.free(todoMem);
-        Misc.free(attachMetaMem);
         Misc.free(attachColumnVersionReader);
         Misc.free(attachIndexBuilder);
         Misc.free(columnVersionWriter);
@@ -9661,6 +9663,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Write all blocks atomically
             TableMetadataFileBlock.write(
                     blockFileWriter,
+                    ColumnType.VERSION,
                     metadata.getTableId(),
                     metadata.getPartitionBy(),
                     metadata.getTimestampIndex(),

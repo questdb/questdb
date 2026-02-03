@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
@@ -56,6 +57,7 @@ import static io.questdb.std.Files.DT_FILE;
 
 public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
     private static final Log LOG = LogFactory.getLog(TableNameRegistryStore.class);
+    private final BlockFileReader blockFileReader;
     private final CairoConfiguration configuration;
     private final StringSink nameSink = new StringSink();
     private final TableFlagResolver tableFlagResolver;
@@ -67,6 +69,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         super(configuration.getFilesFacade());
         this.configuration = configuration;
         this.tableFlagResolver = tableFlagResolver;
+        this.blockFileReader = new BlockFileReader(configuration);
     }
 
     public static int findLastTablesFileVersion(FilesFacade ff, Path path, StringSink nameSink) {
@@ -103,6 +106,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
     @Override
     public void close() {
         super.close();
+        Misc.free(blockFileReader);
         if (lockFd != -1) {
             configuration.getFilesFacade().close(lockFd);
             lockFd = -1;
@@ -313,8 +317,8 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         path.of(configuration.getDbRoot()).concat(dirName);
         int pathLen = path.size();
         path.concat(META_FILE_NAME);
-        long fd = ff.openRO(path.$());
-        if (fd < 1) {
+
+        if (!ff.exists(path.$())) {
             // check if it is a view
             path.trimTo(pathLen).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME);
             if (ff.exists(path.$())) {
@@ -326,15 +330,15 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         }
 
         try {
-            int tableId = ff.readNonNegativeInt(fd, TableUtils.META_OFFSET_TABLE_ID);
-            if (tableId < 0) {
-                LOG.error().$("cannot read table id from metadata file [path=").$(path).I$();
-                return 0;
-            }
-            byte isWal = (byte) (ff.readNonNegativeInt(fd, TableUtils.META_OFFSET_WAL_ENABLED) & 0xFF);
-            return isWal == 0 ? tableId : -tableId;
-        } finally {
-            ff.close(fd);
+            blockFileReader.of(path.$());
+            TableMetadataFileBlock.MetadataHolder holder = new TableMetadataFileBlock.MetadataHolder();
+            TableMetadataFileBlock.read(blockFileReader, holder, path.$());
+            blockFileReader.close();
+            return holder.walEnabled ? -holder.tableId : holder.tableId;
+        } catch (CairoException e) {
+            LOG.error().$("cannot read table id from metadata file [path=").$(path).$(", e=").$(e.getFlyweightMessage()).I$();
+            blockFileReader.close();
+            return 0;
         }
     }
 
