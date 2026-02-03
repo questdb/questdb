@@ -23,7 +23,10 @@
  ******************************************************************************/
 
 #![feature(allocator_api)]
-#![feature(portable_simd)]
+#![cfg_attr(
+    not(all(target_os = "linux", target_arch = "aarch64")),
+    feature(portable_simd)
+)]
 extern crate core;
 pub extern crate jni;
 

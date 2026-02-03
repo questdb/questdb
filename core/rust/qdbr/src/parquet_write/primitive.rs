@@ -301,13 +301,16 @@ fn build_statistics<P: NativeType>(
 
 // =============================================================================
 // SIMD-optimized functions for common types
+// (disabled on Linux aarch64 due to portable_simd compatibility issues)
 // =============================================================================
 
+#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
 use crate::parquet_write::simd::{
     encode_f32_def_levels, encode_f64_def_levels, encode_i32_def_levels, encode_i64_def_levels,
 };
 
 /// SIMD-optimized version for i64 slices (Long, Timestamp, Date columns).
+#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
 pub fn i64_slice_to_page_simd(
     slice: &[i64],
     column_top: usize,
@@ -381,6 +384,7 @@ pub fn i64_slice_to_page_simd(
     .map(Page::Data)
 }
 
+#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
 fn encode_i64_plain(slice: &[i64], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8> {
     let non_null_count = slice.len() - null_count;
     buffer.reserve(std::mem::size_of::<i64>() * non_null_count);
@@ -401,6 +405,7 @@ fn encode_i64_plain(slice: &[i64], null_count: usize, mut buffer: Vec<u8>) -> Ve
     buffer
 }
 
+#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
 fn encode_i64_delta(slice: &[i64], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8> {
     let iterator = slice.iter().filter(|&&x| x != i64::MIN).copied();
     let iterator = ExactSizedIter::new(iterator, slice.len() - null_count);
@@ -409,6 +414,7 @@ fn encode_i64_delta(slice: &[i64], null_count: usize, mut buffer: Vec<u8>) -> Ve
 }
 
 /// SIMD-optimized version for i32 slices (Int columns).
+#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
 pub fn i32_slice_to_page_simd(
     slice: &[i32],
     column_top: usize,
@@ -478,6 +484,7 @@ pub fn i32_slice_to_page_simd(
     .map(Page::Data)
 }
 
+#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
 fn encode_i32_plain(slice: &[i32], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8> {
     let non_null_count = slice.len() - null_count;
     buffer.reserve(std::mem::size_of::<i32>() * non_null_count);
@@ -496,6 +503,7 @@ fn encode_i32_plain(slice: &[i32], null_count: usize, mut buffer: Vec<u8>) -> Ve
     buffer
 }
 
+#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
 fn encode_i32_delta(slice: &[i32], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8> {
     let iterator = slice.iter().filter(|&&x| x != i32::MIN).map(|&x| x as i64);
     let iterator = ExactSizedIter::new(iterator, slice.len() - null_count);
@@ -504,6 +512,7 @@ fn encode_i32_delta(slice: &[i32], null_count: usize, mut buffer: Vec<u8>) -> Ve
 }
 
 /// SIMD-optimized version for f64 slices (Double columns).
+#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
 pub fn f64_slice_to_page_simd(
     slice: &[f64],
     column_top: usize,
@@ -578,6 +587,7 @@ pub fn f64_slice_to_page_simd(
 }
 
 /// SIMD-optimized version for f32 slices (Float columns).
+#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
 pub fn f32_slice_to_page_simd(
     slice: &[f32],
     column_top: usize,

@@ -8,6 +8,7 @@ mod fixed_len_bytes;
 mod jni;
 mod primitive;
 pub mod schema;
+#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
 pub mod simd;
 mod string;
 mod symbol;
