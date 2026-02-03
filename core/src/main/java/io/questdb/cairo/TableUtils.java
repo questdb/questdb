@@ -316,10 +316,6 @@ public final class TableUtils {
         return checksum;
     }
 
-    public static void cleanupDirQuiet(FilesFacade ff, Utf8Sequence dir) {
-        cleanupDirQuiet(ff, dir, LOG);
-    }
-
     public static void cleanupDirQuiet(FilesFacade ff, Utf8Sequence dir, Log log) {
         try {
             Path dirPath = Path.getThreadLocal(dir);
@@ -1269,6 +1265,19 @@ public final class TableUtils {
                     .put(']');
         }
         return address;
+    }
+
+    /**
+     * Maps a file in read-only mode without using the MmapCache.
+     * Opens the file, maps it, and closes the fd.
+     */
+    public static long mapRONoCache(FilesFacade ff, LPSZ path, Log log, long size, int memoryTag) {
+        final long fd = openRO(ff, path, log);
+        try {
+            return mapRONoCache(ff, fd, size, memoryTag);
+        } finally {
+            ff.close(fd);
+        }
     }
 
     public static long mapRW(FilesFacade ff, long fd, long size, int memoryTag) {
