@@ -1433,6 +1433,7 @@ public final class IntervalUtils {
         if (queryIntervalCount == 0 || schedule.size() == 0) {
             return;
         }
+        assert schedule.size() % 2 == 0 : "odd element count in schedule";
 
         // Sort query intervals by lo value before intersection (intersectInPlace requires sorted input)
         LongGroupSort.quickSort(2, out, startIndex / 2, startIndex / 2 + queryIntervalCount);
