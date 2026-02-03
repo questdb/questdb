@@ -80,10 +80,12 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.DefaultWalListener;
+import io.questdb.cairo.wal.QdbrWalLocker;
 import io.questdb.cairo.wal.ViewWalWriter;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalListener;
+import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
@@ -219,9 +221,15 @@ public class CairoEngine implements Closeable, WriterSource {
     private @NotNull ViewStateStore viewStateStore = NoOpViewStateStore.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
+    private @NotNull WalLocker walLocker;
 
     public CairoEngine(CairoConfiguration configuration) {
+        this(configuration, new QdbrWalLocker());
+    }
+
+    public CairoEngine(CairoConfiguration configuration, @NotNull WalLocker walLocker) {
         try {
+            this.walLocker = walLocker;
             this.ffCache = new FunctionFactoryCache(configuration, getFunctionFactories());
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
@@ -584,6 +592,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(matViewStateStore);
         Misc.free(settingsStore);
         Misc.free(frameFactory);
+        Misc.free(walLocker);
     }
 
     @TestOnly
@@ -1193,6 +1202,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return walListener;
     }
 
+    public @NotNull WalLocker getWalLocker() {
+        return walLocker;
+    }
+
     // For testing only
     @TestOnly
     public WalReader getWalReader(
@@ -1580,6 +1593,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     (short) 0
             );
         }
+        walLocker.clearTable(tableToken);
     }
 
     public void removeThreadLocalReaderPoolSupervisor() {
@@ -1761,6 +1775,11 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void setWalListener(@NotNull WalListener walListener) {
         this.walListener = walListener;
+    }
+
+    @TestOnly
+    public void setWalLocker(@NotNull WalLocker walLocker) {
+        this.walLocker = walLocker;
     }
 
     public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
