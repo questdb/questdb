@@ -660,12 +660,22 @@ public final class IntervalUtils {
             StringSink dateSink = dayFilterMarkerPos >= 0 ? tlSink1.get() : sink;
             dateSink.clear();
             try {
+                // When global exchange schedule + duration, exclude duration from date list expansion
+                // (duration will be applied after the exchange filter by applyExchangeFilterAndDuration)
+                int expandDateListLim = effectiveSeqLim;
+                int globalSemicolon = -1;
+                if (exchangeSchedule != null) {
+                    globalSemicolon = findDurationSemicolon(effectiveSeq, effectiveSeqLo, effectiveSeqLim);
+                    if (globalSemicolon >= 0) {
+                        expandDateListLim = globalSemicolon;
+                    }
+                }
                 expandDateList(
                         timestampDriver,
                         configuration,
                         effectiveSeq,
                         effectiveSeqLo,
-                        effectiveSeqLim,
+                        expandDateListLim,
                         position,
                         out,
                         operation,
@@ -677,7 +687,7 @@ public final class IntervalUtils {
                 );
                 // Apply tick calendar filter if specified
                 if (exchangeSchedule != null) {
-                    int semicolon = findDurationSemicolon(effectiveSeq, effectiveSeqLo, effectiveSeqLim);
+                    int semicolon = globalSemicolon;
                     applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, effectiveSeq,
                             semicolon >= 0 ? semicolon + 1 : -1, effectiveSeqLim, position);
                 }
@@ -3333,8 +3343,7 @@ public final class IntervalUtils {
             int index = out.size();
             timestampDriver.parseInterval(seq, lo, p, operation, out);
             long low = decodeIntervalLo(out, index);
-            long hi = decodeIntervalHi(out, index);
-            hi = addDuration(timestampDriver, hi, seq, p + 1, lim, position);
+            long hi = addDuration(timestampDriver, low, seq, p + 1, lim, position) - 1;
             replaceHiLoInterval(low, hi, operation, out);
             return;
         } catch (NumericException ignore) {
@@ -3342,7 +3351,7 @@ public final class IntervalUtils {
         }
         try {
             long loMicros = timestampDriver.parseAnyFormat(seq, lo, p);
-            long hiMicros = addDuration(timestampDriver, loMicros, seq, p + 1, lim, position);
+            long hiMicros = addDuration(timestampDriver, loMicros, seq, p + 1, lim, position) - 1;
             encodeInterval(loMicros, hiMicros, operation, out);
         } catch (NumericException e) {
             throw SqlException.$(position, "Invalid date: ").put(seq, lo, p);
