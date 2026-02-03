@@ -84,40 +84,33 @@ public class ShowParametersCursorFactory extends AbstractRecordCursorFactory {
         private final Record record = new Record() {
             @Override
             public boolean getBool(int col) {
-                switch (col) {
-                    case 4:
-                        return entry.key.isSensitive();
-                    case 5:
-                        return entry.value.isDynamic();
-                    default:
-                        return false;
-                }
+                return switch (col) {
+                    case 4 -> entry.key.isSensitive();
+                    case 5 -> entry.value.isDynamic();
+                    default -> false;
+                };
             }
 
             @Override
             public CharSequence getStrA(int col) {
-                switch (col) {
-                    case 0:
-                        return entry.key.getPropertyPath();
-                    case 1:
-                        return entry.key.getEnvVarName();
-                    case 2:
+                return switch (col) {
+                    case 0 -> entry.key.getPropertyPath();
+                    case 1 -> entry.key.getEnvVarName();
+                    case 2 -> {
                         if (entry.key.isSensitive()) {
-                            return "****";
+                            yield "****";
                         }
-                        return entry.value.getValue();
-                    case 3:
-                        switch (entry.value.getValueSource()) {
-                            case ConfigPropertyValue.VALUE_SOURCE_DEFAULT:
-                                return "default";
-                            case ConfigPropertyValue.VALUE_SOURCE_CONF:
-                                return "conf";
-                            default:
-                                return "env";
-                        }
-                    default:
-                        return null;
-                }
+                        yield entry.value.getValue();
+                    }
+                    case 3 -> switch (entry.value.getValueSource()) {
+                        case ConfigPropertyValue.VALUE_SOURCE_DEFAULT -> "default";
+                        case ConfigPropertyValue.VALUE_SOURCE_CONF -> "conf";
+                        case ConfigPropertyValue.VALUE_SOURCE_ENV -> "env";
+                        case ConfigPropertyValue.VALUE_SOURCE_FILE -> "file";
+                        default -> "unknown";
+                    };
+                    default -> null;
+                };
             }
 
             @Override

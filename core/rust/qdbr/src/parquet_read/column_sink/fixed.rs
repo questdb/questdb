@@ -1,4 +1,4 @@
-use crate::allocator::{AcVec, AcVecSetLen};
+use crate::allocator::AcVec;
 use crate::parquet::error::ParquetResult;
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::DataPageSlicer;
@@ -93,7 +93,7 @@ impl<const N: usize, const R: usize, T: DataPageSlicer> Pushable for FixedColumn
                     for i in 0..count {
                         ptr::copy_nonoverlapping(self.null_value.as_ptr(), ptr.add(i * N), N);
                     }
-                    AcVecSetLen::set_len(&mut self.buffers.data_vec, base + total_bytes);
+                    self.buffers.data_vec.set_len(base + total_bytes);
                 }
                 Ok(())
             }
@@ -143,7 +143,7 @@ impl<const N: usize, T: DataPageSlicer> Pushable for ReverseFixedColumnSink<'_, 
             for i in 0..N {
                 *ptr.add(i) = slice[N - i - 1];
             }
-            AcVecSetLen::set_len(&mut self.buffers.data_vec, base + N);
+            self.buffers.data_vec.set_len(base + N);
         }
         Ok(())
     }
@@ -182,7 +182,7 @@ impl<const N: usize, T: DataPageSlicer> Pushable for ReverseFixedColumnSink<'_, 
                             *dest.add(i) = slice[N - i - 1];
                         }
                     }
-                    AcVecSetLen::set_len(&mut self.buffers.data_vec, base + total_bytes);
+                    self.buffers.data_vec.set_len(base + total_bytes);
                 }
                 Ok(())
             }
@@ -225,7 +225,7 @@ impl<const N: usize, T: DataPageSlicer> Pushable for ReverseFixedColumnSink<'_, 
                     for i in 0..count {
                         ptr::copy_nonoverlapping(self.null_value.as_ptr(), ptr.add(i * N), N);
                     }
-                    AcVecSetLen::set_len(&mut self.buffers.data_vec, base + total_bytes);
+                    self.buffers.data_vec.set_len(base + total_bytes);
                 }
                 Ok(())
             }
@@ -320,7 +320,7 @@ impl<T: DataPageSlicer> Pushable for NanoTimestampColumnSink<'_, T> {
                             null_size,
                         );
                     }
-                    AcVecSetLen::set_len(&mut self.buffers.data_vec, base + total_bytes);
+                    self.buffers.data_vec.set_len(base + total_bytes);
                 }
                 Ok(())
             }
@@ -433,7 +433,7 @@ impl<T: DataPageSlicer> Pushable for IntDecimalColumnSink<'_, T> {
                             8,
                         );
                     }
-                    AcVecSetLen::set_len(&mut self.buffers.data_vec, base + total_bytes);
+                    self.buffers.data_vec.set_len(base + total_bytes);
                 }
                 Ok(())
             }
@@ -481,7 +481,7 @@ impl<T: DataPageSlicer> Pushable for IntDecimalColumnSink<'_, T> {
                             null_size,
                         );
                     }
-                    AcVecSetLen::set_len(&mut self.buffers.data_vec, base + total_bytes);
+                    self.buffers.data_vec.set_len(base + total_bytes);
                 }
                 Ok(())
             }

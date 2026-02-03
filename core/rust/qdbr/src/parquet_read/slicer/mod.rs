@@ -5,7 +5,7 @@ pub mod rle;
 #[cfg(test)]
 mod tests;
 
-use crate::allocator::{AcVec, AcVecSetLen, AllocFailure};
+use crate::allocator::{AcVec, AllocFailure};
 use crate::parquet::error::{fmt_err, ParquetResult};
 use parquet2::encoding::delta_bitpacked;
 use parquet2::encoding::hybrid_rle::BitmapIter;
