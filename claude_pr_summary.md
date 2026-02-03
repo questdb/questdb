@@ -200,3 +200,177 @@ default void setStreamingMode(boolean enabled) {
 2. **Madvise after reading**: Page cache is released when partition is closed, after all reads complete
 3. **No VMA splitting**: Entire mapping gets the madvise call at once
 4. **Backward compatible**: Default behavior (madviseOpts = -1) uses MmapCache as before
+
+---
+
+## Partition Conversion Optimization (ALTER TABLE CONVERT PARTITION)
+
+### Problem
+
+`TableWriter.convertPartitionNativeToParquet()` maps entire partitions into memory for Parquet encoding. For large partitions, this can exhaust page cache similar to the export case.
+
+### Solution
+
+Added madvise hints to the partition conversion code path:
+
+1. **Use `mapRONoCache()`** instead of `mapRO()` for independent mappings
+2. **Apply `MADV_SEQUENTIAL`** after mapping (hint for sequential read pattern)
+3. **Apply `MADV_DONTNEED`** before unmapping (release page cache)
+
+### Implementation
+
+**TableUtils.java** - Added path-based `mapRONoCache` helper:
+```java
+public static long mapRONoCache(FilesFacade ff, LPSZ path, Log log, long size, int memoryTag) {
+    final long fd = openRO(ff, path, log);
+    try {
+        return mapRONoCache(ff, fd, size, memoryTag);
+    } finally {
+        ff.close(fd);
+    }
+}
+```
+
+**TableWriter.java** - Changed all `mapRO` → `mapRONoCache` with madvise:
+```java
+final long columnAddr = mapRONoCache(ff, dFile(...), LOG, columnSize, memoryTag);
+ff.madvise(columnAddr, columnSize, Files.POSIX_MADV_SEQUENTIAL);
+partitionDescriptor.setColumnAddr(columnAddr, columnSize);
+```
+
+**MappedMemoryPartitionDescriptor.java** - Added `MADV_DONTNEED` before unmapping:
+```java
+@Override
+public void clear() {
+    // ... for each column ...
+    if (columnAddr != 0) {
+        ff.madvise(columnAddr, columnSize, Files.POSIX_MADV_DONTNEED);
+        ff.munmap(columnAddr, columnSize, MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER);
+    }
+    // ... same for secondary and symbol columns ...
+}
+```
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `TableUtils.java` | Added `mapRONoCache(FilesFacade, LPSZ, Log, long, int)` helper |
+| `TableWriter.java` | Use `mapRONoCache` + `MADV_SEQUENTIAL` for all partition file mappings |
+| `MappedMemoryPartitionDescriptor.java` | Added `Files` import, `MADV_DONTNEED` before each `munmap()` |
+
+---
+
+## SQL Serial Parquet Exporter Optimization
+
+### Problem
+
+`SQLSerialParquetExporter` reads partitions via `TableReader` but doesn't release them after processing, causing page cache accumulation during large exports.
+
+### Solution
+
+Enable streaming mode and close partitions after encoding:
+
+```java
+try (TableReader reader = cairoEngine.getReader(tableToken)) {
+    // Enable streaming mode for madvise hints
+    reader.setStreamingMode(true);
+
+    for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+        // ... process partition ...
+
+        PartitionEncoder.encodeWithOptions(partitionDescriptor, ...);
+
+        // Release page cache for processed partition
+        reader.closePartitionByIndex(partitionIndex);
+    }
+}
+```
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `SQLSerialParquetExporter.java` | Added `setStreamingMode(true)` and `closePartitionByIndex()` after each partition |
+
+---
+
+## Analysis: Auto-Release Safety with Random Access
+
+### Problem Statement
+
+Can we automatically release partitions when moving to the next one, without explicit caller control?
+
+### Frame Pointer Usage Analysis
+
+Analyzed how `PageFrame` addresses are used across the codebase:
+
+**Safe Patterns (addresses processed immediately):**
+1. **Immediate Processing** - Frame addresses used and discarded before `next()`
+2. **PageFrameAddressCache** - Two-pass: iterate ALL frames first, cache addresses, THEN process
+3. **Parquet Streaming** - Per-frame: addresses copied to `DirectLongList`, passed to native, processed synchronously
+
+**No Problematic Patterns Found:**
+- No frames stored across `cursor.next()` calls without proper caching
+- Async operations use frame INDEX, not pointers
+- Native code (Rust Parquet) processes synchronously before returning
+
+### Random Access Requirement Analysis
+
+**Operations that REQUIRE random access (unsafe to auto-release):**
+
+| Operation | Why Random Access Needed |
+|-----------|-------------------------|
+| ORDER BY (sorting) | Sort cursor uses `recordAt()` on base cursor |
+| ASOF/LT/SPLICE Joins | Jump back to restore state |
+| LatestBy | Navigate to specific rows by rowId |
+| Window Functions | Access rows in window range |
+
+**Key Finding:** `recordCursorSupportsRandomAccess()` indicates CAPABILITY, not REQUIREMENT.
+
+A simple `SELECT * FROM table`:
+- `recordCursorSupportsRandomAccess()` = **true** (CAN do random access)
+- Actually REQUIRES random access = **false** (just iterates sequentially)
+
+### Proposed Solution: New Factory Method
+
+Add method to distinguish capability from requirement:
+
+```java
+/**
+ * Returns true if this factory's internal implementation requires
+ * random access to underlying data (e.g., sorting, certain joins).
+ * Different from recordCursorSupportsRandomAccess() which indicates capability.
+ */
+default boolean requiresRandomAccessToUnderlyingData() {
+    return false;  // Safe default - most simple scans don't need it
+}
+```
+
+**Implementation by factory type:**
+
+| Factory | `recordCursorSupportsRandomAccess()` | `requiresRandomAccessToUnderlyingData()` |
+|---------|--------------------------------------|------------------------------------------|
+| TableReaderRecordCursorFactory | true | **false** |
+| SortedRecordCursorFactory | true | **true** |
+| AsofJoinRecordCursorFactory | true | **true** |
+| GroupByRecordCursorFactory | false | false |
+
+### Usage for Auto-Release
+
+```java
+PageFrameCursor cursor = factory.getPageFrameCursor(ctx, ORDER_ASC);
+cursor.setStreamingMode(true);
+
+// Only enable auto-release if query doesn't need random access internally
+if (!factory.requiresRandomAccessToUnderlyingData()) {
+    cursor.setAutoReleasePartitions(true);
+}
+```
+
+### Future Work
+
+1. Implement `requiresRandomAccessToUnderlyingData()` across all `RecordCursorFactory` implementations
+2. Add `setAutoReleasePartitions(boolean)` to `PageFrameCursor`
+3. Auto-release partitions on transition when safe
+4. Consider compile-time annotation in `SqlCodeGenerator` when building factory tree

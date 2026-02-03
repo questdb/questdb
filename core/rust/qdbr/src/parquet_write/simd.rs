@@ -56,11 +56,7 @@ fn try_encode_i64_rle<W: Write>(
 ) -> std::io::Result<Option<DefLevelResult<i64>>> {
     if slice.is_empty() {
         write_rle_all_ones(writer, 0)?;
-        return Ok(Some(DefLevelResult {
-            null_count: 0,
-            max: None,
-            min: None,
-        }));
+        return Ok(Some(DefLevelResult { null_count: 0, max: None, min: None }));
     }
 
     let null_val = Simd::<i64, 8>::splat(i64::MIN);
@@ -409,11 +405,7 @@ fn try_encode_i32_rle<W: Write>(
 ) -> std::io::Result<Option<DefLevelResult<i32>>> {
     if slice.is_empty() {
         write_rle_all_ones(writer, 0)?;
-        return Ok(Some(DefLevelResult {
-            null_count: 0,
-            max: None,
-            min: None,
-        }));
+        return Ok(Some(DefLevelResult { null_count: 0, max: None, min: None }));
     }
 
     let null_val = Simd::<i32, 16>::splat(i32::MIN);
@@ -774,11 +766,7 @@ fn try_encode_f64_rle<W: Write>(
 ) -> std::io::Result<Option<DefLevelResult<f64>>> {
     if slice.is_empty() {
         write_rle_all_ones(writer, 0)?;
-        return Ok(Some(DefLevelResult {
-            null_count: 0,
-            max: None,
-            min: None,
-        }));
+        return Ok(Some(DefLevelResult { null_count: 0, max: None, min: None }));
     }
 
     let sign_mask_vec = Simd::<i64, 8>::splat(F64_SIGN_MASK);
@@ -817,7 +805,14 @@ fn try_encode_f64_rle<W: Write>(
     let rest_slice = &slice[PROBE_SIZE_64..];
 
     if all_valid {
-        scan_f64_verify_all_valid(writer, slice, rest_slice, compute_stats, sign_mask_vec, infinity_vec)
+        scan_f64_verify_all_valid(
+            writer,
+            slice,
+            rest_slice,
+            compute_stats,
+            sign_mask_vec,
+            infinity_vec,
+        )
     } else {
         scan_f64_verify_all_null(writer, slice, rest_slice, sign_mask_vec, infinity_vec)
     }
@@ -1151,11 +1146,7 @@ fn try_encode_f32_rle<W: Write>(
 ) -> std::io::Result<Option<DefLevelResult<f32>>> {
     if slice.is_empty() {
         write_rle_all_ones(writer, 0)?;
-        return Ok(Some(DefLevelResult {
-            null_count: 0,
-            max: None,
-            min: None,
-        }));
+        return Ok(Some(DefLevelResult { null_count: 0, max: None, min: None }));
     }
 
     let sign_mask_vec = Simd::<i32, 16>::splat(F32_SIGN_MASK);
@@ -1194,7 +1185,14 @@ fn try_encode_f32_rle<W: Write>(
     let rest_slice = &slice[PROBE_SIZE_32..];
 
     if all_valid {
-        scan_f32_verify_all_valid(writer, slice, rest_slice, compute_stats, sign_mask_vec, infinity_vec)
+        scan_f32_verify_all_valid(
+            writer,
+            slice,
+            rest_slice,
+            compute_stats,
+            sign_mask_vec,
+            infinity_vec,
+        )
     } else {
         scan_f32_verify_all_null(writer, slice, rest_slice, sign_mask_vec, infinity_vec)
     }

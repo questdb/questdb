@@ -592,7 +592,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                         params.clear();
                                         params.put("fmt", "parquet");
                                         params.put("query", "test_json_conn_table");
-                                        client.assertGetParquet("/exp", 1659, params, null);
+                                        client.assertGetParquet("/exp", 1683, params, null);
                                     }
                                 }
                             } catch (Throwable e) {
@@ -686,19 +686,19 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 103536, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 103501, params, "test_table");
                     params.put("row_group_size", "1000");
-                    testHttpClient.assertGetParquet("/exp", 107352, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 107317, params, "test_table");
                     params.put("row_group_size", "500");
-                    testHttpClient.assertGetParquet("/exp", 113778, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 113699, params, "test_table");
                     params.put("row_group_size", "999");
-                    testHttpClient.assertGetParquet("/exp", 109748, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 109701, params, "test_table");
                     params.put("row_group_size", "201");
-                    testHttpClient.assertGetParquet("/exp", 134970, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 134752, params, "test_table");
                     params.put("row_group_size", "2001");
-                    testHttpClient.assertGetParquet("/exp", 106051, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 106002, params, "test_table");
                     params.put("row_group_size", "10000");
-                    testHttpClient.assertGetParquet("/exp", 103536, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 103501, params, "test_table");
                     assertParquetExportDataCorrectness(engine, sqlExecutionContext, new String[]{"test_table"}, 10, 10091);
                 });
     }
@@ -970,9 +970,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.clear();
                     params.put("fmt", "parquet");
                     params.put("data_page_size", "1024");
-                    testHttpClient.assertGetParquet("/exp", 24187, params, "SELECT * FROM page_size_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 24145, params, "SELECT * FROM page_size_valid_test");
                     params.put("data_page_size", "2048");
-                    testHttpClient.assertGetParquet("/exp", 22675, params, "SELECT * FROM page_size_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 22694, params, "SELECT * FROM page_size_valid_test");
                 });
     }
 
@@ -1055,7 +1055,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.clear();
                     params.put("fmt", "parquet");
                     params.put("filename", "large_export_test");
-                    testHttpClient.assertGetParquet("/exp", 927562, params, "SELECT * FROM large_export_test");
+                    testHttpClient.assertGetParquet("/exp", 927480, params, "SELECT * FROM large_export_test");
                 });
     }
 
@@ -1390,19 +1390,19 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("query", "SELECT * FROM row_group_valid_test");
                     params.put("fmt", "parquet");
                     params.put("row_group_size", "1000");
-                    testHttpClient.assertGetParquet("/exp", 21658, params, "SELECT * FROM row_group_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 21949, params, "SELECT * FROM row_group_valid_test");
 
                     params.put("row_group_size", "5000");
-                    testHttpClient.assertGetParquet("/exp", 20387, params, "SELECT * FROM row_group_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 20990, params, "SELECT * FROM row_group_valid_test");
 
                     params.put("row_group_size", "5010");
-                    testHttpClient.assertGetParquet("/exp", 20387, params, "SELECT * FROM row_group_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 20990, params, "SELECT * FROM row_group_valid_test");
 
                     params.put("row_group_size", "1500");
-                    testHttpClient.assertGetParquet("/exp", 21272, params, "SELECT * FROM row_group_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 21720, params, "SELECT * FROM row_group_valid_test");
 
                     params.put("row_group_size", "1510");
-                    testHttpClient.assertGetParquet("/exp", 21268, params, "SELECT * FROM row_group_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 21720, params, "SELECT * FROM row_group_valid_test");
                 });
     }
 

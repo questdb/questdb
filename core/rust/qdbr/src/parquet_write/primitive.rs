@@ -389,9 +389,8 @@ fn encode_i64_plain(slice: &[i64], null_count: usize, mut buffer: Vec<u8>) -> Ve
         // Fast path: no nulls, use memcpy
         // SAFETY: i64 slice can be safely viewed as bytes, and Parquet uses little-endian
         // which matches x86/ARM-LE native byte order
-        let bytes = unsafe {
-            std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 8)
-        };
+        let bytes =
+            unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 8) };
         buffer.extend_from_slice(bytes);
     } else {
         // Slow path: filter out nulls
@@ -485,9 +484,8 @@ fn encode_i32_plain(slice: &[i32], null_count: usize, mut buffer: Vec<u8>) -> Ve
 
     if null_count == 0 {
         // Fast path: no nulls, use memcpy
-        let bytes = unsafe {
-            std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 4)
-        };
+        let bytes =
+            unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 4) };
         buffer.extend_from_slice(bytes);
     } else {
         // Slow path: filter out nulls
@@ -545,9 +543,8 @@ pub fn f64_slice_to_page_simd(
 
     if result.null_count == 0 {
         // Fast path: no nulls (NaNs), use memcpy
-        let bytes = unsafe {
-            std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 8)
-        };
+        let bytes =
+            unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 8) };
         buffer.extend_from_slice(bytes);
     } else {
         // Slow path: filter out NaNs
@@ -620,9 +617,8 @@ pub fn f32_slice_to_page_simd(
 
     if result.null_count == 0 {
         // Fast path: no nulls (NaNs), use memcpy
-        let bytes = unsafe {
-            std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 4)
-        };
+        let bytes =
+            unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 4) };
         buffer.extend_from_slice(bytes);
     } else {
         // Slow path: filter out NaNs

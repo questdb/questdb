@@ -257,13 +257,14 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public void closeExcessPartitions() {
         // close all but N latest partitions
-        if (PartitionBy.isPartitioned(partitionBy) && openPartitionCount > maxOpenPartitions) {
+        int keepOpen = streamingMode ? 0 : maxOpenPartitions;
+        if (PartitionBy.isPartitioned(partitionBy) && openPartitionCount > keepOpen) {
             final int originallyOpen = openPartitionCount;
             int openCount = 0;
             for (int partitionIndex = partitionCount - 1; partitionIndex > -1; partitionIndex--) {
                 final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
                 long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-                if (partitionSize > -1 && ++openCount > maxOpenPartitions) {
+                if (partitionSize > -1 && ++openCount > keepOpen) {
                     closePartition(partitionIndex);
                     if (openCount == originallyOpen) {
                         // ok, we've closed enough

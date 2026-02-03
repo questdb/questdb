@@ -290,12 +290,17 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     }
 
     public class StreamPartitionParquetExporter implements Mutable, QuietCloseable {
+        // Buffer header size: [8 bytes data_len][8 bytes rows_written_to_row_groups]
+        private static final int BUFFER_HEADER_SIZE = 2 * Long.BYTES;
         private DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         private DirectLongList columnMetadata = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         private DirectUtf8Sink columnNames = new DirectUtf8Sink(32, false, MemoryTag.NATIVE_PARQUET_EXPORTER);
         private long currentFrameRowCount = 0;
         private long currentPartitionIndex = -1;
         private boolean exportFinished = false;
+        // Cumulative count of rows written to Parquet row groups by Rust.
+        // Used to determine when partition memory can be safely released.
+        private long rowsWrittenToRowGroups = 0;
         private long streamExportCurrentPtr;
         private long streamExportCurrentSize;
         private long streamWriter = -1;
@@ -310,6 +315,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             closeWriter();
             streamExportCurrentPtr = 0;
             streamExportCurrentSize = 0;
+            rowsWrittenToRowGroups = 0;
             totalRows = 0;
             freeOwnedPageFrameCursor();
             exportFinished = false;
@@ -331,8 +337,9 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             }
             long buffer = finishStreamingParquetWrite(streamWriter);
             exportFinished = true;
-            streamExportCurrentPtr = buffer + Long.BYTES;
+            streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
             streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
+            rowsWrittenToRowGroups = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
             assert writeCallback != null;
             writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
             clear();
@@ -354,6 +361,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             return currentPartitionIndex;
         }
 
+        public long getRowsWrittenToRowGroups() {
+            return rowsWrittenToRowGroups;
+        }
+
         public long getTotalRows() {
             return totalRows;
         }
@@ -365,8 +376,9 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
                     long buffer = writeStreamingParquetChunk(streamWriter, 0, 0);
                     if (buffer != 0) {
-                        streamExportCurrentPtr = buffer + Long.BYTES;
+                        streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
                         streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
+                        rowsWrittenToRowGroups = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
                     } else {
                         streamExportCurrentPtr = 0;
                         streamExportCurrentSize = 0;
@@ -463,8 +475,9 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
                 long buffer = writeStreamingParquetChunk(streamWriter, columnData.getAddress(), frameRowCount);
                 while (buffer != 0) {
-                    streamExportCurrentPtr = buffer + Long.BYTES;
+                    streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
                     streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
+                    rowsWrittenToRowGroups = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
                     writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
                     buffer = writeStreamingParquetChunk(
                             streamWriter,
@@ -500,8 +513,9 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                         frame.getParquetRowGroupHi()
                 );
                 while (buffer != 0) {
-                    streamExportCurrentPtr = buffer + Long.BYTES;
+                    streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
                     streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
+                    rowsWrittenToRowGroups = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
                     writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
                     buffer = writeStreamingParquetChunkFromRowGroup(
                             streamWriter,
