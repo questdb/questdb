@@ -816,7 +816,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("compression_level", "9");
                     testHttpClient.assertGet(
                             "/exp",
-                            "PAR1\u0015\u0000\u0015\\\u00150,\u0015\n" +
+                            "PAR1\u0015\u0000\u0015\\\u0015.,\u0015\n" +
                                     "\u0015\u0000\u0015\u0006\u0015\u0006\u001C6\u0000(\b\u0005\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0018\b\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000",
                             params,
                             null,
@@ -828,7 +828,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("compression_codec", "brotli");
                     testHttpClient.assertGet(
                             "/exp",
-                            "PAR1\u0015\u0000\u0015\\\u00150,\u0015\n" +
+                            "PAR1\u0015\u0000\u0015\\\u0015.,\u0015\n" +
                                     "\u0015\u0000\u0015\u0006\u0015\u0006\u001C6\u0000(\b\u0005\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0018\b\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000",
                             params,
                             null,
@@ -849,7 +849,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("compression_codec", "brotli");
                     testHttpClient.assertGet(
                             "/exp",
-                            "PAR1\u0015\u0006\u0015T\u0015*\\\u0015\n\u0015\u0000\u0015\n\u0015\u0000\u0015\u0004\u0015\u0000\u0011\u001C6\u0000(\b\u0005\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0018\b\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0003\u001F",
+                            "PAR1\u0015\u0006\u0015T\u0015*\\\u0015\n\u0015\u0000\u0015\n\u0015\u0000\u0015\u0004\u0015\u0000\u0011\u001c6\u0000(\b\u0005\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0018\b\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\n\u0001",
                             params,
                             null,
                             null

@@ -152,7 +152,14 @@ public class TestHttpClient implements QuietCloseable {
             }
 
             reqToSink(req, sink, username, password, token, null);
-            TestUtils.assertEquals(expectedResponse, sink);
+            try {
+                TestUtils.assertEquals(expectedResponse, sink);
+            } catch (AssertionError e) {
+                LOG.info().$("=== ACTUAL RESULT IN \\u NOTATION ===").$();
+                LOG.info().$(toUnicodeEscape(sink)).$();
+                LOG.info().$("=== END ===").$();
+                throw e;
+            }
         } finally {
             if (!keepConnection) {
                 httpClient.disconnect();
@@ -449,6 +456,37 @@ public class TestHttpClient implements QuietCloseable {
                 httpClient.disconnect();
             }
         }
+    }
+
+    private static String toUnicodeEscape(Utf8StringSink sink) {
+        // Convert UTF-8 to UTF-16 first (same as assertion does)
+        io.questdb.std.str.StringSink utf16 = new io.questdb.std.str.StringSink();
+        Utf8s.utf8ToUtf16(sink, utf16);
+
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < utf16.length(); i++) {
+            char c = utf16.charAt(i);
+            if (c >= 32 && c < 127 && c != '\\' && c != '"') {
+                sb.append(c);
+            } else if (c == '\\') {
+                sb.append("\\\\");
+            } else if (c == '"') {
+                sb.append("\\\"");
+            } else if (c == '\b') {
+                sb.append("\\b");
+            } else if (c == '\t') {
+                sb.append("\\t");
+            } else if (c == '\n') {
+                sb.append("\\n");
+            } else if (c == '\f') {
+                sb.append("\\f");
+            } else if (c == '\r') {
+                sb.append("\\r");
+            } else {
+                sb.append(String.format("\\u%04x", (int) c));
+            }
+        }
+        return sb.toString();
     }
 
     protected String reqToSink(
