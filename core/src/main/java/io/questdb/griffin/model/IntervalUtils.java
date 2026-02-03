@@ -26,9 +26,9 @@ package io.questdb.griffin.model;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TickCalendarService;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.TickCalendarService;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Interval;
@@ -1393,6 +1393,27 @@ public final class IntervalUtils {
     }
 
     /**
+     * Applies tick calendar filter and optional duration extension.
+     * The filter intersects query intervals with the exchange's trading schedule,
+     * then extends each interval's hi bound by the duration if present.
+     */
+    private static void applyExchangeFilterAndDuration(
+            TimestampDriver timestampDriver,
+            LongList exchangeSchedule,
+            LongList out,
+            int startIndex,
+            CharSequence durationSeq,
+            int durationLo,
+            int durationLim,
+            int position
+    ) throws SqlException {
+        applyTickCalendarFilter(timestampDriver, exchangeSchedule, out, startIndex);
+        if (durationLo >= 0) {
+            applyDurationToIntervals(timestampDriver, out, startIndex, durationSeq, durationLo, durationLim, position);
+        }
+    }
+
+    /**
      * Applies tick calendar filter by intersecting query intervals with trading schedule.
      * The trading schedule is obtained from {@link TickCalendarService} and contains
      * [lo, hi] pairs representing trading sessions in microseconds.
@@ -1505,27 +1526,6 @@ public final class IntervalUtils {
             for (int i = 0; i < temp.size(); i++) {
                 out.add(temp.getQuick(i));
             }
-        }
-    }
-
-    /**
-     * Applies tick calendar filter and optional duration extension.
-     * The filter intersects query intervals with the exchange's trading schedule,
-     * then extends each interval's hi bound by the duration if present.
-     */
-    private static void applyExchangeFilterAndDuration(
-            TimestampDriver timestampDriver,
-            LongList exchangeSchedule,
-            LongList out,
-            int startIndex,
-            CharSequence durationSeq,
-            int durationLo,
-            int durationLim,
-            int position
-    ) throws SqlException {
-        applyTickCalendarFilter(timestampDriver, exchangeSchedule, out, startIndex);
-        if (durationLo >= 0) {
-            applyDurationToIntervals(timestampDriver, out, startIndex, durationSeq, durationLo, durationLim, position);
         }
     }
 
