@@ -1,7 +1,7 @@
 use std::mem;
 
 use super::util::ExactSizedIter;
-use crate::allocator::{AcVec, AcVecSetLen};
+use crate::allocator::AcVec;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{

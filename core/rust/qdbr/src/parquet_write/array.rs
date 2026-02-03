@@ -39,7 +39,7 @@ use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 
 use super::util::ArrayStats;
-use crate::allocator::{AcVec, AcVecSetLen};
+use crate::allocator::AcVec;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
@@ -869,7 +869,7 @@ pub fn append_array_nulls(
                 let new_len = base
                     .checked_add(total_bytes)
                     .ok_or_else(|| fmt_err!(Layout, "append_array_nulls overflow"))?;
-                AcVecSetLen::set_len(aux_mem, new_len);
+                aux_mem.set_len(new_len);
             }
             Ok(())
         }
