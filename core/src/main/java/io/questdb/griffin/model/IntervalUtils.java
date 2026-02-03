@@ -843,8 +843,13 @@ public final class IntervalUtils {
                 applyLastEncodedInterval(timestampDriver, out);
                 // Day filter applies BEFORE timezone conversion (based on local time)
                 if (dayFilterMask != 0 && exchangeSchedule == null) {
-                    boolean expandMultiDay = !hasDatePrecision(effectiveSeq, effectiveSeqLo, effectiveDateLim);
-                    applyDayFilter(timestampDriver, out, outSize, dayFilterMask, expandMultiDay);
+                    applyDayFilter(
+                            timestampDriver,
+                            out,
+                            outSize,
+                            dayFilterMask,
+                            hasDatePrecision(effectiveSeq, effectiveSeqLo, effectiveDateLim)
+                    );
                 }
             } else if (dayFilterMask != 0 && exchangeSchedule == null) {
                 // Dynamic mode: store day filter mask for runtime evaluation
@@ -912,8 +917,13 @@ public final class IntervalUtils {
             // Day filter applies BEFORE timezone conversion (based on local time)
             if (dayFilterMask != 0 && exchangeSchedule == null) {
                 if (applyEncoded) {
-                    boolean expandMultiDay = !hasDatePrecision(parseSeq, parseLo, parseDateLim);
-                    applyDayFilter(timestampDriver, out, outSize, dayFilterMask, expandMultiDay);
+                    applyDayFilter(
+                            timestampDriver,
+                            out,
+                            outSize,
+                            dayFilterMask,
+                            hasDatePrecision(parseSeq, parseLo, parseDateLim)
+                    );
                 } else {
                     // Dynamic mode: store day filter mask for runtime evaluation
                     setDayFilterMaskOnEncodedIntervals(out, outSize, dayFilterMask);
@@ -1265,7 +1275,7 @@ public final class IntervalUtils {
      * @param out             the interval list to filter
      * @param startIndex      index to start filtering from
      * @param dayFilterMask   bitmask of allowed days (bit 0 = Monday, bit 6 = Sunday)
-     * @param expandMultiDay  if true, expand multi-day intervals into individual matching days;
+     * @param ignoreMultiDay  if true, expand multi-day intervals into individual matching days;
      *                        if false, just filter based on start day (for precise dates with duration)
      */
     private static void applyDayFilter(
@@ -1273,7 +1283,7 @@ public final class IntervalUtils {
             LongList out,
             int startIndex,
             int dayFilterMask,
-            boolean expandMultiDay
+            boolean ignoreMultiDay
     ) {
         assert dayFilterMask != 0; // Callers must check dayFilterMask != 0 before calling
 
@@ -1288,7 +1298,7 @@ public final class IntervalUtils {
             long loDay = timestampDriver.startOfDay(lo, 0);
             long hiDay = timestampDriver.startOfDay(hi, 0);
 
-            if (loDay == hiDay || !expandMultiDay) {
+            if (loDay == hiDay || ignoreMultiDay) {
                 // Single day OR precise date with duration - just check if start day matches
                 int dayOfWeek = timestampDriver.getDayOfWeek(lo) - 1; // 0-6
                 if ((dayFilterMask & (1 << dayOfWeek)) != 0) {
@@ -1312,7 +1322,7 @@ public final class IntervalUtils {
             long loDay = timestampDriver.startOfDay(lo, 0);
             long hiDay = timestampDriver.startOfDay(hi, 0);
 
-            if (loDay == hiDay || !expandMultiDay) {
+            if (loDay == hiDay || ignoreMultiDay) {
                 // Single day OR precise date with duration - keep entire interval if start day matches
                 int dayOfWeek = timestampDriver.getDayOfWeek(lo) - 1; // 0-6
                 if ((dayFilterMask & (1 << dayOfWeek)) != 0) {
@@ -2294,8 +2304,13 @@ public final class IntervalUtils {
                     if (applyEncoded) {
                         // Only expand to individual days if the element is an imprecise date (year/month)
                         // Precise dates (with day component) should just be filtered, not expanded
-                        boolean expandMultiDay = !hasDatePrecision(elementSeq, resolvedElementStart, effectiveElementEnd);
-                        applyDayFilter(timestampDriver, out, outSizeBeforeElement, activeDayFilterMask, expandMultiDay);
+                        applyDayFilter(
+                                timestampDriver,
+                                out,
+                                outSizeBeforeElement,
+                                activeDayFilterMask,
+                                hasDatePrecision(elementSeq, resolvedElementStart, effectiveElementEnd)
+                        );
                     } else {
                         // Dynamic mode: store day filter mask for runtime evaluation
                         setDayFilterMaskOnEncodedIntervals(out, outSizeBeforeElement, activeDayFilterMask);
@@ -2424,7 +2439,7 @@ public final class IntervalUtils {
             if (dayFilterMask != 0) {
                 if (applyEncoded) {
                     // Static mode: filter intervals directly
-                    applyDayFilter(timestampDriver, out, outSizeBeforeInterval, dayFilterMask, false);
+                    applyDayFilter(timestampDriver, out, outSizeBeforeInterval, dayFilterMask, true);
                 } else {
                     // Dynamic mode: store mask for runtime evaluation
                     setDayFilterMaskOnEncodedIntervals(out, outSizeBeforeInterval, dayFilterMask);
@@ -2621,7 +2636,7 @@ public final class IntervalUtils {
             if (activeDayFilterMask != 0 && activeExchangeSchedule == null) {
                 if (applyEncoded) {
                     // expandMultiDay=false: appendDate always produces full "YYYY-MM-DD" dates
-                    applyDayFilter(timestampDriver, out, outSizeBeforeElement, dayFilterMask, false);
+                    applyDayFilter(timestampDriver, out, outSizeBeforeElement, dayFilterMask, true);
                 } else {
                     setDayFilterMaskOnEncodedIntervals(out, outSizeBeforeElement, dayFilterMask);
                 }

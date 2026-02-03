@@ -339,7 +339,7 @@ public class TickExprTest {
 
     @Test
     public void testBracketExpansionHourWithSpaceSeparator() throws SqlException {
-        // Tests bracket in hour position with space separator
+        // Tests bracket in hour position with space separator.
         // Space separator produces point timestamps (lo=hi)
         assertBracketInterval(
                 "[{lo=2018-01-10T08:30:00.000000Z, hi=2018-01-10T08:30:00.000000Z},{lo=2018-01-10T14:30:00.000000Z, hi=2018-01-10T14:30:00.000000Z}]",
