@@ -45,12 +45,8 @@ import org.junit.Test;
 
 /**
  * Tests for TICK expression parsing with tick calendars.
- * Uses TestTickCalendarService with hardcoded XNYS and XHKG schedules for 2025.
- * <p>
- * 2025 Calendar Reference (used throughout):
- * - Jan 20 (Mon), 21 (Tue), 22 (Wed), 23 (Thu), 24 (Fri), 25 (Sat), 26 (Sun)
- * - Jan 27 (Mon), 28 (Tue), 29 (Wed), 30 (Thu), 31 (Fri), Feb 1 (Sat), Feb 2 (Sun)
- * - Feb 3 (Mon), 4 (Tue), 5 (Wed), 6 (Thu), 7 (Fri), 8 (Sat), 9 (Sun)
+ * Uses TestTickCalendarService with hardcoded XNYS and XHKG schedules for 2025,
+ * covering regular trading weeks, bank holidays, and early closes for both exchanges.
  */
 public class TickCalendarTest {
 
@@ -552,15 +548,30 @@ public class TickCalendarTest {
     }
 
     @Test
-    public void testHongKongDateRange() throws SqlException {
-        // Date range with XHKG - each trading day produces two intervals
-        // 2025-02-[03..04] - Mon, Tue
+    public void testHongKongChristmas() throws SqlException {
+        // XHKG around Christmas 2025
+        // Dec 23 (Tue) full trading, Dec 24 (Wed) morning only (Christmas Eve early close),
+        // Dec 25 (Thu) Christmas, Dec 26 (Fri) Boxing Day, Dec 27-28 (weekend), Dec 29 (Mon) full
         assertTickInterval(
-                "[{lo=2025-02-03T01:30:00.000000Z, hi=2025-02-03T03:59:59.999999Z}," +
-                        "{lo=2025-02-03T05:00:00.000000Z, hi=2025-02-03T07:59:59.999999Z}," +
-                        "{lo=2025-02-04T01:30:00.000000Z, hi=2025-02-04T03:59:59.999999Z}," +
-                        "{lo=2025-02-04T05:00:00.000000Z, hi=2025-02-04T07:59:59.999999Z}]",
-                "2025-02-[03..04]#XHKG"
+                "[{lo=2025-12-23T01:30:00.000000Z, hi=2025-12-23T03:59:59.999999Z}," +
+                        "{lo=2025-12-23T05:00:00.000000Z, hi=2025-12-23T07:59:59.999999Z}," +
+                        "{lo=2025-12-24T01:30:00.000000Z, hi=2025-12-24T03:59:59.999999Z}," +
+                        "{lo=2025-12-29T01:30:00.000000Z, hi=2025-12-29T03:59:59.999999Z}," +
+                        "{lo=2025-12-29T05:00:00.000000Z, hi=2025-12-29T07:59:59.999999Z}]",
+                "2025-12-[23..29]#XHKG"
+        );
+    }
+
+    @Test
+    public void testHongKongDateRange() throws SqlException {
+        // Date range with XHKG spanning Ching Ming Festival (Apr 4) and weekend
+        // 2025-04-[03..07] - Thu to Mon; Apr 4 (Ching Ming) and Apr 5-6 (weekend) excluded
+        assertTickInterval(
+                "[{lo=2025-04-03T01:30:00.000000Z, hi=2025-04-03T03:59:59.999999Z}," +
+                        "{lo=2025-04-03T05:00:00.000000Z, hi=2025-04-03T07:59:59.999999Z}," +
+                        "{lo=2025-04-07T01:30:00.000000Z, hi=2025-04-07T03:59:59.999999Z}," +
+                        "{lo=2025-04-07T05:00:00.000000Z, hi=2025-04-07T07:59:59.999999Z}]",
+                "2025-04-[03..07]#XHKG"
         );
     }
 
@@ -585,6 +596,19 @@ public class TickCalendarTest {
     }
 
     @Test
+    public void testHongKongLunarNewYear() throws SqlException {
+        // XHKG around Lunar New Year 2025
+        // Jan 27 (Mon) full trading, Jan 28 (Tue) morning only (LNY Eve early close),
+        // Jan 29-31 (Wed-Fri) Lunar New Year holidays
+        assertTickInterval(
+                "[{lo=2025-01-27T01:30:00.000000Z, hi=2025-01-27T03:59:59.999999Z}," +
+                        "{lo=2025-01-27T05:00:00.000000Z, hi=2025-01-27T07:59:59.999999Z}," +
+                        "{lo=2025-01-28T01:30:00.000000Z, hi=2025-01-28T03:59:59.999999Z}]",
+                "2025-01-[27..31]#XHKG"
+        );
+    }
+
+    @Test
     public void testHongKongMultipleDays() throws SqlException {
         // Two trading days with lunch breaks - Fri and Mon
         assertTickInterval(
@@ -599,11 +623,11 @@ public class TickCalendarTest {
     @Test
     public void testHongKongSingleDay() throws SqlException {
         // XHKG has lunch break: 01:30-04:00 UTC and 05:00-08:00 UTC
-        // 2025-01-24 (Fri) is a trading day
+        // 2025-10-06 (Mon) is a trading day (the day before Chung Yeung Festival)
         assertTickInterval(
-                "[{lo=2025-01-24T01:30:00.000000Z, hi=2025-01-24T03:59:59.999999Z}," +
-                        "{lo=2025-01-24T05:00:00.000000Z, hi=2025-01-24T07:59:59.999999Z}]",
-                "2025-01-24#XHKG"
+                "[{lo=2025-10-06T01:30:00.000000Z, hi=2025-10-06T03:59:59.999999Z}," +
+                        "{lo=2025-10-06T05:00:00.000000Z, hi=2025-10-06T07:59:59.999999Z}]",
+                "2025-10-06#XHKG"
         );
     }
 
@@ -778,6 +802,32 @@ public class TickCalendarTest {
     }
 
     @Test
+    public void testNyseGoodFriday() throws SqlException {
+        // NYSE week ending on Good Friday (Apr 18), DST active: 13:30-20:00 UTC
+        // Apr 14 (Mon) through Apr 18 (Fri); Apr 18 is Good Friday, closed
+        assertTickInterval(
+                "[{lo=2025-04-14T13:30:00.000000Z, hi=2025-04-14T19:59:59.999999Z}," +
+                        "{lo=2025-04-15T13:30:00.000000Z, hi=2025-04-15T19:59:59.999999Z}," +
+                        "{lo=2025-04-16T13:30:00.000000Z, hi=2025-04-16T19:59:59.999999Z}," +
+                        "{lo=2025-04-17T13:30:00.000000Z, hi=2025-04-17T19:59:59.999999Z}]",
+                "2025-04-[14..18]#XNYS"
+        );
+    }
+
+    @Test
+    public void testNyseIndependenceDayEarlyClose() throws SqlException {
+        // NYSE around Independence Day 2025, DST active: normal hours 13:30-20:00 UTC
+        // Jul 2 (Wed) normal, Jul 3 (Thu) early close at 17:00 UTC (1:00 PM ET),
+        // Jul 4 (Fri) Independence Day, Jul 5-6 (weekend), Jul 7 (Mon) normal
+        assertTickInterval(
+                "[{lo=2025-07-02T13:30:00.000000Z, hi=2025-07-02T19:59:59.999999Z}," +
+                        "{lo=2025-07-03T13:30:00.000000Z, hi=2025-07-03T16:59:59.999999Z}," +
+                        "{lo=2025-07-07T13:30:00.000000Z, hi=2025-07-07T19:59:59.999999Z}]",
+                "2025-07-[02..07]#XNYS"
+        );
+    }
+
+    @Test
     public void testNyseIsoWeek() throws SqlException {
         // ISO week 2025-W05 is Mon Jan 27 to Sun Feb 2
         // NYSE trading days in that week: Mon, Tue, Wed, Thu, Fri (Jan 27-31)
@@ -806,11 +856,23 @@ public class TickCalendarTest {
 
     @Test
     public void testNyseSingleDay() throws SqlException {
-        // XNYS (NYSE) has no lunch break: 14:30-21:00 UTC
-        // 2025-01-24 is Friday
+        // XNYS (NYSE) has no lunch break: 13:30-20:00 UTC (DST active in Sep)
+        // 2025-09-15 is Monday
         assertTickInterval(
-                "[{lo=2025-01-24T14:30:00.000000Z, hi=2025-01-24T20:59:59.999999Z}]",
-                "2025-01-24#XNYS"
+                "[{lo=2025-09-15T13:30:00.000000Z, hi=2025-09-15T19:59:59.999999Z}]",
+                "2025-09-15#XNYS"
+        );
+    }
+
+    @Test
+    public void testNyseThanksgivingEarlyClose() throws SqlException {
+        // NYSE around Thanksgiving 2025, post-DST: normal hours 14:30-21:00 UTC
+        // Nov 26 (Wed) normal, Nov 27 (Thu) Thanksgiving (closed),
+        // Nov 28 (Fri) Black Friday early close at 18:00 UTC (1:00 PM ET)
+        assertTickInterval(
+                "[{lo=2025-11-26T14:30:00.000000Z, hi=2025-11-26T20:59:59.999999Z}," +
+                        "{lo=2025-11-28T14:30:00.000000Z, hi=2025-11-28T17:59:59.999999Z}]",
+                "2025-11-[26..28]#XNYS"
         );
     }
 
