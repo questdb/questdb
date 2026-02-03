@@ -539,12 +539,11 @@ public class TickExprTest {
         // the sub-precision range (e.g., all 999 nanoseconds within that microsecond).
         String input = "2024-01-15T10:00:00.000000;1s500T";
         if (ColumnType.isTimestampNano(timestampType.getTimestampType())) {
-            LongList out1 = new LongList();
             final TimestampDriver timestampDriver = timestampType.getDriver();
-            parseTickExpr(timestampDriver, input, 0, input.length(), 0, out1, IntervalOperation.INTERSECT);
+            parseTickExpr(timestampDriver, input, 0, input.length(), 0, out, IntervalOperation.INTERSECT);
             TestUtils.assertEquals(
                     "[{lo=2024-01-15T10:00:00.000000000Z, hi=2024-01-15T10:00:01.500000999Z}]",
-                    intervalToString(timestampDriver, out1)
+                    intervalToString(timestampDriver, out)
             );
         } else {
             assertBracketInterval(
