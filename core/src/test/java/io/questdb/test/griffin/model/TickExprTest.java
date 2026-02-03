@@ -4271,7 +4271,7 @@ public class TickExprTest {
      * Converts encoded intervals (4-long format) to a readable string for assertions.
      * Format: [{lo=..., hi=..., dayFilter=Mon,Tue,...}]
      */
-    private static CharSequence encodedIntervalToString(TimestampDriver driver, LongList intervals) {
+    private static CharSequence encodedIntervalToSink(TimestampDriver driver, LongList intervals) {
         sink.clear();
         sink.put('[');
         for (int i = 0, n = intervals.size(); i < n; i += 4) {
@@ -4413,7 +4413,7 @@ public class TickExprTest {
                 ColumnType.isTimestampNano(timestampType.getTimestampType())
                         ? expected.replaceAll("00Z", "00000Z").replaceAll("99Z", "99999Z")
                         : expected,
-                encodedIntervalToString(timestampDriver, out)
+                encodedIntervalToSink(timestampDriver, out)
         );
     }
 
@@ -4430,7 +4430,7 @@ public class TickExprTest {
                 ColumnType.isTimestampNano(timestampType.getTimestampType())
                         ? expected.replaceAll("00Z", "00000Z").replaceAll("99Z", "99999Z")
                         : expected,
-                encodedIntervalToString(timestampDriver, out)
+                encodedIntervalToSink(timestampDriver, out)
         );
     }
 
