@@ -28,6 +28,8 @@ import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.file.AppendableBlock;
+import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
@@ -278,6 +280,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private TxReader attachTxReader;
     private long avgRecordSize;
     private boolean avoidIndexOnCommit = false;
+    private BlockFileReader blockFileReader;
     private BlockFileWriter blockFileWriter;
     private int columnCount;
     private long commitRowCount;
@@ -3297,11 +3300,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private static void openMetaFile(FilesFacade ff, Path path, int rootLen, MemoryMR ddlMem, TableWriterMetadata metadata) {
+    private void openMetaFile(FilesFacade ff, Path path, int rootLen, MemoryMR ddlMem, TableWriterMetadata metadata) {
         path.concat(META_FILE_NAME);
-        try (ddlMem) {
-            ddlMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
-            metadata.reload(path, ddlMem);
+        try {
+            // Read metadata from BlockFile format
+            if (blockFileReader == null) {
+                blockFileReader = new BlockFileReader(configuration);
+            }
+            blockFileReader.of(path.$());
+
+            TableMetadataFileBlock.MetadataHolder holder = new TableMetadataFileBlock.MetadataHolder();
+            TableMetadataFileBlock.read(blockFileReader, holder, path);
+            metadata.reloadFromBlockFile(holder);
         } finally {
             path.trimTo(rootLen);
         }
@@ -5246,6 +5256,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(parquetColumnIdsAndTypes);
         Misc.free(segmentCopyInfo);
         Misc.free(walTxnDetails);
+        Misc.free(blockFileReader);
         Misc.free(blockFileWriter);
         tempDirectMemList = Misc.free(tempDirectMemList);
         if (segmentFileCache != null) {
@@ -9604,21 +9615,68 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void rewriteAndSwapMetadata(TableWriterMetadata metadata) {
-        // create new _meta.swp
-        this.metaSwapIndex = rewriteMetadata(metadata);
+        // Atomic metadata update using BlockFile dual-region approach.
+        // No swap files, no prev files, no todo recovery needed.
+        // The BlockFile version counter provides atomic visibility switching.
+        updateMetadataAtomic(metadata);
+    }
 
-        // validate new meta
-        validateSwapMeta();
+    /**
+     * Atomically updates metadata using BlockFile dual-region versioning.
+     * <p>
+     * This replaces the legacy approach of:
+     * 1. Write _meta.swp
+     * 2. Rename _meta to _meta.prev
+     * 3. Write _todo for recovery
+     * 4. Rename _meta.swp to _meta
+     * <p>
+     * With BlockFile:
+     * 1. Write to inactive region (A or B)
+     * 2. Atomic version bump switches readers to new data
+     * <p>
+     * No race conditions, no recovery files needed.
+     */
+    private void updateMetadataAtomic(TableWriterMetadata metadata) {
+        // Increment metadata version
+        int version = txWriter.getMetadataVersion() + 1;
+        metadata.setMetadataVersion(version);
 
-        // rename _meta to _meta.prev
-        renameMetaToMetaPrev();
+        // Ensure BlockFileWriter is initialized
+        if (blockFileWriter == null) {
+            blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
+        }
 
-        // after we moved _meta to _meta.prev
-        // we have to have _todo to restore _meta should anything go wrong
-        writeRestoreMetaTodo();
+        try {
+            path.concat(META_FILE_NAME).$();
+            blockFileWriter.of(path.$());
 
-        // rename _meta.swp to _meta
-        renameSwapMetaToMeta();
+            // Collect column metadata into ObjList for TableMetadataFileBlock
+            ObjList<TableColumnMetadata> columns = new ObjList<>(metadata.getColumnCount());
+            for (int i = 0; i < metadata.getColumnCount(); i++) {
+                columns.add(metadata.getColumnMetadata(i));
+            }
+
+            // Write all blocks atomically
+            TableMetadataFileBlock.write(
+                    blockFileWriter,
+                    metadata.getTableId(),
+                    metadata.getPartitionBy(),
+                    metadata.getTimestampIndex(),
+                    metadata.getMetadataVersion(),
+                    metadata.isWalEnabled(),
+                    metadata.getMaxUncommittedRows(),
+                    metadata.getO3MaxLag(),
+                    metadata.getTtlHoursOrMonths(),
+                    columns
+            );
+            // BlockFileWriter.commit() is called inside TableMetadataFileBlock.write()
+            // which atomically switches readers to the new data
+        } catch (Throwable th) {
+            LOG.critical().$("could not write metadata to BlockFile [path=").$(path).$(']').$();
+            throw th;
+        } finally {
+            path.trimTo(pathSize);
+        }
     }
 
     private int rewriteMetadata(TableWriterMetadata metadata) {

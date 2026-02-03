@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.Telemetry;
 import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
+import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
@@ -590,11 +591,9 @@ public final class TableUtils {
     ) {
         final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRONoCache(ff, path.trimTo(rootLen).$(), LOG) : 0;
         try (MemoryMARW mem = memory) {
-            mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-            mem.jumpTo(0);
+            // Write metadata using BlockFile format for atomic updates
+            writeMetadataBlockFile(ff, blockFileWriter, path.trimTo(rootLen), structure, tableId);
             path.trimTo(rootLen);
-            writeMetadata(structure, tableVersion, tableId, mem);
-            mem.sync(false);
 
             // create symbol maps
             int symbolMapCount = 0;
@@ -2009,6 +2008,86 @@ public final class TableUtils {
 
         for (int i = 0; i < count; i++) {
             mem.putStr(tableStruct.getColumnName(i));
+        }
+    }
+
+    /**
+     * Writes table metadata using BlockFile format for atomic updates.
+     *
+     * @param ff              file facade
+     * @param blockFileWriter writer to use (or null to create a new one)
+     * @param path            path to table directory
+     * @param structure       table structure
+     * @param tableId         table identifier
+     */
+    public static void writeMetadataBlockFile(
+            FilesFacade ff,
+            @Nullable BlockFileWriter blockFileWriter,
+            Path path,
+            TableStructure structure,
+            int tableId
+    ) {
+        int rootLen = path.size();
+        path.concat(META_FILE_NAME).$();
+
+        BlockFileWriter writer = blockFileWriter;
+        boolean ownWriter = false;
+        if (writer == null) {
+            writer = new BlockFileWriter(ff, CommitMode.SYNC);
+            ownWriter = true;
+        }
+
+        try {
+            writer.of(path.$());
+
+            // Collect column metadata
+            ObjList<TableColumnMetadata> columns = new ObjList<>(structure.getColumnCount());
+            for (int i = 0; i < structure.getColumnCount(); i++) {
+                int type = structure.getColumnType(i);
+                int flags = 0;
+                if (structure.isIndexed(i)) {
+                    flags |= TableMetadataFileBlock.FLAG_INDEXED;
+                }
+                if (structure.getSymbolCacheFlag(i)) {
+                    flags |= TableMetadataFileBlock.FLAG_SYMBOL_CACHE;
+                }
+                if (structure.isDedupKey(i)) {
+                    flags |= TableMetadataFileBlock.FLAG_DEDUP_KEY;
+                }
+
+                TableColumnMetadata col = new TableColumnMetadata(
+                        structure.getColumnName(i).toString(),
+                        type,
+                        (flags & TableMetadataFileBlock.FLAG_INDEXED) != 0,
+                        structure.getIndexBlockCapacity(i),
+                        (flags & TableMetadataFileBlock.FLAG_SYMBOL_CACHE) != 0,
+                        null,
+                        i,
+                        (flags & TableMetadataFileBlock.FLAG_DEDUP_KEY) != 0,
+                        -1, // replacingIndex
+                        (flags & TableMetadataFileBlock.FLAG_SYMBOL_CACHE) != 0,
+                        structure.getSymbolCapacity(i)
+                );
+                columns.add(col);
+            }
+
+            TableMetadataFileBlock.write(
+                    writer,
+                    tableId,
+                    structure.getPartitionBy(),
+                    structure.getTimestampIndex(),
+                    0, // metadataVersion starts at 0
+                    structure.isWalEnabled(),
+                    structure.getMaxUncommittedRows(),
+                    structure.getO3MaxLag(),
+                    structure.getTtlHoursOrMonths(),
+                    columns
+            );
+        } finally {
+            path.trimTo(rootLen);
+            if (ownWriter) {
+                writer.close();
+            }
         }
     }
 

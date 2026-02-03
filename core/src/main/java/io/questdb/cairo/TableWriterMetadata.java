@@ -175,6 +175,55 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         }
     }
 
+    /**
+     * Reloads metadata from a BlockFile format _meta file.
+     *
+     * @param holder the metadata holder populated by TableMetadataFileBlock.read()
+     */
+    public final void reloadFromBlockFile(TableMetadataFileBlock.MetadataHolder holder) {
+        this.partitionBy = holder.partitionBy;
+        this.columnCount = holder.columnCount;
+        this.tableId = holder.tableId;
+        this.maxUncommittedRows = holder.maxUncommittedRows;
+        this.o3MaxLag = holder.o3MaxLag;
+        this.timestampIndex = holder.timestampIndex;
+        this.metadataVersion = holder.metadataVersion;
+        this.walEnabled = holder.walEnabled;
+        this.ttlHoursOrMonths = holder.ttlHoursOrMonths;
+
+        this.columnMetadata.clear();
+        this.columnNameIndexMap.clear();
+        this.symbolMapCount = 0;
+
+        for (int i = 0, n = holder.columns.size(); i < n; i++) {
+            TableColumnMetadata col = holder.columns.getQuick(i);
+            int type = col.getColumnType();
+            String nameStr = col.getColumnName();
+
+            columnMetadata.add(
+                    new WriterTableColumnMetadata(
+                            nameStr,
+                            type,
+                            col.isSymbolIndexFlag(),
+                            col.getIndexValueBlockCapacity(),
+                            true,
+                            null,
+                            col.getWriterIndex(),
+                            col.getSymbolCapacity(),
+                            col.isDedupKeyFlag(),
+                            col.getReplacingIndex(),
+                            col.isSymbolCacheFlag()
+                    )
+            );
+            if (type > -1) {
+                columnNameIndexMap.put(nameStr, i);
+                if (ColumnType.isSymbol(type)) {
+                    symbolMapCount++;
+                }
+            }
+        }
+    }
+
     public void setMaxUncommittedRows(int rows) {
         this.maxUncommittedRows = rows;
     }

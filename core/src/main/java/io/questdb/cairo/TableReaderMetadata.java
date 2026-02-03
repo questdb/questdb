@@ -24,36 +24,31 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMA;
-import io.questdb.cairo.vm.api.MemoryMR;
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.IntList;
-import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.TableUtils.validationException;
-
 public class TableReaderMetadata extends AbstractRecordMetadata implements TableMetadata, Mutable {
     protected final CairoConfiguration configuration;
-    private final IntList columnOrderList = new IntList();
     private final FilesFacade ff;
-    private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
-    private boolean isCopy;
+    private final TableMetadataFileBlock.MetadataHolder holder = new TableMetadataFileBlock.MetadataHolder();
+    private final TableMetadataFileBlock.MetadataHolder transitionHolder = new TableMetadataFileBlock.MetadataHolder();
+    private BlockFileReader blockFileReader;
+    private MemoryCMR dumpMem; // reusable memory for dumpTo
     private boolean isSoftLink;
     private int maxUncommittedRows;
-    private MemoryCARW metaCopyMem; // used when loadFrom() called
-    private MemoryMR metaMem;
     private long metadataVersion;
     private long o3MaxLag;
     private int partitionBy;
@@ -62,7 +57,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private int tableId;
     private TableToken tableToken;
     private TableReaderMetadataTransitionIndex transitionIndex;
-    private MemoryMR transitionMeta;
     private int ttlHoursOrMonths;
     private boolean walEnabled;
     private int writerColumnCount;
@@ -76,8 +70,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             this.path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
             this.plen = path.size();
             this.isSoftLink = Files.isSoftLink(path.$());
-            this.metaMem = Vm.getCMRInstance();
-            this.metaCopyMem = Vm.getCARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_METADATA_READER);
+            this.blockFileReader = new BlockFileReader(configuration);
         } catch (Throwable th) {
             close();
             throw th;
@@ -89,38 +82,25 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.tableToken = null;
-        this.metaMem = Vm.getCMRInstance();
+        this.blockFileReader = new BlockFileReader(configuration);
     }
 
     public TableReaderMetadataTransitionIndex applyTransition() {
-        // Swap meta and transitionMeta. It's fine if we're dealing with
-        // a metadata copy and metaMem wasn't initialized.
-        MemoryMR temp = this.metaMem;
-        this.metaMem = this.transitionMeta;
-        transitionMeta = temp;
-        isCopy = false;
-        Misc.free(transitionMeta); // memory is safe to double close, do not assign null to transitionMeta
-        Misc.free(metaCopyMem); // close copy memory in case if it was in-use
-
-        return applyTransition0(metaMem, columnCount);
+        // Apply the transition from transitionHolder to current metadata
+        return applyTransition0(transitionHolder, columnCount);
     }
 
     public TableReaderMetadataTransitionIndex applyTransitionFrom(TableReaderMetadata srcMeta) {
-        copyMemFrom(srcMeta);
-        isCopy = true;
-        Misc.free(metaMem);
-        Misc.free(transitionMeta);
-
-        return applyTransition0(metaCopyMem, columnCount);
+        // Copy metadata from srcMeta's holder
+        copyHolderFrom(srcMeta.holder);
+        return applyTransition0(holder, columnCount);
     }
 
     @Override
     public void clear() {
         super.clear();
-        Misc.free(metaMem);
-        Misc.free(metaCopyMem);
-        Misc.free(transitionMeta);
-        isCopy = false;
+        holder.clear();
+        transitionHolder.clear();
         partitionBy = 0;
         walEnabled = false;
         metadataVersion = 0;
@@ -133,23 +113,47 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
     @Override
     public void close() {
-        metaMem = Misc.free(metaMem);
-        metaCopyMem = Misc.free(metaCopyMem);
-        transitionMeta = Misc.free(transitionMeta);
+        blockFileReader = Misc.free(blockFileReader);
+        dumpMem = Misc.free(dumpMem);
         path = Misc.free(path);
-        isCopy = false;
     }
 
+    /**
+     * Copies column metadata to a list for external use.
+     *
+     * @return list of column metadata
+     */
+    public ObjList<TableColumnMetadata> copyColumns() {
+        ObjList<TableColumnMetadata> result = new ObjList<>(holder.columns.size());
+        result.addAll(holder.columns);
+        return result;
+    }
+
+    /**
+     * Dumps the metadata file content to the given memory for checkpoint/backup purposes.
+     * Reconstructs the metadata file path and copies raw bytes via memory mapping.
+     *
+     * @param mem the memory to dump to
+     */
     public void dumpTo(MemoryMA mem) {
-        // This may be mmapped _meta file or its copy.
-        final MemoryR metaMem = getMetaMem();
-        // Since _meta files are immutable and get updated with a single atomic rename
-        // operation replacing the old file with the new one, it's ok to clone the metadata
-        // by copying metaMem's contents. Even if _meta file was already replaced, the file
-        // should be still kept on disk until inode's ref counter is above zero.
-        long len = metaMem.size();
-        for (long p = 0; p < len; p++) {
-            mem.putByte(metaMem.getByte(p));
+        // Reconstruct metadata file path
+        int savedLen = path.size();
+        try {
+            path.trimTo(plen).concat(TableUtils.META_FILE_NAME).$();
+
+            // Use memory mapping for efficient copying (like original implementation)
+            if (dumpMem == null) {
+                dumpMem = Vm.getCMRInstance();
+            }
+            dumpMem.smallFile(ff, path.$(), MemoryTag.NATIVE_METADATA_READER);
+            long len = dumpMem.size();
+            for (long p = 0; p < len; p++) {
+                mem.putByte(dumpMem.getByte(p));
+            }
+        } finally {
+            path.trimTo(savedLen);
+            Misc.free(dumpMem);
+            dumpMem = null;
         }
     }
 
@@ -232,11 +236,10 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
     public void loadMetadata(LPSZ path) {
         try {
-            isCopy = false;
-            Misc.free(metaCopyMem);
-            metaMem.smallFile(ff, path, MemoryTag.NATIVE_TABLE_READER);
-            TableUtils.validateMeta(path, metaMem, null, ColumnType.VERSION);
-            readFromMem(metaMem);
+            blockFileReader.of(path);
+            Path pathWrapper = Path.getThreadLocal(path);
+            TableMetadataFileBlock.read(blockFileReader, holder, pathWrapper);
+            readFromHolder(holder);
         } catch (Throwable e) {
             clear();
             throw e;
@@ -269,13 +272,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
     public void loadFrom(TableReaderMetadata srcMeta) {
         assert tableToken.equals(srcMeta.tableToken);
-        // Copy src meta memory.
-        copyMemFrom(srcMeta);
+        // Copy src meta holder.
+        copyHolderFrom(srcMeta.holder);
         // Now, read it.
         try {
-            isCopy = true;
-            Misc.free(metaMem);
-            readFromMem(metaCopyMem);
+            readFromHolder(holder);
         } catch (Throwable e) {
             clear();
             throw e;
@@ -283,75 +284,66 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     public boolean prepareTransition(long txnMetadataVersion) {
-        if (transitionMeta == null) {
-            transitionMeta = Vm.getCMRInstance();
-        }
-
         path.trimTo(plen).concat(TableUtils.META_FILE_NAME);
-        transitionMeta.smallFile(ff, path.$(), MemoryTag.NATIVE_TABLE_READER);
-        if (transitionMeta.size() >= TableUtils.META_OFFSET_METADATA_VERSION + 8
-                && txnMetadataVersion != transitionMeta.getLong(TableUtils.META_OFFSET_METADATA_VERSION)) {
+        blockFileReader.of(path.$());
+        TableMetadataFileBlock.read(blockFileReader, transitionHolder, path);
+
+        // Check if version matches
+        if (txnMetadataVersion != transitionHolder.metadataVersion) {
             // No match
             return false;
         }
-
-        tmpValidationMap.clear();
-        TableUtils.validateMeta(path, transitionMeta, tmpValidationMap, ColumnType.VERSION);
         return true;
     }
 
-    public void readFromMem(MemoryR mem) {
-        int columnCount = mem.getInt(TableUtils.META_OFFSET_COUNT);
-        this.writerColumnCount = columnCount;
-        int timestampIndex = mem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-        this.partitionBy = mem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
-        this.tableId = mem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-        this.maxUncommittedRows = mem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
-        this.o3MaxLag = mem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
-        this.metadataVersion = mem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
-        this.walEnabled = mem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
-        this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(mem);
+    /**
+     * Reads metadata fields from a MetadataHolder into this instance.
+     */
+    private void readFromHolder(TableMetadataFileBlock.MetadataHolder h) {
+        this.writerColumnCount = h.columnCount;
+        int timestampWriterIndex = h.timestampIndex;
+        this.partitionBy = h.partitionBy;
+        this.tableId = h.tableId;
+        this.maxUncommittedRows = h.maxUncommittedRows;
+        this.o3MaxLag = h.o3MaxLag;
+        this.metadataVersion = h.metadataVersion;
+        this.walEnabled = h.walEnabled;
+        this.ttlHoursOrMonths = h.ttlHoursOrMonths;
         this.columnMetadata.clear();
         this.timestampIndex = -1;
-
-        TableUtils.buildColumnListFromMetadataFile(mem, columnCount, columnOrderList);
         this.columnNameIndexMap.clear();
 
-        for (int i = 0, n = columnOrderList.size(); i < n; i += 3) {
-            int writerIndex = columnOrderList.get(i);
-            if (writerIndex < 0) {
-                continue;
-            }
-            int stableIndex = i / 3;
-            CharSequence name = mem.getStrA(columnOrderList.get(i + 1));
-            int denseSymbolIndex = columnOrderList.get(i + 2);
-
-            assert name != null;
-            int columnType = TableUtils.getColumnType(mem, writerIndex);
+        int denseSymbolIndex = 0;
+        for (int i = 0, n = h.columns.size(); i < n; i++) {
+            TableColumnMetadata col = h.columns.getQuick(i);
+            int columnType = col.getColumnType();
+            int writerIndex = col.getWriterIndex();
 
             if (columnType > -1) {
-                String colName = Chars.toString(name);
+                String colName = col.getColumnName();
+                int symbolIndex = ColumnType.isSymbol(columnType) ? denseSymbolIndex++ : -1;
                 columnMetadata.add(
                         new TableReaderMetadataColumn(
                                 colName,
                                 columnType,
-                                TableUtils.isColumnIndexed(mem, writerIndex),
-                                TableUtils.getIndexBlockCapacity(mem, writerIndex),
+                                col.isSymbolIndexFlag(),
+                                col.getIndexValueBlockCapacity(),
                                 true,
                                 null,
                                 writerIndex,
-                                TableUtils.isColumnDedupKey(mem, writerIndex),
-                                denseSymbolIndex,
-                                stableIndex,
-                                TableUtils.isSymbolCached(mem, writerIndex),
-                                TableUtils.getSymbolCapacity(mem, writerIndex)
+                                col.isDedupKeyFlag(),
+                                symbolIndex,
+                                i, // stableIndex
+                                col.isSymbolCacheFlag(),
+                                col.getSymbolCapacity()
                         )
                 );
                 int denseIndex = columnMetadata.size() - 1;
                 if (!columnNameIndexMap.put(colName, denseIndex)) {
-                    throw validationException(mem).put("Duplicate column [name=").put(name).put("] at ").put(i);
+                    throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                            .put("Duplicate column [name=").put(colName).put("] at ").put(i);
                 }
-                if (writerIndex == timestampIndex) {
+                if (writerIndex == timestampWriterIndex) {
                     this.timestampIndex = denseIndex;
                 }
             }
@@ -363,24 +355,20 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.tableToken = tableToken;
     }
 
-    private TableReaderMetadataTransitionIndex applyTransition0(MemoryR newMetaMem, int existingColumnCount) {
+    private TableReaderMetadataTransitionIndex applyTransition0(TableMetadataFileBlock.MetadataHolder newHolder, int existingColumnCount) {
         columnNameIndexMap.clear();
 
-        int columnCount = newMetaMem.getInt(TableUtils.META_OFFSET_COUNT);
-        this.writerColumnCount = columnCount;
-        assert columnCount >= existingColumnCount;
-        columnMetadata.setPos(columnCount);
-        int timestampIndex = newMetaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-        this.tableId = newMetaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-        this.metadataVersion = newMetaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
-        this.maxUncommittedRows = newMetaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
-        this.o3MaxLag = newMetaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
-        this.walEnabled = newMetaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
-        this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(newMetaMem);
-
-        int shiftLeft = 0, existingIndex = 0;
-        TableUtils.buildColumnListFromMetadataFile(newMetaMem, columnCount, columnOrderList);
-        int newColumnCount = newMetaMem.getInt(TableUtils.META_OFFSET_COUNT);
+        int newColumnCount = newHolder.columnCount;
+        this.writerColumnCount = newColumnCount;
+        assert newColumnCount >= existingColumnCount;
+        columnMetadata.setPos(newColumnCount);
+        int timestampWriterIndex = newHolder.timestampIndex;
+        this.tableId = newHolder.tableId;
+        this.metadataVersion = newHolder.metadataVersion;
+        this.maxUncommittedRows = newHolder.maxUncommittedRows;
+        this.o3MaxLag = newHolder.o3MaxLag;
+        this.walEnabled = newHolder.walEnabled;
+        this.ttlHoursOrMonths = newHolder.ttlHoursOrMonths;
 
         if (transitionIndex == null) {
             transitionIndex = new TableReaderMetadataTransitionIndex();
@@ -388,30 +376,28 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             transitionIndex.clear();
         }
 
-        TableUtils.buildColumnListFromMetadataFile(newMetaMem, newColumnCount, columnOrderList);
-        for (int i = 0, n = columnOrderList.size(); i < n; i += 3) {
-            int stableIndex = i / 3;
-            int writerIndex = columnOrderList.get(i);
-            if (writerIndex < 0) {
-                continue;
-            }
-            CharSequence name = newMetaMem.getStrA(columnOrderList.get(i + 1));
-            assert name != null;
-            int denseSymbolIndex = columnOrderList.get(i + 2);
-            int newColumnType = TableUtils.getColumnType(newMetaMem, writerIndex);
-            int columnType = TableUtils.getColumnType(newMetaMem, writerIndex);
-            boolean isIndexed = TableUtils.isColumnIndexed(newMetaMem, writerIndex);
-            boolean isDedupKey = TableUtils.isColumnDedupKey(newMetaMem, writerIndex);
-            int indexBlockCapacity = TableUtils.getIndexBlockCapacity(newMetaMem, writerIndex);
-            boolean symbolIsCached = TableUtils.isSymbolCached(newMetaMem, writerIndex);
-            int symbolCapacity = TableUtils.getSymbolCapacity(newMetaMem, writerIndex);
+        int shiftLeft = 0, existingIndex = 0;
+        int denseSymbolIndex = 0;
+        ObjList<TableColumnMetadata> newColumns = newHolder.columns;
+
+        for (int i = 0, n = newColumns.size(); i < n; i++) {
+            TableColumnMetadata newCol = newColumns.getQuick(i);
+            int writerIndex = newCol.getWriterIndex();
+            int columnType = newCol.getColumnType();
+            String name = newCol.getColumnName();
+            boolean isIndexed = newCol.isSymbolIndexFlag();
+            boolean isDedupKey = newCol.isDedupKeyFlag();
+            int indexBlockCapacity = newCol.getIndexValueBlockCapacity();
+            boolean symbolIsCached = newCol.isSymbolCacheFlag();
+            int symbolCapacity = newCol.getSymbolCapacity();
+            int symbolIndex = ColumnType.isSymbol(columnType) ? denseSymbolIndex++ : -1;
+
             TableReaderMetadataColumn existing = null;
-            String newName;
 
             if (existingIndex < existingColumnCount) {
                 existing = (TableReaderMetadataColumn) columnMetadata.getQuick(existingIndex);
                 int existingStableIndex = existing.getStableIndex();
-                if (existingStableIndex > stableIndex && columnType < 0) {
+                if (existingStableIndex > i && columnType < 0) {
                     // This column must be deleted so existing dense columns do not contain it
                     continue;
                 }
@@ -424,7 +410,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             // "copy from" == Integer.MIN_VALUE  indicates that column is deleted for good and should not be re-added from any source
 
             int outIndex = existingIndex - shiftLeft;
-            if (newColumnType < 0) {
+            if (columnType < 0) {
                 shiftLeft++; // Deleted in new
                 if (existing != null) {
                     transitionIndex.markDeleted(existingIndex);
@@ -432,7 +418,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             } else {
                 // existing column
                 boolean rename = existing != null && !Chars.equals(existing.getColumnName(), name);
-                newName = rename || existing == null ? Chars.toString(name) : existing.getColumnName();
+                String newName = rename || existing == null ? name : existing.getColumnName();
 
                 if (rename
                         || existing == null
@@ -440,8 +426,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                         || existing.isSymbolIndexFlag() != isIndexed
                         || existing.getIndexValueBlockCapacity() != indexBlockCapacity
                         || existing.isDedupKeyFlag() != isDedupKey
-                        || existing.getDenseSymbolIndex() != denseSymbolIndex
-                        || existing.getStableIndex() != stableIndex
+                        || existing.getDenseSymbolIndex() != symbolIndex
+                        || existing.getStableIndex() != i
                 ) {
                     // new
                     columnMetadata.setQuick(
@@ -455,8 +441,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                                     null,
                                     writerIndex,
                                     isDedupKey,
-                                    denseSymbolIndex,
-                                    stableIndex,
+                                    symbolIndex,
+                                    i, // stableIndex
                                     symbolIsCached,
                                     symbolCapacity
                             )
@@ -476,7 +462,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                     }
                 }
                 columnNameIndexMap.put(newName, outIndex);
-                if (timestampIndex == writerIndex) {
+                if (timestampWriterIndex == writerIndex) {
                     this.timestampIndex = outIndex;
                 }
             }
@@ -485,23 +471,28 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
         columnMetadata.setPos(existingIndex - shiftLeft);
         this.columnCount = columnMetadata.size();
-        if (timestampIndex < 0) {
-            this.timestampIndex = timestampIndex;
+        if (timestampWriterIndex < 0) {
+            this.timestampIndex = timestampWriterIndex;
         }
 
         return transitionIndex;
     }
 
-    private void copyMemFrom(TableReaderMetadata srcMeta) {
-        final MemoryR srcMetaMem = srcMeta.getMetaMem();
-        long len = srcMetaMem.size();
-        metaCopyMem.jumpTo(0);
-        for (long p = 0; p < len; p++) {
-            metaCopyMem.putByte(srcMetaMem.getByte(p));
+    private void copyHolderFrom(TableMetadataFileBlock.MetadataHolder src) {
+        holder.tableId = src.tableId;
+        holder.partitionBy = src.partitionBy;
+        holder.timestampIndex = src.timestampIndex;
+        holder.columnCount = src.columnCount;
+        holder.metadataVersion = src.metadataVersion;
+        holder.walEnabled = src.walEnabled;
+        holder.maxUncommittedRows = src.maxUncommittedRows;
+        holder.o3MaxLag = src.o3MaxLag;
+        holder.ttlHoursOrMonths = src.ttlHoursOrMonths;
+        holder.columns.clear();
+        holder.columns.addAll(src.columns);
+        holder.columnNameIndexMap.clear();
+        for (int i = 0, n = src.columns.size(); i < n; i++) {
+            holder.columnNameIndexMap.put(src.columns.getQuick(i).getColumnName(), i);
         }
-    }
-
-    private MemoryR getMetaMem() {
-        return !isCopy ? metaMem : metaCopyMem;
     }
 }

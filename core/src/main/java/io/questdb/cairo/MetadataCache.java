@@ -25,9 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.TelemetryConfigLogger;
+import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.sql.TableMetadata;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -35,16 +34,13 @@ import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
@@ -63,8 +59,7 @@ public class MetadataCache implements QuietCloseable {
     private final CairoEngine engine;
     private final SimpleReadWriteLock rwLock = new SimpleReadWriteLock();
     private final CharSequenceObjHashMap<CairoTable> tableMap = new CharSequenceObjHashMap<>();
-    private ColumnVersionReader columnVersionReader;
-    private MemoryCMR metaMem = Vm.getCMRInstance();
+    private BlockFileReader blockFileReader;
     private long version;
 
     public MetadataCache(CairoEngine engine) {
@@ -73,7 +68,7 @@ public class MetadataCache implements QuietCloseable {
 
     @Override
     public void close() {
-        metaMem = Misc.free(metaMem);
+        blockFileReader = Misc.free(blockFileReader);
         tableMap.clear();
     }
 
@@ -136,14 +131,6 @@ public class MetadataCache implements QuietCloseable {
         return cacheWriter;
     }
 
-    private @NotNull ColumnVersionReader getColumnVersionReader() {
-        //noinspection ReplaceNullCheck
-        if (columnVersionReader != null) {
-            return columnVersionReader;
-        }
-        return columnVersionReader = new ColumnVersionReader();
-    }
-
     private void hydrateTableStartup(@NotNull TableToken token, boolean throwError) {
         if (engine.isTableDropped(token)) {
             // Table writer can still process some transactions when DROP table has already
@@ -171,13 +158,17 @@ public class MetadataCache implements QuietCloseable {
         CairoTable table = new CairoTable(token);
 
         try {
-            // open metadata
-            metaMem.smallFile(engine.getConfiguration().getFilesFacade(), path.$(), MemoryTag.NATIVE_METADATA_READER);
-            TableUtils.validateMeta(path, metaMem, null, ColumnType.VERSION);
+            // open metadata using BlockFile format
+            if (blockFileReader == null) {
+                blockFileReader = new BlockFileReader(engine.getConfiguration());
+            }
+            blockFileReader.of(path.$());
+            TableMetadataFileBlock.MetadataHolder holder = new TableMetadataFileBlock.MetadataHolder();
+            TableMetadataFileBlock.read(blockFileReader, holder, path);
 
             table.setMetadataVersion(Long.MIN_VALUE);
 
-            long metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
+            long metadataVersion = holder.metadataVersion;
 
             // make sure we aren't duplicating work
             CairoTable potentiallyExistingTable = tableMap.get(token.getTableName());
@@ -189,7 +180,7 @@ public class MetadataCache implements QuietCloseable {
             }
 
             // get basic metadata
-            int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+            int columnCount = holder.columnCount;
 
             LOG.debug().$("reading columns [table=").$(token)
                     .$(", count=").$(columnCount)
@@ -201,34 +192,27 @@ public class MetadataCache implements QuietCloseable {
                     .$(", version=").$(metadataVersion)
                     .I$();
 
-            table.setPartitionBy(metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY));
-            table.setMaxUncommittedRows(metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS));
-            table.setO3MaxLag(metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG));
-            int timestampWriterIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
+            table.setPartitionBy(holder.partitionBy);
+            table.setMaxUncommittedRows(holder.maxUncommittedRows);
+            table.setO3MaxLag(holder.o3MaxLag);
+            int timestampWriterIndex = holder.timestampIndex;
             table.setTimestampIndex(-1);
-            table.setTtlHoursOrMonths(TableUtils.getTtlHoursOrMonths(metaMem));
+            table.setTtlHoursOrMonths(holder.ttlHoursOrMonths);
             table.setSoftLinkFlag(isSoftLink);
 
-            TableUtils.buildColumnListFromMetadataFile(metaMem, columnCount, table.columnOrderList);
-            boolean isMetaFormatUpToDate = TableUtils.isMetaFormatUpToDate(metaMem);
-            // populate columns
-            for (int i = 0, n = table.columnOrderList.size(); i < n; i += 3) {
-                int writerIndex = table.columnOrderList.get(i);
-                // negative writer index columns were "replaced", as in renamed, or had their type changed
-                if (writerIndex < 0) {
-                    continue;
-                }
-
-                CharSequence name = metaMem.getStrA(table.columnOrderList.get(i + 1));
-
-                assert name != null;
-                int columnType = TableUtils.getColumnType(metaMem, writerIndex);
+            // populate columns from BlockFile metadata
+            for (int i = 0, n = holder.columns.size(); i < n; i++) {
+                TableColumnMetadata colMeta = holder.columns.getQuick(i);
+                int columnType = colMeta.getColumnType();
 
                 // negative type means column was deleted
                 if (columnType < 0) {
                     continue;
                 }
-                String columnName = Chars.toString(name);
+
+                String columnName = colMeta.getColumnName();
+                int writerIndex = colMeta.getWriterIndex();
+
                 CairoColumn column = new CairoColumn();
 
                 LOG.debug().$("hydrating column [table=").$(token).$(", column=").$safe(columnName).I$();
@@ -238,10 +222,10 @@ public class MetadataCache implements QuietCloseable {
                 // Column positions already determined
                 column.setPosition(table.getColumnCount());
                 column.setType(columnType);
-                column.setIndexedFlag(TableUtils.isColumnIndexed(metaMem, writerIndex));
-                column.setIndexBlockCapacity(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
+                column.setIndexedFlag(colMeta.isSymbolIndexFlag());
+                column.setIndexBlockCapacity(colMeta.getIndexValueBlockCapacity());
                 column.setSymbolTableStaticFlag(true);
-                column.setDedupKeyFlag(TableUtils.isColumnDedupKey(metaMem, writerIndex));
+                column.setDedupKeyFlag(colMeta.isDedupKeyFlag());
                 column.setWriterIndex(writerIndex);
 
                 boolean isDesignated = writerIndex == timestampWriterIndex;
@@ -258,13 +242,9 @@ public class MetadataCache implements QuietCloseable {
                 }
 
                 if (columnType == ColumnType.SYMBOL) {
-                    if (isMetaFormatUpToDate) {
-                        column.setSymbolCapacity(TableUtils.getSymbolCapacity(metaMem, writerIndex));
-                        column.setSymbolCached(TableUtils.isSymbolCached(metaMem, writerIndex));
-                    } else {
-                        LOG.debug().$("updating symbol capacity [table=").$(token).$(", column=").$safe(columnName).I$();
-                        loadCapacities(column, token, path, engine.getConfiguration(), getColumnVersionReader());
-                    }
+                    // BlockFile format always stores symbol capacity
+                    column.setSymbolCapacity(colMeta.getSymbolCapacity());
+                    column.setSymbolCached(colMeta.isSymbolCacheFlag());
                 }
 
                 table.upsertColumn(column);
@@ -293,69 +273,6 @@ public class MetadataCache implements QuietCloseable {
             if (throwError) {
                 throw e;
             }
-        } finally {
-            Misc.free(metaMem);
-        }
-    }
-
-    private void loadCapacities(
-            CairoColumn column,
-            TableToken token,
-            Path path,
-            CairoConfiguration configuration,
-            ColumnVersionReader columnVersionReader
-    ) {
-        final CharSequence columnName = column.getName();
-        final int writerIndex = column.getWriterIndex();
-
-        try (columnVersionReader) {
-            LOG.debug().$("hydrating symbol metadata [table=").$(token).$(", column=").$safe(columnName).I$();
-
-            // get column version
-            path.trimTo(configuration.getDbRoot().length()).concat(token);
-            final int rootLen = path.size();
-            path.concat(TableUtils.COLUMN_VERSION_FILE_NAME);
-
-            final long symbolTableNameTxn;
-            final FilesFacade ff = configuration.getFilesFacade();
-            try (columnVersionReader) {
-                columnVersionReader.ofRO(ff, path.$());
-                columnVersionReader.readUnsafe();
-                symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(writerIndex);
-            }
-
-            // initialize symbol map memory
-            final long capacityOffset = SymbolMapWriter.HEADER_CAPACITY;
-            final int capacity;
-            final byte isCached;
-            final LPSZ offsetFileName = TableUtils.offsetFileName(path.trimTo(rootLen), columnName, symbolTableNameTxn);
-            long fd = TableUtils.openRO(ff, offsetFileName, LOG);
-            try {
-                // use txn to find the correct symbol entry
-                capacity = ff.readNonNegativeInt(fd, capacityOffset);
-                isCached = ff.readNonNegativeByte(fd, SymbolMapWriter.HEADER_CACHE_ENABLED);
-            } finally {
-                ff.close(fd);
-            }
-
-            // get symbol properties
-            if (capacity > 0 && isCached >= 0) {
-                column.setSymbolCapacity(capacity);
-                column.setSymbolCached(isCached != 0);
-            } else {
-                if (capacity <= 0) {
-                    throw CairoException.nonCritical().put("invalid capacity [table=").put(token.getTableName()).put(", column=").put(columnName)
-                            .put(", capacityOffset=").put(capacityOffset).put(", capacity=").put(capacity).put(']');
-                }
-                throw CairoException.nonCritical().put("invalid cache flag [table=").put(token.getTableName()).put(", column=").put(columnName)
-                        .put(", cacheFlagOffset=").put(SymbolMapWriter.HEADER_CACHE_ENABLED).put(", cacheFlag=").put(isCached).put(']');
-            }
-        } catch (CairoException ex) {
-            // Don't stall startup.
-            LOG.error().$("could not load symbol metadata [table=").$(token).$(", column=").$safe(columnName)
-                    .$(", errno=").$(ex.getErrno())
-                    .$(", message=").$safe(ex.getMessage())
-                    .I$();
         }
     }
 
