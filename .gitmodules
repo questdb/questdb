@@ -14,3 +14,6 @@
 	path = core/src/main/c/share/async-profiler
 	url = https://github.com/async-profiler/async-profiler.git
 	shallow = true
+[submodule "java-questdb-client"]
+	path = java-questdb-client
+	url = git@github.com:questdb/java-questdb-client.git
