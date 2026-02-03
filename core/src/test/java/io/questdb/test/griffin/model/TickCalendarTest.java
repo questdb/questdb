@@ -1126,6 +1126,24 @@ public class TickCalendarTest {
         );
     }
 
+    @Test
+    public void testWorkdayExpressionMatchesXnys() throws SqlException {
+        // 09:30 America/New_York in January (EST, UTC-5) = 14:30 UTC
+        // 6h30m duration from 09:30 = 16:00 ET = 21:00 UTC
+        // This should produce the same intervals as the XNYS exchange calendar
+        LongList out1 = new LongList();
+        LongList out2 = new LongList();
+        TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
+
+        String expr1 = "2025-01-[02..8,10..19,21..31]T09:30@America/New_York#workday;6h30m";
+        String expr2 = "2025-01-[01..31]#XNYS";
+
+        IntervalUtils.parseTickExpr(driver, configuration, expr1, 0, expr1.length(), 0, out1, IntervalOperation.INTERSECT, sink, true);
+        IntervalUtils.parseTickExpr(driver, configuration, expr2, 0, expr2.length(), 0, out2, IntervalOperation.INTERSECT, sink, true);
+
+        Assert.assertEquals(intervalToString(driver, out1), intervalToString(driver, out2));
+    }
+
     private static String intervalToString(TimestampDriver driver, LongList intervals) {
         sink.clear();
         sink.put('[');
