@@ -29,7 +29,7 @@ import io.questdb.FactoryProvider;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.ExchangeCalendarServiceFactory;
+import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalOperation;
@@ -37,22 +37,22 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.cairo.TestExchangeCalendarService;
+import io.questdb.test.cairo.TestTickCalendarService;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 /**
- * Tests for TICK expression parsing with exchange calendars.
- * Uses TestExchangeCalendarService with hardcoded XNYS and XHKG schedules for 2025.
+ * Tests for TICK expression parsing with tick calendars.
+ * Uses TestTickCalendarService with hardcoded XNYS and XHKG schedules for 2025.
  * <p>
  * 2025 Calendar Reference (used throughout):
  * - Jan 20 (Mon), 21 (Tue), 22 (Wed), 23 (Thu), 24 (Fri), 25 (Sat), 26 (Sun)
  * - Jan 27 (Mon), 28 (Tue), 29 (Wed), 30 (Thu), 31 (Fri), Feb 1 (Sat), Feb 2 (Sun)
  * - Feb 3 (Mon), 4 (Tue), 5 (Wed), 6 (Thu), 7 (Fri), 8 (Sat), 9 (Sun)
  */
-public class TickExchangeCalendarTest {
+public class TickCalendarTest {
 
     private static final StringSink sink = new StringSink();
     private static CairoConfiguration configuration;
@@ -62,8 +62,8 @@ public class TickExchangeCalendarTest {
         configuration = new DefaultCairoConfiguration(System.getProperty("java.io.tmpdir")) {
             private final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
                 @Override
-                public @NotNull ExchangeCalendarServiceFactory getExchangeCalendarServiceFactory() {
-                    return () -> TestExchangeCalendarService.INSTANCE;
+                public @NotNull TickCalendarServiceFactory getTickCalendarServiceFactory() {
+                    return () -> TestTickCalendarService.INSTANCE;
                 }
             };
 
@@ -393,7 +393,7 @@ public class TickExchangeCalendarTest {
 
     @Test
     public void testExchangeFilterBinarySearchBoundaries() throws SqlException {
-        // Tests microsecond-precision boundaries of the binary search in applyExchangeCalendarFilter.
+        // Tests microsecond-precision boundaries of the binary search in applyTickCalendarFilter.
         // XNYS Jan 24 2025 (Fri) schedule: open=14:30:00.000000, close=21:00:00.000000 (exclusive after -1).
 
         // (1) Query at exact open microsecond -> single-microsecond overlap
@@ -673,7 +673,7 @@ public class TickExchangeCalendarTest {
     @Test
     public void testNanosecondTimestampBoundaries() throws SqlException {
         // Tests nanosecond-precision boundaries exercising the nanos-to-micros rounding
-        // in applyExchangeCalendarFilter's binary search.
+        // in applyTickCalendarFilter's binary search.
         // XNYS Jan 24 2025 (Fri) schedule in micros: open=14:30:00.000000, close=21:00:00.000000
         // After nanos conversion: open=14:30:00.000000000, last_trading_ns=20:59:59.999999999
 
@@ -759,7 +759,7 @@ public class TickExchangeCalendarTest {
 
     @Test
     public void testNyseDateList() throws SqlException {
-        // Explicit date list with exchange calendar - Mon and Wed
+        // Explicit date list with tick calendar - Mon and Wed
         assertTickInterval(
                 "[{lo=2025-01-27T14:30:00.000000Z, hi=2025-01-27T20:59:59.999999Z}," +
                         "{lo=2025-01-29T14:30:00.000000Z, hi=2025-01-29T20:59:59.999999Z}]",
@@ -816,7 +816,7 @@ public class TickExchangeCalendarTest {
 
     @Test
     public void testNyseWithDateRange() throws SqlException {
-        // Date range with exchange calendar
+        // Date range with tick calendar
         // 2025-01-[24..28] spans Fri, Sat, Sun, Mon, Tue - trading days are Fri, Mon, Tue
         assertTickInterval(
                 "[{lo=2025-01-24T14:30:00.000000Z, hi=2025-01-24T20:59:59.999999Z}," +

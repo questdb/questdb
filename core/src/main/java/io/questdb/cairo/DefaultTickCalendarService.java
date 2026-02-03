@@ -27,27 +27,15 @@ package io.questdb.cairo;
 import io.questdb.std.LongList;
 import org.jetbrains.annotations.Nullable;
 
-/**
- * Service providing exchange trading schedules for use in TICK interval expressions.
- * <p>
- * The schedule is returned as a {@link LongList} of [lo, hi] timestamp pairs representing
- * trading hours. This can be intersected with query intervals using
- * {@link io.questdb.griffin.model.IntervalUtils#intersectInPlace}.
- */
-public interface ExchangeCalendarService {
+public class DefaultTickCalendarService implements TickCalendarService {
+    public static final TickCalendarService INSTANCE = new DefaultTickCalendarService();
 
-    /**
-     * Returns the trading schedule for the specified exchange.
-     * <p>
-     * The returned {@link LongList} contains pairs of timestamps [lo, hi] representing
-     * trading sessions. Timestamps are in microseconds since epoch (UTC).
-     * <p>
-     * The schedule covers all known trading days (past and future) for the exchange.
-     * Weekends and holidays are excluded.
-     *
-     * @param exchange the exchange identifier (e.g., "NYSE", "LSE"), case-insensitive
-     * @return the trading schedule as interval pairs, or null if exchange is not found
-     */
+    private DefaultTickCalendarService() {
+    }
+
+    @Override
     @Nullable
-    LongList getSchedule(CharSequence exchange);
+    public LongList getSchedule(CharSequence exchange) {
+        return null;
+    }
 }

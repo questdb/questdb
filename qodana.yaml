@@ -38,7 +38,7 @@ exclude:
   - name: unused
     paths:
       - benchmarks
-      - core/src/main/java/io/questdb/cairo/ExchangeCalendarService.java
+      - core/src/main/java/io/questdb/cairo/TickCalendarService.java
   # Exclude noisy style/migration inspections globally
   - name: EmptyMethod
   - name: JavadocBlankLines
@@ -69,8 +69,8 @@ exclude:
   - name: SameReturnValue
     paths:
       - core/src/test
-      - core/src/main/java/io/questdb/cairo/ExchangeCalendarService.java
-      - core/src/main/java/io/questdb/cairo/ExchangeCalendarServiceFactory.java
+      - core/src/main/java/io/questdb/cairo/TickCalendarService.java
+      - core/src/main/java/io/questdb/cairo/TickCalendarServiceFactory.java
       - core/src/main/java/io/questdb/FactoryProvider.java
   - name: BooleanMethodIsAlwaysInverted
   - name: ThrowablePrintStackTrace

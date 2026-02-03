@@ -24,9 +24,9 @@
 
 package io.questdb;
 
-import io.questdb.cairo.DefaultExchangeCalendarServiceFactory;
+import io.questdb.cairo.DefaultTickCalendarServiceFactory;
 import io.questdb.cairo.DefaultWalJobFactory;
-import io.questdb.cairo.ExchangeCalendarServiceFactory;
+import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.WalJobFactory;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
@@ -154,8 +154,8 @@ public class FactoryProviderImpl implements FactoryProvider {
     }
 
     @Override
-    public @NotNull ExchangeCalendarServiceFactory getExchangeCalendarServiceFactory() {
-        return DefaultExchangeCalendarServiceFactory.INSTANCE;
+    public @NotNull TickCalendarServiceFactory getTickCalendarServiceFactory() {
+        return DefaultTickCalendarServiceFactory.INSTANCE;
     }
 
     private static HttpAuthenticatorFactory getHttpAuthenticatorFactory(ServerConfiguration configuration) {

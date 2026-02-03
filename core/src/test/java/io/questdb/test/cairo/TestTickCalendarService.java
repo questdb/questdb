@@ -24,22 +24,22 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.ExchangeCalendarService;
+import io.questdb.cairo.TickCalendarService;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Test implementation of {@link ExchangeCalendarService} with hardcoded XNYS and XHKG
+ * Test implementation of {@link TickCalendarService} with hardcoded XNYS and XHKG
  * schedules for 2025.
  */
-public class TestExchangeCalendarService implements ExchangeCalendarService {
-    public static final TestExchangeCalendarService INSTANCE = new TestExchangeCalendarService();
+public class TestTickCalendarService implements TickCalendarService {
+    public static final TestTickCalendarService INSTANCE = new TestTickCalendarService();
 
     private final LongList xhkg;
     private final LongList xnys;
 
-    private TestExchangeCalendarService() {
+    private TestTickCalendarService() {
         xnys = buildXnys();
         xhkg = buildXhkg();
     }

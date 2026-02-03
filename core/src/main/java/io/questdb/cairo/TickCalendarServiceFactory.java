@@ -24,18 +24,13 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.LongList;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.NotNull;
 
-public class DefaultExchangeCalendarService implements ExchangeCalendarService {
-    public static final ExchangeCalendarService INSTANCE = new DefaultExchangeCalendarService();
+/**
+ * Factory for obtaining {@link TickCalendarService} instances.
+ */
+public interface TickCalendarServiceFactory {
 
-    private DefaultExchangeCalendarService() {
-    }
-
-    @Override
-    @Nullable
-    public LongList getSchedule(CharSequence exchange) {
-        return null;
-    }
+    @NotNull
+    TickCalendarService getInstance();
 }

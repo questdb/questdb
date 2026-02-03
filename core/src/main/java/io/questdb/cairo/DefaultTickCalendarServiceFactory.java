@@ -27,17 +27,17 @@ package io.questdb.cairo;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Default factory that returns {@link DefaultExchangeCalendarService}.
+ * Default factory that returns {@link DefaultTickCalendarService}.
  * Custom deployments can provide their own factory with actual calendar data.
  */
-public class DefaultExchangeCalendarServiceFactory implements ExchangeCalendarServiceFactory {
-    public static final DefaultExchangeCalendarServiceFactory INSTANCE = new DefaultExchangeCalendarServiceFactory();
+public class DefaultTickCalendarServiceFactory implements TickCalendarServiceFactory {
+    public static final DefaultTickCalendarServiceFactory INSTANCE = new DefaultTickCalendarServiceFactory();
 
-    private DefaultExchangeCalendarServiceFactory() {
+    private DefaultTickCalendarServiceFactory() {
     }
 
     @Override
-    public @NotNull ExchangeCalendarService getInstance() {
-        return DefaultExchangeCalendarService.INSTANCE;
+    public @NotNull TickCalendarService getInstance() {
+        return DefaultTickCalendarService.INSTANCE;
     }
 }

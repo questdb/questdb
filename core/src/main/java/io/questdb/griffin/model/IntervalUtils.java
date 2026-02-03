@@ -26,7 +26,7 @@ package io.questdb.griffin.model;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ExchangeCalendarService;
+import io.questdb.cairo.TickCalendarService;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TimestampDriver;
@@ -609,7 +609,7 @@ public final class IntervalUtils {
 
         // Find day filter marker (#) - must be outside brackets and before ; (duration)
         // Timezone is optional: "2024-01-01#Mon" and "2024-01-01@+05:00#Mon" are both valid
-        // Day filter or exchange calendar is applied based on LOCAL time (before timezone conversion)
+        // Day filter or tick calendar is applied based on LOCAL time (before timezone conversion)
         int dayFilterMarkerPos = findDayFilterMarker(seq, firstNonSpace, lim);
         int dayFilterMask = 0;
         int dayFilterHi = -1;
@@ -624,10 +624,10 @@ public final class IntervalUtils {
                     break;
                 }
             }
-            // First try to look up as exchange calendar
+            // First try to look up as tick calendar
             exchangeSchedule = getExchangeSchedule(configuration, seq, dayFilterMarkerPos + 1, dayFilterHi);
             if (exchangeSchedule == null) {
-                // Not an exchange calendar, parse as day filter
+                // Not an tick calendar, parse as day filter
                 dayFilterMask = parseDayFilter(seq, dayFilterMarkerPos + 1, dayFilterHi, position);
             }
         }
@@ -675,7 +675,7 @@ public final class IntervalUtils {
                         dayFilterMask,
                         nowTimestamp
                 );
-                // Apply exchange calendar filter if specified
+                // Apply tick calendar filter if specified
                 if (exchangeSchedule != null) {
                     int semicolon = findDurationSemicolon(effectiveSeq, effectiveSeqLo, effectiveSeqLim);
                     applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, effectiveSeq,
@@ -751,7 +751,7 @@ public final class IntervalUtils {
                         dayFilterMask,
                         nowTimestamp
                 );
-                // Apply exchange calendar filter if specified
+                // Apply tick calendar filter if specified
                 if (exchangeSchedule != null) {
                     int semicolon = findDurationSemicolon(wrappedSink, 0, wrappedSink.length());
                     applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, wrappedSink,
@@ -819,7 +819,7 @@ public final class IntervalUtils {
         int outSize = out.size();
 
         if (!hasBrackets) {
-            // When exchange calendar filter AND duration are both present, parse without duration first,
+            // When tick calendar filter AND duration are both present, parse without duration first,
             // apply the filter, then extend intervals with duration
             boolean hasDurationWithExchange = exchangeSchedule != null && semicolonPos >= 0;
             if (hasDurationWithExchange) {
@@ -855,11 +855,11 @@ public final class IntervalUtils {
                 // Dynamic mode: store day filter mask for runtime evaluation
                 setDayFilterMaskOnEncodedIntervals(out, outSize, dayFilterMask);
             }
-            // Apply timezone conversion if present (before exchange calendar filter)
+            // Apply timezone conversion if present (before tick calendar filter)
             if (tzMarkerPos >= 0) {
                 applyTimezoneToIntervals(timestampDriver, configuration, out, outSize, effectiveSeq, tzLo, tzHi, position, applyEncoded);
             }
-            // Exchange calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
+            // Tick calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
             if (exchangeSchedule != null) {
                 applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, effectiveSeq,
                         semicolonPos >= 0 ? semicolonPos + 1 : -1, effectiveSeqLim, position);
@@ -874,8 +874,8 @@ public final class IntervalUtils {
         int parseDateLim = effectiveDateLim;
         int parseLim = effectiveSeqLim;
 
-        // When exchange calendar filter AND duration are both present, exclude duration from parsing
-        // Duration will be applied after the exchange calendar filter
+        // When tick calendar filter AND duration are both present, exclude duration from parsing
+        // Duration will be applied after the tick calendar filter
         boolean excludeDurationFromParsing = exchangeSchedule != null && semicolonPos >= 0;
 
         if (tzMarkerPos >= 0) {
@@ -934,7 +934,7 @@ public final class IntervalUtils {
             if (tzMarkerPos >= 0 && !hadTimeListBracket) {
                 applyTimezoneToIntervals(timestampDriver, configuration, out, outSize, effectiveSeq, tzLo, tzHi, position, applyEncoded);
             }
-            // Exchange calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
+            // Tick calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
             if (exchangeSchedule != null) {
                 applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, effectiveSeq,
                         semicolonPos >= 0 ? semicolonPos + 1 : -1, effectiveSeqLim, position);
@@ -1355,8 +1355,8 @@ public final class IntervalUtils {
 
     /**
      * Applies duration suffix to intervals by extending the hi bound of each interval.
-     * This is used when both an exchange calendar filter and duration are present.
-     * The duration is applied after the exchange calendar filter to extend trading hours.
+     * This is used when both an tick calendar filter and duration are present.
+     * The duration is applied after the tick calendar filter to extend trading hours.
      *
      * @param timestampDriver the timestamp driver
      * @param out             the interval list
@@ -1383,8 +1383,8 @@ public final class IntervalUtils {
     }
 
     /**
-     * Applies exchange calendar filter by intersecting query intervals with trading schedule.
-     * The trading schedule is obtained from {@link ExchangeCalendarService} and contains
+     * Applies tick calendar filter by intersecting query intervals with trading schedule.
+     * The trading schedule is obtained from {@link TickCalendarService} and contains
      * [lo, hi] pairs representing trading sessions in microseconds.
      *
      * @param timestampDriver the timestamp driver for unit conversion
@@ -1392,7 +1392,7 @@ public final class IntervalUtils {
      * @param out             the interval list to filter
      * @param startIndex      index to start filtering from
      */
-    private static void applyExchangeCalendarFilter(
+    private static void applyTickCalendarFilter(
             TimestampDriver timestampDriver,
             LongList schedule,
             LongList out,
@@ -1499,7 +1499,7 @@ public final class IntervalUtils {
     }
 
     /**
-     * Applies exchange calendar filter and optional duration extension.
+     * Applies tick calendar filter and optional duration extension.
      * The filter intersects query intervals with the exchange's trading schedule,
      * then extends each interval's hi bound by the duration if present.
      */
@@ -1513,7 +1513,7 @@ public final class IntervalUtils {
             int durationLim,
             int position
     ) throws SqlException {
-        applyExchangeCalendarFilter(timestampDriver, exchangeSchedule, out, startIndex);
+        applyTickCalendarFilter(timestampDriver, exchangeSchedule, out, startIndex);
         if (durationLo >= 0) {
             applyDurationToIntervals(timestampDriver, out, startIndex, durationSeq, durationLo, durationLim, position);
         }
@@ -2014,7 +2014,7 @@ public final class IntervalUtils {
         int globalTzLo = -1;
         int globalTzHi = -1;
 
-        // Find duration semicolon in suffix (for applying duration after exchange calendar filter)
+        // Find duration semicolon in suffix (for applying duration after tick calendar filter)
         int globalDurationSemicolon = findDurationSemicolon(seq, suffixStart, lim);
 
         if (globalTzMarker >= 0) {
@@ -2148,10 +2148,10 @@ public final class IntervalUtils {
                 LongList elemExchangeSchedule = null;
                 int effectiveElementEndForTz = resolvedElementEnd;
                 if (elemDayFilterMarker >= 0) {
-                    // First try to look up as exchange calendar
+                    // First try to look up as tick calendar
                     elemExchangeSchedule = getExchangeSchedule(configuration, elementSeq, elemDayFilterMarker + 1, resolvedElementEnd);
                     if (elemExchangeSchedule == null) {
-                        // Not an exchange calendar, parse as day filter
+                        // Not an tick calendar, parse as day filter
                         elemDayFilterMask = parseDayFilter(elementSeq, elemDayFilterMarker + 1, resolvedElementEnd, errorPos);
                     }
                     effectiveElementEndForTz = elemDayFilterMarker;
@@ -2217,15 +2217,15 @@ public final class IntervalUtils {
                 }
 
                 // Build the full interval string: element (without tz) + suffix (without tz)
-                // When exchange calendar filter is present, exclude duration from parsing
-                // (duration will be applied after the exchange calendar filter)
+                // When tick calendar filter is present, exclude duration from parsing
+                // (duration will be applied after the tick calendar filter)
                 sink.clear();
                 sink.put(elementSeq, resolvedElementStart, effectiveElementEnd);
 
                 // If element already has time, skip the time part of suffix but include duration
                 int effectiveSuffixStart = elementHasTime ? suffixTimeEnd : suffixStart;
 
-                // Determine suffix end - exclude duration if exchange calendar is active
+                // Determine suffix end - exclude duration if tick calendar is active
                 int effectiveSuffixEnd = lim;
                 if (activeExchangeSchedule != null && globalDurationSemicolon >= 0) {
                     effectiveSuffixEnd = globalDurationSemicolon;
@@ -2322,7 +2322,7 @@ public final class IntervalUtils {
                     applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, activeTzSeq, activeTzLo, activeTzHi, errorPos, applyEncoded);
                 }
 
-                // Exchange calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
+                // Tick calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
                 if (activeExchangeSchedule != null) {
                     applyExchangeFilterAndDuration(timestampDriver, activeExchangeSchedule, out, outSizeBeforeElement, seq,
                             globalDurationSemicolon >= 0 ? globalDurationSemicolon + 1 : -1, lim, errorPos);
@@ -2366,7 +2366,7 @@ public final class IntervalUtils {
             boolean applyEncoded,
             int outSizeBeforeExpansion
     ) throws SqlException {
-        // Find duration semicolon in suffix (for applying duration after exchange calendar filter)
+        // Find duration semicolon in suffix (for applying duration after tick calendar filter)
         int durationSemicolon = findDurationSemicolon(seq, suffixStart, lim);
 
         // Find where the range expression ends (at '@' timezone or '#' exchange/day filter marker, or element end)
@@ -2529,10 +2529,10 @@ public final class IntervalUtils {
             LongList elemExchangeSchedule = null;
             int effectiveElementEndForTz = resolvedElementEnd;
             if (elemDayFilterMarker >= 0) {
-                // First try to look up as exchange calendar
+                // First try to look up as tick calendar
                 elemExchangeSchedule = getExchangeSchedule(configuration, dateVarSink, elemDayFilterMarker + 1, resolvedElementEnd);
                 if (elemExchangeSchedule == null) {
-                    // Not an exchange calendar, parse as day filter
+                    // Not an tick calendar, parse as day filter
                     elemDayFilterMask = parseDayFilter(dateVarSink, elemDayFilterMarker + 1, resolvedElementEnd, errorPos);
                 }
                 effectiveElementEndForTz = elemDayFilterMarker;
@@ -2561,12 +2561,12 @@ public final class IntervalUtils {
             int outSizeBeforeElement = out.size();
 
             // Build the full interval string
-            // When exchange calendar filter is present, exclude duration from parsing
-            // (duration will be applied after the exchange calendar filter)
+            // When tick calendar filter is present, exclude duration from parsing
+            // (duration will be applied after the tick calendar filter)
             sink.clear();
             sink.put(dateVarSink, resolvedElementStart, effectiveElementEnd);
 
-            // Determine suffix end - exclude duration if exchange calendar is active
+            // Determine suffix end - exclude duration if tick calendar is active
             int effectiveSuffixEnd = lim;
             if (activeExchangeSchedule != null && durationSemicolon >= 0) {
                 effectiveSuffixEnd = durationSemicolon;
@@ -2647,7 +2647,7 @@ public final class IntervalUtils {
                 applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, activeTzSeq, activeTzLo, activeTzHi, errorPos, applyEncoded);
             }
 
-            // Exchange calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
+            // Tick calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
             if (activeExchangeSchedule != null) {
                 applyExchangeFilterAndDuration(timestampDriver, activeExchangeSchedule, out, outSizeBeforeElement, seq,
                         durationSemicolon >= 0 ? durationSemicolon + 1 : -1, lim, errorPos);
@@ -2981,14 +2981,14 @@ public final class IntervalUtils {
     }
 
     /**
-     * Looks up an exchange calendar schedule for the token between {@code lo} (inclusive) and
+     * Looks up an tick calendar schedule for the token between {@code lo} (inclusive) and
      * {@code hi} (exclusive) in {@code seq}. Returns the schedule {@link LongList} if the
      * token identifies a known exchange, or {@code null} otherwise.
      */
     @Nullable
     private static LongList getExchangeSchedule(CairoConfiguration configuration, CharSequence seq, int lo, int hi) {
         return configuration.getFactoryProvider()
-                .getExchangeCalendarServiceFactory()
+                .getTickCalendarServiceFactory()
                 .getInstance()
                 .getSchedule(tlExchangeCs.get().of(seq, lo, hi - lo));
     }
