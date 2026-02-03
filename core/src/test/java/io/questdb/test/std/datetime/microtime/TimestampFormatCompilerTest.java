@@ -767,6 +767,13 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testNanosGreedySingleN() throws NumericException {
+        // Micros format ignores nanos, but should still consume correct number of chars
+        // Pattern .SSSUUUN with .1234567 should parse correctly
+        assertMicros("y-MM-dd HH:mm:ss.SSSUUUN", "2014-04-03T04:32:49.123456Z", "2014-04-03 04:32:49.1234567");
+    }
+
+    @Test
     public void testMillisGreedy() {
         assertThat("ddMMy HH:mm:ss.S", "2078-03-19T21:20:45.678Z", "190378 21:20:45.678");
     }
