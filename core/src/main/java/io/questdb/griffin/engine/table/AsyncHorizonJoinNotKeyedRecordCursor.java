@@ -104,9 +104,6 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
     public void close() {
         if (isOpen) {
             try {
-                slavePageFrameCursor = Misc.free(slavePageFrameCursor);
-                Misc.free(slaveTimeFrameAddressCache);
-
                 if (frameSequence != null) {
                     LOG.debug()
                             .$("closing [shard=").$(frameSequence.getShard())
@@ -119,7 +116,10 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
                     frameSequence.reset();
                 }
             } finally {
+                // Free shared resources only after workers have finished
                 Misc.clearObjList(groupByFunctions);
+                slavePageFrameCursor = Misc.free(slavePageFrameCursor);
+                Misc.free(slaveTimeFrameAddressCache);
                 isOpen = false;
             }
         }

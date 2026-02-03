@@ -319,6 +319,12 @@ public class IntList implements Mutable, Sinkable {
         return pos;
     }
 
+    public int[] toArray() {
+        int[] result = new int[pos];
+        System.arraycopy(data, 0, result, 0, pos);
+        return result;
+    }
+
     /**
      * Sorts groups of N elements. The size of the group is specified by {@code groupSize}.
      * Comparison between groups is done by comparing the first element of each group, then

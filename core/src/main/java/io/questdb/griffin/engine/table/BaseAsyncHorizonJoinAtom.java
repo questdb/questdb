@@ -34,6 +34,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
@@ -91,6 +92,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     protected final HorizonTimestampIterator ownerHorizonIterator;
     protected final ConcurrentTimeFrameCursor ownerSlaveTimeFrameCursor;
     protected final MarkoutTimeFrameHelper ownerSlaveTimeFrameHelper;
+    protected final SymbolTranslatingRecord ownerSymbolTranslatingRecord;
     protected final ObjList<GroupByAllocator> perWorkerAllocators;
     protected final ObjList<Map> perWorkerAsOfJoinMaps;
     protected final ObjList<MarkoutRecord> perWorkerCombinedRecords;
@@ -101,6 +103,9 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     protected final PerWorkerLocks perWorkerLocks;
     protected final ObjList<ConcurrentTimeFrameCursor> perWorkerSlaveTimeFrameCursors;
     protected final ObjList<MarkoutTimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
+    // Per-worker symbol translating records for integer-based symbol key comparison.
+    // Null when there are no symbol columns in the ASOF join key.
+    protected final ObjList<SymbolTranslatingRecord> perWorkerSymbolTranslatingRecords;
     protected final long sequenceRowCount;
     protected final RecordSink slaveKeyCopier;
     protected final int slotCount;
@@ -114,6 +119,9 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             @Nullable ColumnTypes asOfJoinKeyTypes,
             @Nullable RecordSink masterKeyCopier,
             @Nullable RecordSink slaveKeyCopier,
+            int masterColumnCount,
+            int @Nullable [] masterSymbolKeyColumnIndices,
+            int @Nullable [] slaveSymbolKeyColumnIndices,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
@@ -176,6 +184,18 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         } else {
             this.perWorkerAsOfJoinMaps = null;
             this.ownerAsOfJoinMap = null;
+        }
+
+        // Per-worker symbol translating records for integer-based symbol key comparison
+        if (masterSymbolKeyColumnIndices != null) {
+            this.ownerSymbolTranslatingRecord = new SymbolTranslatingRecord(masterColumnCount, masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices);
+            this.perWorkerSymbolTranslatingRecords = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
+                perWorkerSymbolTranslatingRecords.add(new SymbolTranslatingRecord(masterColumnCount, masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices));
+            }
+        } else {
+            this.ownerSymbolTranslatingRecord = null;
+            this.perWorkerSymbolTranslatingRecords = null;
         }
 
         // Group by functions and updaters
@@ -243,6 +263,10 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         Misc.free(ownerAsOfJoinMap);
         Misc.freeObjListAndKeepObjects(perWorkerAsOfJoinMaps);
 
+        // Clear symbol translating records
+        Misc.clear(ownerSymbolTranslatingRecord);
+        Misc.clearObjList(perWorkerSymbolTranslatingRecords);
+
         // Clear time frame cursors
         Misc.free(ownerSlaveTimeFrameCursor);
         Misc.freeObjListAndKeepObjects(perWorkerSlaveTimeFrameCursors);
@@ -274,6 +298,9 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         Misc.freeObjList(bindVarFunctions);
         Misc.free(ownerFilter);
         Misc.freeObjList(perWorkerFilters);
+        // Symbol translating records
+        Misc.free(ownerSymbolTranslatingRecord);
+        Misc.freeObjList(perWorkerSymbolTranslatingRecords);
 
         // Let subclass close its resources
         closeAggregationState();
@@ -332,6 +359,17 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
 
     public RecordSink getMasterKeyCopier() {
         return masterKeyCopier;
+    }
+
+    public Record getMasterKeyRecord(int slotId, Record masterRecord) {
+        final SymbolTranslatingRecord translatingRecord = (slotId == -1)
+                ? ownerSymbolTranslatingRecord
+                : (perWorkerSymbolTranslatingRecords != null ? perWorkerSymbolTranslatingRecords.getQuick(slotId) : null);
+        if (translatingRecord != null) {
+            translatingRecord.of(masterRecord);
+            return translatingRecord;
+        }
+        return masterRecord;
     }
 
     public int getMasterTimestampColumnIndex() {
@@ -463,6 +501,14 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
                 if (map != null) {
                     map.reopen();
                 }
+            }
+        }
+
+        // Initialize symbol translating records with symbol table sources for lazy resolution
+        if (ownerSymbolTranslatingRecord != null) {
+            ownerSymbolTranslatingRecord.initSources(masterSymbolTableSource, slavePageFrameCursor);
+            for (int i = 0, n = perWorkerSymbolTranslatingRecords.size(); i < n; i++) {
+                perWorkerSymbolTranslatingRecords.getQuick(i).initSources(masterSymbolTableSource, slavePageFrameCursor);
             }
         }
 

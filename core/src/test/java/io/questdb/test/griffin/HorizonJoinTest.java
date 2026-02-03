@@ -1533,6 +1533,303 @@ public class HorizonJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testHorizonJoinWithSymbolMasterStringSlaveKey() throws Exception {
+        // Test HORIZON JOIN where master key column is SYMBOL and slave key column is STRING.
+        // This should fall back to string-based comparison (no integer optimization).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE orders (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym STRING, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.500000Z', 'AAPL', 100.0),
+                                ('1970-01-01T00:00:00.500000Z', 'GOOG', 150.0),
+                                ('1970-01-01T00:00:01.500000Z', 'AAPL', 110.0),
+                                ('1970-01-01T00:00:01.500000Z', 'GOOG', 160.0)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AAPL', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'GOOG', 200)
+                            """
+            );
+
+            // At offset 0: AAPL->100, GOOG->150, avg=125
+            // At offset 1s: AAPL->110, GOOG->160, avg=135
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
+                    "FROM orders AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tsum
+                            0\t125.0\t300
+                            1\t135.0\t300
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithStringMasterSymbolSlaveKey() throws Exception {
+        // Test HORIZON JOIN where master key column is STRING and slave key column is SYMBOL.
+        // This should fall back to string-based comparison (no integer optimization).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE orders (ts #TIMESTAMP, sym STRING, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.500000Z', 'AAPL', 100.0),
+                                ('1970-01-01T00:00:00.500000Z', 'GOOG', 150.0),
+                                ('1970-01-01T00:00:01.500000Z', 'AAPL', 110.0),
+                                ('1970-01-01T00:00:01.500000Z', 'GOOG', 160.0)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AAPL', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'GOOG', 200)
+                            """
+            );
+
+            // At offset 0: AAPL->100, GOOG->150, avg=125
+            // At offset 1s: AAPL->110, GOOG->160, avg=135
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
+                    "FROM orders AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tsum
+                            0\t125.0\t300
+                            1\t135.0\t300
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithSymbolMasterVarcharSlaveKey() throws Exception {
+        // Test HORIZON JOIN where master key column is SYMBOL and slave key column is VARCHAR.
+        // This should fall back to varchar-based comparison (no integer optimization).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE orders (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym VARCHAR, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.500000Z', 'AAPL', 100.0),
+                                ('1970-01-01T00:00:00.500000Z', 'GOOG', 150.0),
+                                ('1970-01-01T00:00:01.500000Z', 'AAPL', 110.0),
+                                ('1970-01-01T00:00:01.500000Z', 'GOOG', 160.0)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AAPL', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'GOOG', 200)
+                            """
+            );
+
+            // At offset 0: AAPL->100, GOOG->150, avg=125
+            // At offset 1s: AAPL->110, GOOG->160, avg=135
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
+                    "FROM orders AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tsum
+                            0\t125.0\t300
+                            1\t135.0\t300
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithMultiColumnMixedSymbolAndStringKey() throws Exception {
+        // Test multi-column key where one column pair is SYMBOL+SYMBOL (uses integer optimization)
+        // and another column pair is SYMBOL+STRING (falls back to string comparison).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE orders (ts #TIMESTAMP, sym SYMBOL, region SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            // Note: region is STRING on slave side, sym is SYMBOL on both sides
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, region STRING, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.500000Z', 'AAPL', 'US', 100.0),
+                                ('1970-01-01T00:00:00.500000Z', 'AAPL', 'EU', 105.0),
+                                ('1970-01-01T00:00:01.500000Z', 'AAPL', 'US', 110.0),
+                                ('1970-01-01T00:00:01.500000Z', 'AAPL', 'EU', 115.0)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AAPL', 'US', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'AAPL', 'EU', 200)
+                            """
+            );
+
+            // At offset 0: AAPL/US->100, AAPL/EU->105, avg=102.5
+            // At offset 1s: AAPL/US->110, AAPL/EU->115, avg=112.5
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
+                    "FROM orders AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym AND t.region = p.region) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tsum
+                            0\t102.5\t300
+                            1\t112.5\t300
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinNotKeyedWithSymbolMasterStringSlaveKey() throws Exception {
+        // Non-keyed (no GROUP BY keys) variant with SYMBOL master + STRING slave key.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE orders (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym STRING, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.500000Z', 'AAPL', 100.0),
+                                ('1970-01-01T00:00:00.500000Z', 'GOOG', 150.0),
+                                ('1970-01-01T00:00:01.500000Z', 'AAPL', 110.0),
+                                ('1970-01-01T00:00:01.500000Z', 'GOOG', 160.0)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AAPL', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'GOOG', 200)
+                            """
+            );
+
+            // Non-keyed: no GROUP BY keys, only aggregates
+            // At offset 0: AAPL->100, GOOG->150, avg=125, sum=300
+            String sql = """
+                    SELECT avg(p.price), sum(t.qty)
+                    FROM orders AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    """;
+
+            assertQueryNoLeakCheck(
+                    """
+                            avg\tsum
+                            125.0\t300
+                            """,
+                    sql,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithMultiColumnSymbolAndNullKey() throws Exception {
+        // Test multi-column SYMBOL+SYMBOL key where some rows have null symbol values.
+        // Verifies that null symbol IDs are handled correctly in the translation cache.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE orders (ts #TIMESTAMP, sym SYMBOL, exchange SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, exchange SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.500000Z', 'AAPL', 'NYSE', 100.0),
+                                ('1970-01-01T00:00:00.500000Z', 'AAPL', null, 105.0),
+                                ('1970-01-01T00:00:01.500000Z', 'AAPL', 'NYSE', 110.0),
+                                ('1970-01-01T00:00:01.500000Z', null, 'NASDAQ', 200.0)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AAPL', 'NYSE', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'AAPL', null, 200),
+                                ('1970-01-01T00:00:02.000000Z', null, 'NASDAQ', 300)
+                            """
+            );
+
+            // At offset 0:
+            //   AAPL/NYSE at 1s -> ASOF to 0.5s -> 100
+            //   AAPL/null at 1s -> ASOF to 0.5s -> 105
+            //   null/NASDAQ at 2s -> ASOF to 1.5s -> 200
+            // avg: (100+105+200)/3 = 135, sum qty: 600
+            // At offset 1s:
+            //   AAPL/NYSE at 1s -> ASOF to 2s -> latest AAPL/NYSE 1.5s -> 110
+            //   AAPL/null at 1s -> ASOF to 2s -> latest AAPL/null 0.5s -> 105
+            //   null/NASDAQ at 2s -> ASOF to 3s -> latest null/NASDAQ 1.5s -> 200
+            // avg: (110+105+200)/3 = 138.33..., sum qty: 600
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
+                    "FROM orders AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym AND t.exchange = p.exchange) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tsum
+                            0\t135.0\t600
+                            1\t138.33333333333334\t600
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
     private long getMinutesDivisor() {
         return leftTableTimestampType == TestTimestampType.MICRO ? 60_000_000L : 60_000_000_000L;
     }

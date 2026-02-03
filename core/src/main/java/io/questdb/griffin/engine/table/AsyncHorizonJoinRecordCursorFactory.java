@@ -105,6 +105,9 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             @Nullable ColumnTypes asOfJoinKeyTypes,
             @Nullable RecordSink masterKeyCopier,
             @Nullable RecordSink slaveKeyCopier,
+            int masterColumnCount,
+            int @Nullable [] masterSymbolKeyColumnIndices,
+            int @Nullable [] slaveSymbolKeyColumnIndices,
             @NotNull RecordSink groupByKeyCopier,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
@@ -147,6 +150,9 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     asOfJoinKeyTypes,
                     masterKeyCopier,
                     slaveKeyCopier,
+                    masterColumnCount,
+                    masterSymbolKeyColumnIndices,
+                    slaveSymbolKeyColumnIndices,
                     groupByKeyCopier,
                     columnSources,
                     columnIndexes,
@@ -306,6 +312,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             final RecordSink masterKeyCopier = atom.getMasterKeyCopier();
             final RecordSink slaveKeyCopier = atom.getSlaveKeyCopier();
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
+            final Record masterKeyRecord = atom.getMasterKeyRecord(slotId, record);
 
             // Get horizon timestamp iterator and initialize for filtered rows
             final HorizonTimestampIterator horizonIterator = atom.getHorizonIterator(slotId);
@@ -317,6 +324,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             processSortedHorizonTimestamps(
                     horizonIterator,
                     record,
+                    masterKeyRecord,
                     baseRowId,
                     atom,
                     slaveTimeFrameHelper,
@@ -344,7 +352,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
      * <p>
      * 1. First tuple: Find ASOF position, backward scan until key match, set watermarks
      * 2. Subsequent tuples: Forward scan to new ASOF position (caching keys),
-     *    then lookup in cache. On cache miss, continue backward scan.
+     * then lookup in cache. On cache miss, continue backward scan.
      * <p>
      * Each slave row is scanned at most once per frame (either forward or backward).
      * Watermarks are tracked internally by the helper and reset via toTop().
@@ -352,6 +360,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
     private static void processSortedHorizonTimestamps(
             HorizonTimestampIterator horizonIterator,
             PageFrameMemoryRecord masterRecord,
+            Record masterKeyRecord,
             long baseRowId,
             AsyncHorizonJoinAtom atom,
             MarkoutTimeFrameHelper slaveTimeFrameHelper,
@@ -397,7 +406,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                         // First tuple: backward scan from ASOF position to find matching key
                         matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
                                 asOfRowId,
-                                masterRecord,
+                                masterKeyRecord,
                                 masterKeyCopier,
                                 slaveKeyCopier,
                                 asOfJoinMap
@@ -414,7 +423,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
                         // Look up the key in the cache
                         MapKey cacheKey = asOfJoinMap.withKey();
-                        cacheKey.put(masterRecord, masterKeyCopier);
+                        cacheKey.put(masterKeyRecord, masterKeyCopier);
                         MapValue cacheValue = cacheKey.findValue();
 
                         if (cacheValue != null) {
@@ -423,7 +432,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                             // Cache miss: continue backward scan (uses internal watermark)
                             matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
                                     asOfRowId,
-                                    masterRecord,
+                                    masterKeyRecord,
                                     masterKeyCopier,
                                     slaveKeyCopier,
                                     asOfJoinMap
@@ -494,6 +503,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             final RecordSink masterKeyCopier = atom.getMasterKeyCopier();
             final RecordSink slaveKeyCopier = atom.getSlaveKeyCopier();
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
+            final Record masterKeyRecord = atom.getMasterKeyRecord(slotId, record);
 
             // Get horizon timestamp iterator and initialize for this frame
             final HorizonTimestampIterator horizonIterator = atom.getHorizonIterator(slotId);
@@ -505,6 +515,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             processSortedHorizonTimestamps(
                     horizonIterator,
                     record,
+                    masterKeyRecord,
                     baseRowId,
                     atom,
                     slaveTimeFrameHelper,

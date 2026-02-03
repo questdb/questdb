@@ -3348,9 +3348,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ListColumnFilter groupByColumnFilter = listColumnFilterA.copy();
 
         // Process ASOF join key information for the join lookup
-        ArrayColumnTypes asofJoinKeyTypes = null;
+        ArrayColumnTypes asOfJoinKeyTypes = null;
         RecordSink masterKeyCopier = null;
         RecordSink slaveKeyCopier = null;
+        int[] masterSymbolKeyColumnIndices = null;
+        int[] slaveSymbolKeyColumnIndices = null;
 
         JoinContext asOfJoinContext = slaveModel.getJoinContext();
         if (asOfJoinContext != null && !asOfJoinContext.isEmpty()) {
@@ -3361,10 +3363,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             lookupColumnIndexes(listColumnFilterB, asOfJoinContext.bNodes, masterMetadata);
 
             // Build ASOF join key types and configure symbol/string handling
-            asofJoinKeyTypes = new ArrayColumnTypes();
+            asOfJoinKeyTypes = new ArrayColumnTypes();
             BitSet asOfWriteSymbolAsString = new BitSet();
             BitSet asOfWriteStringAsVarcharA = new BitSet();
             BitSet asOfWriteStringAsVarcharB = new BitSet();
+            IntList masterSymbolKeyCols = null;
+            IntList slaveSymbolKeyCols = null;
 
             for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
                 final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
@@ -3374,7 +3378,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 // For SYMBOL columns from different tables, write as STRING for comparison
                 if (ColumnType.isVarchar(columnTypeA) || ColumnType.isVarchar(columnTypeB)) {
-                    asofJoinKeyTypes.add(ColumnType.VARCHAR);
+                    asOfJoinKeyTypes.add(ColumnType.VARCHAR);
                     if (ColumnType.isVarchar(columnTypeA)) {
                         asOfWriteStringAsVarcharB.set(columnIndexB);
                     } else {
@@ -3382,18 +3386,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                     asOfWriteSymbolAsString.set(columnIndexA);
                     asOfWriteSymbolAsString.set(columnIndexB);
+                } else if (columnTypeA == ColumnType.SYMBOL && columnTypeB == ColumnType.SYMBOL) {
+                    // Both sides are SYMBOL: use integer comparison with translation cache
+                    asOfJoinKeyTypes.add(ColumnType.SYMBOL);
+                    // Do NOT set asOfWriteSymbolAsString — copiers will use getInt/putInt
+                    if (masterSymbolKeyCols == null) {
+                        masterSymbolKeyCols = new IntList();
+                        slaveSymbolKeyCols = new IntList();
+                    }
+                    masterSymbolKeyCols.add(columnIndexB);
+                    slaveSymbolKeyCols.add(columnIndexA);
                 } else if (columnTypeB == ColumnType.SYMBOL || columnTypeA == ColumnType.SYMBOL) {
-                    // Different tables have different symbol tables, so write as STRING
-                    asofJoinKeyTypes.add(ColumnType.STRING);
+                    // Mixed SYMBOL + non-SYMBOL: write as STRING
+                    asOfJoinKeyTypes.add(ColumnType.STRING);
                     asOfWriteSymbolAsString.set(columnIndexA);
                     asOfWriteSymbolAsString.set(columnIndexB);
                 } else if (ColumnType.isString(columnTypeA) || ColumnType.isString(columnTypeB)) {
-                    asofJoinKeyTypes.add(columnTypeB);
+                    asOfJoinKeyTypes.add(columnTypeB);
                     asOfWriteSymbolAsString.set(columnIndexA);
                     asOfWriteSymbolAsString.set(columnIndexB);
                 } else {
-                    asofJoinKeyTypes.add(columnTypeA);
+                    asOfJoinKeyTypes.add(columnTypeA);
                 }
+            }
+
+            if (masterSymbolKeyCols != null) {
+                masterSymbolKeyColumnIndices = masterSymbolKeyCols.toArray();
+                slaveSymbolKeyColumnIndices = slaveSymbolKeyCols.toArray();
             }
 
             // Create key copiers with proper symbol/varchar handling
@@ -3441,9 +3460,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     groupByFunctions,
                     perWorkerGroupByFunctions,
                     valueTypesCopy.getColumnCount(),
-                    asofJoinKeyTypes,
+                    asOfJoinKeyTypes,
                     masterKeyCopier,
                     slaveKeyCopier,
+                    masterMetadata.getColumnCount(),
+                    masterSymbolKeyColumnIndices,
+                    slaveSymbolKeyColumnIndices,
                     columnSources,
                     columnIndices,
                     compiledFilter,
@@ -3475,9 +3497,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 new ObjList<>(tempOuterProjectionFunctions),
                 keyTypesCopy,
                 valueTypesCopy,
-                asofJoinKeyTypes,
+                asOfJoinKeyTypes,
                 masterKeyCopier,
                 slaveKeyCopier,
+                masterMetadata.getColumnCount(),
+                masterSymbolKeyColumnIndices,
+                slaveSymbolKeyColumnIndices,
                 groupByKeyCopier,
                 columnSources,
                 columnIndices,

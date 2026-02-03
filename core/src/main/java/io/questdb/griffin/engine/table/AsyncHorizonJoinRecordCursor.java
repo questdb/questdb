@@ -100,21 +100,24 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
     @Override
     public void close() {
         if (isOpen) {
-            isOpen = false;
-            mapCursor = Misc.free(mapCursor);
-            slavePageFrameCursor = Misc.free(slavePageFrameCursor);
-            Misc.free(slaveTimeFrameAddressCache);
+            try {
+                if (frameSequence != null) {
+                    LOG.debug()
+                            .$("closing [shard=").$(frameSequence.getShard())
+                            .$(", frameCount=").$(frameLimit)
+                            .I$();
 
-            if (frameSequence != null) {
-                LOG.debug()
-                        .$("closing [shard=").$(frameSequence.getShard())
-                        .$(", frameCount=").$(frameLimit)
-                        .I$();
-
-                if (frameLimit > -1) {
-                    frameSequence.await();
+                    if (frameLimit > -1) {
+                        frameSequence.await();
+                    }
+                    frameSequence.reset();
                 }
-                frameSequence.reset();
+            } finally {
+                // Free shared resources only after workers have finished
+                mapCursor = Misc.free(mapCursor);
+                slavePageFrameCursor = Misc.free(slavePageFrameCursor);
+                Misc.free(slaveTimeFrameAddressCache);
+                isOpen = false;
             }
         }
     }

@@ -105,6 +105,9 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             @Nullable ColumnTypes asOfJoinKeyTypes,
             @Nullable RecordSink masterKeyCopier,
             @Nullable RecordSink slaveKeyCopier,
+            int masterColumnCount,
+            int @Nullable [] masterSymbolKeyColumnIndices,
+            int @Nullable [] slaveSymbolKeyColumnIndices,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
             @Nullable CompiledFilter compiledFilter,
@@ -145,6 +148,9 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     asOfJoinKeyTypes,
                     masterKeyCopier,
                     slaveKeyCopier,
+                    masterColumnCount,
+                    masterSymbolKeyColumnIndices,
+                    slaveSymbolKeyColumnIndices,
                     columnSources,
                     columnIndexes,
                     groupByFunctions,
@@ -298,6 +304,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             final RecordSink masterKeyCopier = atom.getMasterKeyCopier();
             final RecordSink slaveKeyCopier = atom.getSlaveKeyCopier();
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
+            final Record masterKeyRecord = atom.getMasterKeyRecord(slotId, record);
 
             // Get horizon timestamp iterator and initialize for filtered rows
             final HorizonTimestampIterator horizonIterator = atom.getHorizonIterator(slotId);
@@ -309,6 +316,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             processSortedHorizonTimestamps(
                     horizonIterator,
                     record,
+                    masterKeyRecord,
                     baseRowId,
                     atom,
                     slaveTimeFrameHelper,
@@ -343,6 +351,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
     private static void processSortedHorizonTimestamps(
             HorizonTimestampIterator horizonIterator,
             PageFrameMemoryRecord masterRecord,
+            Record masterKeyRecord,
             long baseRowId,
             AsyncHorizonJoinNotKeyedAtom atom,
             MarkoutTimeFrameHelper slaveTimeFrameHelper,
@@ -387,7 +396,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                         // First tuple: backward scan from ASOF position to find matching key
                         matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
                                 asOfRowId,
-                                masterRecord,
+                                masterKeyRecord,
                                 masterKeyCopier,
                                 slaveKeyCopier,
                                 asOfJoinMap
@@ -404,7 +413,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
 
                         // Look up the key in the cache
                         MapKey cacheKey = asOfJoinMap.withKey();
-                        cacheKey.put(masterRecord, masterKeyCopier);
+                        cacheKey.put(masterKeyRecord, masterKeyCopier);
                         MapValue cacheValue = cacheKey.findValue();
 
                         if (cacheValue != null) {
@@ -413,7 +422,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                             // Cache miss: continue backward scan (uses internal watermark)
                             matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
                                     asOfRowId,
-                                    masterRecord,
+                                    masterKeyRecord,
                                     masterKeyCopier,
                                     slaveKeyCopier,
                                     asOfJoinMap
@@ -483,6 +492,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             final RecordSink masterKeyCopier = atom.getMasterKeyCopier();
             final RecordSink slaveKeyCopier = atom.getSlaveKeyCopier();
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
+            final Record masterKeyRecord = atom.getMasterKeyRecord(slotId, record);
 
             // Get horizon timestamp iterator and initialize for this frame
             final HorizonTimestampIterator horizonIterator = atom.getHorizonIterator(slotId);
@@ -494,6 +504,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             processSortedHorizonTimestamps(
                     horizonIterator,
                     record,
+                    masterKeyRecord,
                     baseRowId,
                     atom,
                     slaveTimeFrameHelper,
