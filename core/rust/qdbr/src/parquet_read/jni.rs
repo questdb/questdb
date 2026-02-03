@@ -6,8 +6,8 @@ use crate::parquet::error::{ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::ParquetFieldId;
 use crate::parquet_read::decode::ParquetColumnIndex;
 use crate::parquet_read::{
-    ColumnChunkBuffers, ColumnChunkStats, ColumnMeta, DecodeContext, ParquetDecoder,
-    RowGroupBuffers, RowGroupStatBuffers,
+    ColumnChunkBuffers, ColumnChunkStats, ColumnFilterValues, ColumnMeta, DecodeContext,
+    ParquetDecoder, RowGroupBuffers, RowGroupStatBuffers,
 };
 use jni::objects::JClass;
 use jni::JNIEnv;
@@ -184,6 +184,37 @@ fn decode_row_group_impl<const MODE: u8>(
             err.add_context(context_msg);
             err.add_context(method_name);
             err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_canSkipRowGroup(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *const ParquetDecoder,
+    row_group_index: u32,
+    file_ptr: *const u8,
+    file_size: u64,
+    filters: *const (ParquetColumnIndex, ColumnFilterValues),
+    filter_count: u32,
+) -> bool {
+    assert!(!decoder.is_null(), "decoder pointer is null");
+    assert!(!filters.is_null(), "filters pointer is null");
+    assert!(!file_ptr.is_null(), "file_ptr is null");
+
+    let decoder = unsafe { &*decoder };
+    let filters = unsafe { slice::from_raw_parts(filters, filter_count as usize) };
+    let file_data = unsafe { slice::from_raw_parts(file_ptr, file_size as usize) };
+
+    match decoder.can_skip_row_group(row_group_index, file_data, filters) {
+        Ok(can_skip) => can_skip,
+        Err(mut err) => {
+            err.add_context(format!(
+                "could not check bloom filter for row group {row_group_index}"
+            ));
+            err.add_context("error in PartitionDecoder.canSkipRowGroup");
+            err.into_cairo_exception().throw(&mut env)
         }
     }
 }

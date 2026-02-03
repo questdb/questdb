@@ -20,8 +20,8 @@ use crate::parquet_read::slicer::{
     ValueConvertSlicer,
 };
 use crate::parquet_read::{
-    ColumnChunkBuffers, ColumnChunkStats, DecodeContext, ParquetDecoder, RowGroupBuffers,
-    RowGroupStatBuffers,
+    ColumnChunkBuffers, ColumnChunkStats, ColumnFilterValues, DecodeContext, ParquetDecoder,
+    RowGroupBuffers, RowGroupStatBuffers,
 };
 use crate::parquet_write::array::{
     append_array_null, append_array_nulls, calculate_array_shape, LevelsIterator,
@@ -38,6 +38,7 @@ use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLog
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use std::cmp;
 use std::cmp::min;
+use std::mem::size_of;
 use std::ptr;
 use std::slice;
 
@@ -747,6 +748,224 @@ impl ParquetDecoder {
             stats.max_value_size = stats.max_value.len();
         }
         Ok(())
+    }
+
+    pub fn can_skip_row_group(
+        &self,
+        row_group_index: u32,
+        file_data: &[u8],
+        filters: &[(ParquetColumnIndex, ColumnFilterValues)],
+    ) -> ParquetResult<bool> {
+        if row_group_index >= self.row_group_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "row group index {} out of range [0,{})",
+                row_group_index,
+                self.row_group_count
+            ));
+        }
+
+        let row_group_index = row_group_index as usize;
+        let columns_meta = self.metadata.row_groups[row_group_index].columns();
+        let column_count = columns_meta.len();
+        for &(column_idx, filter_desc) in filters {
+            let column_idx = column_idx as usize;
+            if column_idx >= column_count {
+                continue;
+            }
+
+            let column_metadata = &columns_meta[column_idx];
+            let physical_type = column_metadata.physical_type();
+            let bitset =
+                parquet2::bloom_filter::read_from_slice(column_metadata, file_data).unwrap_or(&[]);
+
+            if !bitset.is_empty() {
+                let all_absent =
+                    Self::all_values_absent_from_bloom(bitset, &physical_type, &filter_desc);
+                if all_absent {
+                    return Ok(true);
+                }
+            }
+
+            if Self::all_values_outside_min_max(column_metadata, &physical_type, &filter_desc) {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn all_values_absent_from_bloom(
+        bitset: &[u8],
+        physical_type: &PhysicalType,
+        filter_desc: &ColumnFilterValues,
+    ) -> bool {
+        let count = filter_desc.count as usize;
+        if count == 0 {
+            return false;
+        }
+        let ptr = filter_desc.ptr as *const u8;
+
+        match physical_type {
+            PhysicalType::Int32 => {
+                let values = unsafe { slice::from_raw_parts(ptr as *const i32, count) };
+                values.iter().all(|v| {
+                    !parquet2::bloom_filter::is_in_set(
+                        bitset,
+                        parquet2::bloom_filter::hash_native(*v),
+                    )
+                })
+            }
+            PhysicalType::Int64 => {
+                let values = unsafe { slice::from_raw_parts(ptr as *const i64, count) };
+                values.iter().all(|v| {
+                    !parquet2::bloom_filter::is_in_set(
+                        bitset,
+                        parquet2::bloom_filter::hash_native(*v),
+                    )
+                })
+            }
+            PhysicalType::Float => {
+                let values = unsafe { slice::from_raw_parts(ptr as *const f32, count) };
+                values.iter().all(|v| {
+                    !parquet2::bloom_filter::is_in_set(
+                        bitset,
+                        parquet2::bloom_filter::hash_native(*v),
+                    )
+                })
+            }
+            PhysicalType::Double => {
+                let values = unsafe { slice::from_raw_parts(ptr as *const f64, count) };
+                values.iter().all(|v| {
+                    !parquet2::bloom_filter::is_in_set(
+                        bitset,
+                        parquet2::bloom_filter::hash_native(*v),
+                    )
+                })
+            }
+            PhysicalType::ByteArray => {
+                let mut offset = 0usize;
+                for _ in 0..count {
+                    let len = unsafe { (ptr.add(offset) as *const i32).read_unaligned() } as usize;
+                    offset += size_of::<i32>();
+                    let bytes = unsafe { slice::from_raw_parts(ptr.add(offset), len) };
+                    offset += len;
+                    if parquet2::bloom_filter::is_in_set(
+                        bitset,
+                        parquet2::bloom_filter::hash_byte(bytes),
+                    ) {
+                        return false;
+                    }
+                }
+                true
+            }
+            PhysicalType::FixedLenByteArray(size) => {
+                let size = *size;
+                for i in 0..count {
+                    let bytes = unsafe { slice::from_raw_parts(ptr.add(i * size), size) };
+                    if parquet2::bloom_filter::is_in_set(
+                        bitset,
+                        parquet2::bloom_filter::hash_byte(bytes),
+                    ) {
+                        return false;
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn all_values_outside_min_max(
+        column_metadata: &parquet2::metadata::ColumnChunkMetaData,
+        physical_type: &PhysicalType,
+        filter_desc: &ColumnFilterValues,
+    ) -> bool {
+        let column_chunk = column_metadata.column_chunk();
+        let meta_data = match &column_chunk.meta_data {
+            Some(m) => m,
+            None => return false,
+        };
+        let statistics = match &meta_data.statistics {
+            Some(s) => s,
+            None => return false,
+        };
+        let min_bytes = match statistics
+            .min_value
+            .as_deref()
+            .or(statistics.min.as_deref())
+        {
+            Some(v) => v,
+            None => return false,
+        };
+        let max_bytes = match statistics
+            .max_value
+            .as_deref()
+            .or(statistics.max.as_deref())
+        {
+            Some(v) => v,
+            None => return false,
+        };
+
+        let count = filter_desc.count as usize;
+        if count == 0 {
+            return false;
+        }
+        let ptr = filter_desc.ptr as *const u8;
+
+        match physical_type {
+            PhysicalType::Int32 if min_bytes.len() == 4 && max_bytes.len() == 4 => {
+                let min_val = i32::from_le_bytes(min_bytes.try_into().unwrap());
+                let max_val = i32::from_le_bytes(max_bytes.try_into().unwrap());
+                let values = unsafe { slice::from_raw_parts(ptr as *const i32, count) };
+                values.iter().all(|v| *v < min_val || *v > max_val)
+            }
+            PhysicalType::Int64 if min_bytes.len() == 8 && max_bytes.len() == 8 => {
+                let min_val = i64::from_le_bytes(min_bytes.try_into().unwrap());
+                let max_val = i64::from_le_bytes(max_bytes.try_into().unwrap());
+                let values = unsafe { slice::from_raw_parts(ptr as *const i64, count) };
+                values.iter().all(|v| *v < min_val || *v > max_val)
+            }
+            PhysicalType::Float if min_bytes.len() == 4 && max_bytes.len() == 4 => {
+                let min_val = f32::from_le_bytes(min_bytes.try_into().unwrap());
+                let max_val = f32::from_le_bytes(max_bytes.try_into().unwrap());
+                let values = unsafe { slice::from_raw_parts(ptr as *const f32, count) };
+                values.iter().all(|v| *v < min_val || *v > max_val)
+            }
+            PhysicalType::Double if min_bytes.len() == 8 && max_bytes.len() == 8 => {
+                let min_val = f64::from_le_bytes(min_bytes.try_into().unwrap());
+                let max_val = f64::from_le_bytes(max_bytes.try_into().unwrap());
+                let values = unsafe { slice::from_raw_parts(ptr as *const f64, count) };
+                values.iter().all(|v| *v < min_val || *v > max_val)
+            }
+            PhysicalType::ByteArray => {
+                let mut offset = 0usize;
+                for _ in 0..count {
+                    let len = unsafe { (ptr.add(offset) as *const i32).read_unaligned() } as usize;
+                    offset += size_of::<i32>();
+                    let bytes = unsafe { slice::from_raw_parts(ptr.add(offset), len) };
+                    offset += len;
+                    if bytes >= min_bytes && bytes <= max_bytes {
+                        return false;
+                    }
+                }
+                true
+            }
+            PhysicalType::FixedLenByteArray(size) => {
+                let size = *size;
+                if min_bytes.len() != size || max_bytes.len() != size {
+                    return false;
+                }
+                for i in 0..count {
+                    let bytes = unsafe { slice::from_raw_parts(ptr.add(i * size), size) };
+                    if bytes >= min_bytes && bytes <= max_bytes {
+                        return false;
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
     }
 
     pub fn find_row_group_by_timestamp(

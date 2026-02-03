@@ -76,6 +76,21 @@ public class PartitionDecoder implements QuietCloseable {
 
     public static native void destroyDecodeContext(long decodeContextPtr);
 
+    public boolean canSkipRowGroup(
+            int rowGroupIndex,
+            DirectLongList filters // contains [parquet_column_index, ColumnFilterValues] pairs
+    ) {
+        assert ptr != 0;
+        return canSkipRowGroup( // throws CairoException on error
+                ptr,
+                rowGroupIndex,
+                fileAddr,
+                fileSize,
+                filters.getAddress(),
+                (int) (filters.size() / 3)
+        );
+    }
+
     @Override
     public void close() {
         destroy();
@@ -268,6 +283,15 @@ public class PartitionDecoder implements QuietCloseable {
                 rowGroupIndex
         );
     }
+
+    private static native boolean canSkipRowGroup(
+            long decoderPtr,
+            int rowGroupIndex,
+            long filePtr,
+            long fileSize,
+            long filtersPtr,
+            int filterCount
+    ) throws CairoException;
 
     private static native long columnCountOffset();
 
