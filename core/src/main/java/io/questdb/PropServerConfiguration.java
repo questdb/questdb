@@ -439,6 +439,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlHashJoinValuePageSize;
     private final long sqlInsertModelBatchSize;
     private final int sqlInsertModelPoolCapacity;
+    private final int sqlIntervalIncrementalMergeThreshold;
+    private final int sqlIntervalMaxBracketDepth;
+    private final int sqlIntervalMaxIntervalsAfterMerge;
     private final int sqlJitBindVarsMemoryMaxPages;
     private final int sqlJitBindVarsMemoryPageSize;
     private final boolean sqlJitDebugEnabled;
@@ -501,9 +504,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlWindowStorePageSize;
     private final int sqlWindowTreeKeyMaxPages;
     private final int sqlWindowTreeKeyPageSize;
-    private final int sqlIntervalIncrementalMergeThreshold;
-    private final int sqlIntervalMaxBracketDepth;
-    private final int sqlIntervalMaxIntervalsAfterMerge;
     private final int sqlWithClauseModelPoolCapacity;
     private final long symbolTableMaxAllocationPageSize;
     private final long symbolTableMinAllocationPageSize;
@@ -1961,7 +1961,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.partitionEncoderParquetVersion = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_VERSION, ParquetVersion.PARQUET_VERSION_V1);
         this.partitionEncoderParquetStatisticsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, true);
         this.partitionEncoderParquetCompressionCodec = ParquetCompression.getCompressionCodec(getString(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, "LZ4_RAW"));
-        this.partitionEncoderParquetRawArrayEncoding = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, false);
+        // Use raw array encoding in partition-to-parquet conversion for better performance.
+        // Raw encoding writes arrays in QuestDB's native binary layout, avoiding the overhead
+        // of Parquet's nested LIST encoding. Compatibility with external tools is not a concern
+        // since these parquet files are internal to QuestDB.
+        this.partitionEncoderParquetRawArrayEncoding = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, true);
         int defaultCompressionLevel = partitionEncoderParquetCompressionCodec == ParquetCompression.COMPRESSION_ZSTD ? 9 : 0;
         this.partitionEncoderParquetCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, defaultCompressionLevel);
         this.partitionEncoderParquetRowGroupSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
@@ -4036,6 +4040,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlIntervalIncrementalMergeThreshold() {
+            return sqlIntervalIncrementalMergeThreshold;
+        }
+
+        @Override
+        public int getSqlIntervalMaxBracketDepth() {
+            return sqlIntervalMaxBracketDepth;
+        }
+
+        @Override
+        public int getSqlIntervalMaxIntervalsAfterMerge() {
+            return sqlIntervalMaxIntervalsAfterMerge;
+        }
+
+        @Override
         public int getSqlJitBindVarsMemoryMaxPages() {
             return sqlJitBindVarsMemoryMaxPages;
         }
@@ -4248,21 +4267,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlWindowTreeKeyPageSize() {
             return sqlWindowTreeKeyPageSize;
-        }
-
-        @Override
-        public int getSqlIntervalIncrementalMergeThreshold() {
-            return sqlIntervalIncrementalMergeThreshold;
-        }
-
-        @Override
-        public int getSqlIntervalMaxBracketDepth() {
-            return sqlIntervalMaxBracketDepth;
-        }
-
-        @Override
-        public int getSqlIntervalMaxIntervalsAfterMerge() {
-            return sqlIntervalMaxIntervalsAfterMerge;
         }
 
         @Override
