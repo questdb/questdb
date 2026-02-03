@@ -3313,6 +3313,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             TableMetadataFileBlock.read(blockFileReader, holder, path);
             metadata.reloadFromBlockFile(holder);
         } finally {
+            // Close reader after reading - we have all data in holder/metadata
+            blockFileReader.close();
             path.trimTo(rootLen);
         }
     }

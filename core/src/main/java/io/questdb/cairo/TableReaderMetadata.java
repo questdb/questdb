@@ -136,6 +136,10 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
      * @param mem the memory to dump to
      */
     public void dumpTo(MemoryMA mem) {
+        if (path == null) {
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                    .put("cannot dump metadata: path not initialized");
+        }
         // Reconstruct metadata file path
         int savedLen = path.size();
         try {
@@ -151,9 +155,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                 mem.putByte(dumpMem.getByte(p));
             }
         } finally {
+            // Free memory FIRST to avoid leak if path.trimTo throws
+            dumpMem = Misc.free(dumpMem);
             path.trimTo(savedLen);
-            Misc.free(dumpMem);
-            dumpMem = null;
         }
     }
 
@@ -239,6 +243,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             blockFileReader.of(path);
             Path pathWrapper = Path.getThreadLocal(path);
             TableMetadataFileBlock.read(blockFileReader, holder, pathWrapper);
+            // Close reader after reading - we have all data in holder
+            blockFileReader.close();
             readFromHolder(holder);
         } catch (Throwable e) {
             clear();
@@ -287,6 +293,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         path.trimTo(plen).concat(TableUtils.META_FILE_NAME);
         blockFileReader.of(path.$());
         TableMetadataFileBlock.read(blockFileReader, transitionHolder, path);
+        // Close reader after reading - we have all data in transitionHolder
+        blockFileReader.close();
 
         // Check if version matches
         if (txnMetadataVersion != transitionHolder.metadataVersion) {
