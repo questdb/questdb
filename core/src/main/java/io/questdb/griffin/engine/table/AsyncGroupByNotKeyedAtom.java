@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameFilteredNoRandomAccessMemoryRecord;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -45,6 +46,7 @@ import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -59,16 +61,21 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledFilter;
+    private final IntHashSet filterUsedColumnIndexes;
+    private final ObjList<PageFrameFilteredNoRandomAccessMemoryRecord> frameFilteredMemoryRecords = new ObjList<>();
     private final GroupByAllocator ownerAllocator;
     private final Function ownerFilter;
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final SimpleMapValue ownerMapValue;
+    private final PageFrameFilteredNoRandomAccessMemoryRecord ownerPageFrameFilteredNoRandomAccessMemoryRecord = new PageFrameFilteredNoRandomAccessMemoryRecord();
+    private final SelectivityStats ownerSelectivityStats = new SelectivityStats();
     private final ObjList<GroupByAllocator> perWorkerAllocators;
     private final ObjList<Function> perWorkerFilters;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<SimpleMapValue> perWorkerMapValues;
+    private final ObjList<SelectivityStats> perWorkerSelectivityStats;
 
     public AsyncGroupByNotKeyedAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -80,6 +87,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
             @Nullable MemoryCARW bindVarMemory,
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function ownerFilter,
+            @Nullable IntHashSet filterUsedColumnIndexes,
             @Nullable ObjList<Function> perWorkerFilters,
             int workerCount
     ) {
@@ -92,6 +100,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
             this.bindVarMemory = bindVarMemory;
             this.bindVarFunctions = bindVarFunctions;
             this.ownerFilter = ownerFilter;
+            this.filterUsedColumnIndexes = filterUsedColumnIndexes;
             this.perWorkerFilters = perWorkerFilters;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
 
@@ -111,6 +120,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
             perWorkerMapValues = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
                 perWorkerMapValues.extendAndSet(i, new SimpleMapValue(valueCount));
+                frameFilteredMemoryRecords.extendAndSet(i, new PageFrameFilteredNoRandomAccessMemoryRecord());
             }
 
             ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
@@ -125,6 +135,11 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
                 }
             } else {
                 perWorkerAllocators = null;
+            }
+
+            perWorkerSelectivityStats = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
+                perWorkerSelectivityStats.extendAndSet(i, new SelectivityStats());
             }
 
             clear();
@@ -150,6 +165,8 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         }
         Misc.clear(ownerAllocator);
         Misc.clearObjList(perWorkerAllocators);
+        ownerSelectivityStats.clear();
+        Misc.clearObjList(perWorkerSelectivityStats);
     }
 
     @Override
@@ -189,6 +206,10 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         return perWorkerFilters.getQuick(slotId);
     }
 
+    public @Nullable IntHashSet getFilterUsedColumnIndexes() {
+        return filterUsedColumnIndexes;
+    }
+
     public GroupByFunctionsUpdater getFunctionUpdater(int slotId) {
         if (slotId == -1 || perWorkerFunctionUpdaters == null) {
             return ownerFunctionUpdater;
@@ -208,9 +229,23 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         return ownerMapValue;
     }
 
+    public PageFrameFilteredNoRandomAccessMemoryRecord getPageFrameFilteredMemoryRecord(int slotId) {
+        if (slotId == -1) {
+            return ownerPageFrameFilteredNoRandomAccessMemoryRecord;
+        }
+        return frameFilteredMemoryRecords.getQuick(slotId);
+    }
+
     // Thread-unsafe, should be used by query owner thread only.
     public ObjList<SimpleMapValue> getPerWorkerMapValues() {
         return perWorkerMapValues;
+    }
+
+    public SelectivityStats getSelectivityStats(int slotId) {
+        if (slotId == -1) {
+            return ownerSelectivityStats;
+        }
+        return perWorkerSelectivityStats.getQuick(slotId);
     }
 
     @Override
@@ -275,6 +310,16 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
                 perWorkerAllocators.getQuick(i).reopen();
             }
         }
+    }
+
+    public boolean shouldUseLateMaterialization(int slotId, boolean isParquetFrame) {
+        if (!isParquetFrame) {
+            return false;
+        }
+        if (filterUsedColumnIndexes == null || filterUsedColumnIndexes.size() == 0) {
+            return false;
+        }
+        return getSelectivityStats(slotId).shouldUseLateMaterialization();
     }
 
     @Override
