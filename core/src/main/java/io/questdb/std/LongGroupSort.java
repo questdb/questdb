@@ -71,6 +71,31 @@ public class LongGroupSort {
     private static void quickSortImpl(LongList longList, int low, int high, int n) {
         int stackStart = longList.size();
         int stackPos = stackStart;
+        //   Quicksort Stack Depth Analysis
+        //
+        //  Best/Average Case: O(log n)
+        //  - With good pivot selection, each partition roughly halves the data
+        //  - For n elements: log₂(n) recursion levels
+        //  - Each level needs 2 stack entries (low, high)
+        //  - So stack size ≈ 2 × log₂(n)
+        //
+        //  Worst Case: O(n)
+        // But our algorithm uses a key optimization: "process smaller partition immediately"
+        // We push the larger partition first (defer it), then smaller partition last (process next)
+        // This ensures the stack depth stays logarithmic even in worst case!
+        //
+        //  Concrete Examples:
+        //
+        //  | Data Size     | log₂(n) | Stack Pairs Needed | Stack Entries (×2) |
+        //  |---------------|---------|--------------------|--------------------|
+        //  | 1,000         | ~10     | ~10                | ~20                |
+        //  | 1,000,000     | ~20     | ~20                | ~40                |
+        //  | 1,000,000,000 | ~30     | ~30                | ~60                |
+        //
+        //  Why 64 is Safe:
+        //
+        //  - 64 ÷ 2 = 32 partition pairs
+        //  - This handles up to 2³² = 4+ billion elements
         long[] array = longList.resetCapacityInternal(stackPos + 64);
 
         try {
