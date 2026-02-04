@@ -687,9 +687,8 @@ public final class IntervalUtils {
                 );
                 // Apply tick calendar filter if specified
                 if (exchangeSchedule != null) {
-                    int semicolon = globalSemicolon;
                     applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, effectiveSeq,
-                            semicolon >= 0 ? semicolon + 1 : -1, effectiveSeqLim, position);
+                            globalSemicolon >= 0 ? globalSemicolon + 1 : -1, effectiveSeqLim, position);
                 }
                 // In static mode, union all bracket-expanded intervals and validate count
                 if (applyEncoded) {
