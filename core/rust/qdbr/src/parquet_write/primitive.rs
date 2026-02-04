@@ -102,7 +102,7 @@ where
     P: NativeType,
     T: Default + num_traits::AsPrimitive<P> + Debug,
 {
-    assert!(primitive_type.field_info.repetition == Repetition::Required);
+    assert_eq!(primitive_type.field_info.repetition, Repetition::Required);
     let statistics = if options.write_statistics {
         let mut statistics = MaxMin::new();
         for value in slice {
@@ -143,12 +143,12 @@ where
     T: Nullable + num_traits::AsPrimitive<P> + Debug,
     F: Fn(&[T], usize, Vec<u8>) -> Vec<u8>,
 {
-    assert!(primitive_type.field_info.repetition == Repetition::Optional);
+    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
     let num_rows = column_top + slice.len();
     let mut null_count = 0;
     let mut statistics = MaxMin::new();
 
-    let deflevels_iter = (0..num_rows).map(|i| {
+    let def_levels_iter = (0..num_rows).map(|i| {
         if i < column_top {
             false
         } else {
@@ -164,7 +164,7 @@ where
         }
     });
     let mut buffer = vec![];
-    encode_primitive_def_levels(&mut buffer, deflevels_iter, num_rows, options.version)?;
+    encode_primitive_def_levels(&mut buffer, def_levels_iter, num_rows, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
     let buffer = encode_fn(slice, null_count, buffer);
@@ -197,7 +197,7 @@ where
     P: NativeType,
     T: Default + num_traits::AsPrimitive<P>,
 {
-    let mut buffer = Vec::with_capacity(std::mem::size_of::<P>() * (column_top + slice.len()));
+    let mut buffer = Vec::with_capacity(size_of::<P>() * (column_top + slice.len()));
     for i in 0..column_top + slice.len() {
         let x = if i < column_top {
             T::default()
@@ -235,7 +235,7 @@ where
     P: NativeType,
     T: Nullable + num_traits::AsPrimitive<P>,
 {
-    buffer.reserve(std::mem::size_of::<P>() * (slice.len() - null_count));
+    buffer.reserve(size_of::<P>() * (slice.len() - null_count));
     for x in slice.iter().filter(|x| !x.is_null()) {
         let parquet_native: P = x.as_();
         buffer.extend_from_slice(parquet_native.to_le_bytes().as_ref())
@@ -279,23 +279,163 @@ fn build_statistics<P: NativeType>(
 
 use crate::parquet_write::simd::{
     encode_f32_def_levels, encode_f64_def_levels, encode_i32_def_levels, encode_i64_def_levels,
+    DefLevelResult,
 };
 
-/// SIMD-optimized version for i64 slices (Long, Timestamp, Date columns).
-pub fn i64_slice_to_page_simd(
-    slice: &[i64],
+/// Trait for types that can be SIMD-encoded in Parquet pages.
+pub trait SimdEncodable: NativeType {
+    /// Encode definition levels using SIMD, returns null count and optional stats.
+    fn encode_def_levels(
+        buffer: &mut Vec<u8>,
+        slice: &[Self],
+        column_top: usize,
+        compute_stats: bool,
+    ) -> std::io::Result<DefLevelResult<Self>>;
+
+    /// Check if a value represents null.
+    fn is_null(&self) -> bool;
+
+    /// Encode data with delta encoding. Override for types that support it.
+    fn encode_delta(_slice: &[Self], _non_null_count: usize, _buffer: &mut Vec<u8>) -> bool {
+        false // Not supported by default
+    }
+
+    /// Encode data values, dispatching to Plain or Delta based on encoding.
+    fn encode_data(
+        slice: &[Self],
+        null_count: usize,
+        encoding: Encoding,
+        mut buffer: Vec<u8>,
+    ) -> ParquetResult<Vec<u8>> {
+        let non_null_count = slice.len() - null_count;
+        if non_null_count == 0 {
+            return Ok(buffer);
+        }
+
+        match encoding {
+            Encoding::Plain => {
+                buffer.reserve(size_of::<Self>() * non_null_count);
+                if null_count == 0 {
+                    // Fast path: no nulls, memcpy entire slice
+                    let bytes = unsafe {
+                        std::slice::from_raw_parts(slice.as_ptr() as *const u8, size_of_val(slice))
+                    };
+                    buffer.extend_from_slice(bytes);
+                } else {
+                    // Slow path: filter out nulls
+                    for x in slice.iter().filter(|x| !x.is_null()) {
+                        buffer.extend_from_slice(x.to_le_bytes().as_ref());
+                    }
+                }
+                Ok(buffer)
+            }
+            Encoding::DeltaBinaryPacked => {
+                if Self::encode_delta(slice, non_null_count, &mut buffer) {
+                    Ok(buffer)
+                } else {
+                    Err(fmt_err!(
+                        Unsupported,
+                        "delta encoding not supported for this type"
+                    ))
+                }
+            }
+            other => Err(fmt_err!(Unsupported, "unsupported encoding {other:?}")),
+        }
+    }
+}
+
+impl SimdEncodable for i64 {
+    fn encode_def_levels(
+        buffer: &mut Vec<u8>,
+        slice: &[Self],
+        column_top: usize,
+        compute_stats: bool,
+    ) -> std::io::Result<DefLevelResult<Self>> {
+        encode_i64_def_levels(buffer, slice, column_top, compute_stats)
+    }
+
+    #[inline(always)]
+    fn is_null(&self) -> bool {
+        *self == i64::MIN
+    }
+
+    fn encode_delta(slice: &[Self], non_null_count: usize, buffer: &mut Vec<u8>) -> bool {
+        let iterator = slice.iter().filter(|&&x| x != i64::MIN).copied();
+        let iterator = ExactSizedIter::new(iterator, non_null_count);
+        encode(iterator, buffer);
+        true
+    }
+}
+
+impl SimdEncodable for i32 {
+    fn encode_def_levels(
+        buffer: &mut Vec<u8>,
+        slice: &[Self],
+        column_top: usize,
+        compute_stats: bool,
+    ) -> std::io::Result<DefLevelResult<Self>> {
+        encode_i32_def_levels(buffer, slice, column_top, compute_stats)
+    }
+
+    #[inline(always)]
+    fn is_null(&self) -> bool {
+        *self == i32::MIN
+    }
+
+    fn encode_delta(slice: &[Self], non_null_count: usize, buffer: &mut Vec<u8>) -> bool {
+        let iterator = slice.iter().filter(|&&x| x != i32::MIN).map(|&x| x as i64);
+        let iterator = ExactSizedIter::new(iterator, non_null_count);
+        encode(iterator, buffer);
+        true
+    }
+}
+
+impl SimdEncodable for f64 {
+    fn encode_def_levels(
+        buffer: &mut Vec<u8>,
+        slice: &[Self],
+        column_top: usize,
+        compute_stats: bool,
+    ) -> std::io::Result<DefLevelResult<Self>> {
+        encode_f64_def_levels(buffer, slice, column_top, compute_stats)
+    }
+
+    #[inline(always)]
+    fn is_null(&self) -> bool {
+        self.is_nan()
+    }
+}
+
+impl SimdEncodable for f32 {
+    fn encode_def_levels(
+        buffer: &mut Vec<u8>,
+        slice: &[Self],
+        column_top: usize,
+        compute_stats: bool,
+    ) -> std::io::Result<DefLevelResult<Self>> {
+        encode_f32_def_levels(buffer, slice, column_top, compute_stats)
+    }
+
+    #[inline(always)]
+    fn is_null(&self) -> bool {
+        self.is_nan()
+    }
+}
+
+/// Generic SIMD-optimized page encoder for nullable columns.
+pub fn slice_to_page_simd<T: SimdEncodable>(
+    slice: &[T],
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
 ) -> ParquetResult<Page> {
-    assert!(primitive_type.field_info.repetition == Repetition::Optional);
+    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
     let num_rows = column_top + slice.len();
 
-    // Use SIMD to encode definition levels and compute statistics in one pass
     let mut buffer = vec![];
 
-    // For V1, we need to write a 4-byte length prefix placeholder
+    // For V1, write a 4-byte length prefix placeholder
     let def_levels_start = if matches!(options.version, parquet2::write::Version::V1) {
         buffer.extend_from_slice(&[0; 4]);
         4
@@ -303,7 +443,7 @@ pub fn i64_slice_to_page_simd(
         0
     };
 
-    let result = encode_i64_def_levels(&mut buffer, slice, column_top, options.write_statistics)
+    let result = T::encode_def_levels(&mut buffer, slice, column_top, options.write_statistics)
         .map_err(|e| {
             fmt_err!(
                 Io(std::sync::Arc::new(e)),
@@ -319,17 +459,7 @@ pub fn i64_slice_to_page_simd(
 
     let definition_levels_byte_length = buffer.len();
 
-    // Encode the actual data
-    let buffer = match encoding {
-        Encoding::Plain => encode_i64_plain(slice, result.null_count, buffer),
-        Encoding::DeltaBinaryPacked => encode_i64_delta(slice, result.null_count, buffer),
-        other => {
-            return Err(fmt_err!(
-                Unsupported,
-                "unsupported encoding {other:?} for i64 column"
-            ))
-        }
-    };
+    let buffer = T::encode_data(slice, result.null_count, encoding, buffer)?;
 
     let statistics = if options.write_statistics {
         Some(build_statistics(
@@ -350,294 +480,6 @@ pub fn i64_slice_to_page_simd(
         primitive_type,
         options,
         encoding,
-        false,
-    )
-    .map(Page::Data)
-}
-
-fn encode_i64_plain(slice: &[i64], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8> {
-    let non_null_count = slice.len() - null_count;
-    if non_null_count == 0 {
-        return buffer;
-    }
-    buffer.reserve(std::mem::size_of::<i64>() * non_null_count);
-
-    if null_count == 0 {
-        // Fast path: no nulls, use memcpy
-        // SAFETY: i64 slice can be safely viewed as bytes, and Parquet uses little-endian
-        // which matches x86/ARM-LE native byte order
-        let bytes =
-            unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 8) };
-        buffer.extend_from_slice(bytes);
-    } else {
-        // Slow path: filter out nulls
-        for &x in slice.iter().filter(|&&x| x != i64::MIN) {
-            buffer.extend_from_slice(&x.to_le_bytes());
-        }
-    }
-    buffer
-}
-
-fn encode_i64_delta(slice: &[i64], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8> {
-    let non_null_count = slice.len() - null_count;
-    if non_null_count == 0 {
-        return buffer;
-    }
-    let iterator = slice.iter().filter(|&&x| x != i64::MIN).copied();
-    let iterator = ExactSizedIter::new(iterator, non_null_count);
-    encode(iterator, &mut buffer);
-    buffer
-}
-
-/// SIMD-optimized version for i32 slices (Int columns).
-pub fn i32_slice_to_page_simd(
-    slice: &[i32],
-    column_top: usize,
-    options: WriteOptions,
-    primitive_type: PrimitiveType,
-    encoding: Encoding,
-) -> ParquetResult<Page> {
-    assert!(primitive_type.field_info.repetition == Repetition::Optional);
-    let num_rows = column_top + slice.len();
-
-    let mut buffer = vec![];
-
-    let def_levels_start = if matches!(options.version, parquet2::write::Version::V1) {
-        buffer.extend_from_slice(&[0; 4]);
-        4
-    } else {
-        0
-    };
-
-    let result = encode_i32_def_levels(&mut buffer, slice, column_top, options.write_statistics)
-        .map_err(|e| {
-            fmt_err!(
-                Io(std::sync::Arc::new(e)),
-                "failed to encode definition levels"
-            )
-        })?;
-
-    if matches!(options.version, parquet2::write::Version::V1) {
-        let def_levels_len = (buffer.len() - def_levels_start) as i32;
-        buffer[0..4].copy_from_slice(&def_levels_len.to_le_bytes());
-    }
-
-    let definition_levels_byte_length = buffer.len();
-
-    let buffer = match encoding {
-        Encoding::Plain => encode_i32_plain(slice, result.null_count, buffer),
-        Encoding::DeltaBinaryPacked => encode_i32_delta(slice, result.null_count, buffer),
-        other => {
-            return Err(fmt_err!(
-                Unsupported,
-                "unsupported encoding {other:?} for i32 column"
-            ))
-        }
-    };
-
-    let statistics = if options.write_statistics {
-        Some(build_statistics(
-            Some((column_top + result.null_count) as i64),
-            MaxMin { max: result.max, min: result.min },
-            primitive_type.clone(),
-        ))
-    } else {
-        None
-    };
-
-    build_plain_page(
-        buffer,
-        num_rows,
-        column_top + result.null_count,
-        definition_levels_byte_length,
-        statistics,
-        primitive_type,
-        options,
-        encoding,
-        false,
-    )
-    .map(Page::Data)
-}
-
-fn encode_i32_plain(slice: &[i32], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8> {
-    let non_null_count = slice.len() - null_count;
-    if non_null_count == 0 {
-        return buffer;
-    }
-    buffer.reserve(std::mem::size_of::<i32>() * non_null_count);
-
-    if null_count == 0 {
-        // Fast path: no nulls, use memcpy
-        let bytes =
-            unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 4) };
-        buffer.extend_from_slice(bytes);
-    } else {
-        // Slow path: filter out nulls
-        for &x in slice.iter().filter(|&&x| x != i32::MIN) {
-            buffer.extend_from_slice(&x.to_le_bytes());
-        }
-    }
-    buffer
-}
-
-fn encode_i32_delta(slice: &[i32], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8> {
-    let non_null_count = slice.len() - null_count;
-    if non_null_count == 0 {
-        return buffer;
-    }
-    let iterator = slice.iter().filter(|&&x| x != i32::MIN).map(|&x| x as i64);
-    let iterator = ExactSizedIter::new(iterator, non_null_count);
-    encode(iterator, &mut buffer);
-    buffer
-}
-
-/// SIMD-optimized version for f64 slices (Double columns).
-pub fn f64_slice_to_page_simd(
-    slice: &[f64],
-    column_top: usize,
-    options: WriteOptions,
-    primitive_type: PrimitiveType,
-) -> ParquetResult<Page> {
-    assert!(primitive_type.field_info.repetition == Repetition::Optional);
-    let num_rows = column_top + slice.len();
-
-    let mut buffer = vec![];
-
-    let def_levels_start = if matches!(options.version, parquet2::write::Version::V1) {
-        buffer.extend_from_slice(&[0; 4]);
-        4
-    } else {
-        0
-    };
-
-    let result = encode_f64_def_levels(&mut buffer, slice, column_top, options.write_statistics)
-        .map_err(|e| {
-            fmt_err!(
-                Io(std::sync::Arc::new(e)),
-                "failed to encode definition levels"
-            )
-        })?;
-
-    if matches!(options.version, parquet2::write::Version::V1) {
-        let def_levels_len = (buffer.len() - def_levels_start) as i32;
-        buffer[0..4].copy_from_slice(&def_levels_len.to_le_bytes());
-    }
-
-    let definition_levels_byte_length = buffer.len();
-
-    // Encode the actual data (Plain encoding only for floats)
-    let non_null_count = slice.len() - result.null_count;
-    if non_null_count > 0 {
-        buffer.reserve(std::mem::size_of::<f64>() * non_null_count);
-
-        if result.null_count == 0 {
-            // Fast path: no nulls (NaNs), use memcpy
-            let bytes =
-                unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 8) };
-            buffer.extend_from_slice(bytes);
-        } else {
-            // Slow path: filter out NaNs
-            for &x in slice.iter().filter(|x| !x.is_nan()) {
-                buffer.extend_from_slice(&x.to_le_bytes());
-            }
-        }
-    }
-
-    let statistics = if options.write_statistics {
-        Some(build_statistics(
-            Some((column_top + result.null_count) as i64),
-            MaxMin { max: result.max, min: result.min },
-            primitive_type.clone(),
-        ))
-    } else {
-        None
-    };
-
-    build_plain_page(
-        buffer,
-        num_rows,
-        column_top + result.null_count,
-        definition_levels_byte_length,
-        statistics,
-        primitive_type,
-        options,
-        Encoding::Plain,
-        false,
-    )
-    .map(Page::Data)
-}
-
-/// SIMD-optimized version for f32 slices (Float columns).
-pub fn f32_slice_to_page_simd(
-    slice: &[f32],
-    column_top: usize,
-    options: WriteOptions,
-    primitive_type: PrimitiveType,
-) -> ParquetResult<Page> {
-    assert!(primitive_type.field_info.repetition == Repetition::Optional);
-    let num_rows = column_top + slice.len();
-
-    let mut buffer = vec![];
-
-    let def_levels_start = if matches!(options.version, parquet2::write::Version::V1) {
-        buffer.extend_from_slice(&[0; 4]);
-        4
-    } else {
-        0
-    };
-
-    let result = encode_f32_def_levels(&mut buffer, slice, column_top, options.write_statistics)
-        .map_err(|e| {
-            fmt_err!(
-                Io(std::sync::Arc::new(e)),
-                "failed to encode definition levels"
-            )
-        })?;
-
-    if matches!(options.version, parquet2::write::Version::V1) {
-        let def_levels_len = (buffer.len() - def_levels_start) as i32;
-        buffer[0..4].copy_from_slice(&def_levels_len.to_le_bytes());
-    }
-
-    let definition_levels_byte_length = buffer.len();
-
-    // Encode the actual data (Plain encoding only for floats)
-    let non_null_count = slice.len() - result.null_count;
-    if non_null_count > 0 {
-        buffer.reserve(std::mem::size_of::<f32>() * non_null_count);
-
-        if result.null_count == 0 {
-            // Fast path: no nulls (NaNs), use memcpy
-            let bytes =
-                unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 4) };
-            buffer.extend_from_slice(bytes);
-        } else {
-            // Slow path: filter out NaNs
-            for &x in slice.iter().filter(|x| !x.is_nan()) {
-                buffer.extend_from_slice(&x.to_le_bytes());
-            }
-        }
-    }
-
-    let statistics = if options.write_statistics {
-        Some(build_statistics(
-            Some((column_top + result.null_count) as i64),
-            MaxMin { max: result.max, min: result.min },
-            primitive_type.clone(),
-        ))
-    } else {
-        None
-    };
-
-    build_plain_page(
-        buffer,
-        num_rows,
-        column_top + result.null_count,
-        definition_levels_byte_length,
-        statistics,
-        primitive_type,
-        options,
-        Encoding::Plain,
         false,
     )
     .map(Page::Data)

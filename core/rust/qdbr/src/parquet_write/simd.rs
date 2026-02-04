@@ -54,6 +54,88 @@ const F32_SIGN_MASK: i32 = 0x7FFFFFFF_u32 as i32;
 /// Any value with (bits & SIGN_MASK) > this is NaN.
 const F32_INFINITY_BITS: i32 = 0x7F800000_u32 as i32;
 
+/// Helper for writing bitpacked definition levels with partial byte handling.
+/// Tracks accumulated bits when data isn't byte-aligned (e.g., due to column_top).
+struct BitWriter<'a, W: Write> {
+    writer: &'a mut W,
+    partial_byte: u8,
+    partial_bits: usize,
+}
+
+impl<'a, W: Write> BitWriter<'a, W> {
+    #[inline(always)]
+    fn new(writer: &'a mut W, initial_partial_bits: usize) -> Self {
+        Self {
+            writer,
+            partial_byte: 0,
+            partial_bits: initial_partial_bits,
+        }
+    }
+
+    /// Write a full byte (8 bits), merging with any partial bits.
+    #[inline(always)]
+    fn write_byte(&mut self, byte: u8) -> std::io::Result<()> {
+        if self.partial_bits == 0 {
+            self.writer.write_all(&[byte])
+        } else {
+            let combined = self.partial_byte | (byte << self.partial_bits);
+            self.writer.write_all(&[combined])?;
+            self.partial_byte = byte >> (8 - self.partial_bits);
+            Ok(())
+        }
+    }
+
+    /// Write two bytes (16 bits), merging with any partial bits.
+    #[inline(always)]
+    fn write_two_bytes(&mut self, bytes: [u8; 2]) -> std::io::Result<()> {
+        if self.partial_bits == 0 {
+            self.writer.write_all(&bytes)
+        } else {
+            let combined0 = self.partial_byte | (bytes[0] << self.partial_bits);
+            self.writer.write_all(&[combined0])?;
+            let combined1 = (bytes[0] >> (8 - self.partial_bits)) | (bytes[1] << self.partial_bits);
+            self.writer.write_all(&[combined1])?;
+            self.partial_byte = bytes[1] >> (8 - self.partial_bits);
+            Ok(())
+        }
+    }
+
+    /// Write a variable number of bits (1-8), merging with any partial bits.
+    #[inline(always)]
+    fn write_bits(&mut self, bits: u8, num_bits: usize) -> std::io::Result<()> {
+        if self.partial_bits == 0 {
+            if num_bits == 8 {
+                self.writer.write_all(&[bits])?;
+            } else {
+                self.partial_byte = bits;
+                self.partial_bits = num_bits;
+            }
+        } else {
+            let combined = self.partial_byte | (bits << self.partial_bits);
+            let total_bits = self.partial_bits + num_bits;
+            if total_bits >= 8 {
+                self.writer.write_all(&[combined])?;
+                self.partial_byte = bits >> (8 - self.partial_bits);
+                self.partial_bits = total_bits - 8;
+            } else {
+                self.partial_byte = combined;
+                self.partial_bits = total_bits;
+            }
+        }
+        Ok(())
+    }
+
+    /// Flush any remaining partial byte.
+    #[inline(always)]
+    fn flush(&mut self) -> std::io::Result<()> {
+        if self.partial_bits > 0 {
+            self.writer.write_all(&[self.partial_byte])?;
+            self.partial_bits = 0;
+        }
+        Ok(())
+    }
+}
+
 /// Encodes definition levels for i64 slices using SIMD.
 ///
 /// Returns the null count and optionally computes min/max statistics.
@@ -265,9 +347,7 @@ fn encode_i64_def_levels_bitpacked<W: Write>(
         writer.write_all(&[0u8])?;
     }
 
-    // Track bits accumulated in the current partial byte
-    let mut partial_byte: u8 = 0;
-    let partial_bits: usize = top_remaining_bits;
+    let mut bit_writer = BitWriter::new(writer, top_remaining_bits);
 
     // Process slice in chunks of 8 for SIMD
     let chunks = slice.chunks_exact(8);
@@ -289,16 +369,7 @@ fn encode_i64_def_levels_bitpacked<W: Write>(
             }
         }
 
-        // Merge with partial byte if needed
-        if partial_bits == 0 {
-            writer.write_all(&[byte])?;
-        } else {
-            // Combine: partial_byte has `partial_bits` bits in low positions
-            // byte has 8 bits to add
-            let combined = partial_byte | (byte << partial_bits);
-            writer.write_all(&[combined])?;
-            partial_byte = byte >> (8 - partial_bits);
-        }
+        bit_writer.write_byte(byte)?;
     }
 
     // Handle remainder (< 8 values)
@@ -315,22 +386,10 @@ fn encode_i64_def_levels_bitpacked<W: Write>(
             }
         }
 
-        if partial_bits == 0 {
-            writer.write_all(&[rem_byte])?;
-        } else {
-            let combined = partial_byte | (rem_byte << partial_bits);
-            writer.write_all(&[combined])?;
-            let total_bits = partial_bits + remainder.len();
-            if total_bits > 8 {
-                // Flush the remaining bits
-                let leftover = rem_byte >> (8 - partial_bits);
-                writer.write_all(&[leftover])?;
-            }
-        }
-    } else if partial_bits > 0 {
-        // Flush remaining partial byte
-        writer.write_all(&[partial_byte])?;
+        bit_writer.write_bits(rem_byte, remainder.len())?;
     }
+
+    bit_writer.flush()?;
 
     Ok(DefLevelResult {
         null_count: data_null_count,
@@ -542,8 +601,7 @@ fn encode_i32_def_levels_bitpacked<W: Write>(
         writer.write_all(&[0u8])?;
     }
 
-    let mut partial_byte: u8 = 0;
-    let mut partial_bits: usize = top_remaining_bits;
+    let mut bit_writer = BitWriter::new(writer, top_remaining_bits);
 
     // Process in chunks of 16 (produces 2 bytes)
     let chunks = slice.chunks_exact(16);
@@ -564,18 +622,7 @@ fn encode_i32_def_levels_bitpacked<W: Write>(
             }
         }
 
-        let bytes = mask16.to_le_bytes();
-
-        if partial_bits == 0 {
-            writer.write_all(&bytes)?;
-        } else {
-            // Handle partial byte merging
-            let combined0 = partial_byte | (bytes[0] << partial_bits);
-            writer.write_all(&[combined0])?;
-            let combined1 = (bytes[0] >> (8 - partial_bits)) | (bytes[1] << partial_bits);
-            writer.write_all(&[combined1])?;
-            partial_byte = bytes[1] >> (8 - partial_bits);
-        }
+        bit_writer.write_two_bytes(mask16.to_le_bytes())?;
     }
 
     // Handle remainder
@@ -595,31 +642,11 @@ fn encode_i32_def_levels_bitpacked<W: Write>(
                 }
             }
 
-            if partial_bits == 0 {
-                if rem_chunk.len() == 8 {
-                    writer.write_all(&[rem_byte])?;
-                } else {
-                    partial_byte = rem_byte;
-                    partial_bits = rem_chunk.len();
-                }
-            } else {
-                let combined = partial_byte | (rem_byte << partial_bits);
-                let total_bits = partial_bits + rem_chunk.len();
-                if total_bits >= 8 {
-                    writer.write_all(&[combined])?;
-                    partial_byte = rem_byte >> (8 - partial_bits);
-                    partial_bits = total_bits - 8;
-                } else {
-                    partial_byte = combined;
-                    partial_bits = total_bits;
-                }
-            }
+            bit_writer.write_bits(rem_byte, rem_chunk.len())?;
         }
     }
 
-    if partial_bits > 0 {
-        writer.write_all(&[partial_byte])?;
-    }
+    bit_writer.flush()?;
 
     Ok(DefLevelResult {
         null_count: data_null_count,
@@ -855,8 +882,7 @@ fn encode_f64_def_levels_bitpacked<W: Write>(
         writer.write_all(&[0u8])?;
     }
 
-    let mut partial_byte: u8 = 0;
-    let partial_bits: usize = top_remaining_bits;
+    let mut bit_writer = BitWriter::new(writer, top_remaining_bits);
 
     // NaN check using integer bitwise operations (see module-level constants for details)
     let sign_mask_vec = Simd::<i64, 8>::splat(F64_SIGN_MASK);
@@ -885,13 +911,7 @@ fn encode_f64_def_levels_bitpacked<W: Write>(
             }
         }
 
-        if partial_bits == 0 {
-            writer.write_all(&[byte])?;
-        } else {
-            let combined = partial_byte | (byte << partial_bits);
-            writer.write_all(&[combined])?;
-            partial_byte = byte >> (8 - partial_bits);
-        }
+        bit_writer.write_byte(byte)?;
     }
 
     // Handle remainder
@@ -909,20 +929,10 @@ fn encode_f64_def_levels_bitpacked<W: Write>(
             }
         }
 
-        if partial_bits == 0 {
-            writer.write_all(&[rem_byte])?;
-        } else {
-            let combined = partial_byte | (rem_byte << partial_bits);
-            writer.write_all(&[combined])?;
-            let total_bits = partial_bits + remainder.len();
-            if total_bits > 8 {
-                let leftover = rem_byte >> (8 - partial_bits);
-                writer.write_all(&[leftover])?;
-            }
-        }
-    } else if partial_bits > 0 {
-        writer.write_all(&[partial_byte])?;
+        bit_writer.write_bits(rem_byte, remainder.len())?;
     }
+
+    bit_writer.flush()?;
 
     Ok(DefLevelResult {
         null_count: data_null_count,
@@ -1158,8 +1168,7 @@ fn encode_f32_def_levels_bitpacked<W: Write>(
         writer.write_all(&[0u8])?;
     }
 
-    let mut partial_byte: u8 = 0;
-    let mut partial_bits: usize = top_remaining_bits;
+    let mut bit_writer = BitWriter::new(writer, top_remaining_bits);
 
     // NaN check using integer bitwise operations (see module-level constants for details)
     let sign_mask_vec = Simd::<i32, 16>::splat(F32_SIGN_MASK);
@@ -1188,17 +1197,7 @@ fn encode_f32_def_levels_bitpacked<W: Write>(
             }
         }
 
-        let bytes = mask16.to_le_bytes();
-
-        if partial_bits == 0 {
-            writer.write_all(&bytes)?;
-        } else {
-            let combined0 = partial_byte | (bytes[0] << partial_bits);
-            writer.write_all(&[combined0])?;
-            let combined1 = (bytes[0] >> (8 - partial_bits)) | (bytes[1] << partial_bits);
-            writer.write_all(&[combined1])?;
-            partial_byte = bytes[1] >> (8 - partial_bits);
-        }
+        bit_writer.write_two_bytes(mask16.to_le_bytes())?;
     }
 
     // Handle remainder
@@ -1218,31 +1217,11 @@ fn encode_f32_def_levels_bitpacked<W: Write>(
                 }
             }
 
-            if partial_bits == 0 {
-                if rem_chunk.len() == 8 {
-                    writer.write_all(&[rem_byte])?;
-                } else {
-                    partial_byte = rem_byte;
-                    partial_bits = rem_chunk.len();
-                }
-            } else {
-                let combined = partial_byte | (rem_byte << partial_bits);
-                let total_bits = partial_bits + rem_chunk.len();
-                if total_bits >= 8 {
-                    writer.write_all(&[combined])?;
-                    partial_byte = rem_byte >> (8 - partial_bits);
-                    partial_bits = total_bits - 8;
-                } else {
-                    partial_byte = combined;
-                    partial_bits = total_bits;
-                }
-            }
+            bit_writer.write_bits(rem_byte, rem_chunk.len())?;
         }
     }
 
-    if partial_bits > 0 {
-        writer.write_all(&[partial_byte])?;
-    }
+    bit_writer.flush()?;
 
     Ok(DefLevelResult {
         null_count: data_null_count,
@@ -1625,7 +1604,7 @@ mod tests {
 
     #[test]
     fn test_i32_no_nulls_no_column_top() {
-        let data: Vec<i32> = (0..100).map(|x| x as i32).collect();
+        let data: Vec<i32> = (0..100).map(|x| x).collect();
         let mut buffer = Vec::new();
 
         let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
@@ -1652,7 +1631,7 @@ mod tests {
 
     #[test]
     fn test_i32_with_nulls() {
-        let mut data: Vec<i32> = (0..100).map(|x| x as i32).collect();
+        let mut data: Vec<i32> = (0..100).map(|x| x).collect();
         data[5] = i32::MIN;
         data[50] = i32::MIN;
         data[95] = i32::MIN;
@@ -1672,7 +1651,7 @@ mod tests {
 
     #[test]
     fn test_i32_with_column_top() {
-        let data: Vec<i32> = (0..50).map(|x| x as i32).collect();
+        let data: Vec<i32> = (0..50).map(|x| x).collect();
         let mut buffer = Vec::new();
 
         let result = encode_i32_def_levels(&mut buffer, &data, 15, true).unwrap();
@@ -1703,7 +1682,7 @@ mod tests {
     #[test]
     fn test_i32_exact_simd_chunk_size() {
         // Exact multiple of 16 (SIMD chunk size for i32)
-        let data: Vec<i32> = (0..64).map(|x| x as i32).collect();
+        let data: Vec<i32> = (0..64).map(|x| x).collect();
         let mut buffer = Vec::new();
 
         let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
@@ -1716,7 +1695,7 @@ mod tests {
     #[test]
     fn test_i32_remainder_handling() {
         // 67 elements = 4 * 16 + 3 remainder
-        let data: Vec<i32> = (0..67).map(|x| x as i32).collect();
+        let data: Vec<i32> = (0..67).map(|x| x).collect();
         let mut buffer = Vec::new();
 
         let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
@@ -1730,7 +1709,7 @@ mod tests {
 
     #[test]
     fn test_i32_column_top_partial_byte() {
-        let data: Vec<i32> = (0..10).map(|x| x as i32).collect();
+        let data: Vec<i32> = (0..10).map(|x| x).collect();
         let mut buffer = Vec::new();
 
         let _result = encode_i32_def_levels(&mut buffer, &data, 5, true).unwrap();
@@ -1746,7 +1725,7 @@ mod tests {
 
     #[test]
     fn test_i32_no_stats() {
-        let data: Vec<i32> = (0..100).map(|x| x as i32).collect();
+        let data: Vec<i32> = (0..100).map(|x| x).collect();
         let mut buffer = Vec::new();
 
         let result = encode_i32_def_levels(&mut buffer, &data, 0, false).unwrap();
@@ -2207,7 +2186,7 @@ mod tests {
     #[test]
     fn test_i32_rle_fast_path_used() {
         // No nulls, no column_top - should use compact RLE encoding
-        let data: Vec<i32> = (0..1000).map(|x| x as i32).collect();
+        let data: Vec<i32> = (0..1000).map(|x| x).collect();
         let mut buffer = Vec::new();
 
         let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
@@ -2232,7 +2211,7 @@ mod tests {
     #[test]
     fn test_i32_bitpacked_slow_path_used() {
         // Has nulls - should use bitpacked encoding
-        let mut data: Vec<i32> = (0..1000).map(|x| x as i32).collect();
+        let mut data: Vec<i32> = (0..1000).map(|x| x).collect();
         data[500] = i32::MIN;
         let mut buffer = Vec::new();
 
@@ -2349,7 +2328,7 @@ mod tests {
 
     #[test]
     fn test_i32_stats_with_negative_values() {
-        let data: Vec<i32> = (-50..50).map(|x| x as i32).collect();
+        let data: Vec<i32> = (-50..50).map(|x| x).collect();
         let mut buffer = Vec::new();
 
         let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
@@ -2381,7 +2360,7 @@ mod tests {
 
     #[test]
     fn test_i32_fast_path_large_data() {
-        let data: Vec<i32> = (0..100000).map(|x| x as i32).collect();
+        let data: Vec<i32> = (0..100000).map(|x| x).collect();
         let mut buffer = Vec::new();
 
         let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
@@ -2530,7 +2509,7 @@ mod tests {
     #[test]
     fn test_i32_probe_early_exit_mixed_in_probe() {
         // Data larger than probe size (256), with null in probe region
-        let mut data: Vec<i32> = (0..1000).map(|x| x as i32).collect();
+        let mut data: Vec<i32> = (0..1000).map(|x| x).collect();
         data[100] = i32::MIN;
 
         let mut buffer = Vec::new();
@@ -2716,7 +2695,7 @@ mod tests {
     #[test]
     fn test_i32_exactly_probe_size_all_not_null() {
         // Exactly 256 elements (probe size for 32-bit)
-        let data: Vec<i32> = (0..256).map(|x| x as i32).collect();
+        let data: Vec<i32> = (0..256).map(|x| x).collect();
 
         let mut buffer = Vec::new();
         let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
@@ -2728,7 +2707,7 @@ mod tests {
     #[test]
     fn test_i32_null_at_probe_boundary() {
         // Null exactly at position 255 (last element of probe)
-        let mut data: Vec<i32> = (0..500).map(|x| x as i32).collect();
+        let mut data: Vec<i32> = (0..500).map(|x| x).collect();
         data[255] = i32::MIN;
 
         let mut buffer = Vec::new();
@@ -2742,7 +2721,7 @@ mod tests {
     #[test]
     fn test_i32_null_just_after_probe() {
         // Null at position 256 (first element after probe)
-        let mut data: Vec<i32> = (0..500).map(|x| x as i32).collect();
+        let mut data: Vec<i32> = (0..500).map(|x| x).collect();
         data[256] = i32::MIN;
 
         let mut buffer = Vec::new();

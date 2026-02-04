@@ -1012,8 +1012,9 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::Int => {
             let data: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::i32_slice_to_page_simd(
-                &data[lower_bound..upper_bound],
+            let slice = &data[lower_bound..upper_bound];
+            primitive::slice_to_page_simd(
+                slice,
                 adjusted_column_top,
                 options,
                 primitive_type,
@@ -1032,8 +1033,9 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::Long | ColumnTypeTag::Date => {
             let data: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::i64_slice_to_page_simd(
-                &data[lower_bound..upper_bound],
+            let slice = &data[lower_bound..upper_bound];
+            primitive::slice_to_page_simd(
+                slice,
                 adjusted_column_top,
                 options,
                 primitive_type,
@@ -1052,8 +1054,9 @@ fn chunk_to_primitive_page(
                     encoding,
                 )
             } else {
-                primitive::i64_slice_to_page_simd(
-                    &data[lower_bound..upper_bound],
+                let slice = &data[lower_bound..upper_bound];
+                primitive::slice_to_page_simd(
+                    slice,
                     adjusted_column_top,
                     options,
                     primitive_type,
@@ -1103,20 +1106,24 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::Float => {
             let data: &[f32] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::f32_slice_to_page_simd(
-                &data[lower_bound..upper_bound],
+            let slice = &data[lower_bound..upper_bound];
+            primitive::slice_to_page_simd(
+                slice,
                 adjusted_column_top,
                 options,
                 primitive_type,
+                Encoding::Plain,
             )
         }
         ColumnTypeTag::Double => {
             let data: &[f64] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::f64_slice_to_page_simd(
-                &data[lower_bound..upper_bound],
+            let slice = &data[lower_bound..upper_bound];
+            primitive::slice_to_page_simd(
+                slice,
                 adjusted_column_top,
                 options,
                 primitive_type,
+                Encoding::Plain,
             )
         }
         ColumnTypeTag::Binary => {
