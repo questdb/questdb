@@ -127,36 +127,28 @@ public final class PurgingOperator {
                                 TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
                                 int pathPartitionLen = path.size();
                                 TableUtils.dFile(path, columnName, columnVersion);
-                                log.info().$("deleting column data file ").$(path).$();
                                 columnPurged = ff.removeQuiet(path.$());
 
                                 if (ColumnType.isVarSize(columnType)) {
                                     TableUtils.iFile(path.trimTo(pathPartitionLen), columnName, columnVersion);
-                                    log.info().$("deleting column index file ").$(path).$();
                                     columnPurged &= ff.removeQuiet(path.$());
                                 }
 
                                 if (isIndexed) {
                                     BitmapIndexUtils.valueFileName(path.trimTo(pathPartitionLen), columnName, columnVersion);
-                                    log.info().$("deleting column index value file ").$(path).$();
                                     columnPurged &= ff.removeQuiet(path.$());
                                     BitmapIndexUtils.keyFileName(path.trimTo(pathPartitionLen), columnName, columnVersion);
-                                    log.info().$("deleting column index key file ").$(path).$();
                                     columnPurged &= ff.removeQuiet(path.$());
                                 }
                             } else {
                                 // This is removal of symbol files from the table root directory
                                 TableUtils.charFileName(path.trimTo(rootLen), columnName, columnVersion);
-                                log.info().$("deleting column index char file ").$(path).$();
                                 columnPurged = ff.removeQuiet(path.$());
                                 TableUtils.offsetFileName(path.trimTo(rootLen), columnName, columnVersion);
-                                log.info().$("deleting column index offset file ").$(path).$();
                                 columnPurged &= ff.removeQuiet(path.$());
                                 BitmapIndexUtils.keyFileName(path.trimTo(rootLen), columnName, columnVersion);
-                                log.info().$("deleting column index key file ").$(path).$();
                                 columnPurged &= ff.removeQuiet(path.$());
                                 BitmapIndexUtils.valueFileName(path.trimTo(rootLen), columnName, columnVersion);
-                                log.info().$("deleting column index value file ").$(path).$();
                                 columnPurged &= ff.removeQuiet(path.$());
                             }
                         }
