@@ -32,7 +32,7 @@ fn test_fixed_column_sink_push_slice_4byte() {
 
     {
         let mut sink = FixedColumnSink::<4, 4, _>::new(&mut slicer, &mut buffers, &INT_NULL);
-        sink.reserve().unwrap();
+        sink.reserve(5).unwrap();
         sink.push_slice(3).unwrap();
     }
 
@@ -66,7 +66,7 @@ fn test_fixed_column_sink_push_slice_8byte() {
     let mut slicer = DataPageFixedSlicer::<8>::new(&data, 5);
     let mut sink = FixedColumnSink::<8, 8, _>::new(&mut slicer, &mut buffers, &LONG_NULL);
 
-    sink.reserve().unwrap();
+    sink.reserve(5).unwrap();
     sink.push_slice(5).unwrap();
 
     let result: Vec<i64> = buffers
@@ -85,10 +85,10 @@ fn test_fixed_column_sink_push_nulls_small() {
     for count in 0..=4 {
         let mut buffers = create_buffers(&allocator);
         let data: Vec<u8> = vec![1, 0, 0, 0];
-        let mut slicer = DataPageFixedSlicer::<4>::new(&data, count);
+        let mut slicer = DataPageFixedSlicer::<4>::new(&data, 1);
         let mut sink = FixedColumnSink::<4, 4, _>::new(&mut slicer, &mut buffers, &INT_NULL);
 
-        sink.reserve().unwrap();
+        sink.reserve(count).unwrap();
         sink.push_nulls(count).unwrap();
 
         assert_eq!(buffers.data_vec.len(), count * 4, "count={}", count);
@@ -105,10 +105,10 @@ fn test_fixed_column_sink_push_nulls_large() {
     let mut buffers = create_buffers(&allocator);
 
     let data: Vec<u8> = vec![1, 0, 0, 0];
-    let mut slicer = DataPageFixedSlicer::<4>::new(&data, 10);
+    let mut slicer = DataPageFixedSlicer::<4>::new(&data, 1);
     let mut sink = FixedColumnSink::<4, 4, _>::new(&mut slicer, &mut buffers, &INT_NULL);
 
-    sink.reserve().unwrap();
+    sink.reserve(10).unwrap();
     sink.push_nulls(10).unwrap();
 
     assert_eq!(buffers.data_vec.len(), 40);
@@ -124,10 +124,10 @@ fn test_fixed_column_sink_mixed_push_and_nulls() {
     let mut buffers = create_buffers(&allocator);
 
     let data: Vec<u8> = (1i32..=10).flat_map(|v| v.to_le_bytes()).collect();
-    let mut slicer = DataPageFixedSlicer::<4>::new(&data, 15);
+    let mut slicer = DataPageFixedSlicer::<4>::new(&data, 10);
     let mut sink = FixedColumnSink::<4, 4, _>::new(&mut slicer, &mut buffers, &INT_NULL);
 
-    sink.reserve().unwrap();
+    sink.reserve(15).unwrap();
     sink.push_slice(2).unwrap(); // [1, 2]
     sink.push_nulls(3).unwrap(); // [null, null, null]
     sink.push_slice(3).unwrap(); // [3, 4, 5]
@@ -160,7 +160,7 @@ fn test_fixed_column_sink_int_to_short() {
     static SHORT_NULL: [u8; 2] = [0x00, 0x80];
     let mut sink = FixedColumnSink::<2, 4, _>::new(&mut slicer, &mut buffers, &SHORT_NULL);
 
-    sink.reserve().unwrap();
+    sink.reserve(3).unwrap();
     sink.push_slice(3).unwrap();
 
     let result: Vec<i16> = buffers
@@ -182,7 +182,7 @@ fn test_reverse_fixed_column_sink_push_slice() {
     let mut slicer = DataPageFixedSlicer::<4>::new(&data, 2);
     let mut sink = ReverseFixedColumnSink::<4, _>::new(&mut slicer, &mut buffers, INT_NULL);
 
-    sink.reserve().unwrap();
+    sink.reserve(2).unwrap();
     sink.push_slice(2).unwrap();
 
     // Should be reversed to little-endian
@@ -203,7 +203,7 @@ fn test_reverse_fixed_column_sink_push_slice_small_counts() {
         let mut slicer = DataPageFixedSlicer::<4>::new(&data, count);
         let mut sink = ReverseFixedColumnSink::<4, _>::new(&mut slicer, &mut buffers, INT_NULL);
 
-        sink.reserve().unwrap();
+        sink.reserve(count).unwrap();
         sink.push_slice(count).unwrap();
 
         for (i, chunk) in buffers.data_vec.chunks(4).enumerate() {
@@ -220,11 +220,11 @@ fn test_reverse_fixed_column_sink_push_nulls() {
     let mut buffers = create_buffers(&allocator);
 
     let data: Vec<u8> = vec![0x01, 0x02, 0x03, 0x04];
-    let mut slicer = DataPageFixedSlicer::<4>::new(&data, 6);
+    let mut slicer = DataPageFixedSlicer::<4>::new(&data, 1);
     let null_value = [0xDE, 0xAD, 0xBE, 0xEF];
     let mut sink = ReverseFixedColumnSink::<4, _>::new(&mut slicer, &mut buffers, null_value);
 
-    sink.reserve().unwrap();
+    sink.reserve(6).unwrap();
     sink.push_nulls(6).unwrap();
 
     assert_eq!(buffers.data_vec.len(), 24);
@@ -250,7 +250,7 @@ fn test_nano_timestamp_column_sink_push_slice() {
     static TS_NULL: [u8; 8] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80];
     let mut sink = NanoTimestampColumnSink::new(&mut slicer, &mut buffers, &TS_NULL);
 
-    sink.reserve().unwrap();
+    sink.reserve(2).unwrap();
     sink.push_slice(2).unwrap();
 
     let result: Vec<i64> = buffers
@@ -270,11 +270,11 @@ fn test_nano_timestamp_column_sink_push_nulls() {
     let mut buffers = create_buffers(&allocator);
 
     let data: Vec<u8> = vec![0; 12];
-    let mut slicer = DataPageFixedSlicer::<12>::new(&data, 5);
+    let mut slicer = DataPageFixedSlicer::<12>::new(&data, 1);
     static TS_NULL: [u8; 8] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80];
     let mut sink = NanoTimestampColumnSink::new(&mut slicer, &mut buffers, &TS_NULL);
 
-    sink.reserve().unwrap();
+    sink.reserve(5).unwrap();
     sink.push_nulls(5).unwrap();
 
     assert_eq!(buffers.data_vec.len(), 40);
@@ -297,7 +297,7 @@ fn test_int_decimal_column_sink_push_slice() {
     static DOUBLE_NULL: [u8; 8] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF8, 0x7F]; // NaN
     let mut sink = IntDecimalColumnSink::new(&mut slicer, &mut buffers, &DOUBLE_NULL, 2);
 
-    sink.reserve().unwrap();
+    sink.reserve(2).unwrap();
     sink.push_slice(2).unwrap();
 
     let result: Vec<f64> = buffers
@@ -324,7 +324,7 @@ fn test_int_decimal_column_sink_push_slice_small_counts() {
         static DOUBLE_NULL: [u8; 8] = [0; 8];
         let mut sink = IntDecimalColumnSink::new(&mut slicer, &mut buffers, &DOUBLE_NULL, 2);
 
-        sink.reserve().unwrap();
+        sink.reserve(count).unwrap();
         sink.push_slice(count).unwrap();
 
         let result: Vec<f64> = buffers
@@ -347,11 +347,11 @@ fn test_int_decimal_column_sink_push_nulls() {
     let mut buffers = create_buffers(&allocator);
 
     let data: Vec<u8> = vec![0; 4];
-    let mut slicer = DataPageFixedSlicer::<4>::new(&data, 7);
+    let mut slicer = DataPageFixedSlicer::<4>::new(&data, 1);
     static DOUBLE_NULL: [u8; 8] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF8, 0x7F];
     let mut sink = IntDecimalColumnSink::new(&mut slicer, &mut buffers, &DOUBLE_NULL, 2);
 
-    sink.reserve().unwrap();
+    sink.reserve(7).unwrap();
     sink.push_nulls(7).unwrap();
 
     assert_eq!(buffers.data_vec.len(), 56);

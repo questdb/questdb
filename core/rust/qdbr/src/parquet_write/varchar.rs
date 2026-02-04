@@ -1,7 +1,7 @@
 use std::mem;
 
 use super::util::ExactSizedIter;
-use crate::allocator::{AcVec, AcVecSetLen};
+use crate::allocator::AcVec;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
@@ -263,7 +263,14 @@ pub fn append_varchar_nulls(
             null_entry[12..16].copy_from_slice(&((offset >> 16) as u32).to_le_bytes());
 
             let base = aux_mem.len();
-            aux_mem.reserve(count * ENTRY_SIZE)?;
+            let total_bytes = count
+                .checked_mul(ENTRY_SIZE)
+                .ok_or_else(|| fmt_err!(Layout, "append_varchar_nulls overflow"))?;
+            let new_len = base
+                .checked_add(total_bytes)
+                .ok_or_else(|| fmt_err!(Layout, "append_varchar_nulls overflow"))?;
+
+            aux_mem.reserve(total_bytes)?;
             unsafe {
                 let ptr = aux_mem.as_mut_ptr().add(base);
                 for i in 0..count {
@@ -273,7 +280,7 @@ pub fn append_varchar_nulls(
                         ENTRY_SIZE,
                     );
                 }
-                aux_mem.set_len(base + count * ENTRY_SIZE);
+                aux_mem.set_len(new_len);
             }
             Ok(())
         }
