@@ -152,7 +152,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration;
     protected static CairoConfiguration configuration;
     protected static TestCairoConfigurationFactory configurationFactory;
-    protected static volatile long currentMicros = -1;
+    protected static long currentMicros = -1;
     protected static final MicrosecondClock defaultMicrosecondClock = () -> currentMicros != -1 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
     protected static MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     protected static final NanosecondClock defaultNanosecondClock = () -> currentMicros != -1 ? currentMicros * 1000L : NanosecondClockImpl.INSTANCE.getTicks();
