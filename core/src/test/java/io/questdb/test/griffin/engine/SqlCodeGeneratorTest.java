@@ -8889,6 +8889,19 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionAllAssertionError() throws Exception {
+        execute("create table t1 (name1 varchar, ts1 timestamp, sym1 symbol) timestamp(ts1)");
+        execute("create table t2 (name2 varchar, ts2 timestamp, sym2 symbol) timestamp(ts2)");
+        assertQuery(
+                "ts\n",
+                "select ts from (select name1, ts1, sym1 ts from t1 union all select name2, ts2 ts, sym2 from t2) where ts in '2025-12-01T01;2h';",
+                "",
+                false,
+                false
+        );
+    }
+
+    @Test
     public void testUnionCastMatrix() {
         final int[][] expected = SqlCodeGenerator.expectedUnionCastMatrix();
         printExpectedUnionCastMatrix(expected);
@@ -9069,6 +9082,33 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVirtualColumnWithDateaddTimestampMetadata() throws Exception {
+        // Test that when using dateadd on timestamp column, the result metadata has correct timestamp
+        // even without explicit timestamp(ts) clause
+        assertMemoryLeak(() -> {
+            execute("create table trades (timestamp TIMESTAMP, price DOUBLE, amount DOUBLE) timestamp(timestamp) partition by DAY");
+            execute("insert into trades values ('2022-01-15T12:00:00.000000Z', 100.0, 10.0)");
+            execute("insert into trades values ('2022-06-15T12:00:00.000000Z', 150.0, 20.0)");
+
+            // Query with dateadd but without explicit timestamp(ts) clause
+            try (
+                    RecordCursorFactory factory = select("SELECT dateadd('h', -1, timestamp) as ts, price FROM trades");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                RecordMetadata metadata = factory.getMetadata();
+                // Verify timestamp index is set to the 'ts' column (index 0)
+                Assert.assertEquals("Expected timestamp index to be 0 (ts column)", 0, metadata.getTimestampIndex());
+
+                // Also verify data is correct
+                Record record = cursor.getRecord();
+                Assert.assertTrue(cursor.hasNext());
+                // First row: 2022-01-15T12:00:00 - 1h = 2022-01-15T11:00:00 = 1642244400000000 microseconds
+                Assert.assertEquals(100.0, record.getDouble(1), 0.001);
+            }
+        });
+    }
+
+    @Test
     public void testVirtualColumns() throws Exception {
         assertQuery(
                 """
@@ -9178,33 +9218,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 true,
                 true
         );
-    }
-
-    @Test
-    public void testVirtualColumnWithDateaddTimestampMetadata() throws Exception {
-        // Test that when using dateadd on timestamp column, the result metadata has correct timestamp
-        // even without explicit timestamp(ts) clause
-        assertMemoryLeak(() -> {
-            execute("create table trades (timestamp TIMESTAMP, price DOUBLE, amount DOUBLE) timestamp(timestamp) partition by DAY");
-            execute("insert into trades values ('2022-01-15T12:00:00.000000Z', 100.0, 10.0)");
-            execute("insert into trades values ('2022-06-15T12:00:00.000000Z', 150.0, 20.0)");
-
-            // Query with dateadd but without explicit timestamp(ts) clause
-            try (
-                    RecordCursorFactory factory = select("SELECT dateadd('h', -1, timestamp) as ts, price FROM trades");
-                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-            ) {
-                RecordMetadata metadata = factory.getMetadata();
-                // Verify timestamp index is set to the 'ts' column (index 0)
-                Assert.assertEquals("Expected timestamp index to be 0 (ts column)", 0, metadata.getTimestampIndex());
-
-                // Also verify data is correct
-                Record record = cursor.getRecord();
-                Assert.assertTrue(cursor.hasNext());
-                // First row: 2022-01-15T12:00:00 - 1h = 2022-01-15T11:00:00 = 1642244400000000 microseconds
-                Assert.assertEquals(100.0, record.getDouble(1), 0.001);
-            }
-        });
     }
 
     /**

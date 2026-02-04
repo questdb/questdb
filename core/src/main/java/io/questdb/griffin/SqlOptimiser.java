@@ -5379,12 +5379,10 @@ public class SqlOptimiser implements Mutable {
         // propagate explicit timestamp declaration
         if (model.getTimestamp() != null && nestedIsFlex && nestedAllowsColumnChange) {
             emitLiteralsTopDown(model.getTimestamp(), nested);
-
-            QueryModel unionModel = nested.getUnionModel();
-            while (unionModel != null) {
-                emitLiteralsTopDown(model.getTimestamp(), unionModel);
-                unionModel = unionModel.getUnionModel();
-            }
+            // Don't emit to nested union models by name here. In UNION, columns are matched
+            // by position, not name. Name-based resolution can map to a wrong column index
+            // in union branches. The indexed propagation below (emitColumnLiteralsTopDown loop)
+            // correctly propagates columns by position.
         }
 
         if (model.getWhereClause() != null) {
@@ -5393,12 +5391,10 @@ public class SqlOptimiser implements Mutable {
             }
             if (nestedAllowsColumnChange) {
                 emitLiteralsTopDown(model.getWhereClause(), nested);
-
-                QueryModel unionModel = nested.getUnionModel();
-                while (unionModel != null) {
-                    emitLiteralsTopDown(model.getWhereClause(), unionModel);
-                    unionModel = unionModel.getUnionModel();
-                }
+                // Don't emit to nested union models by name here. In UNION, columns are matched
+                // by position, not name. Name-based resolution can map to a wrong column index
+                // in union branches. The indexed propagation below (emitColumnLiteralsTopDown loop)
+                // correctly propagates columns by position.
             }
         }
 
