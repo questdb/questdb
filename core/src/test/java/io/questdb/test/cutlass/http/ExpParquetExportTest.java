@@ -29,6 +29,9 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
@@ -768,6 +771,96 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
                     // Test that chunked parquet export request is properly handled
                     testHttpClient.assertGet("/exp", "PAR1\u0015\u0000\u0015", params, null, null);
+                });
+    }
+
+    /**
+     * Tests streaming parquet export via page frame cursor with various column types.
+     * Uses timestamp filtering to skip rows at the start, which still supports
+     * page frame cursor (unlike LIMIT which requires temp table).
+     * Uses odd row counts to create unaligned tails for SIMD processing.
+     */
+    @Test
+    public void testParquetExportPageFrameAllTypes() throws Exception {
+        getExportTesterPageFrame()
+                .run((engine, sqlExecutionContext) -> {
+                    // Create table with all fixed-size numeric types
+                    // 1000 rows with 1 second intervals = ~16 minutes of data in one partition
+                    engine.execute("CREATE TABLE pageframe_test AS (" +
+                            "SELECT " +
+                            "x::byte as byte_col, " +
+                            "x::short as short_col, " +
+                            "x::int as int_col, " +
+                            "x::long as long_col, " +
+                            "(x * 1.5)::float as float_col, " +
+                            "x * 1.5 as double_col, " +
+                            "cast(null as double) double_null, " +
+                            "cast(null as float) float_null, " +
+                            "cast(null as int) int_null, " +
+                            "cast(null as long) long_null, " +
+                            "cast(null as timestamp) timestamp_null, " +
+                            "timestamp_sequence('2020-01-01T00:00:00', 1000000L) as ts " +
+                            "FROM long_sequence(1000)" +
+                            ") timestamp(ts) partition by day", sqlExecutionContext);
+
+                    // Use timestamp filtering to skip rows - this still supports page frame cursor
+                    // Each filter skips different number of rows, creating odd result counts
+                    String[] queries = {
+                            // Skip 1 row (ts > row 1's timestamp), 999 rows result (odd)
+                            "SELECT * FROM pageframe_test WHERE ts > '2020-01-01T00:00:01'",
+                            // Skip 3 rows, 997 rows result (odd)
+                            "SELECT * FROM pageframe_test WHERE ts > '2020-01-01T00:00:03'",
+                            // Skip 7 rows, 993 rows result (odd)
+                            "SELECT * FROM pageframe_test WHERE ts > '2020-01-01T00:00:07'",
+                            // Skip 15 rows, 985 rows result (odd)
+                            "SELECT * FROM pageframe_test WHERE ts > '2020-01-01T00:00:15'",
+                    };
+
+                    // Verify data correctness
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length, 99);
+                });
+    }
+
+    /**
+     * Tests streaming parquet export via page frame cursor with BYTE column.
+     * Uses timestamp filtering to achieve row offsets while keeping page frame support.
+     * Tests various offsets including near SIMD boundaries with odd row counts.
+     */
+    @Test
+    public void testParquetExportPageFrameByteColumn() throws Exception {
+        getExportTesterPageFrame()
+                .run((engine, sqlExecutionContext) -> {
+                    // Create table with byte column, 10000 rows with 1ms intervals
+                    engine.execute("CREATE TABLE byte_pageframe_test AS (" +
+                            "SELECT " +
+                            "x::byte as b, " +
+                            "x::int as i, " +
+                            "x::long as l, " +
+                            "timestamp_sequence('2020-01-01T00:00:00', 1000L) as ts " +
+                            "FROM long_sequence(10000)" +
+                            ") timestamp(ts) partition by day", sqlExecutionContext);
+
+                    // Use timestamp filtering to skip rows, creating odd result counts
+                    // Timestamps are in milliseconds: row N has ts = base + N ms
+                    String[] queries = {
+                            // Skip 1 row, 9999 rows (odd)
+                            "SELECT * FROM byte_pageframe_test WHERE ts > '2020-01-01T00:00:00.001'",
+                            // Skip 2 rows, 9998 rows (even) - still tests offset 2
+                            "SELECT * FROM byte_pageframe_test WHERE ts > '2020-01-01T00:00:00.002'",
+                            // Skip 3 rows, 9997 rows (odd)
+                            "SELECT * FROM byte_pageframe_test WHERE ts > '2020-01-01T00:00:00.003'",
+                            // Skip 5 rows, 9995 rows (odd)
+                            "SELECT * FROM byte_pageframe_test WHERE ts > '2020-01-01T00:00:00.005'",
+                            // Skip 127 rows, 9873 rows (odd) - near SIMD boundary
+                            "SELECT * FROM byte_pageframe_test WHERE ts > '2020-01-01T00:00:00.127'",
+                            // Skip 128 rows, 9872 rows (even) - at SIMD boundary
+                            "SELECT * FROM byte_pageframe_test WHERE ts > '2020-01-01T00:00:00.128'",
+                            // Skip 129 rows, 9871 rows (odd) - past SIMD boundary
+                            "SELECT * FROM byte_pageframe_test WHERE ts > '2020-01-01T00:00:00.129'",
+                    };
+
+                    // Verify data correctness
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length, 999);
                 });
     }
 
@@ -1617,5 +1710,58 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 .withSendBufferSize(Math.max(1024, rnd.nextInt(4099)))
                 .withCopyExportRoot(root + "/export")
                 .withCopyInputRoot(root + "/export");
+    }
+
+    /**
+     * Returns an export tester configured with a FilesFacade that fails if
+     * temp tables (zzz.copy.*) are created. This ensures the page frame
+     * export path is used instead of copying to a temp table.
+     */
+    private HttpQueryTestBuilder getExportTesterPageFrame() {
+        FilesFacade noTempTableFacade = new TestFilesFacadeImpl() {
+            private void checkNoTempTable(LPSZ name) {
+                if (name.toString().contains("zzz.copy.")) {
+                    Assert.fail("Expected page frame export but temp table was created: " + name);
+                }
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                checkNoTempTable(name);
+                return super.openRW(name, opts);
+            }
+
+            @Override
+            public long openCleanRW(LPSZ name, long size) {
+                checkNoTempTable(name);
+                return super.openCleanRW(name, size);
+            }
+
+            @Override
+            public long openAppend(LPSZ name) {
+                checkNoTempTable(name);
+                return super.openAppend(name);
+            }
+
+            @Override
+            public int mkdirs(Path path, int mode) {
+                if (path.toString().contains("zzz.copy.")) {
+                    Assert.fail("Expected page frame export but temp table directory was created: " + path);
+                }
+                return super.mkdirs(path, mode);
+            }
+        };
+
+        return new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .withForceRecvFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
+                .withForceSendFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
+                .withSendBufferSize(Math.max(1024, rnd.nextInt(4099)))
+                .withCopyExportRoot(root + "/export")
+                .withCopyInputRoot(root + "/export")
+                .withFilesFacade(noTempTableFacade);
     }
 }
