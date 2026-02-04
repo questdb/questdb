@@ -126,6 +126,49 @@ public class UnionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterPushdownShouldNotChangeSampleByInUnionBranch() throws Exception {
+        // Regression test: pushing a WHERE filter into a UNION branch that has
+        // SAMPLE BY must not change aggregation semantics. The filter should be
+        // applied AFTER the SAMPLE BY aggregation (like HAVING), not before it
+        // (as a scan-level WHERE that changes which rows are aggregated).
+        assertMemoryLeak(() -> {
+            execute("create table t1 (ts timestamp, x double) timestamp(ts)");
+            execute("insert into t1 values ('2024-01-01T00:00:00.000000Z', 9.0)");
+
+            execute("create table t2 (ts timestamp, x double) timestamp(ts)");
+            execute("insert into t2 values ('2024-01-01T00:00:00.000000Z', 3.0)");
+            execute("insert into t2 values ('2024-01-01T00:00:01.000000Z', 4.0)");
+            execute("insert into t2 values ('2024-01-01T00:00:02.000000Z', 8.0)");
+
+            // Correct semantics:
+            //   1. t1 branch: (ts=0, x=9.0)
+            //   2. t2 SAMPLE BY branch: avg(3.0, 4.0, 8.0) = 5.0
+            //   3. UNION ALL: (9.0), (5.0)
+            //   4. WHERE x > 5: only (9.0) — avg 5.0 is not > 5
+            //
+            // Buggy semantics (if filter pushed as pre-aggregation WHERE):
+            //   1. t1 branch with WHERE x>5: (ts=0, x=9.0)
+            //   2. t2 with WHERE x>5 then SAMPLE BY: only x=8.0 survives filter,
+            //      avg(8.0) = 8.0
+            //   3. UNION ALL: (9.0), (8.0)
+            //   4. WHERE x > 5: both kept — wrong! t2 bucket should not appear
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tx
+                            2024-01-01T00:00:00.000000Z\t9.0
+                            """,
+                    "select * from (" +
+                            "select ts, x from t1 " +
+                            "union all " +
+                            "select ts, avg(x) x from t2 sample by 1h align to first observation" +
+                            ") where x > 5",
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testFilteredUnionAll() throws Exception {
         assertMemoryLeak(() -> {
             execute(
