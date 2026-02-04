@@ -10701,6 +10701,39 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultipleNamedWindowsPartitionedFirst() throws Exception {
+        // This test reproduces a bug where defining the partitioned window FIRST
+        // caused both windows to use the same partition specification
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, side symbol, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 'sell', 0)");
+            execute("insert into t values (2, 'buy', 1000000)");
+            execute("insert into t values (3, 'buy', 2000000)");
+            execute("insert into t values (4, 'sell', 3000000)");
+
+            // ws has partition by side, wt has no partition
+            // If bug exists: both would show partitioned results
+            // Correct: sum_ws partitions by side, sum_wt is global cumulative
+            assertQueryNoLeakCheck(
+                    "x\tside\tsum_ws\tsum_wt\n" +
+                            "1\tsell\t1.0\t1.0\n" +
+                            "2\tbuy\t2.0\t3.0\n" +
+                            "3\tbuy\t5.0\t6.0\n" +
+                            "4\tsell\t5.0\t10.0\n",
+                    "SELECT x, side, " +
+                            "sum(x) OVER ws as sum_ws, " +
+                            "sum(x) OVER wt as sum_wt " +
+                            "FROM t " +
+                            "WINDOW ws AS (PARTITION BY side ORDER BY x), " +
+                            "wt AS (ORDER BY x)",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testNamedWindowRankDenseRank() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");

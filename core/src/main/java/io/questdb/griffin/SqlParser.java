@@ -2887,7 +2887,9 @@ public class SqlParser {
                     throw SqlException.$(lexer.lastTokenPosition(), "window name expected");
                 }
 
-                CharSequence windowName = tok;
+                // Intern the window name immediately before any more lexer operations
+                // (the lexer reuses its buffer, so tok would be overwritten)
+                CharSequence windowName = Chars.toString(tok);
                 int windowNamePos = lexer.lastTokenPosition();
 
                 // Check for duplicate window name
@@ -2912,9 +2914,8 @@ public class SqlParser {
                 windowSpec.clear();
                 expressionParser.parseWindowSpec(lexer, windowSpec, sqlParserCallback, model.getDecls());
 
-                // Store in model using interned name
-                CharSequence internedName = Chars.toString(windowName);
-                model.getNamedWindows().put(internedName, windowSpec);
+                // Store in model
+                model.getNamedWindows().put(windowName, windowSpec);
 
                 tok = optTok(lexer);
             } while (tok != null && Chars.equals(tok, ','));
