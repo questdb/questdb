@@ -33,6 +33,7 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -1552,9 +1553,9 @@ public final class TableUtils {
 
                     if (columnRowCount > 0) {
                         if (ColumnType.isSymbol(columnType)) {
-                            final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndex);
+                            final StaticSymbolTable symbolTable = reader.getSymbolMapReader(columnIndex);
                             int encodeColumnType = columnType;
-                            if (!symbolMapReader.containsNullValue()) {
+                            if (!symbolTable.containsNullValue()) {
                                 encodeColumnType |= Integer.MIN_VALUE;
                             }
 
@@ -1584,7 +1585,7 @@ public final class TableUtils {
                                 throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
                             }
 
-                            final int symbolCount = symbolMapReader.getSymbolCount();
+                            final int symbolCount = symbolTable.getSymbolCount();
                             final long offsetsMemSize = SymbolMapWriter.keyToOffset(symbolCount + 1);
                             final long symbolOffsetsAddr = mapRO(ff, path.$(), LOG, offsetsMemSize, memoryTag);
                             partitionDescriptor.setSymbolOffsetsAddr(symbolOffsetsAddr + SymbolMapWriter.HEADER_SIZE, symbolCount);
