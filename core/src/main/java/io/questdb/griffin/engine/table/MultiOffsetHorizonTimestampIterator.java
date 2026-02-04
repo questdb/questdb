@@ -167,23 +167,33 @@ public class MultiOffsetHorizonTimestampIterator implements HorizonTimestampIter
     }
 
     private void siftDown() {
+        // "Hole" sift-down: save root, move smaller children up, place saved element at final position.
+        // This halves array writes compared to swapping at each level.
+        long savedTs = heapTs[0];
+        long savedPos = heapPos[0];
+        int savedOffsetIdx = heapOffsetIdx[0];
         int i = 0;
         while (true) {
             int left = 2 * i + 1;
-            int right = 2 * i + 2;
-            int smallest = i;
-            if (left < heapSize && heapTs[left] < heapTs[smallest]) {
-                smallest = left;
-            }
-            if (right < heapSize && heapTs[right] < heapTs[smallest]) {
-                smallest = right;
-            }
-            if (smallest == i) {
+            if (left >= heapSize) {
                 break;
             }
-            swap(i, smallest);
+            int smallest = left;
+            int right = left + 1;
+            if (right < heapSize && heapTs[right] < heapTs[left]) {
+                smallest = right;
+            }
+            if (savedTs <= heapTs[smallest]) {
+                break;
+            }
+            heapTs[i] = heapTs[smallest];
+            heapPos[i] = heapPos[smallest];
+            heapOffsetIdx[i] = heapOffsetIdx[smallest];
             i = smallest;
         }
+        heapTs[i] = savedTs;
+        heapPos[i] = savedPos;
+        heapOffsetIdx[i] = savedOffsetIdx;
     }
 
     private void siftUp(int i) {
