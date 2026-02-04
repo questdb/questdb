@@ -4483,10 +4483,13 @@ public class SqlOptimiser implements Mutable {
                             || nested.getLatestBy().size() > 0
                             || nested.getLimitLo() != null
                             || nested.getLimitHi() != null
-                            || nested.getUnionModel() != null
                             || (nested.getSampleBy() != null && !canPushToSampleBy(nested, literalCollectorANames))
                     ) {
                         // there is no nested model for this table, keep where clause element with this model
+                        addWhereNode(parent, node);
+                    } else if (nested.getUnionModel() != null) {
+                        // try pushing into each union branch, always keep at parent too
+                        tryPushFilterIntoSetOperationBranches(node, parent, nested);
                         addWhereNode(parent, node);
                     } else {
                         // now that we have identified sub-query we have to rewrite our where clause
@@ -9229,6 +9232,21 @@ public class SqlOptimiser implements Mutable {
         literalCollector.resetCounts();
         traversalAlgo.traverse(node.lhs, literalCollector.lhs());
         traversalAlgo.traverse(node.rhs, literalCollector.rhs());
+    }
+
+    private void tryPushFilterIntoSetOperationBranches(ExpressionNode node, QueryModel parent, QueryModel nested) throws SqlException {
+        QueryModel branch = nested;
+        while (branch != null) {
+            try {
+                ExpressionNode clone = deepClone(expressionNodePool, node);
+                traversalAlgo.traverse(clone, literalCheckingVisitor.of(parent.getAliasToColumnMap()));
+                traversalAlgo.traverse(clone, literalRewritingVisitor.of(parent.getAliasToColumnNameMap()));
+                addWhereNode(branch, clone);
+            } catch (NonLiteralException ignore) {
+                // skip this branch - the outer filter still guarantees correctness
+            }
+            branch = branch.getUnionModel();
+        }
     }
 
     private CharSequence validateColumnAndGetAlias(QueryModel model, CharSequence columnName, int dot, int position) throws SqlException {
