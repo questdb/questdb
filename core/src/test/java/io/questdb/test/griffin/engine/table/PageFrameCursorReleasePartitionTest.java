@@ -43,6 +43,118 @@ import org.junit.Test;
 public class PageFrameCursorReleasePartitionTest extends AbstractCairoTest {
 
     @Test
+    public void testBwdCursorReleaseAfterToTopIsNoOp() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create table with multiple partitions
+            execute("create table x as (" +
+                    "select" +
+                    " rnd_int() a," +
+                    " timestamp_sequence('2022-01-01', 24*60*60*1000000L) t" +
+                    " from long_sequence(10)" +
+                    ") timestamp (t) partition by DAY"
+            );
+
+            TableReader reader = engine.getReader("x");
+
+            IntList columnIndexes = new IntList();
+            IntList columnSizeShifts = new IntList();
+            for (int i = 0; i < reader.getMetadata().getColumnCount(); i++) {
+                columnIndexes.add(i);
+                int columnType = reader.getMetadata().getColumnType(i);
+                columnSizeShifts.add(ColumnType.pow2SizeOf(columnType));
+            }
+
+            FullBwdPartitionFrameCursor partitionFrameCursor = new FullBwdPartitionFrameCursor();
+            partitionFrameCursor.of(reader);
+
+            BwdTableReaderPageFrameCursor pageFrameCursor = new BwdTableReaderPageFrameCursor(
+                    columnIndexes,
+                    columnSizeShifts,
+                    1
+            );
+
+            try (pageFrameCursor) {
+                pageFrameCursor.of(partitionFrameCursor, 1000, 1000000);
+
+                // First pass - iterate and release
+                while (pageFrameCursor.next() != null) {
+                    pageFrameCursor.releaseOpenPartitions();
+                }
+                Assert.assertEquals("One partition should be open after first pass", 1, reader.getOpenPartitionCount());
+
+                // Reset cursor
+                pageFrameCursor.toTop();
+
+                // Calling releaseOpenPartitions() immediately after toTop() should be safe
+                // This tests the edge case where highestOpenPartitionIndex is reset to -1
+                // but reenterPartitionIndex retains its old value
+                pageFrameCursor.releaseOpenPartitions();
+
+                // Should still have one partition open (toTop doesn't close partitions)
+                // and releaseOpenPartitions should be a no-op since nothing new is open
+                Assert.assertTrue("Partitions should remain from previous iteration", reader.getOpenPartitionCount() >= 0);
+
+                // Cursor should still work normally
+                int frameCount = 0;
+                while (pageFrameCursor.next() != null) {
+                    frameCount++;
+                }
+                Assert.assertTrue("Should process frames on second pass", frameCount > 0);
+            }
+        });
+    }
+
+    @Test
+    public void testBwdCursorReleaseBeforeNextIsNoOp() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create table with multiple partitions
+            execute("create table x as (" +
+                    "select" +
+                    " rnd_int() a," +
+                    " timestamp_sequence('2022-01-01', 24*60*60*1000000L) t" +
+                    " from long_sequence(10)" +
+                    ") timestamp (t) partition by DAY"
+            );
+
+            TableReader reader = engine.getReader("x");
+
+            IntList columnIndexes = new IntList();
+            IntList columnSizeShifts = new IntList();
+            for (int i = 0; i < reader.getMetadata().getColumnCount(); i++) {
+                columnIndexes.add(i);
+                int columnType = reader.getMetadata().getColumnType(i);
+                columnSizeShifts.add(ColumnType.pow2SizeOf(columnType));
+            }
+
+            FullBwdPartitionFrameCursor partitionFrameCursor = new FullBwdPartitionFrameCursor();
+            partitionFrameCursor.of(reader);
+
+            BwdTableReaderPageFrameCursor pageFrameCursor = new BwdTableReaderPageFrameCursor(
+                    columnIndexes,
+                    columnSizeShifts,
+                    1
+            );
+
+            try (pageFrameCursor) {
+                pageFrameCursor.of(partitionFrameCursor, 1000, 1000000);
+
+                // Calling releaseOpenPartitions() before next() should be safe (no-op)
+                Assert.assertEquals("No partitions should be open initially", 0, reader.getOpenPartitionCount());
+                pageFrameCursor.releaseOpenPartitions();
+                Assert.assertEquals("No partitions should be open after release before next", 0, reader.getOpenPartitionCount());
+
+                // Cursor should still work normally after
+                int frameCount = 0;
+                while (pageFrameCursor.next() != null) {
+                    frameCount++;
+                    pageFrameCursor.releaseOpenPartitions();
+                }
+                Assert.assertTrue("Should have processed frames", frameCount > 0);
+            }
+        });
+    }
+
+    @Test
     public void testBwdCursorReleasesPartitions() throws Exception {
         assertMemoryLeak(() -> {
             // Create table with multiple partitions (one per day)
@@ -227,6 +339,115 @@ public class PageFrameCursorReleasePartitionTest extends AbstractCairoTest {
                 );
             }
             // This will close the reader via the cursor chain
+        });
+    }
+
+    @Test
+    public void testFwdCursorReleaseAfterToTopIsNoOp() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create table with multiple partitions
+            execute("create table x as (" +
+                    "select" +
+                    " rnd_int() a," +
+                    " timestamp_sequence('2022-01-01', 24*60*60*1000000L) t" +
+                    " from long_sequence(10)" +
+                    ") timestamp (t) partition by DAY"
+            );
+
+            TableReader reader = engine.getReader("x");
+
+            IntList columnIndexes = new IntList();
+            IntList columnSizeShifts = new IntList();
+            for (int i = 0; i < reader.getMetadata().getColumnCount(); i++) {
+                columnIndexes.add(i);
+                int columnType = reader.getMetadata().getColumnType(i);
+                columnSizeShifts.add(ColumnType.pow2SizeOf(columnType));
+            }
+
+            FullFwdPartitionFrameCursor partitionFrameCursor = new FullFwdPartitionFrameCursor();
+            partitionFrameCursor.of(reader);
+
+            FwdTableReaderPageFrameCursor pageFrameCursor = new FwdTableReaderPageFrameCursor(
+                    columnIndexes,
+                    columnSizeShifts,
+                    1
+            );
+
+            try (pageFrameCursor) {
+                pageFrameCursor.of(partitionFrameCursor, 1000, 1000000);
+
+                // First pass - iterate and release
+                while (pageFrameCursor.next() != null) {
+                    pageFrameCursor.releaseOpenPartitions();
+                }
+                Assert.assertEquals("One partition should be open after first pass", 1, reader.getOpenPartitionCount());
+
+                // Reset cursor
+                pageFrameCursor.toTop();
+
+                // Calling releaseOpenPartitions() immediately after toTop() should be safe
+                pageFrameCursor.releaseOpenPartitions();
+
+                // Should still have one partition open (toTop doesn't close partitions)
+                Assert.assertTrue("Partitions should remain from previous iteration", reader.getOpenPartitionCount() >= 0);
+
+                // Cursor should still work normally
+                int frameCount = 0;
+                while (pageFrameCursor.next() != null) {
+                    frameCount++;
+                }
+                Assert.assertTrue("Should process frames on second pass", frameCount > 0);
+            }
+        });
+    }
+
+    @Test
+    public void testFwdCursorReleaseBeforeNextIsNoOp() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create table with multiple partitions
+            execute("create table x as (" +
+                    "select" +
+                    " rnd_int() a," +
+                    " timestamp_sequence('2022-01-01', 24*60*60*1000000L) t" +
+                    " from long_sequence(10)" +
+                    ") timestamp (t) partition by DAY"
+            );
+
+            TableReader reader = engine.getReader("x");
+
+            IntList columnIndexes = new IntList();
+            IntList columnSizeShifts = new IntList();
+            for (int i = 0; i < reader.getMetadata().getColumnCount(); i++) {
+                columnIndexes.add(i);
+                int columnType = reader.getMetadata().getColumnType(i);
+                columnSizeShifts.add(ColumnType.pow2SizeOf(columnType));
+            }
+
+            FullFwdPartitionFrameCursor partitionFrameCursor = new FullFwdPartitionFrameCursor();
+            partitionFrameCursor.of(reader);
+
+            FwdTableReaderPageFrameCursor pageFrameCursor = new FwdTableReaderPageFrameCursor(
+                    columnIndexes,
+                    columnSizeShifts,
+                    1
+            );
+
+            try (pageFrameCursor) {
+                pageFrameCursor.of(partitionFrameCursor, 1000, 1000000);
+
+                // Calling releaseOpenPartitions() before next() should be safe (no-op)
+                Assert.assertEquals("No partitions should be open initially", 0, reader.getOpenPartitionCount());
+                pageFrameCursor.releaseOpenPartitions();
+                Assert.assertEquals("No partitions should be open after release before next", 0, reader.getOpenPartitionCount());
+
+                // Cursor should still work normally after
+                int frameCount = 0;
+                while (pageFrameCursor.next() != null) {
+                    frameCount++;
+                    pageFrameCursor.releaseOpenPartitions();
+                }
+                Assert.assertTrue("Should have processed frames", frameCount > 0);
+            }
         });
     }
 

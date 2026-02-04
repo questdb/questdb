@@ -156,6 +156,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
     @Override
     public void releaseOpenPartitions() {
+        // Guard against being called before next() or after toTop() when no partitions are open.
+        // highestOpenPartitionIndex is -1 until the first partition is opened by next().
+        if (highestOpenPartitionIndex < 0 || highestOpenPartitionIndex <= reenterPartitionIndex) {
+            return;
+        }
         // Close all partitions from highestOpenPartitionIndex down to (but not including) current partition
         // Backward cursor scans from high to low partition indices
         for (int i = highestOpenPartitionIndex; i > reenterPartitionIndex; i--) {

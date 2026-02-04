@@ -65,6 +65,8 @@ import static io.questdb.griffin.engine.table.parquet.PartitionEncoder.*;
  */
 @Ignore
 public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
+    // Sentinel value indicating CPU time measurement is not supported
+    private static final long CPU_TIME_UNSUPPORTED = -1;
     private static final int DATA_PAGE_SIZE = 1024 * 1024;  // 1MB
     private static final Log LOG = LogFactory.getLog(StreamingParquetBenchmarkTest.class);
     private static final int PARQUET_VERSION = ParquetVersion.PARQUET_VERSION_V2;
@@ -74,6 +76,20 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
     private static final int ROW_GROUP_SIZE = 220_000;
     private static final boolean STATISTICS_ENABLED = true;
     private static final String TABLE_NAME = "benchmark_table";
+    private static final ThreadMXBean THREAD_MX_BEAN = ManagementFactory.getThreadMXBean();
+    private static final boolean CPU_TIME_SUPPORTED;
+
+    static {
+        boolean supported = THREAD_MX_BEAN.isCurrentThreadCpuTimeSupported();
+        if (supported && !THREAD_MX_BEAN.isThreadCpuTimeEnabled()) {
+            try {
+                THREAD_MX_BEAN.setThreadCpuTimeEnabled(true);
+            } catch (UnsupportedOperationException | SecurityException e) {
+                supported = false;
+            }
+        }
+        CPU_TIME_SUPPORTED = supported;
+    }
 
     /**
      * Pure read benchmark - reads all data without Parquet encoding.
@@ -220,8 +236,7 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
 
                 LOG.info().$("Starting pure read benchmark (no Parquet, no Rust)...").$();
 
-                ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
-                long startCpuTime = threadMXBean.getCurrentThreadCpuTime();
+                long startCpuTime = CPU_TIME_SUPPORTED ? THREAD_MX_BEAN.getCurrentThreadCpuTime() : CPU_TIME_UNSUPPORTED;
                 long startTime = System.nanoTime();
 
                 try {
@@ -266,11 +281,9 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                 }
 
                 long elapsedNs = System.nanoTime() - startTime;
-                long cpuTimeNs = threadMXBean.getCurrentThreadCpuTime() - startCpuTime;
+                long cpuTimeNs = CPU_TIME_SUPPORTED ? THREAD_MX_BEAN.getCurrentThreadCpuTime() - startCpuTime : CPU_TIME_UNSUPPORTED;
 
                 double elapsedSec = elapsedNs / 1_000_000_000.0;
-                double cpuTimeSec = cpuTimeNs / 1_000_000_000.0;
-                double cpuUtilization = (cpuTimeNs * 100.0) / elapsedNs;
                 double throughputMBps = (totalBytesRead / (1024.0 * 1024.0)) / elapsedSec;
                 double tableThroughputMBps = (tableDiskSize / (1024.0 * 1024.0)) / elapsedSec;
 
@@ -281,18 +294,25 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                 LOG.info().$("Table disk size: ").$(tableDiskSize / (1024 * 1024)).$(" MB").$();
                 LOG.info().$("Checksum (to prevent optimization): ").$(totalSum).$();
                 LOG.info().$("Elapsed (wall) time: ").$(String.format("%.3f", elapsedSec)).$("s").$();
-                LOG.info().$("CPU time: ").$(String.format("%.3f", cpuTimeSec)).$("s").$();
-                LOG.info().$("CPU utilization: ").$(String.format("%.1f", cpuUtilization)).$("%").$();
+                if (cpuTimeNs != CPU_TIME_UNSUPPORTED) {
+                    double cpuTimeSec = cpuTimeNs / 1_000_000_000.0;
+                    double cpuUtilization = (cpuTimeNs * 100.0) / elapsedNs;
+                    LOG.info().$("CPU time: ").$(String.format("%.3f", cpuTimeSec)).$("s").$();
+                    LOG.info().$("CPU utilization: ").$(String.format("%.1f", cpuUtilization)).$("%").$();
+                }
                 LOG.info().$("Read throughput: ").$(String.format("%.2f", throughputMBps)).$(" MB/s").$();
                 LOG.info().$("Table throughput: ").$(String.format("%.2f", tableThroughputMBps)).$(" MB/s").$();
                 LOG.info().$("==========================================").$();
 
-                if (cpuUtilization > 90) {
-                    LOG.info().$("Analysis: CPU-bound (memory/compute limited)").$();
-                } else if (cpuUtilization > 50) {
-                    LOG.info().$("Analysis: Mixed CPU/IO").$();
-                } else {
-                    LOG.info().$("Analysis: IO-bound (disk limited)").$();
+                if (cpuTimeNs != CPU_TIME_UNSUPPORTED) {
+                    double cpuUtilization = (cpuTimeNs * 100.0) / elapsedNs;
+                    if (cpuUtilization > 90) {
+                        LOG.info().$("Analysis: CPU-bound (memory/compute limited)").$();
+                    } else if (cpuUtilization > 50) {
+                        LOG.info().$("Analysis: Mixed CPU/IO").$();
+                    } else {
+                        LOG.info().$("Analysis: IO-bound (disk limited)").$();
+                    }
                 }
             }
         }
@@ -361,9 +381,7 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                             .$(" level=").$(compressionLevel)
                             .$("...").$();
 
-                    // CPU time measurement
-                    ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
-                    long startCpuTime = threadMXBean.getCurrentThreadCpuTime();
+                    long startCpuTime = CPU_TIME_SUPPORTED ? THREAD_MX_BEAN.getCurrentThreadCpuTime() : CPU_TIME_UNSUPPORTED;
                     long startTime = System.nanoTime();
 
                     // Process all page frames
@@ -426,11 +444,9 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                     }
 
                     long elapsedNs = System.nanoTime() - startTime;
-                    long cpuTimeNs = threadMXBean.getCurrentThreadCpuTime() - startCpuTime;
+                    long cpuTimeNs = CPU_TIME_SUPPORTED ? THREAD_MX_BEAN.getCurrentThreadCpuTime() - startCpuTime : CPU_TIME_UNSUPPORTED;
 
                     double elapsedSec = elapsedNs / 1_000_000_000.0;
-                    double cpuTimeSec = cpuTimeNs / 1_000_000_000.0;
-                    double cpuUtilization = (cpuTimeNs * 100.0) / elapsedNs;
                     double outputThroughputMBps = (totalBytesWritten / (1024.0 * 1024.0)) / elapsedSec;
                     double inputThroughputMBps = (tableDiskSize / (1024.0 * 1024.0)) / elapsedSec;
 
@@ -442,19 +458,25 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                     LOG.info().$("Parquet bytes written: ").$(totalBytesWritten).$(" (")
                             .$(totalBytesWritten / (1024 * 1024)).$(" MB)").$();
                     LOG.info().$("Elapsed (wall) time: ").$(String.format("%.3f", elapsedSec)).$("s").$();
-                    LOG.info().$("CPU time: ").$(String.format("%.3f", cpuTimeSec)).$("s").$();
-                    LOG.info().$("CPU utilization: ").$(String.format("%.1f", cpuUtilization)).$("%").$();
+                    if (cpuTimeNs != CPU_TIME_UNSUPPORTED) {
+                        double cpuTimeSec = cpuTimeNs / 1_000_000_000.0;
+                        double cpuUtilization = (cpuTimeNs * 100.0) / elapsedNs;
+                        LOG.info().$("CPU time: ").$(String.format("%.3f", cpuTimeSec)).$("s").$();
+                        LOG.info().$("CPU utilization: ").$(String.format("%.1f", cpuUtilization)).$("%").$();
+                    }
                     LOG.info().$("Input throughput (table): ").$(String.format("%.2f", inputThroughputMBps)).$(" MB/s").$();
                     LOG.info().$("Output throughput (parquet): ").$(String.format("%.2f", outputThroughputMBps)).$(" MB/s").$();
                     LOG.info().$("==========================================").$();
 
-                    // Analysis
-                    if (cpuUtilization > 90) {
-                        LOG.info().$("Analysis: CPU-bound (").$(String.format("%.1f", cpuUtilization)).$("% CPU utilization)").$();
-                    } else if (cpuUtilization > 50) {
-                        LOG.info().$("Analysis: Mixed CPU/IO (").$(String.format("%.1f", cpuUtilization)).$("% CPU utilization)").$();
-                    } else {
-                        LOG.info().$("Analysis: IO-bound (").$(String.format("%.1f", cpuUtilization)).$("% CPU utilization)").$();
+                    if (cpuTimeNs != CPU_TIME_UNSUPPORTED) {
+                        double cpuUtilization = (cpuTimeNs * 100.0) / elapsedNs;
+                        if (cpuUtilization > 90) {
+                            LOG.info().$("Analysis: CPU-bound (").$(String.format("%.1f", cpuUtilization)).$("% CPU utilization)").$();
+                        } else if (cpuUtilization > 50) {
+                            LOG.info().$("Analysis: Mixed CPU/IO (").$(String.format("%.1f", cpuUtilization)).$("% CPU utilization)").$();
+                        } else {
+                            LOG.info().$("Analysis: IO-bound (").$(String.format("%.1f", cpuUtilization)).$("% CPU utilization)").$();
+                        }
                     }
 
                 } finally {

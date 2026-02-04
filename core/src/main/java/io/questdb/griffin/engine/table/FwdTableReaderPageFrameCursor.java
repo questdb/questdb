@@ -155,6 +155,10 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
     @Override
     public void releaseOpenPartitions() {
+        // Guard against being called before next() when no partitions need releasing.
+        if (lowestOpenPartitionIndex >= reenterPartitionIndex) {
+            return;
+        }
         // Close all partitions from lowestOpenPartitionIndex up to (but not including) current partition
         for (int i = lowestOpenPartitionIndex; i < reenterPartitionIndex; i++) {
             reader.closePartitionByIndex(i);
