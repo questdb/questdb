@@ -25,6 +25,35 @@ pub struct DefLevelResult<T> {
 const PROBE_SIZE_64: usize = 128;
 const PROBE_SIZE_32: usize = 256;
 
+// IEEE-754 floating point NaN detection constants.
+//
+// NaN detection works via bitwise integer operations on the float's binary representation.
+// This is portable across all platforms because:
+// 1. IEEE-754 defines the binary format (sign bit, exponent, mantissa) independently of endianness
+// 2. Rust's f64::to_bits() returns a u64 where the bit layout matches the IEEE-754 spec
+// 3. The sign/exponent/mantissa positions are the same in the u64 regardless of platform endianness
+//
+// A value is NaN if: (bits & SIGN_MASK) > INFINITY_BITS
+// This checks if the exponent is all 1s AND the mantissa is non-zero (after clearing sign bit).
+
+/// Mask to clear the sign bit from f64, leaving exponent and mantissa.
+/// Binary: 0111_1111_1111_1111_... (63 bits set, MSB cleared)
+const F64_SIGN_MASK: i64 = 0x7FFFFFFFFFFFFFFF_u64 as i64;
+
+/// Bit pattern for positive infinity in f64 (exponent all 1s, mantissa all 0s).
+/// Binary: 0111_1111_1111_0000_... (sign=0, exponent=0x7FF, mantissa=0)
+/// Any value with (bits & SIGN_MASK) > this is NaN.
+const F64_INFINITY_BITS: i64 = 0x7FF0000000000000_u64 as i64;
+
+/// Mask to clear the sign bit from f32, leaving exponent and mantissa.
+/// Binary: 0111_1111_1111_1111_1111_1111_1111_1111 (31 bits set, MSB cleared)
+const F32_SIGN_MASK: i32 = 0x7FFFFFFF_u32 as i32;
+
+/// Bit pattern for positive infinity in f32 (exponent all 1s, mantissa all 0s).
+/// Binary: 0_11111111_00000000000000000000000 (sign=0, exponent=0xFF, mantissa=0)
+/// Any value with (bits & SIGN_MASK) > this is NaN.
+const F32_INFINITY_BITS: i32 = 0x7F800000_u32 as i32;
+
 /// Encodes definition levels for i64 slices using SIMD.
 ///
 /// Returns the null count and optionally computes min/max statistics.
@@ -743,15 +772,6 @@ pub fn encode_f64_def_levels<W: Write>(
     encode_f64_def_levels_bitpacked(writer, slice, column_top, compute_stats)
 }
 
-// NaN check constants for f64.
-// IEEE-754 NaN detection: NaN has all exponent bits set AND non-zero mantissa,
-// so abs(bits) > infinity_bits. We use transmute from f64 to i64 for SIMD NaN checks.
-// This is endianness-safe: transmute reinterprets the bit pattern in registers without
-// byte swapping, and IEEE-754 bit layout (sign/exponent/mantissa) is identical on all
-// platforms. Endianness only affects memory byte order, not register bit operations.
-const F64_SIGN_MASK: i64 = 0x7FFFFFFFFFFFFFFF_u64 as i64;
-const F64_INFINITY_BITS: i64 = 0x7FF0000000000000_u64 as i64;
-
 #[inline]
 fn f64_is_nan(val: f64) -> bool {
     let bits = val.to_bits() as i64;
@@ -1032,11 +1052,9 @@ fn encode_f64_def_levels_bitpacked<W: Write>(
     let mut partial_byte: u8 = 0;
     let partial_bits: usize = top_remaining_bits;
 
-    // NaN check using integer bitwise operations
-    const SIGN_MASK: i64 = 0x7FFFFFFFFFFFFFFF_u64 as i64;
-    const INFINITY_BITS: i64 = 0x7FF0000000000000_u64 as i64;
-    let sign_mask_vec = Simd::<i64, 8>::splat(SIGN_MASK);
-    let infinity_vec = Simd::<i64, 8>::splat(INFINITY_BITS);
+    // NaN check using integer bitwise operations (see module-level constants for details)
+    let sign_mask_vec = Simd::<i64, 8>::splat(F64_SIGN_MASK);
+    let infinity_vec = Simd::<i64, 8>::splat(F64_INFINITY_BITS);
 
     // Process in chunks of 8
     let chunks = slice.chunks_exact(8);
@@ -1125,10 +1143,6 @@ pub fn encode_f32_def_levels<W: Write>(
     // Slow path: mixed nulls or column_top, use bitpacked encoding
     encode_f32_def_levels_bitpacked(writer, slice, column_top, compute_stats)
 }
-
-// NaN check constants for f32 (see f64 constants above for endianness safety explanation).
-const F32_SIGN_MASK: i32 = 0x7FFFFFFF_u32 as i32;
-const F32_INFINITY_BITS: i32 = 0x7F800000_u32 as i32;
 
 #[inline]
 fn f32_is_nan(val: f32) -> bool {
@@ -1410,11 +1424,9 @@ fn encode_f32_def_levels_bitpacked<W: Write>(
     let mut partial_byte: u8 = 0;
     let mut partial_bits: usize = top_remaining_bits;
 
-    // NaN check using integer bitwise operations for f32
-    const SIGN_MASK: i32 = 0x7FFFFFFF_u32 as i32;
-    const INFINITY_BITS: i32 = 0x7F800000_u32 as i32;
-    let sign_mask_vec = Simd::<i32, 16>::splat(SIGN_MASK);
-    let infinity_vec = Simd::<i32, 16>::splat(INFINITY_BITS);
+    // NaN check using integer bitwise operations (see module-level constants for details)
+    let sign_mask_vec = Simd::<i32, 16>::splat(F32_SIGN_MASK);
+    let infinity_vec = Simd::<i32, 16>::splat(F32_INFINITY_BITS);
 
     // Process in chunks of 16
     let chunks = slice.chunks_exact(16);
