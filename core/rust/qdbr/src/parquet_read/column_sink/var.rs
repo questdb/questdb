@@ -1,4 +1,4 @@
-use crate::allocator::{AcVec, AcVecSetLen};
+use crate::allocator::AcVec;
 use crate::parquet::error::{ParquetErrorReason, ParquetResult};
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::DataPageSlicer;
@@ -27,7 +27,7 @@ fn write_offset_sequence(
     while remaining > 0 {
         let n = remaining.min(BATCH);
         for slot in buf.iter_mut().take(n) {
-            *slot = offset as u64;
+            *slot = (offset as u64).to_le();
             offset += step;
         }
         aux_vec.extend_from_slice(unsafe {
@@ -44,8 +44,7 @@ pub struct VarcharColumnSink<'a, T: DataPageSlicer> {
 }
 
 impl<T: DataPageSlicer> Pushable for VarcharColumnSink<'_, T> {
-    fn reserve(&mut self) -> ParquetResult<()> {
-        let count = self.slicer.count();
+    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
         self.buffers.aux_vec.reserve(count * VARCHAR_AUX_SIZE)?;
         self.buffers.data_vec.reserve(self.slicer.data_size())?;
         Ok(())
@@ -105,8 +104,7 @@ pub struct StringColumnSink<'a, T: DataPageSlicer> {
 }
 
 impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
-    fn reserve(&mut self) -> ParquetResult<()> {
-        let count = self.slicer.count();
+    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
         if count > 0 {
             self.buffers
                 .aux_vec
@@ -242,8 +240,7 @@ pub struct BinaryColumnSink<'a, T: DataPageSlicer> {
 }
 
 impl<T: DataPageSlicer> Pushable for BinaryColumnSink<'_, T> {
-    fn reserve(&mut self) -> ParquetResult<()> {
-        let count = self.slicer.count();
+    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
         if count > 0 {
             self.buffers
                 .aux_vec
@@ -361,8 +358,7 @@ pub struct RawArrayColumnSink<'a, T: DataPageSlicer> {
 }
 
 impl<T: DataPageSlicer> Pushable for RawArrayColumnSink<'_, T> {
-    fn reserve(&mut self) -> ParquetResult<()> {
-        let count = self.slicer.count();
+    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
         self.buffers.aux_vec.reserve(count * ARRAY_AUX_SIZE)?;
         self.buffers.data_vec.reserve(self.slicer.data_size())?;
         Ok(())
