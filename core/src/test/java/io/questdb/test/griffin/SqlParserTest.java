@@ -4908,7 +4908,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testEraseColumnPrefixInJoinWithNestedUnion() throws Exception {
         assertQueryWithOuterJoinType(
-                "select-choose c.customerId customerId, o.customerId customerId1, o.x x from (select [customerId] from customers c #OUTER_JOIN_TYPE join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders) union select-choose [customerId, x] customerId, x from (select [customerId, x] from orders)) o where x = 10 and customerId = 100) o) o on customerId = c.customerId where customerId = 100) c",
+                "select-choose c.customerId customerId, o.customerId customerId1, o.x x from (select [customerId] from customers c #OUTER_JOIN_TYPE join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders where x = 10 and customerId = 100) union select-choose [customerId, x] customerId, x from (select [customerId, x] from orders where x = 10 and customerId = 100)) o where x = 10 and customerId = 100) o) o on customerId = c.customerId where customerId = 100) c",
                 "customers c" +
                         " #OUTER_JOIN_TYPE join ((orders union orders) o where o.x = 10) o on c.customerId = o.customerId" +
                         " where c.customerId = 100",
@@ -9789,6 +9789,203 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "show create table public",
                 18,
                 "table does not exist [table=public]"
+        );
+    }
+
+    @Test
+    public void testPushDownTimestampFilterThroughExcept() throws SqlException {
+        assertQuery(
+                "select-choose ts from (" +
+                        /**/ "select [ts] from (" +
+                        /**/   "select-choose [ts1 ts] ts1 ts from (" +
+                        /**/     "select [ts1] from t1 timestamp (ts1) where ts1 in '2025-12-01T01;2h'" +
+                        /**/   ") except select-choose [ts2 ts] ts2 ts from (" +
+                        /**/     "select [ts2] from t2 timestamp (ts2) where ts2 in '2025-12-01T01;2h'" +
+                        /**/   ")" +
+                        /**/ ") _xQdbA1 where ts in '2025-12-01T01;2h'" +
+                        ")",
+                "select ts from (select ts1 ts from t1 except select ts2 ts from t2) where ts in '2025-12-01T01;2h'",
+                modelOf("t1").timestamp("ts1"),
+                modelOf("t2").timestamp("ts2")
+        );
+    }
+
+    @Test
+    public void testPushDownTimestampFilterThroughIntersect() throws SqlException {
+        assertQuery(
+                "select-choose ts from (" +
+                        /**/ "select [ts] from (" +
+                        /**/   "select-choose [ts1 ts] ts1 ts from (" +
+                        /**/     "select [ts1] from t1 timestamp (ts1) where ts1 in '2025-12-01T01;2h'" +
+                        /**/   ") intersect select-choose [ts2 ts] ts2 ts from (" +
+                        /**/     "select [ts2] from t2 timestamp (ts2) where ts2 in '2025-12-01T01;2h'" +
+                        /**/   ")" +
+                        /**/ ") _xQdbA1 where ts in '2025-12-01T01;2h'" +
+                        ")",
+                "select ts from (select ts1 ts from t1 intersect select ts2 ts from t2) where ts in '2025-12-01T01;2h'",
+                modelOf("t1").timestamp("ts1"),
+                modelOf("t2").timestamp("ts2")
+        );
+    }
+
+    @Test
+    public void testPushDownTimestampFilterThroughUnion() throws SqlException {
+        assertQuery(
+                "select-choose ts from (" +
+                        /**/ "select [ts] from (" +
+                        /**/   "select-choose [ts1 ts] ts1 ts from (" +
+                        /**/     "select [ts1] from t1 timestamp (ts1) where ts1 in '2025-12-01T01;2h'" +
+                        /**/   ") union select-choose [ts2 ts] ts2 ts from (" +
+                        /**/     "select [ts2] from t2 timestamp (ts2) where ts2 in '2025-12-01T01;2h'" +
+                        /**/   ")" +
+                        /**/ ") _xQdbA1 where ts in '2025-12-01T01;2h'" +
+                        ")",
+                "select ts from (select ts1 ts from t1 union select ts2 ts from t2) where ts in '2025-12-01T01;2h'",
+                modelOf("t1").timestamp("ts1"),
+                modelOf("t2").timestamp("ts2")
+        );
+    }
+
+    @Test
+    public void testPushDownTimestampFilterThroughUnionAll() throws SqlException {
+        assertQuery(
+                "select-choose ts from (" +
+                        /**/ "select [ts] from (" +
+                        /**/   "select-choose [ts1 ts] ts1 ts from (" +
+                        /**/     "select [ts1] from t1 timestamp (ts1) where ts1 in '2025-12-01T01;2h'" +
+                        /**/   ") union all select-choose [ts2 ts] ts2 ts from (" +
+                        /**/     "select [ts2] from t2 timestamp (ts2) where ts2 in '2025-12-01T01;2h'" +
+                        /**/   ")" +
+                        /**/ ") _xQdbA1 where ts in '2025-12-01T01;2h'" +
+                        ")",
+                "select ts from (select ts1 ts from t1 union all select ts2 ts from t2) where ts in '2025-12-01T01;2h'",
+                modelOf("t1").timestamp("ts1"),
+                modelOf("t2").timestamp("ts2")
+        );
+    }
+
+    @Test
+    public void testPushDownTimestampFilterThroughUnionAllNonPushableBranch() throws SqlException {
+        // One branch aliases the column to a non-literal expression (ts2+1).
+        // The filter is pushed to both branches (since the parent's alias map sees it as a literal),
+        // but on the non-literal branch it stays at the select-virtual level and cannot be pushed further.
+        assertQuery(
+                "select-choose ts from (" +
+                        /**/ "select [ts] from (" +
+                        /**/   "select-choose [ts1 ts] ts1 ts from (" +
+                        /**/     "select [ts1] from t1 timestamp (ts1) where ts1 in '2025-12-01T01;2h'" +
+                        /**/   ") union all select-virtual [ts2 + 1 ts] ts2 + 1 ts from (" +
+                        /**/     "select [ts2] from t2 timestamp (ts2)" +
+                        /**/   ") where ts in '2025-12-01T01;2h'" +
+                        /**/ ") _xQdbA1 where ts in '2025-12-01T01;2h'" +
+                        ")",
+                "select ts from (select ts1 ts from t1 union all select ts2+1 ts from t2) where ts in '2025-12-01T01;2h'",
+                modelOf("t1").timestamp("ts1"),
+                modelOf("t2").timestamp("ts2")
+        );
+    }
+
+    @Test
+    public void testPushDownTimestampFilterThroughUnionAllThreeBranches() throws SqlException {
+        assertQuery(
+                "select-choose ts from (" +
+                        /**/ "select [ts] from (" +
+                        /**/   "select-choose [ts1 ts] ts1 ts from (" +
+                        /**/     "select [ts1] from t1 timestamp (ts1) where ts1 in '2025-12-01T01;2h'" +
+                        /**/   ") union all select-choose [ts2 ts] ts2 ts from (" +
+                        /**/     "select [ts2] from t2 timestamp (ts2) where ts2 in '2025-12-01T01;2h'" +
+                        /**/   ") union all select-choose [ts3 ts] ts3 ts from (" +
+                        /**/     "select [ts3] from t3 timestamp (ts3) where ts3 in '2025-12-01T01;2h'" +
+                        /**/   ")" +
+                        /**/ ") _xQdbA1 where ts in '2025-12-01T01;2h'" +
+                        ")",
+                "select ts from (select ts1 ts from t1 union all select ts2 ts from t2 union all select ts3 ts from t3) where ts in '2025-12-01T01;2h'",
+                modelOf("t1").timestamp("ts1"),
+                modelOf("t2").timestamp("ts2"),
+                modelOf("t3").timestamp("ts3")
+        );
+    }
+
+    @Test
+    public void testPushFilterThroughUnionAllExprInAllBranches() throws SqlException {
+        // Both branches define c as expression x+y. Filter pushed to branches
+        // but stays at select-virtual level (can't descend past non-literal).
+        assertQuery(
+                "select-choose c from (" +
+                        /**/ "select [c] from (" +
+                        /**/   "select-virtual [x + y c] x + y c from (" +
+                        /**/     "select [y, x] from t1" +
+                        /**/   ") where c > 5" +
+                        /**/   " union all select-virtual [x + y c] x + y c from (" +
+                        /**/     "select [y, x] from t2" +
+                        /**/   ") where c > 5" +
+                        /**/ ") _xQdbA1 where c > 5" +
+                        ")",
+                "select c from (select x + y c from t1 union all select x + y c from t2) where c > 5",
+                modelOf("t1").col("x", ColumnType.INT).col("y", ColumnType.INT),
+                modelOf("t2").col("x", ColumnType.INT).col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testPushFilterThroughUnionAllMixedPushability() throws SqlException {
+        // Two filters: ts is a literal (pushed all the way to base table),
+        // c is a non-literal expression (pushed to branch level but not further).
+        assertQuery(
+                "select-choose ts, c from (" +
+                        /**/ "select [ts, c] from (" +
+                        /**/   "select-virtual [ts, x + y c] ts, x + y c from (" +
+                        /**/     "select-choose [ts1 ts, y, x] ts1 ts, y, x from (" +
+                        /**/       "select [ts1, y, x] from t1 timestamp (ts1) where ts1 in '2025-12-01T01;2h'" +
+                        /**/     ")" +
+                        /**/   ") where c > 5" +
+                        /**/   " union all select-virtual [ts, x + y c] ts, x + y c from (" +
+                        /**/     "select-choose [ts2 ts, y, x] ts2 ts, y, x from (" +
+                        /**/       "select [ts2, y, x] from t2 timestamp (ts2) where ts2 in '2025-12-01T01;2h'" +
+                        /**/     ")" +
+                        /**/   ") where c > 5" +
+                        /**/ ") _xQdbA1 where ts in '2025-12-01T01;2h' and c > 5" +
+                        ")",
+                "select ts, c from (select ts1 ts, x + y c from t1 union all select ts2 ts, x + y c from t2) where ts in '2025-12-01T01;2h' and c > 5",
+                modelOf("t1").timestamp("ts1").col("x", ColumnType.INT).col("y", ColumnType.INT),
+                modelOf("t2").timestamp("ts2").col("x", ColumnType.INT).col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testPushFilterThroughUnionAllSameTable() throws SqlException {
+        // Both branches reference the same table; filter should be pushed to both independently.
+        assertQuery(
+                "select-choose ts from (" +
+                        /**/ "select [ts] from (" +
+                        /**/   "select-choose [ts] ts from (" +
+                        /**/     "select [ts] from t1 timestamp (ts) where ts in '2025-12-01T01;2h'" +
+                        /**/   ") union all select-choose [ts] ts from (" +
+                        /**/     "select [ts] from t1 timestamp (ts) where ts in '2025-12-01T01;2h'" +
+                        /**/   ")" +
+                        /**/ ") _xQdbA1 where ts in '2025-12-01T01;2h'" +
+                        ")",
+                "select ts from (select ts from t1 union all select ts from t1) where ts in '2025-12-01T01;2h'",
+                modelOf("t1").timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testPushFilterWithMultipleColumnsThroughUnionAll() throws SqlException {
+        // Filter references two columns; both are literals in both branches, so pushed to both.
+        assertQuery(
+                "select-choose ts, v from (" +
+                        /**/ "select [ts, v] from (" +
+                        /**/   "select-choose [val1 v, ts1 ts] ts1 ts, val1 v from (" +
+                        /**/     "select [val1, ts1] from t1 where ts1 > val1" +
+                        /**/   ") union all select-choose [val2 v, ts2 ts] ts2 ts, val2 v from (" +
+                        /**/     "select [val2, ts2] from t2 where ts2 > val2" +
+                        /**/   ")" +
+                        /**/ ") _xQdbA1 where ts > v" +
+                        ")",
+                "select ts, v from (select ts1 ts, val1 v from t1 union all select ts2 ts, val2 v from t2) where ts > v",
+                modelOf("t1").col("ts1", ColumnType.TIMESTAMP).col("val1", ColumnType.INT),
+                modelOf("t2").col("ts2", ColumnType.TIMESTAMP).col("val2", ColumnType.INT)
         );
     }
 
