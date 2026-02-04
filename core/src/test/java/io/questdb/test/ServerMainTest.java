@@ -456,7 +456,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 serverMain.start();
 
                 // test sanity check: our new config differs from the default one
-                Assert.assertNotEquals(nonDefaultConfig, 1readStringFromFile(consoleFile));
+                Assert.assertNotEquals(nonDefaultConfig, readStringFromFile(consoleFile));
             }
 
             // mangle the version file -> this is to force web console upgrade on the next server start
