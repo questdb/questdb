@@ -2860,6 +2860,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return false;
     }
 
+    // returns false if there is no parquet file to switch to, true otherwise
     public boolean switchNativePartitionWithParquet(long partitionTimestamp) {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
@@ -2878,7 +2879,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
             // The partition is active; conversion is currently unsupported.
             LOG.info()
-                    .$("skipping active partition as it cannot be converted to parquet format [table=")
+                    .$("skipping active partition as it cannot be switched to parquet format [table=")
                     .$(tableToken)
                     .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                     .I$();
