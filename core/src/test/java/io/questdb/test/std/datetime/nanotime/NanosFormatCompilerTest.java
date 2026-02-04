@@ -810,7 +810,7 @@ public class NanosFormatCompilerTest {
         assertNanos("y-MM-dd HH:mm:ss.Nz", "2014-04-03T04:32:49.000000999Z", "2014-04-03 04:32:49.999Z");
 
         // N = nanos, up to 9 digits
-        assertNanos("y-MM-dd HH:mm:ss.N+z", "2014-04-03T04:32:49.000000999Z", "2014-04-03 04:32:49.999Z");
+        assertNanos("y-MM-dd HH:mm:ss.N+z", "2014-04-03T04:32:49.999000000Z", "2014-04-03 04:32:49.999Z");
     }
 
     @Test
