@@ -44,13 +44,13 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory.inVolumeToSink;
-import static io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory.ttlToSink;
 
 public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final int N_DDL_COL = 0;
@@ -245,7 +245,7 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
                     .put(viewDefinition.getMatViewSql())
                     .putAscii('\n');
             sink.putAscii(") PARTITION BY ").put(table.getPartitionByName());
-            ttlToSink(table.getTtlHoursOrMonths(), sink);
+            ttlToSink(sink);
             inVolumeToSink(configuration, table, sink);
             putAdditional();
             sink.putAscii(';');
@@ -253,6 +253,11 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
 
         // placeholder for ent, do not remove!
         protected void putAdditional() {
+        }
+
+        // overridden in ent, do not remove!
+        protected void ttlToSink(CharSink<?> sink) {
+            ShowCreateTableRecordCursorFactory.ttlToSink(table.getTtlHoursOrMonths(), sink);
         }
 
         public class ShowCreateMatViewRecord implements Record {

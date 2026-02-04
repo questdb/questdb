@@ -34,7 +34,7 @@ import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
 
-public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata, TableStructure {
+public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata {
     private int maxUncommittedRows;
     private long metadataVersion;
     private long o3MaxLag;

@@ -59,6 +59,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     @SuppressWarnings("unused")
     public static final String importIDStr = Numbers.toHexStrPadded(importID);
     private final CairoConfiguration cairoConfiguration;
+    private final WorkerPoolConfiguration confExportPool;
     private final HttpFullFatServerConfiguration confHttp;
     private final HttpServerConfiguration confHttpMin;
     private final LineTcpReceiverConfiguration confLineTcp;
@@ -71,9 +72,8 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         }
     };
     private final WorkerPoolConfiguration confMatViewRefreshPool;
-    private final WorkerPoolConfiguration confExportPool;
     private final WorkerPoolConfiguration confSharedPool;
-    private final WorkerPoolConfiguration confViewRefreshPool;
+    private final WorkerPoolConfiguration confViewCompilerPool;
     private final WorkerPoolConfiguration confWalApplyPool;
     private final boolean enablePgWire;
     private final FactoryProvider factoryProvider;
@@ -203,7 +203,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         };
 
         this.confMatViewRefreshPool = () -> 0; // shared pool
-        this.confViewRefreshPool = () -> 0; // shared pool
+        this.confViewCompilerPool = () -> 0; // shared pool
         this.confExportPool = () -> 2; // default export pool worker count
         this.confWalApplyPool = () -> 0;
         this.confSharedPool = () -> workerCountShared;
@@ -214,6 +214,11 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     @Override
     public CairoConfiguration getCairoConfiguration() {
         return cairoConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getExportPoolConfiguration() {
+        return confExportPool;
     }
 
     @Override
@@ -247,27 +252,22 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getExportPoolConfiguration() {
-        return confExportPool;
-    }
-
-    @Override
     public PGConfiguration getPGWireConfiguration() {
         return confPgWire;
     }
 
     @Override
+    public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
+        return confSharedPool;
+    }
+
+    @Override
     public WorkerPoolConfiguration getViewCompilerPoolConfiguration() {
-        return confViewRefreshPool;
+        return confViewCompilerPool;
     }
 
     @Override
     public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
         return confWalApplyPool;
-    }
-
-    @Override
-    public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
-        return confSharedPool;
     }
 }
