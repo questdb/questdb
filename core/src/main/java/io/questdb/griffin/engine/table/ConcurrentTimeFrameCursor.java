@@ -45,8 +45,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.griffin.engine.table.TimeFrameCursorImpl.estimatePartitionHi;
-
 /**
  * Instances of this time frame cursor can be used by multiple threads as interactions
  * with the table reader are synchronized. Yet, a single instance can't be called by
@@ -65,8 +63,7 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
     private PageFrameCursor frameCursor;
     private IntList framePartitionIndexes;
     private LongList frameRowCounts;
-    private TimestampDriver.TimestampCeilMethod partitionCeilMethod;
-    private int partitionHi;
+    private LongList partitionCeilings;
     private LongList partitionTimestamps;
 
     public ConcurrentTimeFrameCursor(
@@ -75,6 +72,27 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
     ) {
         this.metadata = metadata;
         frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
+    }
+
+    public static void populatePartitionTimestamps(
+            TablePageFrameCursor frameCursor,
+            LongList partitionTimestamps,
+            LongList partitionCeilings
+    ) {
+        partitionTimestamps.clear();
+        partitionCeilings.clear();
+        final TableReader reader = frameCursor.getTableReader();
+        final int partitionCount = reader.getPartitionCount();
+        final TimestampDriver.TimestampCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(
+                reader.getMetadata().getTimestampType(),
+                reader.getPartitionedBy()
+        );
+        for (int i = 0; i < partitionCount; i++) {
+            final long tsLo = reader.getPartitionTimestampByIndex(i);
+            partitionTimestamps.add(tsLo);
+            final long maxTsHi = i < partitionCount - 2 ? reader.getPartitionTimestampByIndex(i + 1) : Long.MAX_VALUE;
+            partitionCeilings.add(TimeFrameCursorImpl.estimatePartitionHi(ceilMethod, tsLo, maxTsHi));
+        }
     }
 
     @Override
@@ -110,8 +128,7 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
 
         int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
         long timestampLo = partitionTimestamps.getQuick(partitionIndex);
-        long maxTimestampHi = partitionIndex < partitionHi - 2 ? partitionTimestamps.getQuick(partitionIndex + 1) : Long.MAX_VALUE;
-        timeFrame.ofEstimate(frameIndex, timestampLo, estimatePartitionHi(partitionCeilMethod, timestampLo, maxTimestampHi));
+        timeFrame.ofEstimate(frameIndex, timestampLo, partitionCeilings.getQuick(partitionIndex));
     }
 
     @Override
@@ -125,8 +142,7 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
         if (++frameIndex < frameCount) {
             int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
             long timestampLo = partitionTimestamps.getQuick(partitionIndex);
-            long maxTimestampHi = partitionIndex < partitionHi - 2 ? partitionTimestamps.getQuick(partitionIndex + 1) : Long.MAX_VALUE;
-            timeFrame.ofEstimate(frameIndex, timestampLo, estimatePartitionHi(partitionCeilMethod, timestampLo, maxTimestampHi));
+            timeFrame.ofEstimate(frameIndex, timestampLo, partitionCeilings.getQuick(partitionIndex));
             return true;
         }
         // Update frame index in case of subsequent prev() call.
@@ -140,21 +156,17 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
             IntList framePartitionIndexes,
             LongList frameRowCounts,
             LongList partitionTimestamps,
+            LongList partitionCeilings,
             int frameCount
     ) {
         this.frameCursor = frameCursor;
         this.framePartitionIndexes = framePartitionIndexes;
         this.frameRowCounts = frameRowCounts;
         this.partitionTimestamps = partitionTimestamps;
+        this.partitionCeilings = partitionCeilings;
         this.frameCount = frameCount;
         frameMemoryPool.of(frameAddressCache);
-        final TableReader reader = frameCursor.getTableReader();
         record.of(frameCursor);
-        partitionHi = reader.getPartitionCount();
-        partitionCeilMethod = PartitionBy.getPartitionCeilMethod(
-                reader.getMetadata().getTimestampType(),
-                reader.getPartitionedBy()
-        );
         toTop();
         return this;
     }
@@ -195,8 +207,7 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
         if (--frameIndex >= 0) {
             int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
             long timestampLo = partitionTimestamps.getQuick(partitionIndex);
-            long maxTimestampHi = partitionIndex < partitionHi - 2 ? partitionTimestamps.getQuick(partitionIndex + 1) : Long.MAX_VALUE;
-            timeFrame.ofEstimate(frameIndex, timestampLo, estimatePartitionHi(partitionCeilMethod, timestampLo, maxTimestampHi));
+            timeFrame.ofEstimate(frameIndex, timestampLo, partitionCeilings.getQuick(partitionIndex));
             return true;
         }
         // Update frame index in case of subsequent next() call.

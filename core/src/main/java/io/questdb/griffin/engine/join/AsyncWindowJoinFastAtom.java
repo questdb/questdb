@@ -229,6 +229,7 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
             IntList framePartitionIndexes,
             LongList frameRowCounts,
             LongList partitionTimestamps,
+            LongList partitionCeilings,
             int frameCount
     ) throws SqlException {
         super.initTimeFrameCursors(
@@ -239,6 +240,7 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
                 framePartitionIndexes,
                 frameRowCounts,
                 partitionTimestamps,
+                partitionCeilings,
                 frameCount
         );
 

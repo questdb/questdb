@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.PageFrame;
@@ -55,6 +54,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populatePartitionTimestamps;
 
 /**
  * Cursor for parallel non-keyed markout GROUP BY using PageFrameSequence.
@@ -67,6 +67,7 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
     private final ObjList<GroupByFunction> groupByFunctions;
     private final VirtualRecord recordA;
     private final RecordCursorFactory slaveFactory;
+    private final LongList slavePartitionCeilings = new LongList();
     private final LongList slavePartitionTimestamps = new LongList();
     // Slave time frame cache data
     private final PageFrameAddressCache slaveTimeFrameAddressCache;
@@ -79,7 +80,7 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
     private boolean isSlaveTimeFrameCacheBuilt;
     private boolean isValueBuilt;
     private int recordsRemaining = 1;
-    private TablePageFrameCursor slavePageFrameCursor;
+    private TablePageFrameCursor slaveFrameCursor;
 
     public AsyncHorizonJoinNotKeyedRecordCursor(
             ObjList<GroupByFunction> groupByFunctions,
@@ -118,7 +119,7 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
             } finally {
                 // Free shared resources only after workers have finished
                 Misc.clearObjList(groupByFunctions);
-                slavePageFrameCursor = Misc.free(slavePageFrameCursor);
+                slaveFrameCursor = Misc.free(slaveFrameCursor);
                 Misc.free(slaveTimeFrameAddressCache);
                 isOpen = false;
             }
@@ -171,7 +172,7 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
     private void buildSlaveTimeFrameCacheConditionally() {
         if (!isSlaveTimeFrameCacheBuilt) {
             final int frameCount = initializeSlaveTimeFrameCache();
-            populateSlavePartitionTimestamps();
+            populatePartitionTimestamps(slaveFrameCursor, slavePartitionTimestamps, slavePartitionCeilings);
             initializeTimeFrameCursors(frameCount);
             isSlaveTimeFrameCacheBuilt = true;
         }
@@ -218,8 +219,7 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
             } while (frameIndex < frameLimit);
         } catch (Throwable e) {
             LOG.error().$("horizon join error [ex=").$(e).I$();
-            if (e instanceof CairoException) {
-                CairoException ce = (CairoException) e;
+            if (e instanceof CairoException ce) {
                 if (ce.isInterruption()) {
                     throwTimeoutException();
                 } else {
@@ -256,13 +256,13 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
 
     private int initializeSlaveTimeFrameCache() {
         RecordMetadata slaveMetadata = slaveFactory.getMetadata();
-        slaveTimeFrameAddressCache.of(slaveMetadata, slavePageFrameCursor.getColumnIndexes(), slavePageFrameCursor.isExternal());
+        slaveTimeFrameAddressCache.of(slaveMetadata, slaveFrameCursor.getColumnIndexes(), slaveFrameCursor.isExternal());
         slaveTimeFramePartitionIndexes.clear();
         slaveTimeFrameRowCounts.clear();
 
         int frameCount = 0;
         PageFrame frame;
-        while ((frame = slavePageFrameCursor.next()) != null) {
+        while ((frame = slaveFrameCursor.next()) != null) {
             slaveTimeFramePartitionIndexes.add(frame.getPartitionIndex());
             slaveTimeFrameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             slaveTimeFrameAddressCache.add(frameCount++, frame);
@@ -275,23 +275,16 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
             frameSequence.getAtom().initTimeFrameCursors(
                     executionContext,
                     frameSequence.getSymbolTableSource(),
-                    slavePageFrameCursor,
+                    slaveFrameCursor,
                     slaveTimeFrameAddressCache,
                     slaveTimeFramePartitionIndexes,
                     slaveTimeFrameRowCounts,
                     slavePartitionTimestamps,
+                    slavePartitionCeilings,
                     frameCount
             );
         } catch (SqlException e) {
             throw CairoException.nonCritical().put(e.getFlyweightMessage());
-        }
-    }
-
-    private void populateSlavePartitionTimestamps() {
-        slavePartitionTimestamps.clear();
-        final TableReader reader = slavePageFrameCursor.getTableReader();
-        for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
-            slavePartitionTimestamps.add(reader.getPartitionTimestampByIndex(i));
         }
     }
 
@@ -313,12 +306,12 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
         this.executionContext = executionContext;
 
         // Get slave page frame cursor for time frame initialization
-        this.slavePageFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, ORDER_ASC);
+        this.slaveFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, ORDER_ASC);
 
         // Initialize record functions with a symbol table source that routes lookups
         // to the correct source (master or slave) based on column mappings
         final MarkoutSymbolTableSource symbolTableSource = atom.getMarkoutSymbolTableSource();
-        symbolTableSource.of(frameSequence.getSymbolTableSource(), slavePageFrameCursor);
+        symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveFrameCursor);
 
         // Initialize record with the owner's map value
         recordA.of(atom.getOwnerMapValue());

@@ -444,6 +444,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             IntList slaveFramePartitionIndexes,
             LongList slaveFrameRowCounts,
             LongList slavePartitionTimestamps,
+            LongList slavePartitionCeilings,
             int frameCount
     ) throws SqlException {
         // Initialize owner cursor
@@ -453,6 +454,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
                 slaveFramePartitionIndexes,
                 slaveFrameRowCounts,
                 slavePartitionTimestamps,
+                slavePartitionCeilings,
                 frameCount
         );
         ownerSlaveTimeFrameHelper.of(ownerSlaveTimeFrameCursor);
@@ -466,6 +468,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
                     slaveFramePartitionIndexes,
                     slaveFrameRowCounts,
                     slavePartitionTimestamps,
+                    slavePartitionCeilings,
                     frameCount
             );
             perWorkerSlaveTimeFrameHelpers.getQuick(i).of(workerCursor);

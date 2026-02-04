@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.sql.Function;
@@ -53,6 +52,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populatePartitionTimestamps;
 
 /**
  * Cursor for parallel markout GROUP BY using PageFrameSequence.
@@ -64,6 +64,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
     private final VirtualRecord recordB;
     private final ObjList<Function> recordFunctions;
     private final RecordCursorFactory slaveFactory;
+    private final LongList slavePartitionCeilings = new LongList();
     private final LongList slavePartitionTimestamps = new LongList();
     // Slave time frame cache data
     private final PageFrameAddressCache slaveTimeFrameAddressCache;
@@ -76,7 +77,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
     private boolean isOpen;
     private boolean isSlaveTimeFrameCacheBuilt;
     private MapRecordCursor mapCursor;
-    private TablePageFrameCursor slavePageFrameCursor;
+    private TablePageFrameCursor slaveFrameCursor;
 
     public AsyncHorizonJoinRecordCursor(
             ObjList<Function> recordFunctions,
@@ -115,7 +116,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
             } finally {
                 // Free shared resources only after workers have finished
                 mapCursor = Misc.free(mapCursor);
-                slavePageFrameCursor = Misc.free(slavePageFrameCursor);
+                slaveFrameCursor = Misc.free(slaveFrameCursor);
                 Misc.free(slaveTimeFrameAddressCache);
                 isOpen = false;
             }
@@ -249,7 +250,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
     private void buildSlaveTimeFrameCacheConditionally() {
         if (!isSlaveTimeFrameCacheBuilt) {
             final int frameCount = initializeSlaveTimeFrameCache();
-            populateSlavePartitionTimestamps();
+            populatePartitionTimestamps(slaveFrameCursor, slavePartitionTimestamps, slavePartitionCeilings);
             initializeTimeFrameCursors(frameCount);
             isSlaveTimeFrameCacheBuilt = true;
         }
@@ -257,13 +258,13 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
 
     private int initializeSlaveTimeFrameCache() {
         RecordMetadata slaveMetadata = slaveFactory.getMetadata();
-        slaveTimeFrameAddressCache.of(slaveMetadata, slavePageFrameCursor.getColumnIndexes(), slavePageFrameCursor.isExternal());
+        slaveTimeFrameAddressCache.of(slaveMetadata, slaveFrameCursor.getColumnIndexes(), slaveFrameCursor.isExternal());
         slaveTimeFramePartitionIndexes.clear();
         slaveTimeFrameRowCounts.clear();
 
         int frameCount = 0;
         PageFrame frame;
-        while ((frame = slavePageFrameCursor.next()) != null) {
+        while ((frame = slaveFrameCursor.next()) != null) {
             slaveTimeFramePartitionIndexes.add(frame.getPartitionIndex());
             slaveTimeFrameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             slaveTimeFrameAddressCache.add(frameCount++, frame);
@@ -276,23 +277,16 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
             frameSequence.getAtom().initTimeFrameCursors(
                     executionContext,
                     frameSequence.getSymbolTableSource(),
-                    slavePageFrameCursor,
+                    slaveFrameCursor,
                     slaveTimeFrameAddressCache,
                     slaveTimeFramePartitionIndexes,
                     slaveTimeFrameRowCounts,
                     slavePartitionTimestamps,
+                    slavePartitionCeilings,
                     frameCount
             );
         } catch (SqlException e) {
             throw CairoException.nonCritical().put(e.getFlyweightMessage());
-        }
-    }
-
-    private void populateSlavePartitionTimestamps() {
-        slavePartitionTimestamps.clear();
-        final TableReader reader = slavePageFrameCursor.getTableReader();
-        for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
-            slavePartitionTimestamps.add(reader.getPartitionTimestampByIndex(i));
         }
     }
 
@@ -314,12 +308,12 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
         this.executionContext = executionContext;
 
         // Get slave page frame cursor for time frame initialization
-        this.slavePageFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, ORDER_ASC);
+        this.slaveFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, ORDER_ASC);
 
         // Initialize record functions with a symbol table source that routes lookups
         // to the correct source (master or slave) based on column mappings
         final MarkoutSymbolTableSource symbolTableSource = atom.getMarkoutSymbolTableSource();
-        symbolTableSource.of(frameSequence.getSymbolTableSource(), slavePageFrameCursor);
+        symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveFrameCursor);
         Function.init(recordFunctions, symbolTableSource, executionContext, null);
 
         isDataMapBuilt = false;

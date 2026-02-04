@@ -504,6 +504,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
             IntList framePartitionIndexes,
             LongList frameRowCounts,
             LongList partitionTimestamps,
+            LongList partitionCeilings,
             int frameCount
     ) throws SqlException {
         ownerSlaveTimeFrameCursor.of(
@@ -512,6 +513,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
                 framePartitionIndexes,
                 frameRowCounts,
                 partitionTimestamps,
+                partitionCeilings,
                 frameCount
         );
         ownerSlaveTimeFrameHelper.of(ownerSlaveTimeFrameCursor);
@@ -523,6 +525,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
                     framePartitionIndexes,
                     frameRowCounts,
                     partitionTimestamps,
+                    partitionCeilings,
                     frameCount
             );
             perWorkerSlaveTimeFrameHelpers.getQuick(i).of(workerCursor);

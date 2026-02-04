@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -56,6 +55,8 @@ import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populatePartitionTimestamps;
+
 class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncWindowJoinRecordCursor.class);
     private final int columnSplit;
@@ -66,6 +67,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private final PageFrameMemoryRecord masterRecord;
     private final Record record;
     private final RecordMetadata slaveMetadata;
+    private final LongList slavePartitionCeilings = new LongList();
     private final LongList slavePartitionTimestamps = new LongList();
     private final PageFrameAddressCache slaveTimeFrameAddressCache;
     private final IntList slaveTimeFramePartitionIndexes = new IntList();
@@ -215,7 +217,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private void buildSlaveTimeFrameCacheConditionally() {
         if (!isSlaveTimeFrameCacheBuilt) {
             final int frameCount = initializeSlaveTimeFrameCache();
-            populateSlavePartitionTimestamps();
+            populatePartitionTimestamps(slaveFrameCursor, slavePartitionTimestamps, slavePartitionCeilings);
             initializeTimeFrameCursors(frameCount);
             isSlaveTimeFrameCacheBuilt = true;
         }
@@ -462,18 +464,11 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                     slaveTimeFramePartitionIndexes,
                     slaveTimeFrameRowCounts,
                     slavePartitionTimestamps,
+                    slavePartitionCeilings,
                     frameCount
             );
         } catch (SqlException e) {
             throw CairoException.nonCritical().put(e.getFlyweightMessage());
-        }
-    }
-
-    private void populateSlavePartitionTimestamps() {
-        slavePartitionTimestamps.clear();
-        final TableReader reader = slaveFrameCursor.getTableReader();
-        for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
-            slavePartitionTimestamps.add(reader.getPartitionTimestampByIndex(i));
         }
     }
 
