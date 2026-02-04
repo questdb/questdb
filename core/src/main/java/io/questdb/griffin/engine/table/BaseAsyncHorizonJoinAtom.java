@@ -240,10 +240,10 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         }
 
         // Per-worker horizon timestamp iterators for sorted processing
-        this.ownerHorizonIterator = new HorizonTimestampIterator(offsets, masterTsScale);
+        this.ownerHorizonIterator = createHorizonIterator(offsets, masterTsScale);
         this.perWorkerHorizonIterators = new ObjList<>(slotCount);
         for (int i = 0; i < slotCount; i++) {
-            perWorkerHorizonIterators.add(new HorizonTimestampIterator(offsets, masterTsScale));
+            perWorkerHorizonIterators.add(createHorizonIterator(offsets, masterTsScale));
         }
     }
 
@@ -560,5 +560,12 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     // package-private to make linter happy
     MarkoutSymbolTableSource getMarkoutSymbolTableSource() {
         return markoutSymbolTableSource;
+    }
+
+    private static HorizonTimestampIterator createHorizonIterator(LongList offsets, long masterTsScale) {
+        if (offsets.size() == 1) {
+            return new SingleOffsetHorizonTimestampIterator(offsets.getQuick(0), masterTsScale);
+        }
+        return new MultiOffsetHorizonTimestampIterator(offsets, masterTsScale);
     }
 }

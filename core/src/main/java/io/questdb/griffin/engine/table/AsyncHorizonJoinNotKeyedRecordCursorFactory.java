@@ -372,9 +372,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             asOfJoinMap.clear();
         }
 
-        while (horizonIterator.hasNext()) {
+        while (horizonIterator.next()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            horizonIterator.next();
 
             final long horizonTs = horizonIterator.getHorizonTimestamp();
             final long masterRowIdx = horizonIterator.getMasterRowIndex();
