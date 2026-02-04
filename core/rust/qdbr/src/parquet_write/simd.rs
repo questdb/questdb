@@ -28,7 +28,6 @@ const PROBE_SIZE_32: usize = 256;
 /// Encodes definition levels for i64 slices using SIMD.
 ///
 /// Returns the null count and optionally computes min/max statistics.
-#[allow(unused_assignments)]
 pub fn encode_i64_def_levels<W: Write>(
     writer: &mut W,
     slice: &[i64],
@@ -277,7 +276,6 @@ fn scan_i64_verify_all_null<W: Write>(
 /// Slow path: bitpacked encoding for i64 slices with nulls or column_top
 /// Note: Returns null_count for the data slice ONLY, not including column_top.
 /// The caller should add column_top to get the total null count for statistics.
-#[allow(unused_assignments)]
 fn encode_i64_def_levels_bitpacked<W: Write>(
     writer: &mut W,
     slice: &[i64],
@@ -379,7 +377,6 @@ fn encode_i64_def_levels_bitpacked<W: Write>(
 /// Encodes definition levels for i32 slices using SIMD.
 /// Note: Returns null_count for the data slice ONLY, not including column_top.
 /// The caller should add column_top to get the total null count for statistics.
-#[allow(unused_assignments)]
 pub fn encode_i32_def_levels<W: Write>(
     writer: &mut W,
     slice: &[i32],
@@ -619,7 +616,6 @@ fn scan_i32_verify_all_null<W: Write>(
 /// Slow path: bitpacked encoding for i32 slices with nulls or column_top
 /// Note: Returns null_count for the data slice ONLY, not including column_top.
 /// The caller should add column_top to get the total null count for statistics.
-#[allow(unused_assignments)]
 fn encode_i32_def_levels_bitpacked<W: Write>(
     writer: &mut W,
     slice: &[i32],
@@ -730,7 +726,6 @@ fn encode_i32_def_levels_bitpacked<W: Write>(
 
 /// Encodes definition levels for f64 slices using SIMD.
 /// NaN values are considered null.
-#[allow(unused_assignments)]
 pub fn encode_f64_def_levels<W: Write>(
     writer: &mut W,
     slice: &[f64],
@@ -1012,7 +1007,6 @@ fn scan_f64_verify_all_null<W: Write>(
 /// Slow path: bitpacked encoding for slices with nulls or column_top
 /// Note: Returns null_count for the data slice ONLY, not including column_top.
 /// The caller should add column_top to get the total null count for statistics.
-#[allow(unused_assignments)]
 fn encode_f64_def_levels_bitpacked<W: Write>(
     writer: &mut W,
     slice: &[f64],
@@ -1115,7 +1109,6 @@ fn encode_f64_def_levels_bitpacked<W: Write>(
 
 /// Encodes definition levels for f32 slices using SIMD.
 /// NaN values are considered null.
-#[allow(unused_assignments)]
 pub fn encode_f32_def_levels<W: Write>(
     writer: &mut W,
     slice: &[f32],
@@ -1392,7 +1385,6 @@ fn scan_f32_verify_all_null<W: Write>(
 /// Slow path: bitpacked encoding for f32 slices with nulls or column_top
 /// Note: Returns null_count for the data slice ONLY, not including column_top.
 /// The caller should add column_top to get the total null count for statistics.
-#[allow(unused_assignments)]
 fn encode_f32_def_levels_bitpacked<W: Write>(
     writer: &mut W,
     slice: &[f32],
