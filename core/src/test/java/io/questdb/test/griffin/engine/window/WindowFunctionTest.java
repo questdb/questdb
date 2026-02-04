@@ -10734,6 +10734,86 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInlineWindowOrderByNotInSelect() throws Exception {
+        // Test that ORDER BY columns in INLINE windows don't need to be in SELECT list
+        // This is the baseline - if this works, then named windows should also work
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, y int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (10, 1, 0)");
+            execute("insert into t values (20, 2, 1000000)");
+            execute("insert into t values (30, 3, 2000000)");
+            execute("insert into t values (40, 4, 3000000)");
+
+            // Inline window: ORDER BY y, but y is not in SELECT
+            assertQueryNoLeakCheck(
+                    "x\tsum_x\n" +
+                            "10\t10.0\n" +
+                            "20\t30.0\n" +
+                            "30\t60.0\n" +
+                            "40\t100.0\n",
+                    "SELECT x, sum(x) OVER (ORDER BY y) as sum_x FROM t",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowOrderByNotInSelect() throws Exception {
+        // Test that ORDER BY columns in named windows don't need to be in SELECT list
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, y int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (10, 1, 0)");
+            execute("insert into t values (20, 2, 1000000)");
+            execute("insert into t values (30, 3, 2000000)");
+            execute("insert into t values (40, 4, 3000000)");
+
+            // ORDER BY y, but y is not in SELECT - this should work
+            assertQueryNoLeakCheck(
+                    "x\tsum_x\n" +
+                            "10\t10.0\n" +
+                            "20\t30.0\n" +
+                            "30\t60.0\n" +
+                            "40\t100.0\n",
+                    "SELECT x, sum(x) OVER w as sum_x " +
+                            "FROM t " +
+                            "WINDOW w AS (ORDER BY y)",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowPartitionByNotInSelect() throws Exception {
+        // Test that PARTITION BY columns in named windows don't need to be in SELECT list
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 'A', 0)");
+            execute("insert into t values (2, 'B', 1000000)");
+            execute("insert into t values (3, 'A', 2000000)");
+            execute("insert into t values (4, 'B', 3000000)");
+
+            // PARTITION BY category, but category is not in SELECT - this should work
+            assertQueryNoLeakCheck(
+                    "x\tsum_x\n" +
+                            "1\t1.0\n" +
+                            "2\t2.0\n" +
+                            "3\t4.0\n" +
+                            "4\t6.0\n",
+                    "SELECT x, sum(x) OVER w as sum_x " +
+                            "FROM t " +
+                            "WINDOW w AS (PARTITION BY category ORDER BY x)",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testNamedWindowRankDenseRank() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
