@@ -81,7 +81,7 @@ public class PartitionDecoder implements QuietCloseable {
             DirectLongList filters // contains [parquet_column_index, ColumnFilterValues] pairs
     ) {
         assert ptr != 0;
-        return canSkipRowGroup( // throws CairoException on error
+        return canSkipRowGroup(
                 ptr,
                 rowGroupIndex,
                 fileAddr,

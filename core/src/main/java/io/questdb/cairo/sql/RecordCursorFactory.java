@@ -268,6 +268,10 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
+    default boolean mayHasParquetFormatPartition(SqlExecutionContext executionContext) {
+        return false;
+    }
+
     /**
      * Returns a new time frame cursor instance or null if time frames aren't supported by the factory.
      * The returned instance can be used by a worker thread, i.e. the underlying interaction with

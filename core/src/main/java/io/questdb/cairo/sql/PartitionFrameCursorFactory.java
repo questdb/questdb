@@ -79,6 +79,8 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
 
     TableToken getTableToken();
 
+    boolean hasParquetFormatPartitions(SqlExecutionContext executionContext);
+
     boolean supportsTableRowId(TableToken tableToken);
 
     /**

@@ -77,6 +77,13 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     }
 
     @Override
+    public boolean hasParquetFormatPartitions(SqlExecutionContext executionContext) {
+        try (TableReader reader = getReader(executionContext)) {
+            return reader.hasParquetPartitions();
+        }
+    }
+
+    @Override
     public boolean supportsTableRowId(TableToken tableToken) {
         return this.tableToken.equals(tableToken);
     }

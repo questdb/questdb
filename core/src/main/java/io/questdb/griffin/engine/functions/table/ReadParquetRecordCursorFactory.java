@@ -63,6 +63,11 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
     }
 
     @Override
+    public boolean mayHasParquetFormatPartition(SqlExecutionContext executionContext) {
+        return true;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

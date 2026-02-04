@@ -291,6 +291,7 @@ import io.questdb.griffin.engine.table.LatestByValueIndexedRowCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValuesIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
+import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
@@ -453,6 +454,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ListColumnFilter listColumnFilterB = new ListColumnFilter();
     private final MarkoutHorizonInfo markoutHorizonInfo = new MarkoutHorizonInfo();
     private final LongList prefixes = new LongList();
+    private final PushdownFilterExtractor pushdownFilterExtractor = new PushdownFilterExtractor();
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final RecordComparatorCompiler recordComparatorCompiler;
     private final IntList recordFunctionPositions = new IntList();
@@ -641,6 +643,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         whereClauseParser.clear();
         symbolEstimator.clear();
         intListPool.clear();
+        pushdownFilterExtractor.clear();
     }
 
     @Override
@@ -2898,88 +2901,101 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
-        final boolean enableParallelFilter = executionContext.isParallelFilterEnabled();
-        final boolean enablePreTouch = SqlHints.hasEnablePreTouchHint(model, model.getName());
-        if (enableParallelFilter && factory.supportsPageFrameCursor()) {
-            IntHashSet filterUsedColumnIndexes = new IntHashSet();
-            collectColumnIndexes(sqlNodeStack, factory.getMetadata(), filterExpr, filterUsedColumnIndexes);
-
-            final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED
-                    && (!model.isUpdate() || executionContext.isWalApplication());
-            final boolean canCompile = factory.supportsPageFrameCursor() && JitUtil.isJitSupported();
-            if (useJit && canCompile) {
-                CompiledFilter compiledFilter = null;
-                CompiledCountOnlyFilter compiledCountOnlyFilter = null;
-                try {
-                    int jitOptions;
-                    final ObjList<Function> bindVarFunctions = new ObjList<>();
-                    try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext, ORDER_ANY)) {
-                        final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
-                        jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), cursor, bindVarFunctions);
-                        jitOptions = jitIRSerializer.serialize(filterExpr, forceScalar, enableJitDebug, enableJitNullChecks);
+        ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditionObjList = null;
+        try {
+            if (factory.mayHasParquetFormatPartition(executionContext)) {
+                ObjList<PushdownFilterExtractor.PushdownFilterCondition> tempConditions = pushdownFilterExtractor.extract(sqlNodeStack, filterExpr, factory.getMetadata());
+                if (tempConditions.size() != 0) {
+                    pushdownFilterConditionObjList = new ObjList<>(tempConditions);
+                    for (int i = 0, n = pushdownFilterConditionObjList.size(); i < n; i++) {
+                        PushdownFilterExtractor.PushdownFilterCondition condition = pushdownFilterConditionObjList.getQuick(i);
+                        ObjList<ExpressionNode> values = condition.getValues();
+                        for (int j = 0, m = values.size(); j < m; j++) {
+                            condition.addValueFunction(functionParser.parseFunction(values.getQuick(j), factory.getMetadata(), executionContext));
+                        }
                     }
-
-                    compiledFilter = new CompiledFilter();
-                    compiledFilter.compile(jitIRMem, jitOptions);
-
-                    compiledCountOnlyFilter = new CompiledCountOnlyFilter();
-                    compiledCountOnlyFilter.compile(jitIRMem, jitOptions);
-
-                    final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
-                    final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
-
-                    LOG.debug()
-                            .$("JIT enabled for (sub)query [tableName=").$safe(model.getName())
-                            .$(", fd=").$(executionContext.getRequestFd())
-                            .I$();
-                    return new AsyncJitFilteredRecordCursorFactory(
-                            executionContext.getCairoEngine(),
-                            configuration,
-                            executionContext.getMessageBus(),
-                            factory,
-                            bindVarFunctions,
-                            compiledFilter,
-                            compiledCountOnlyFilter,
-                            filter,
-                            filterUsedColumnIndexes,
-                            reduceTaskFactory,
-                            compileWorkerFilterConditionally(
-                                    executionContext,
-                                    filter,
-                                    executionContext.getSharedQueryWorkerCount(),
-                                    filterExpr,
-                                    factory.getMetadata()
-                            ),
-                            deepClone(expressionNodePool, filterExpr),
-                            limitLoFunction,
-                            limitLoPos,
-                            executionContext.getSharedQueryWorkerCount(),
-                            enablePreTouch
-                    );
-                } catch (SqlException | LimitOverflowException ex) {
-                    // for these errors we are intentionally **not** rethrowing the exception
-                    // if a JIT filter cannot be used, we will simply use a Java filter
-                    Misc.free(compiledFilter);
-                    Misc.free(compiledCountOnlyFilter);
-                    LOG.debug()
-                            .$("JIT cannot be applied to (sub)query [tableName=").$safe(model.getName())
-                            .$(", ex=").$safe(ex.getFlyweightMessage())
-                            .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
-                } catch (Throwable t) {
-                    // other errors are fatal -> rethrow them
-                    Misc.free(compiledFilter);
-                    Misc.free(compiledCountOnlyFilter);
-                    Misc.free(filter);
-                    Misc.free(factory);
-                    throw t;
-                } finally {
-                    jitIRSerializer.clear();
-                    jitIRMem.truncate();
                 }
             }
 
-            // Use Java filter.
-            try {
+            final boolean enableParallelFilter = executionContext.isParallelFilterEnabled();
+            final boolean enablePreTouch = SqlHints.hasEnablePreTouchHint(model, model.getName());
+            if (enableParallelFilter && factory.supportsPageFrameCursor()) {
+                IntHashSet filterUsedColumnIndexes = new IntHashSet();
+                collectColumnIndexes(sqlNodeStack, factory.getMetadata(), filterExpr, filterUsedColumnIndexes);
+
+                final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED
+                        && (!model.isUpdate() || executionContext.isWalApplication());
+                final boolean canCompile = factory.supportsPageFrameCursor() && JitUtil.isJitSupported();
+                if (useJit && canCompile) {
+                    CompiledFilter compiledFilter = null;
+                    CompiledCountOnlyFilter compiledCountOnlyFilter = null;
+                    try {
+                        int jitOptions;
+                        final ObjList<Function> bindVarFunctions = new ObjList<>();
+                        try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext, ORDER_ANY)) {
+                            final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
+                            jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), cursor, bindVarFunctions);
+                            jitOptions = jitIRSerializer.serialize(filterExpr, forceScalar, enableJitDebug, enableJitNullChecks);
+                        }
+
+                        compiledFilter = new CompiledFilter();
+                        compiledFilter.compile(jitIRMem, jitOptions);
+
+                        compiledCountOnlyFilter = new CompiledCountOnlyFilter();
+                        compiledCountOnlyFilter.compile(jitIRMem, jitOptions);
+
+                        final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+                        final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
+
+                        LOG.debug()
+                                .$("JIT enabled for (sub)query [tableName=").$safe(model.getName())
+                                .$(", fd=").$(executionContext.getRequestFd())
+                                .I$();
+                        return new AsyncJitFilteredRecordCursorFactory(
+                                executionContext.getCairoEngine(),
+                                configuration,
+                                executionContext.getMessageBus(),
+                                factory,
+                                bindVarFunctions,
+                                compiledFilter,
+                                compiledCountOnlyFilter,
+                                filter,
+                                filterUsedColumnIndexes,
+                                reduceTaskFactory,
+                                compileWorkerFilterConditionally(
+                                        executionContext,
+                                        filter,
+                                        executionContext.getSharedQueryWorkerCount(),
+                                        filterExpr,
+                                        factory.getMetadata()
+                                ),
+                                deepClone(expressionNodePool, filterExpr),
+                                limitLoFunction,
+                                limitLoPos,
+                                executionContext.getSharedQueryWorkerCount(),
+                                enablePreTouch
+                        );
+                    } catch (SqlException | LimitOverflowException ex) {
+                        // for these errors we are intentionally **not** rethrowing the exception
+                        // if a JIT filter cannot be used, we will simply use a Java filter
+                        Misc.free(compiledFilter);
+                        Misc.free(compiledCountOnlyFilter);
+                        LOG.debug()
+                                .$("JIT cannot be applied to (sub)query [tableName=").$safe(model.getName())
+                                .$(", ex=").$safe(ex.getFlyweightMessage())
+                                .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
+                    } catch (Throwable t) {
+                        // other errors are fatal -> rethrow them
+                        Misc.free(compiledFilter);
+                        Misc.free(compiledCountOnlyFilter);
+                        throw t;
+                    } finally {
+                        jitIRSerializer.clear();
+                        jitIRMem.truncate();
+                    }
+                }
+
+                // Use Java filter.
                 final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                 final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
                 return new AsyncFilteredRecordCursorFactory(
@@ -3003,13 +3019,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         executionContext.getSharedQueryWorkerCount(),
                         enablePreTouch
                 );
-            } catch (Throwable e) {
-                Misc.free(filter);
-                Misc.free(factory);
-                throw e;
             }
+            return new FilteredRecordCursorFactory(factory, filter);
+        } catch (Throwable e) {
+            Misc.free(filter);
+            Misc.free(factory);
+            Misc.freeObjList(pushdownFilterConditionObjList);
+            throw e;
         }
-        return new FilteredRecordCursorFactory(factory, filter);
     }
 
     private RecordCursorFactory generateFunctionQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {

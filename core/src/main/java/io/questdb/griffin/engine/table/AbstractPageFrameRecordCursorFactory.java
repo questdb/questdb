@@ -105,6 +105,10 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
         return partitionFrameCursorFactory.getTableToken();
     }
 
+    public boolean mayHasParquetFormatPartition(SqlExecutionContext executionContext) {
+        return partitionFrameCursorFactory.hasParquetFormatPartitions(executionContext);
+    }
+
     @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return partitionFrameCursorFactory.supportsTableRowId(tableToken);
