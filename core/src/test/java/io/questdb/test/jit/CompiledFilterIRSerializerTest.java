@@ -616,15 +616,15 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         serialize("atimestampns in '2020-01-01'");
         assertIR("(i64 1577836800000000000L)(i64 atimestampns)(>=)(i64 1577923199999999999L)(i64 atimestampns)(<=)(&&)(ret)");
         serialize("atimestampns in '2020-01-01;15s'");
-        assertIR("(i64 1577836800000000000L)(i64 atimestampns)(>=)(i64 1577923214999999999L)(i64 atimestampns)(<=)(&&)(ret)");
+        assertIR("(i64 1577836800000000000L)(i64 atimestampns)(>=)(i64 1577836814999999999L)(i64 atimestampns)(<=)(&&)(ret)");
         serialize("atimestampns in '2020-01-01T23:59:58;4s;-1d;3'");
-        assertIR("(i64 1577750398000000000L)(i64 atimestampns)(>=)(i64 1577750402999999999L)(i64 atimestampns)(<=)(&&)" +
-                "(i64 1577836798000000000L)(i64 atimestampns)(>=)(i64 1577836802999999999L)(i64 atimestampns)(<=)(&&)" +
-                "(i64 1577923198000000000L)(i64 atimestampns)(>=)(i64 1577923202999999999L)(i64 atimestampns)(<=)(&&)(||)(||)(ret)");
+        assertIR("(i64 1577750398000000000L)(i64 atimestampns)(>=)(i64 1577750401999999999L)(i64 atimestampns)(<=)(&&)" +
+                "(i64 1577836798000000000L)(i64 atimestampns)(>=)(i64 1577836801999999999L)(i64 atimestampns)(<=)(&&)" +
+                "(i64 1577923198000000000L)(i64 atimestampns)(>=)(i64 1577923201999999999L)(i64 atimestampns)(<=)(&&)(||)(||)(ret)");
         serialize("along = 42 and atimestampns in '2020-01-01T23:59:58;4s;-1d;3'");
-        assertIR("(i64 1577750398000000000L)(i64 atimestampns)(>=)(i64 1577750402999999999L)(i64 atimestampns)(<=)(&&)" +
-                "(i64 1577836798000000000L)(i64 atimestampns)(>=)(i64 1577836802999999999L)(i64 atimestampns)(<=)(&&)" +
-                "(i64 1577923198000000000L)(i64 atimestampns)(>=)(i64 1577923202999999999L)(i64 atimestampns)(<=)(&&)" +
+        assertIR("(i64 1577750398000000000L)(i64 atimestampns)(>=)(i64 1577750401999999999L)(i64 atimestampns)(<=)(&&)" +
+                "(i64 1577836798000000000L)(i64 atimestampns)(>=)(i64 1577836801999999999L)(i64 atimestampns)(<=)(&&)" +
+                "(i64 1577923198000000000L)(i64 atimestampns)(>=)(i64 1577923201999999999L)(i64 atimestampns)(<=)(&&)" +
                 "(||)(||)(i64 42L)(i64 along)(=)(&&)(ret)");
     }
 
@@ -933,15 +933,15 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         serialize("atimestamp in '2020-01-01'");
         assertIR("(i64 1577836800000000L)(i64 atimestamp)(>=)(i64 1577923199999999L)(i64 atimestamp)(<=)(&&)(ret)");
         serialize("atimestamp in '2020-01-01;15s'");
-        assertIR("(i64 1577836800000000L)(i64 atimestamp)(>=)(i64 1577923214999999L)(i64 atimestamp)(<=)(&&)(ret)");
+        assertIR("(i64 1577836800000000L)(i64 atimestamp)(>=)(i64 1577836814999999L)(i64 atimestamp)(<=)(&&)(ret)");
         serialize("atimestamp in '2020-01-01T23:59:58;4s;-1d;3'");
-        assertIR("(i64 1577750398000000L)(i64 atimestamp)(>=)(i64 1577750402999999L)(i64 atimestamp)(<=)(&&)" +
-                "(i64 1577836798000000L)(i64 atimestamp)(>=)(i64 1577836802999999L)(i64 atimestamp)(<=)(&&)" +
-                "(i64 1577923198000000L)(i64 atimestamp)(>=)(i64 1577923202999999L)(i64 atimestamp)(<=)(&&)(||)(||)(ret)");
+        assertIR("(i64 1577750398000000L)(i64 atimestamp)(>=)(i64 1577750401999999L)(i64 atimestamp)(<=)(&&)" +
+                "(i64 1577836798000000L)(i64 atimestamp)(>=)(i64 1577836801999999L)(i64 atimestamp)(<=)(&&)" +
+                "(i64 1577923198000000L)(i64 atimestamp)(>=)(i64 1577923201999999L)(i64 atimestamp)(<=)(&&)(||)(||)(ret)");
         serialize("along = 42 and atimestamp in '2020-01-01T23:59:58;4s;-1d;3'");
-        assertIR("(i64 1577750398000000L)(i64 atimestamp)(>=)(i64 1577750402999999L)(i64 atimestamp)(<=)(&&)" +
-                "(i64 1577836798000000L)(i64 atimestamp)(>=)(i64 1577836802999999L)(i64 atimestamp)(<=)(&&)" +
-                "(i64 1577923198000000L)(i64 atimestamp)(>=)(i64 1577923202999999L)(i64 atimestamp)(<=)(&&)(||)(||)" +
+        assertIR("(i64 1577750398000000L)(i64 atimestamp)(>=)(i64 1577750401999999L)(i64 atimestamp)(<=)(&&)" +
+                "(i64 1577836798000000L)(i64 atimestamp)(>=)(i64 1577836801999999L)(i64 atimestamp)(<=)(&&)" +
+                "(i64 1577923198000000L)(i64 atimestamp)(>=)(i64 1577923201999999L)(i64 atimestamp)(<=)(&&)(||)(||)" +
                 "(i64 42L)(i64 along)(=)(&&)(ret)");
     }
 
