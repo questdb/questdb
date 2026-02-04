@@ -89,14 +89,10 @@ fn try_encode_i64_rle<W: Write>(
 
     let null_val = Simd::<i64, 8>::splat(i64::MIN);
 
-    // For small slices, scan all without probing
-    if slice.len() < PROBE_SIZE_64 {
-        return scan_i64_full(writer, slice, compute_stats, null_val);
-    }
-
-    // Phase 1: Probe first PROBE_SIZE_64 elements to detect pattern
-    let probe_slice = &slice[..PROBE_SIZE_64];
-    let mut all_valid = true;
+    // Probe up to PROBE_SIZE_64 elements (or entire slice if smaller)
+    let probe_len = slice.len().min(PROBE_SIZE_64);
+    let probe_slice = &slice[..probe_len];
+    let mut all_not_null = true;
     let mut all_null = true;
 
     for chunk in probe_slice.chunks_exact(8) {
@@ -104,108 +100,42 @@ fn try_encode_i64_rle<W: Write>(
         let mask = values.simd_ne(null_val).to_bitmask();
 
         if mask != 0xFF {
-            all_valid = false;
+            all_not_null = false;
         }
         if mask != 0x00 {
             all_null = false;
         }
 
         // Early exit: mixed pattern detected in probe
-        if !all_valid && !all_null {
+        if !all_not_null && !all_null {
             return Ok(None);
         }
     }
 
-    // Phase 2: Continue scanning rest with the detected pattern
-    let rest_slice = &slice[PROBE_SIZE_64..];
+    // Handle probe remainder (for small slices not aligned to 8)
+    for &val in probe_slice.chunks_exact(8).remainder() {
+        if val == i64::MIN {
+            all_not_null = false;
+        } else {
+            all_null = false;
+        }
+        if !all_not_null && !all_null {
+            return Ok(None);
+        }
+    }
 
-    if all_valid {
-        // Probe showed all valid, verify rest
-        scan_i64_verify_all_valid(writer, slice, rest_slice, compute_stats, null_val)
+    // Continue scanning rest with the detected pattern (empty for small slices)
+    let rest_slice = &slice[probe_len..];
+
+    if all_not_null {
+        scan_i64_verify_all_not_null(writer, slice, rest_slice, compute_stats, null_val)
     } else {
-        // Probe showed all null, verify rest
         scan_i64_verify_all_null(writer, slice, rest_slice, null_val)
     }
 }
 
-/// Scan entire slice (for small slices below probe threshold)
-fn scan_i64_full<W: Write>(
-    writer: &mut W,
-    slice: &[i64],
-    compute_stats: bool,
-    null_val: Simd<i64, 8>,
-) -> std::io::Result<Option<DefLevelResult<i64>>> {
-    let chunks = slice.chunks_exact(8);
-    let remainder = chunks.remainder();
-
-    let mut all_valid = true;
-    let mut all_null = true;
-    let mut min_vec = Simd::<i64, 8>::splat(i64::MAX);
-    let mut max_vec = Simd::<i64, 8>::splat(i64::MIN + 1);
-
-    for chunk in chunks {
-        let values = Simd::<i64, 8>::from_slice(chunk);
-        let mask = values.simd_ne(null_val).to_bitmask();
-
-        if mask != 0xFF {
-            all_valid = false;
-        }
-        if mask != 0x00 {
-            all_null = false;
-        }
-
-        if compute_stats && all_valid {
-            min_vec = min_vec.simd_min(values);
-            max_vec = max_vec.simd_max(values);
-        }
-
-        if !all_valid && !all_null {
-            return Ok(None);
-        }
-    }
-
-    // Check remainder
-    for &val in remainder {
-        if val == i64::MIN {
-            all_valid = false;
-        } else {
-            all_null = false;
-            if compute_stats && all_valid {
-                min_vec = Simd::splat(min_vec.reduce_min().min(val));
-                max_vec = Simd::splat(max_vec.reduce_max().max(val));
-            }
-        }
-        if !all_valid && !all_null {
-            return Ok(None);
-        }
-    }
-
-    if all_valid {
-        write_rle_all_ones(writer, slice.len())?;
-        let (min_val, max_val) = if compute_stats {
-            (Some(min_vec.reduce_min()), Some(max_vec.reduce_max()))
-        } else {
-            (None, None)
-        };
-        Ok(Some(DefLevelResult {
-            null_count: 0,
-            max: max_val,
-            min: min_val,
-        }))
-    } else if all_null {
-        write_rle_all_zeros(writer, slice.len())?;
-        Ok(Some(DefLevelResult {
-            null_count: slice.len(),
-            max: None,
-            min: None,
-        }))
-    } else {
-        Ok(None)
-    }
-}
-
-/// Continue verifying all-valid pattern after probe
-fn scan_i64_verify_all_valid<W: Write>(
+/// Continue verifying all-not-null pattern after probe
+fn scan_i64_verify_all_not_null<W: Write>(
     writer: &mut W,
     full_slice: &[i64],
     rest_slice: &[i64],
@@ -218,15 +148,21 @@ fn scan_i64_verify_all_valid<W: Write>(
     let mut min_vec = Simd::<i64, 8>::splat(i64::MAX);
     let mut max_vec = Simd::<i64, 8>::splat(i64::MIN + 1);
 
-    // First pass probe stats if needed
+    // Compute stats for probe portion
+    let probe_len = full_slice.len() - rest_slice.len();
     if compute_stats {
-        for chunk in full_slice[..PROBE_SIZE_64].chunks_exact(8) {
+        for chunk in full_slice[..probe_len].chunks_exact(8) {
             let values = Simd::<i64, 8>::from_slice(chunk);
             min_vec = min_vec.simd_min(values);
             max_vec = max_vec.simd_max(values);
         }
+        for &val in full_slice[..probe_len].chunks_exact(8).remainder() {
+            min_vec = Simd::splat(min_vec.reduce_min().min(val));
+            max_vec = Simd::splat(max_vec.reduce_max().max(val));
+        }
     }
 
+    // Verify rest_slice (empty for small slices)
     for chunk in chunks {
         let values = Simd::<i64, 8>::from_slice(chunk);
         let mask = values.simd_ne(null_val).to_bitmask();
@@ -436,14 +372,10 @@ fn try_encode_i32_rle<W: Write>(
 
     let null_val = Simd::<i32, 16>::splat(i32::MIN);
 
-    // For small slices, scan all without probing
-    if slice.len() < PROBE_SIZE_32 {
-        return scan_i32_full(writer, slice, compute_stats, null_val);
-    }
-
-    // Phase 1: Probe first PROBE_SIZE_32 elements to detect pattern
-    let probe_slice = &slice[..PROBE_SIZE_32];
-    let mut all_valid = true;
+    // Probe up to PROBE_SIZE_32 elements (or entire slice if smaller)
+    let probe_len = slice.len().min(PROBE_SIZE_32);
+    let probe_slice = &slice[..probe_len];
+    let mut all_not_null = true;
     let mut all_null = true;
 
     for chunk in probe_slice.chunks_exact(16) {
@@ -451,104 +383,40 @@ fn try_encode_i32_rle<W: Write>(
         let mask = values.simd_ne(null_val).to_bitmask();
 
         if mask != 0xFFFF {
-            all_valid = false;
+            all_not_null = false;
         }
         if mask != 0x0000 {
             all_null = false;
         }
 
-        if !all_valid && !all_null {
+        if !all_not_null && !all_null {
             return Ok(None);
         }
     }
 
-    // Phase 2: Continue scanning rest with the detected pattern
-    let rest_slice = &slice[PROBE_SIZE_32..];
+    // Handle probe remainder (for small slices not aligned to 16)
+    for &val in probe_slice.chunks_exact(16).remainder() {
+        if val == i32::MIN {
+            all_not_null = false;
+        } else {
+            all_null = false;
+        }
+        if !all_not_null && !all_null {
+            return Ok(None);
+        }
+    }
 
-    if all_valid {
-        scan_i32_verify_all_valid(writer, slice, rest_slice, compute_stats, null_val)
+    // Continue scanning rest with the detected pattern (empty for small slices)
+    let rest_slice = &slice[probe_len..];
+
+    if all_not_null {
+        scan_i32_verify_all_not_null(writer, slice, rest_slice, compute_stats, null_val)
     } else {
         scan_i32_verify_all_null(writer, slice, rest_slice, null_val)
     }
 }
 
-fn scan_i32_full<W: Write>(
-    writer: &mut W,
-    slice: &[i32],
-    compute_stats: bool,
-    null_val: Simd<i32, 16>,
-) -> std::io::Result<Option<DefLevelResult<i32>>> {
-    let chunks = slice.chunks_exact(16);
-    let remainder = chunks.remainder();
-
-    let mut all_valid = true;
-    let mut all_null = true;
-    let mut min_vec = Simd::<i32, 16>::splat(i32::MAX);
-    let mut max_vec = Simd::<i32, 16>::splat(i32::MIN + 1);
-
-    for chunk in chunks {
-        let values = Simd::<i32, 16>::from_slice(chunk);
-        let mask = values.simd_ne(null_val).to_bitmask();
-
-        if mask != 0xFFFF {
-            all_valid = false;
-        }
-        if mask != 0x0000 {
-            all_null = false;
-        }
-
-        if compute_stats && all_valid {
-            min_vec = min_vec.simd_min(values);
-            max_vec = max_vec.simd_max(values);
-        }
-
-        if !all_valid && !all_null {
-            return Ok(None);
-        }
-    }
-
-    for &val in remainder {
-        if val == i32::MIN {
-            all_valid = false;
-        } else {
-            all_null = false;
-        }
-        if !all_valid && !all_null {
-            return Ok(None);
-        }
-    }
-
-    if all_valid {
-        write_rle_all_ones(writer, slice.len())?;
-        let (min_val, max_val) = if compute_stats {
-            let mut min_i = min_vec.reduce_min();
-            let mut max_i = max_vec.reduce_max();
-            for &val in remainder {
-                min_i = min_i.min(val);
-                max_i = max_i.max(val);
-            }
-            (Some(min_i), Some(max_i))
-        } else {
-            (None, None)
-        };
-        Ok(Some(DefLevelResult {
-            null_count: 0,
-            max: max_val,
-            min: min_val,
-        }))
-    } else if all_null {
-        write_rle_all_zeros(writer, slice.len())?;
-        Ok(Some(DefLevelResult {
-            null_count: slice.len(),
-            max: None,
-            min: None,
-        }))
-    } else {
-        Ok(None)
-    }
-}
-
-fn scan_i32_verify_all_valid<W: Write>(
+fn scan_i32_verify_all_not_null<W: Write>(
     writer: &mut W,
     full_slice: &[i32],
     rest_slice: &[i32],
@@ -561,14 +429,21 @@ fn scan_i32_verify_all_valid<W: Write>(
     let mut min_vec = Simd::<i32, 16>::splat(i32::MAX);
     let mut max_vec = Simd::<i32, 16>::splat(i32::MIN + 1);
 
+    // Compute stats for probe portion
+    let probe_len = full_slice.len() - rest_slice.len();
     if compute_stats {
-        for chunk in full_slice[..PROBE_SIZE_32].chunks_exact(16) {
+        for chunk in full_slice[..probe_len].chunks_exact(16) {
             let values = Simd::<i32, 16>::from_slice(chunk);
             min_vec = min_vec.simd_min(values);
             max_vec = max_vec.simd_max(values);
         }
+        for &val in full_slice[..probe_len].chunks_exact(16).remainder() {
+            min_vec = Simd::splat(min_vec.reduce_min().min(val));
+            max_vec = Simd::splat(max_vec.reduce_max().max(val));
+        }
     }
 
+    // Verify rest_slice (empty for small slices)
     for chunk in chunks {
         let values = Simd::<i32, 16>::from_slice(chunk);
         let mask = values.simd_ne(null_val).to_bitmask();
@@ -792,14 +667,10 @@ fn try_encode_f64_rle<W: Write>(
     let sign_mask_vec = Simd::<i64, 8>::splat(F64_SIGN_MASK);
     let infinity_vec = Simd::<i64, 8>::splat(F64_INFINITY_BITS);
 
-    // For small slices, scan all without probing
-    if slice.len() < PROBE_SIZE_64 {
-        return scan_f64_full(writer, slice, compute_stats, sign_mask_vec, infinity_vec);
-    }
-
-    // Phase 1: Probe first PROBE_SIZE_64 elements to detect pattern
-    let probe_slice = &slice[..PROBE_SIZE_64];
-    let mut all_valid = true;
+    // Probe up to PROBE_SIZE_64 elements (or entire slice if smaller)
+    let probe_len = slice.len().min(PROBE_SIZE_64);
+    let probe_slice = &slice[..probe_len];
+    let mut all_not_null = true;
     let mut all_null = true;
 
     for chunk in probe_slice.chunks_exact(8) {
@@ -810,22 +681,34 @@ fn try_encode_f64_rle<W: Write>(
         let mask = is_not_nan.to_bitmask();
 
         if mask != 0xFF {
-            all_valid = false;
+            all_not_null = false;
         }
         if mask != 0x00 {
             all_null = false;
         }
 
-        if !all_valid && !all_null {
+        if !all_not_null && !all_null {
             return Ok(None);
         }
     }
 
-    // Phase 2: Continue scanning rest with the detected pattern
-    let rest_slice = &slice[PROBE_SIZE_64..];
+    // Handle probe remainder (for small slices not aligned to 8)
+    for &val in probe_slice.chunks_exact(8).remainder() {
+        if f64_is_nan(val) {
+            all_not_null = false;
+        } else {
+            all_null = false;
+        }
+        if !all_not_null && !all_null {
+            return Ok(None);
+        }
+    }
 
-    if all_valid {
-        scan_f64_verify_all_valid(
+    // Continue scanning rest with the detected pattern (empty for small slices)
+    let rest_slice = &slice[probe_len..];
+
+    if all_not_null {
+        scan_f64_verify_all_not_null(
             writer,
             slice,
             rest_slice,
@@ -838,91 +721,7 @@ fn try_encode_f64_rle<W: Write>(
     }
 }
 
-fn scan_f64_full<W: Write>(
-    writer: &mut W,
-    slice: &[f64],
-    compute_stats: bool,
-    sign_mask_vec: Simd<i64, 8>,
-    infinity_vec: Simd<i64, 8>,
-) -> std::io::Result<Option<DefLevelResult<f64>>> {
-    let chunks = slice.chunks_exact(8);
-    let remainder = chunks.remainder();
-
-    let mut all_valid = true;
-    let mut all_null = true;
-    let mut min_vec = Simd::<f64, 8>::splat(f64::INFINITY);
-    let mut max_vec = Simd::<f64, 8>::splat(f64::NEG_INFINITY);
-
-    for chunk in chunks {
-        let values = Simd::<f64, 8>::from_slice(chunk);
-        let bits: Simd<i64, 8> = unsafe { std::mem::transmute(values) };
-        let abs_bits = bits & sign_mask_vec;
-        let is_not_nan = abs_bits.simd_le(infinity_vec);
-        let mask = is_not_nan.to_bitmask();
-
-        if mask != 0xFF {
-            all_valid = false;
-        }
-        if mask != 0x00 {
-            all_null = false;
-        }
-
-        if compute_stats && all_valid {
-            min_vec = min_vec.simd_min(values);
-            max_vec = max_vec.simd_max(values);
-        }
-
-        if !all_valid && !all_null {
-            return Ok(None);
-        }
-    }
-
-    for &val in remainder {
-        if f64_is_nan(val) {
-            all_valid = false;
-        } else {
-            all_null = false;
-        }
-        if !all_valid && !all_null {
-            return Ok(None);
-        }
-    }
-
-    if all_valid {
-        write_rle_all_ones(writer, slice.len())?;
-        let (min_val, max_val) = if compute_stats {
-            let mut min_f = min_vec.reduce_min();
-            let mut max_f = max_vec.reduce_max();
-            for &val in remainder {
-                min_f = min_f.min(val);
-                max_f = max_f.max(val);
-            }
-            if min_f == f64::INFINITY {
-                (None, None)
-            } else {
-                (Some(min_f), Some(max_f))
-            }
-        } else {
-            (None, None)
-        };
-        Ok(Some(DefLevelResult {
-            null_count: 0,
-            max: max_val,
-            min: min_val,
-        }))
-    } else if all_null {
-        write_rle_all_zeros(writer, slice.len())?;
-        Ok(Some(DefLevelResult {
-            null_count: slice.len(),
-            max: None,
-            min: None,
-        }))
-    } else {
-        Ok(None)
-    }
-}
-
-fn scan_f64_verify_all_valid<W: Write>(
+fn scan_f64_verify_all_not_null<W: Write>(
     writer: &mut W,
     full_slice: &[f64],
     rest_slice: &[f64],
@@ -936,14 +735,21 @@ fn scan_f64_verify_all_valid<W: Write>(
     let mut min_vec = Simd::<f64, 8>::splat(f64::INFINITY);
     let mut max_vec = Simd::<f64, 8>::splat(f64::NEG_INFINITY);
 
+    // Compute stats for probe portion
+    let probe_len = full_slice.len() - rest_slice.len();
     if compute_stats {
-        for chunk in full_slice[..PROBE_SIZE_64].chunks_exact(8) {
+        for chunk in full_slice[..probe_len].chunks_exact(8) {
             let values = Simd::<f64, 8>::from_slice(chunk);
             min_vec = min_vec.simd_min(values);
             max_vec = max_vec.simd_max(values);
         }
+        for &val in full_slice[..probe_len].chunks_exact(8).remainder() {
+            min_vec = Simd::splat(min_vec.reduce_min().min(val));
+            max_vec = Simd::splat(max_vec.reduce_max().max(val));
+        }
     }
 
+    // Verify rest_slice (empty for small slices)
     for chunk in chunks {
         let values = Simd::<f64, 8>::from_slice(chunk);
         let bits: Simd<i64, 8> = unsafe { std::mem::transmute(values) };
@@ -1164,14 +970,10 @@ fn try_encode_f32_rle<W: Write>(
     let sign_mask_vec = Simd::<i32, 16>::splat(F32_SIGN_MASK);
     let infinity_vec = Simd::<i32, 16>::splat(F32_INFINITY_BITS);
 
-    // For small slices, scan all without probing
-    if slice.len() < PROBE_SIZE_32 {
-        return scan_f32_full(writer, slice, compute_stats, sign_mask_vec, infinity_vec);
-    }
-
-    // Phase 1: Probe first PROBE_SIZE_32 elements to detect pattern
-    let probe_slice = &slice[..PROBE_SIZE_32];
-    let mut all_valid = true;
+    // Probe up to PROBE_SIZE_32 elements (or entire slice if smaller)
+    let probe_len = slice.len().min(PROBE_SIZE_32);
+    let probe_slice = &slice[..probe_len];
+    let mut all_not_null = true;
     let mut all_null = true;
 
     for chunk in probe_slice.chunks_exact(16) {
@@ -1182,22 +984,34 @@ fn try_encode_f32_rle<W: Write>(
         let mask = is_not_nan.to_bitmask();
 
         if mask != 0xFFFF {
-            all_valid = false;
+            all_not_null = false;
         }
         if mask != 0x0000 {
             all_null = false;
         }
 
-        if !all_valid && !all_null {
+        if !all_not_null && !all_null {
             return Ok(None);
         }
     }
 
-    // Phase 2: Continue scanning rest with the detected pattern
-    let rest_slice = &slice[PROBE_SIZE_32..];
+    // Handle probe remainder (for small slices not aligned to 16)
+    for &val in probe_slice.chunks_exact(16).remainder() {
+        if f32_is_nan(val) {
+            all_not_null = false;
+        } else {
+            all_null = false;
+        }
+        if !all_not_null && !all_null {
+            return Ok(None);
+        }
+    }
 
-    if all_valid {
-        scan_f32_verify_all_valid(
+    // Continue scanning rest with the detected pattern (empty for small slices)
+    let rest_slice = &slice[probe_len..];
+
+    if all_not_null {
+        scan_f32_verify_all_not_null(
             writer,
             slice,
             rest_slice,
@@ -1210,91 +1024,7 @@ fn try_encode_f32_rle<W: Write>(
     }
 }
 
-fn scan_f32_full<W: Write>(
-    writer: &mut W,
-    slice: &[f32],
-    compute_stats: bool,
-    sign_mask_vec: Simd<i32, 16>,
-    infinity_vec: Simd<i32, 16>,
-) -> std::io::Result<Option<DefLevelResult<f32>>> {
-    let chunks = slice.chunks_exact(16);
-    let remainder = chunks.remainder();
-
-    let mut all_valid = true;
-    let mut all_null = true;
-    let mut min_vec = Simd::<f32, 16>::splat(f32::INFINITY);
-    let mut max_vec = Simd::<f32, 16>::splat(f32::NEG_INFINITY);
-
-    for chunk in chunks {
-        let values = Simd::<f32, 16>::from_slice(chunk);
-        let bits: Simd<i32, 16> = unsafe { std::mem::transmute(values) };
-        let abs_bits = bits & sign_mask_vec;
-        let is_not_nan = abs_bits.simd_le(infinity_vec);
-        let mask = is_not_nan.to_bitmask();
-
-        if mask != 0xFFFF {
-            all_valid = false;
-        }
-        if mask != 0x0000 {
-            all_null = false;
-        }
-
-        if compute_stats && all_valid {
-            min_vec = min_vec.simd_min(values);
-            max_vec = max_vec.simd_max(values);
-        }
-
-        if !all_valid && !all_null {
-            return Ok(None);
-        }
-    }
-
-    for &val in remainder {
-        if f32_is_nan(val) {
-            all_valid = false;
-        } else {
-            all_null = false;
-        }
-        if !all_valid && !all_null {
-            return Ok(None);
-        }
-    }
-
-    if all_valid {
-        write_rle_all_ones(writer, slice.len())?;
-        let (min_val, max_val) = if compute_stats {
-            let mut min_f = min_vec.reduce_min();
-            let mut max_f = max_vec.reduce_max();
-            for &val in remainder {
-                min_f = min_f.min(val);
-                max_f = max_f.max(val);
-            }
-            if min_f == f32::INFINITY {
-                (None, None)
-            } else {
-                (Some(min_f), Some(max_f))
-            }
-        } else {
-            (None, None)
-        };
-        Ok(Some(DefLevelResult {
-            null_count: 0,
-            max: max_val,
-            min: min_val,
-        }))
-    } else if all_null {
-        write_rle_all_zeros(writer, slice.len())?;
-        Ok(Some(DefLevelResult {
-            null_count: slice.len(),
-            max: None,
-            min: None,
-        }))
-    } else {
-        Ok(None)
-    }
-}
-
-fn scan_f32_verify_all_valid<W: Write>(
+fn scan_f32_verify_all_not_null<W: Write>(
     writer: &mut W,
     full_slice: &[f32],
     rest_slice: &[f32],
@@ -1308,14 +1038,21 @@ fn scan_f32_verify_all_valid<W: Write>(
     let mut min_vec = Simd::<f32, 16>::splat(f32::INFINITY);
     let mut max_vec = Simd::<f32, 16>::splat(f32::NEG_INFINITY);
 
+    // Compute stats for probe portion
+    let probe_len = full_slice.len() - rest_slice.len();
     if compute_stats {
-        for chunk in full_slice[..PROBE_SIZE_32].chunks_exact(16) {
+        for chunk in full_slice[..probe_len].chunks_exact(16) {
             let values = Simd::<f32, 16>::from_slice(chunk);
             min_vec = min_vec.simd_min(values);
             max_vec = max_vec.simd_max(values);
         }
+        for &val in full_slice[..probe_len].chunks_exact(16).remainder() {
+            min_vec = Simd::splat(min_vec.reduce_min().min(val));
+            max_vec = Simd::splat(max_vec.reduce_max().max(val));
+        }
     }
 
+    // Verify rest_slice (empty for small slices)
     for chunk in chunks {
         let values = Simd::<f32, 16>::from_slice(chunk);
         let bits: Simd<i32, 16> = unsafe { std::mem::transmute(values) };
@@ -2708,7 +2445,7 @@ mod tests {
     }
 
     #[test]
-    fn test_i64_probe_all_valid_continue_all_valid() {
+    fn test_i64_probe_all_not_null_continue_all_not_null() {
         // Data larger than probe size, all valid
         let data: Vec<i64> = (0..500).collect();
 
@@ -2726,7 +2463,7 @@ mod tests {
     }
 
     #[test]
-    fn test_i64_probe_all_valid_but_null_after_probe() {
+    fn test_i64_probe_all_not_null_but_null_after_probe() {
         // Probe shows all valid, but null found after probe region
         let mut data: Vec<i64> = (0..500).collect();
         data[200] = i64::MIN; // Null after probe region (128)
@@ -2939,7 +2676,7 @@ mod tests {
     // ==========================================================================
 
     #[test]
-    fn test_i64_exactly_probe_size_all_valid() {
+    fn test_i64_exactly_probe_size_all_not_null() {
         // Exactly 128 elements (probe size for 64-bit)
         let data: Vec<i64> = (0..128).collect();
 
@@ -2962,7 +2699,7 @@ mod tests {
     }
 
     #[test]
-    fn test_i64_probe_size_plus_one_all_valid() {
+    fn test_i64_probe_size_plus_one_all_not_null() {
         // 129 elements - just over probe threshold
         let data: Vec<i64> = (0..129).collect();
 
@@ -2977,7 +2714,7 @@ mod tests {
     }
 
     #[test]
-    fn test_i32_exactly_probe_size_all_valid() {
+    fn test_i32_exactly_probe_size_all_not_null() {
         // Exactly 256 elements (probe size for 32-bit)
         let data: Vec<i32> = (0..256).map(|x| x as i32).collect();
 

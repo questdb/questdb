@@ -14,29 +14,6 @@ use parquet2::schema::Repetition;
 use parquet2::statistics::{serialize_statistics, ParquetStatistics, PrimitiveStatistics};
 use parquet2::types::NativeType;
 
-#[allow(dead_code)]
-pub fn float_slice_to_page_plain<T, P>(
-    slice: &[T],
-    column_top: usize,
-    options: WriteOptions,
-    primitive_type: PrimitiveType,
-) -> ParquetResult<Page>
-where
-    P: NativeType,
-    T: Nullable + num_traits::AsPrimitive<P> + num_traits::Float + From<i8> + Debug,
-{
-    slice_to_page_nullable(
-        slice,
-        column_top,
-        options,
-        primitive_type,
-        Encoding::Plain,
-        encode_plain_nullable,
-    )
-    .map(Page::Data)
-}
-
-#[allow(dead_code)]
 pub fn int_slice_to_page_nullable<T, P>(
     slice: &[T],
     column_top: usize,
@@ -153,7 +130,6 @@ where
     )
 }
 
-#[allow(dead_code)]
 fn slice_to_page_nullable<T, P, F>(
     slice: &[T],
     column_top: usize,
@@ -254,7 +230,6 @@ where
     buffer
 }
 
-#[allow(dead_code)]
 fn encode_plain_nullable<T, P>(slice: &[T], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8>
 where
     P: NativeType,
@@ -268,7 +243,6 @@ where
     buffer
 }
 
-#[allow(dead_code)]
 fn encode_delta_nullable<T, P>(slice: &[T], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8>
 where
     P: NativeType + num_traits::AsPrimitive<i64>,
@@ -383,6 +357,9 @@ pub fn i64_slice_to_page_simd(
 
 fn encode_i64_plain(slice: &[i64], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8> {
     let non_null_count = slice.len() - null_count;
+    if non_null_count == 0 {
+        return buffer;
+    }
     buffer.reserve(std::mem::size_of::<i64>() * non_null_count);
 
     if null_count == 0 {
@@ -402,8 +379,12 @@ fn encode_i64_plain(slice: &[i64], null_count: usize, mut buffer: Vec<u8>) -> Ve
 }
 
 fn encode_i64_delta(slice: &[i64], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8> {
+    let non_null_count = slice.len() - null_count;
+    if non_null_count == 0 {
+        return buffer;
+    }
     let iterator = slice.iter().filter(|&&x| x != i64::MIN).copied();
-    let iterator = ExactSizedIter::new(iterator, slice.len() - null_count);
+    let iterator = ExactSizedIter::new(iterator, non_null_count);
     encode(iterator, &mut buffer);
     buffer
 }
@@ -480,6 +461,9 @@ pub fn i32_slice_to_page_simd(
 
 fn encode_i32_plain(slice: &[i32], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8> {
     let non_null_count = slice.len() - null_count;
+    if non_null_count == 0 {
+        return buffer;
+    }
     buffer.reserve(std::mem::size_of::<i32>() * non_null_count);
 
     if null_count == 0 {
@@ -497,8 +481,12 @@ fn encode_i32_plain(slice: &[i32], null_count: usize, mut buffer: Vec<u8>) -> Ve
 }
 
 fn encode_i32_delta(slice: &[i32], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8> {
+    let non_null_count = slice.len() - null_count;
+    if non_null_count == 0 {
+        return buffer;
+    }
     let iterator = slice.iter().filter(|&&x| x != i32::MIN).map(|&x| x as i64);
-    let iterator = ExactSizedIter::new(iterator, slice.len() - null_count);
+    let iterator = ExactSizedIter::new(iterator, non_null_count);
     encode(iterator, &mut buffer);
     buffer
 }
@@ -539,17 +527,19 @@ pub fn f64_slice_to_page_simd(
 
     // Encode the actual data (Plain encoding only for floats)
     let non_null_count = slice.len() - result.null_count;
-    buffer.reserve(std::mem::size_of::<f64>() * non_null_count);
+    if non_null_count > 0 {
+        buffer.reserve(std::mem::size_of::<f64>() * non_null_count);
 
-    if result.null_count == 0 {
-        // Fast path: no nulls (NaNs), use memcpy
-        let bytes =
-            unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 8) };
-        buffer.extend_from_slice(bytes);
-    } else {
-        // Slow path: filter out NaNs
-        for &x in slice.iter().filter(|x| !x.is_nan()) {
-            buffer.extend_from_slice(&x.to_le_bytes());
+        if result.null_count == 0 {
+            // Fast path: no nulls (NaNs), use memcpy
+            let bytes =
+                unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 8) };
+            buffer.extend_from_slice(bytes);
+        } else {
+            // Slow path: filter out NaNs
+            for &x in slice.iter().filter(|x| !x.is_nan()) {
+                buffer.extend_from_slice(&x.to_le_bytes());
+            }
         }
     }
 
@@ -613,17 +603,19 @@ pub fn f32_slice_to_page_simd(
 
     // Encode the actual data (Plain encoding only for floats)
     let non_null_count = slice.len() - result.null_count;
-    buffer.reserve(std::mem::size_of::<f32>() * non_null_count);
+    if non_null_count > 0 {
+        buffer.reserve(std::mem::size_of::<f32>() * non_null_count);
 
-    if result.null_count == 0 {
-        // Fast path: no nulls (NaNs), use memcpy
-        let bytes =
-            unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 4) };
-        buffer.extend_from_slice(bytes);
-    } else {
-        // Slow path: filter out NaNs
-        for &x in slice.iter().filter(|x| !x.is_nan()) {
-            buffer.extend_from_slice(&x.to_le_bytes());
+        if result.null_count == 0 {
+            // Fast path: no nulls (NaNs), use memcpy
+            let bytes =
+                unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 4) };
+            buffer.extend_from_slice(bytes);
+        } else {
+            // Slow path: filter out NaNs
+            for &x in slice.iter().filter(|x| !x.is_nan()) {
+                buffer.extend_from_slice(&x.to_le_bytes());
+            }
         }
     }
 
