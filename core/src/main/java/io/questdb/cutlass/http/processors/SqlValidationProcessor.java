@@ -53,7 +53,6 @@ import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -68,39 +67,25 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
 
     private static final Log LOG = LogFactory.getLog(SqlValidationProcessor.class);
     private static final LocalValue<SqlValidationProcessorState> LV = new LocalValue<>();
-    private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final JsonQueryProcessorConfiguration configuration;
     private final CairoEngine engine;
     private final NanosecondClock nanosecondClock;
     private final Path path;
     private final byte requiredAuthType;
-    private final SqlExecutionContextImpl sqlExecutionContext;
+    private final int sharedWorkerCount;
 
     public SqlValidationProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
             int sharedWorkerCount
     ) {
-        this(
-                configuration,
-                engine,
-                new SqlExecutionContextImpl(engine, sharedWorkerCount)
-        );
-    }
-
-    public SqlValidationProcessor(
-            JsonQueryProcessorConfiguration configuration,
-            CairoEngine engine,
-            SqlExecutionContextImpl sqlExecutionContext
-    ) {
         try {
             this.configuration = configuration;
             this.path = new Path();
             this.engine = engine;
+            this.sharedWorkerCount = sharedWorkerCount;
             requiredAuthType = configuration.getRequiredAuthType();
-            this.sqlExecutionContext = sqlExecutionContext;
             this.nanosecondClock = configuration.getNanosecondClock();
-            this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB3);
         } catch (Throwable th) {
             close();
             throw th;
@@ -110,7 +95,6 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
     @Override
     public void close() {
         Misc.free(path);
-        Misc.free(circuitBreaker);
     }
 
     @Override
@@ -168,6 +152,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
         final SqlValidationProcessorState state = LV.get(context);
         if (state != null) {
             // preserve random when we park the context
+            SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
             state.setRnd(sqlExecutionContext.getRandom());
         }
     }
@@ -189,6 +174,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
 
     public void validate0(SqlValidationProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
+        NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
         circuitBreaker.resetTimer();
         try {
             // new query
@@ -273,9 +259,11 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
     private void compileAndValidate(
             SqlValidationProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+        HttpConnectionContext context = state.getHttpConnectionContext();
+        NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
+        SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             final long compilationStart = nanosecondClock.getTicks();
-            HttpConnectionContext context = state.getHttpConnectionContext();
             sqlExecutionContext.with(
                     context.getSecurityContext(),
                     null,
