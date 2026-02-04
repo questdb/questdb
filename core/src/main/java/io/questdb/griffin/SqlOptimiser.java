@@ -9237,6 +9237,15 @@ public class SqlOptimiser implements Mutable {
     private void tryPushFilterIntoSetOperationBranches(ExpressionNode node, QueryModel parent, QueryModel nested) throws SqlException {
         QueryModel branch = nested;
         while (branch != null) {
+            // Skip branches where pushing could change semantics
+            if (branch.getLatestBy().size() > 0
+                    || branch.getLimitLo() != null
+                    || branch.getLimitHi() != null
+                    || (branch.getSampleBy() != null && !canPushToSampleBy(branch, literalCollectorANames))
+            ) {
+                branch = branch.getUnionModel();
+                continue;
+            }
             try {
                 ExpressionNode clone = deepClone(expressionNodePool, node);
                 traversalAlgo.traverse(clone, literalCheckingVisitor.of(parent.getAliasToColumnMap()));
