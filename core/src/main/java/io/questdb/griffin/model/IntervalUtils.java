@@ -1453,7 +1453,7 @@ public final class IntervalUtils {
         // queryHi: round up (ceil) so we don't miss a schedule interval that starts
         //          within the last sub-microsecond of the query range.
         long queryLoMicros = isNanos ? (queryLo / 1000L) : queryLo;
-        long queryHiMicros = isNanos ? ((queryHi + 999L) / 1000L) : queryHi;
+        long queryHiMicros = isNanos ? (queryHi / 1000L + (queryHi % 1000L > 0 ? 1 : 0)) : queryHi;
 
         int scheduleIntervalCount = schedule.size() / 2;
 
