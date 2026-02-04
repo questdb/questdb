@@ -2901,20 +2901,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
-        ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditionObjList = null;
+        ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions = null;
         try {
             if (factory.mayHasParquetFormatPartition(executionContext)) {
                 ObjList<PushdownFilterExtractor.PushdownFilterCondition> tempConditions = pushdownFilterExtractor.extract(sqlNodeStack, filterExpr, factory.getMetadata());
                 if (tempConditions.size() != 0) {
-                    pushdownFilterConditionObjList = new ObjList<>(tempConditions);
-                    for (int i = 0, n = pushdownFilterConditionObjList.size(); i < n; i++) {
-                        PushdownFilterExtractor.PushdownFilterCondition condition = pushdownFilterConditionObjList.getQuick(i);
+                    pushdownFilterConditions = new ObjList<>(tempConditions);
+                    for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
+                        PushdownFilterExtractor.PushdownFilterCondition condition = pushdownFilterConditions.getQuick(i);
                         ObjList<ExpressionNode> values = condition.getValues();
                         for (int j = 0, m = values.size(); j < m; j++) {
                             condition.addValueFunction(functionParser.parseFunction(values.getQuick(j), factory.getMetadata(), executionContext));
                         }
                     }
                 }
+                factory.setPushdownFilterCondition(pushdownFilterConditions);
             }
 
             final boolean enableParallelFilter = executionContext.isParallelFilterEnabled();
@@ -3024,7 +3025,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } catch (Throwable e) {
             Misc.free(filter);
             Misc.free(factory);
-            Misc.freeObjList(pushdownFilterConditionObjList);
+            Misc.freeObjList(pushdownFilterConditions);
             throw e;
         }
     }

@@ -32,6 +32,7 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
+import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
@@ -305,6 +306,9 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     boolean recordCursorSupportsRandomAccess();
 
     default void revertFromSampleByIndexPageFrameCursorFactory() {
+    }
+
+    default void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
     }
 
     /**

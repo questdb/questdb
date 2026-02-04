@@ -6,7 +6,7 @@ use crate::parquet::error::{ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::ParquetFieldId;
 use crate::parquet_read::decode::ParquetColumnIndex;
 use crate::parquet_read::{
-    ColumnChunkBuffers, ColumnChunkStats, ColumnFilterValues, ColumnMeta, DecodeContext,
+    ColumnChunkBuffers, ColumnChunkStats, ColumnFilterPacked, ColumnMeta, DecodeContext,
     ParquetDecoder, RowGroupBuffers, RowGroupStatBuffers,
 };
 use jni::objects::JClass;
@@ -196,7 +196,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     row_group_index: u32,
     file_ptr: *const u8,
     file_size: u64,
-    filters: *const (ParquetColumnIndex, ColumnFilterValues),
+    filters: *const ColumnFilterPacked,
     filter_count: u32,
 ) -> bool {
     assert!(!decoder.is_null(), "decoder pointer is null");

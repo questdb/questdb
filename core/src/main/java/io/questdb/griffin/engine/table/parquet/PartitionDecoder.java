@@ -76,10 +76,18 @@ public class PartitionDecoder implements QuietCloseable {
 
     public static native void destroyDecodeContext(long decodeContextPtr);
 
-    public boolean canSkipRowGroup(
-            int rowGroupIndex,
-            DirectLongList filters // contains [parquet_column_index, ColumnFilterValues] pairs
-    ) {
+    /**
+     * Check if a row group can be skipped based on bloom filter conditions.
+     * <p>
+     * Filter list format: 2 longs per filter
+     * - Long 0: encoded(column_index, count) - lower 32 bits: column_index, upper 32 bits: count
+     * - Long 1: values_ptr
+     *
+     * @param rowGroupIndex the row group index to check
+     * @param filters       filter descriptors: [encoded(col_idx, count), ptr] per filter
+     * @return true if the row group can be safely skipped
+     */
+    public boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters) {
         assert ptr != 0;
         return canSkipRowGroup(
                 ptr,
@@ -87,7 +95,7 @@ public class PartitionDecoder implements QuietCloseable {
                 fileAddr,
                 fileSize,
                 filters.getAddress(),
-                (int) (filters.size() / 3)
+                (int) (filters.size() / 2)  // 2 longs per filter
         );
     }
 

@@ -34,14 +34,21 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
+import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.Nullable;
 
@@ -51,23 +58,43 @@ import static io.questdb.griffin.engine.functions.table.ReadParquetRecordCursor.
  * Page frame cursor for parallel read_parquet() SQL function.
  */
 public class ReadParquetPageFrameCursor implements PageFrameCursor {
+    private static final int FILTER_BUFFER_MAX_PAGES = 16;
+    private static final long FILTER_BUFFER_PAGE_SIZE = 4096;
     private static final Log LOG = LogFactory.getLog(ReadParquetPageFrameCursor.class);
     private final IntList columnIndexes;
     private final PartitionDecoder decoder;
     private final FilesFacade ff;
+    private final DirectLongList filterList;
+    private final MemoryCARWImpl filterValues;
     private final ReadParquetPageFrame frame = new ReadParquetPageFrame();
     private final RecordMetadata metadata;
+    private final @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
     private long addr = 0;
     private long fd = -1;
     private long fileSize = 0;
     private long rowCount;
     private int rowGroupCount;
 
-    public ReadParquetPageFrameCursor(FilesFacade ff, RecordMetadata metadata) {
+    public ReadParquetPageFrameCursor(FilesFacade ff, RecordMetadata metadata, @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
         this.ff = ff;
         this.metadata = metadata;
         this.decoder = new PartitionDecoder();
         this.columnIndexes = new IntList();
+        this.pushdownFilterConditions = pushdownFilterConditions;
+        if (pushdownFilterConditions != null && pushdownFilterConditions.size() > 0) {
+            this.filterList = new DirectLongList(
+                    (long) pushdownFilterConditions.size() * ParquetRowGroupFilter.LONGS_PER_FILTER,
+                    MemoryTag.NATIVE_DEFAULT
+            );
+            this.filterValues = new MemoryCARWImpl(
+                    FILTER_BUFFER_PAGE_SIZE,
+                    FILTER_BUFFER_MAX_PAGES,
+                    MemoryTag.NATIVE_DEFAULT
+            );
+        } else {
+            this.filterList = null;
+            this.filterValues = null;
+        }
     }
 
     @Override
@@ -78,6 +105,8 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     @Override
     public void close() {
         Misc.free(decoder);
+        Misc.free(filterList);
+        Misc.free(filterValues);
         if (fd != -1) {
             ff.close(fd);
             fd = -1;
@@ -115,17 +144,31 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
 
     @Override
     public @Nullable PageFrame next(long skipTarget) {
-        final int rowGroupIndex = ++frame.rowGroupIndex;
-        if (rowGroupIndex < rowGroupCount) {
+        while (true) {
+            final int rowGroupIndex = ++frame.rowGroupIndex;
+            if (rowGroupIndex >= rowGroupCount) {
+                return null;
+            }
+
+            if (filterList != null && ParquetRowGroupFilter.canSkipRowGroup(
+                    rowGroupIndex,
+                    decoder,
+                    pushdownFilterConditions,
+                    filterList,
+                    filterValues
+            )) {
+                frame.partitionHi += decoder.metadata().getRowGroupSize(rowGroupIndex);
+                continue;
+            }
+
             frame.rowGroupSize = decoder.metadata().getRowGroupSize(rowGroupIndex);
             frame.partitionLo = frame.partitionHi;
             frame.partitionHi = frame.partitionHi + frame.rowGroupSize;
             return frame;
         }
-        return null;
     }
 
-    public void of(LPSZ path) {
+    public void of(LPSZ path, SqlExecutionContext executionContext) throws SqlException {
         // Reopen the file, it could have changed
         this.fd = TableUtils.openRO(ff, path, LOG);
         this.fileSize = ff.length(fd);
@@ -138,6 +181,11 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         }
         this.rowCount = decoder.metadata().getRowCount();
         this.rowGroupCount = decoder.metadata().getRowGroupCount();
+        if (pushdownFilterConditions != null) {
+            for (int i = 0, n = pushdownFilterConditions.size(); i < n; ++i) {
+                pushdownFilterConditions.getQuick(i).init(executionContext);
+            }
+        }
 
         toTop();
     }

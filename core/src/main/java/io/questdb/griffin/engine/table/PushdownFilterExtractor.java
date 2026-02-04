@@ -26,6 +26,8 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.Chars;
@@ -208,8 +210,18 @@ public class PushdownFilterExtractor implements Mutable {
             return columnType;
         }
 
+        public ObjList<Function> getValueFunctions() {
+            return valueFunctions;
+        }
+
         public ObjList<ExpressionNode> getValues() {
             return values;
+        }
+
+        public void init(SqlExecutionContext executionContext) throws SqlException {
+            for (int i = 0, n = valueFunctions.size(); i < n; i++) {
+                valueFunctions.getQuick(i).init(null, executionContext);
+            }
         }
     }
 }

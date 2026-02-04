@@ -45,6 +45,25 @@ impl DecodeContext {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
+pub struct ColumnFilterPacked {
+    pub col_idx_and_count: u64,
+    pub ptr: u64,
+}
+
+impl ColumnFilterPacked {
+    #[inline]
+    pub fn column_index(&self) -> u32 {
+        (self.col_idx_and_count & 0xFFFFFFFF) as u32
+    }
+
+    #[inline]
+    pub fn count(&self) -> u32 {
+        (self.col_idx_and_count >> 32) as u32
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
 pub struct ColumnFilterValues {
     pub count: u32,
     pub ptr: u64,
