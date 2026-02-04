@@ -748,7 +748,12 @@ pub fn encode_f64_def_levels<W: Write>(
     encode_f64_def_levels_bitpacked(writer, slice, column_top, compute_stats)
 }
 
-// NaN check constants for f64
+// NaN check constants for f64.
+// IEEE-754 NaN detection: NaN has all exponent bits set AND non-zero mantissa,
+// so abs(bits) > infinity_bits. We use transmute from f64 to i64 for SIMD NaN checks.
+// This is endianness-safe: transmute reinterprets the bit pattern in registers without
+// byte swapping, and IEEE-754 bit layout (sign/exponent/mantissa) is identical on all
+// platforms. Endianness only affects memory byte order, not register bit operations.
 const F64_SIGN_MASK: i64 = 0x7FFFFFFFFFFFFFFF_u64 as i64;
 const F64_INFINITY_BITS: i64 = 0x7FF0000000000000_u64 as i64;
 
@@ -1128,7 +1133,7 @@ pub fn encode_f32_def_levels<W: Write>(
     encode_f32_def_levels_bitpacked(writer, slice, column_top, compute_stats)
 }
 
-// NaN check constants for f32
+// NaN check constants for f32 (see f64 constants above for endianness safety explanation).
 const F32_SIGN_MASK: i32 = 0x7FFFFFFF_u32 as i32;
 const F32_INFINITY_BITS: i32 = 0x7F800000_u32 as i32;
 
