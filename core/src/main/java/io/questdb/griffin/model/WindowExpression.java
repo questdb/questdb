@@ -74,6 +74,9 @@ public final class WindowExpression extends QueryColumn {
     private char rowsLoExprTimeUnit;
     private int rowsLoKind = PRECEDING;
     private int rowsLoKindPos = 0;
+    // For OVER window_name syntax - stores the referenced window name
+    private CharSequence windowName;
+    private int windowNamePosition;
 
     private WindowExpression() {
     }
@@ -106,6 +109,8 @@ public final class WindowExpression extends QueryColumn {
         exclusionKindPos = 0;
         ignoreNulls = false;
         nullsDescPos = 0;
+        windowName = null;
+        windowNamePosition = 0;
     }
 
     public int getExclusionKind() {
@@ -184,8 +189,20 @@ public final class WindowExpression extends QueryColumn {
         return rowsLoKindPos;
     }
 
+    public CharSequence getWindowName() {
+        return windowName;
+    }
+
+    public int getWindowNamePosition() {
+        return windowNamePosition;
+    }
+
     public boolean isIgnoreNulls() {
         return ignoreNulls;
+    }
+
+    public boolean isNamedWindowReference() {
+        return windowName != null;
     }
 
     public boolean isNonDefaultFrame() {
@@ -255,6 +272,55 @@ public final class WindowExpression extends QueryColumn {
     public void setRowsLoKind(int rowsLoKind, int rowsLoKindPos) {
         this.rowsLoKind = rowsLoKind;
         this.rowsLoKindPos = rowsLoKindPos;
+    }
+
+    public void setWindowName(CharSequence windowName, int windowNamePosition) {
+        this.windowName = windowName;
+        this.windowNamePosition = windowNamePosition;
+    }
+
+    /**
+     * Copies the window specification (partition by, order by, frame) from another WindowExpression.
+     * Used when resolving named window references.
+     *
+     * @param source the named window definition to copy from
+     */
+    public void copySpecFrom(WindowExpression source) {
+        // Copy partition by
+        this.partitionBy.clear();
+        this.partitionBy.addAll(source.partitionBy);
+
+        // Copy order by
+        this.orderBy.clear();
+        this.orderBy.addAll(source.orderBy);
+        this.orderByDirection.clear();
+        this.orderByDirection.addAll(source.orderByDirection);
+
+        // Copy frame specification
+        this.framingMode = source.framingMode;
+        this.rowsLo = source.rowsLo;
+        this.rowsLoExpr = source.rowsLoExpr;
+        this.rowsLoExprPos = source.rowsLoExprPos;
+        this.rowsLoExprTimeUnit = source.rowsLoExprTimeUnit;
+        this.rowsLoKind = source.rowsLoKind;
+        this.rowsLoKindPos = source.rowsLoKindPos;
+        this.rowsHi = source.rowsHi;
+        this.rowsHiExpr = source.rowsHiExpr;
+        this.rowsHiExprPos = source.rowsHiExprPos;
+        this.rowsHiExprTimeUnit = source.rowsHiExprTimeUnit;
+        this.rowsHiKind = source.rowsHiKind;
+        this.rowsHiKindPos = source.rowsHiKindPos;
+
+        // Copy exclusion
+        this.exclusionKind = source.exclusionKind;
+        this.exclusionKindPos = source.exclusionKindPos;
+
+        // Note: ignoreNulls and nullsDescPos are NOT copied - they are function-specific
+        // and are set from the IGNORE NULLS / RESPECT NULLS clause on the function itself
+
+        // Clear the window name since we've now resolved it
+        this.windowName = null;
+        this.windowNamePosition = 0;
     }
 
     public boolean stopOrderByPropagate(ObjList<ExpressionNode> modelOrder, IntList modelOrderDirection) {

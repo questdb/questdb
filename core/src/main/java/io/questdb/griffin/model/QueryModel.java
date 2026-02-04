@@ -158,6 +158,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final IntList updateTableColumnTypes = new IntList();
     private final ObjList<CharSequence> wildcardColumnNames = new ObjList<>();
     private final WindowJoinContext windowJoinContext = new WindowJoinContext();
+    // Named window definitions from WINDOW clause (e.g., WINDOW w AS (PARTITION BY ...))
+    private final LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauseModel = new LowerCaseCharSequenceObjHashMap<>();
     // used for the parallel sample by rewrite. In the future, if we deprecate original SAMPLE BY, then these will
     // be the only fields for these values.
@@ -494,6 +496,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         sqlNodeStack.clear();
         joinColumns.clear();
         withClauseModel.clear();
+        namedWindows.clear();
         selectModelType = SELECT_MODEL_NONE;
         columnNameToAliasMap.clear();
         tableNameFunction = null;
@@ -1062,6 +1065,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public WindowJoinContext getWindowJoinContext() {
         return windowJoinContext;
+    }
+
+    public LowerCaseCharSequenceObjHashMap<WindowExpression> getNamedWindows() {
+        return namedWindows;
     }
 
     public LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses() {

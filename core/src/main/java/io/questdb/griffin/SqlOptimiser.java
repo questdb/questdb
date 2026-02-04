@@ -8722,6 +8722,8 @@ public class SqlOptimiser implements Mutable {
                 QueryModel innerWm = innerWindowModels.getQuick(i);
                 innerWm.setNestedModel(root);
                 innerWm.copyHints(model.getHints());
+                // Copy named windows from original model for WINDOW clause support
+                innerWm.getNamedWindows().putAll(model.getNamedWindows());
                 root = innerWm;
             }
         }
@@ -8731,6 +8733,8 @@ public class SqlOptimiser implements Mutable {
             windowModel.moveLimitFrom(limitSource);
             windowModel.moveJoinAliasFrom(limitSource);
             windowModel.copyHints(model.getHints());
+            // Copy named windows from original model for WINDOW clause support
+            windowModel.getNamedWindows().putAll(model.getNamedWindows());
             root = windowModel;
             limitSource = windowModel;
         } else if ((rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) {
@@ -9554,6 +9558,48 @@ public class SqlOptimiser implements Mutable {
                 if (qc.isWindowExpression()) {
                     final WindowExpression ac = (WindowExpression) qc;
                     // preceding and following accept non-negative values only
+                    long rowsLo = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsLoExpr(), sqlExecutionContext);
+                    long rowsHi = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsHiExpr(), sqlExecutionContext);
+
+                    switch (ac.getRowsLoKind()) {
+                        case WindowExpression.PRECEDING:
+                            rowsLo = rowsLo != Long.MAX_VALUE ? -rowsLo : Long.MIN_VALUE;
+                            break;
+                        case WindowExpression.FOLLOWING:
+                            //rowsLo = rowsLo;
+                            break;
+                        default:
+                            // CURRENT ROW
+                            rowsLo = 0;
+                            break;
+                    }
+
+                    switch (ac.getRowsHiKind()) {
+                        case WindowExpression.PRECEDING:
+                            rowsHi = rowsHi != Long.MAX_VALUE ? -rowsHi : Long.MIN_VALUE;
+                            break;
+                        case WindowExpression.FOLLOWING:
+                            //rowsHi = rowsHi;
+                            break;
+                        default:
+                            // CURRENT ROW
+                            rowsHi = 0;
+                            break;
+                    }
+
+                    ac.setRowsLo(rowsLo);
+                    ac.setRowsHi(rowsHi);
+                }
+            }
+        }
+
+        // Also validate named window definitions (WINDOW clause)
+        LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows = model.getNamedWindows();
+        if (namedWindows.size() > 0) {
+            ObjList<CharSequence> keys = namedWindows.keys();
+            for (int i = 0, n = keys.size(); i < n; i++) {
+                WindowExpression ac = namedWindows.get(keys.getQuick(i));
+                if (ac != null) {
                     long rowsLo = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsLoExpr(), sqlExecutionContext);
                     long rowsHi = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsHiExpr(), sqlExecutionContext);
 
