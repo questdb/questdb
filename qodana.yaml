@@ -78,4 +78,7 @@ exclude:
       - core/src/test
   - name: ExtractMethodRecommender
   - name: RedundantMethodOverride
+  - name: AutoCloseableResource
+    paths:
+      - core/src/test/java/io/questdb/test/cutlass/http/ConcurrentParquetExportTest.java
   - name: RedundantSuppression
