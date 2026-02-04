@@ -398,8 +398,6 @@ public class HttpServer implements Closeable {
 
     private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {
 
-        // Non-owning index for O(1) lookup by handler ID. Lifecycle is owned by
-        // requestHandlerMap (URL-mapped handlers) and defaultRequestProcessor (default handler).
         private final ObjList<HttpRequestHandler> handlersByIdList = new ObjList<>();
         private final Utf8SequenceObjHashMap<IndexedHandler> requestHandlerMap = new Utf8SequenceObjHashMap<>();
         private int defaultProcessorId = REJECT_PROCESSOR_ID;
@@ -408,25 +406,21 @@ public class HttpServer implements Closeable {
 
         @Override
         public void close() {
-            Misc.freeIfCloseable(defaultRequestProcessor);
-            // Handlers may be stored in both the map and handlersByIdList; close each unique instance once.
-            ObjHashSet<HttpRequestHandler> seen = new ObjHashSet<>();
+            ObjHashSet<Object> dedup = new ObjHashSet<>();
+            if (defaultRequestProcessor != null) {
+                dedup.add(defaultRequestProcessor);
+                Misc.freeIfCloseable(defaultRequestProcessor);
+            }
+
             for (int i = 0, n = handlersByIdList.size(); i < n; i++) {
                 HttpRequestHandler handler = handlersByIdList.getQuick(i);
-                if (handler != null && seen.add(handler)) {
+                if (handler != null && dedup.add(handler)) {
                     Misc.freeIfCloseable(handler);
                 }
             }
-            ObjList<Utf8String> requestHandlerKeys = requestHandlerMap.keys();
-            for (int i = 0, n = requestHandlerKeys.size(); i < n; i++) {
-                IndexedHandler entry = requestHandlerMap.get(requestHandlerKeys.getQuick(i));
-                if (entry != null) {
-                    HttpRequestHandler handler = entry.handler();
-                    if (handler != null && seen.add(handler)) {
-                        Misc.freeIfCloseable(handler);
-                    }
-                }
-            }
+
+            // invariant: every handler in requestHandlerMap is also included in handlersByIdList
+            // thus we can close just handlers in handlersByIdList, no need to iterate over requestHandlerMap
         }
 
         @Override
