@@ -425,6 +425,15 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
     return JNI_FALSE;
 }
 
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_fallocateKeepSize
+        (JNIEnv *e, jclass cl, jint fd, jlong offset, jlong len) {
+    int rc = fallocate(fd, FALLOC_FL_KEEP_SIZE, offset, len);
+    if (rc == 0) {
+        return JNI_TRUE;
+    }
+    return JNI_FALSE;
+}
+
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified
         (JNIEnv *e, jclass cl, jlong pchar) {
     struct stat st;

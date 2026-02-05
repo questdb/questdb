@@ -93,6 +93,16 @@ public class IOURingImpl implements IOURing {
     }
 
     @Override
+    public long enqueueFsync(long fd) {
+        return enqueueSqe(IORING_OP_FSYNC, fd, 0, 0, 0);
+    }
+
+    @Override
+    public void enqueueFsync(long fd, long userData) {
+        enqueueSqeWithUserData(IORING_OP_FSYNC, fd, 0, 0, 0, userData);
+    }
+
+    @Override
     @TestOnly
     public long enqueueNop() {
         return enqueueSqe(IORING_OP_NOP, -1, 0, 0, 0);
@@ -101,6 +111,16 @@ public class IOURingImpl implements IOURing {
     @Override
     public long enqueueRead(long fd, long offset, long bufAddr, int len) {
         return enqueueSqe(IORING_OP_READ, fd, offset, bufAddr, len);
+    }
+
+    @Override
+    public long enqueueWrite(long fd, long offset, long bufAddr, int len) {
+        return enqueueSqe(IORING_OP_WRITE, fd, offset, bufAddr, len);
+    }
+
+    @Override
+    public void enqueueWrite(long fd, long offset, long bufAddr, int len, long userData) {
+        enqueueSqeWithUserData(IORING_OP_WRITE, fd, offset, bufAddr, len, userData);
     }
 
     @Override
@@ -158,14 +178,29 @@ public class IOURingImpl implements IOURing {
         if (sqeAddr == 0) {
             return -1;
         }
+        final long id = idSeq++;
+        fillSqe(sqeAddr, op, fd, offset, bufAddr, len, id);
+        return id;
+    }
+
+    private void enqueueSqeWithUserData(byte op, long fd, long offset, long bufAddr, int len, long userData) {
+        final long sqeAddr = nextSqe();
+        if (sqeAddr == 0) {
+            throw CairoException.critical(0).put("io_uring SQ full");
+        }
+        fillSqe(sqeAddr, op, fd, offset, bufAddr, len, userData);
+    }
+
+    private static void fillSqe(long sqeAddr, byte op, long fd, long offset, long bufAddr, int len, long userData) {
+        // Zero entire SQE to prevent stale flags/ioprio/buf_index/personality/rw_flags
+        // from corrupting the operation. Matches liburing's io_uring_prep_* behavior.
+        Unsafe.getUnsafe().setMemory(sqeAddr, SIZEOF_SQE, (byte) 0);
         Unsafe.getUnsafe().putByte(sqeAddr + SQE_OPCODE_OFFSET, op);
         Unsafe.getUnsafe().putInt(sqeAddr + SQE_FD_OFFSET, toOsFd(fd));
         Unsafe.getUnsafe().putLong(sqeAddr + SQE_OFF_OFFSET, offset);
         Unsafe.getUnsafe().putLong(sqeAddr + SQE_ADDR_OFFSET, bufAddr);
         Unsafe.getUnsafe().putInt(sqeAddr + SQE_LEN_OFFSET, len);
-        final long id = idSeq++;
-        Unsafe.getUnsafe().putLong(sqeAddr + SQE_USER_DATA_OFFSET, id);
-        return id;
+        Unsafe.getUnsafe().putLong(sqeAddr + SQE_USER_DATA_OFFSET, userData);
     }
 
     /**

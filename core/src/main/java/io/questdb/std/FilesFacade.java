@@ -58,6 +58,8 @@ public interface FilesFacade {
 
     void fadvise(long fd, long offset, long len, int advise);
 
+    boolean fallocateKeepSize(long fd, long offset, long len);
+
     long findClose(long findPtr);
 
     long findFirst(LPSZ path);

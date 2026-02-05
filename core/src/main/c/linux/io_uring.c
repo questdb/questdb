@@ -180,6 +180,11 @@ JNIEXPORT jshort JNICALL Java_io_questdb_std_IOUringAccessor_getSqeLenOffset
     return (jshort) offsetof(struct io_uring_sqe, len);
 }
 
+JNIEXPORT jshort JNICALL Java_io_questdb_std_IOUringAccessor_getSqeFlagsOffset
+        (JNIEnv *e, jclass cl) {
+    return (jshort) offsetof(struct io_uring_sqe, flags);
+}
+
 JNIEXPORT jshort JNICALL Java_io_questdb_std_IOUringAccessor_getSqeUserDataOffset
         (JNIEnv *e, jclass cl) {
     return (jshort) offsetof(struct io_uring_sqe, user_data);

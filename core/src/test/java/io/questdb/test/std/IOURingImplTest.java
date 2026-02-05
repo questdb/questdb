@@ -41,6 +41,55 @@ public class IOURingImplTest extends AbstractTest {
 
     private static final IOURingFacade rf = new IOURingFacadeImpl();
 
+    @Test
+    public void testFallocateKeepSize() throws Exception {
+        Assume.assumeTrue(Os.isLinux());
+
+        TestUtils.assertMemoryLeak(() -> {
+            File file = temp.newFile();
+            try (Path path = new Path()) {
+                long fd = Files.openRW(path.of(file.getAbsolutePath()).$());
+                Assert.assertTrue(fd > -1);
+
+                try {
+                    long allocSize = 1024 * 1024; // 1 MB
+                    boolean ok = Files.fallocateKeepSize(fd, 0, allocSize);
+                    Assert.assertTrue("fallocateKeepSize should succeed", ok);
+
+                    // Visible file size should remain 0 (FALLOC_FL_KEEP_SIZE).
+                    Assert.assertEquals(0, Files.length(fd));
+
+                    // Write into the pre-allocated region via pwrite and verify.
+                    final int bufLen = 4096;
+                    long buf = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        for (int i = 0; i < bufLen; i++) {
+                            Unsafe.getUnsafe().putByte(buf + i, (byte) 0xAB);
+                        }
+                        long written = Files.write(fd, buf, bufLen, 0);
+                        Assert.assertEquals(bufLen, written);
+
+                        // Read back and verify.
+                        long readBuf = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+                        try {
+                            long bytesRead = Files.read(fd, readBuf, bufLen, 0);
+                            Assert.assertEquals(bufLen, bytesRead);
+                            for (int i = 0; i < bufLen; i++) {
+                                Assert.assertEquals((byte) 0xAB, Unsafe.getUnsafe().getByte(readBuf + i));
+                            }
+                        } finally {
+                            Unsafe.free(readBuf, bufLen, MemoryTag.NATIVE_DEFAULT);
+                        }
+                    } finally {
+                        Unsafe.free(buf, bufLen, MemoryTag.NATIVE_DEFAULT);
+                    }
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
+    }
+
     @Test(expected = CairoException.class)
     public void testFailsToInit() {
         final IOURingFacade rf = new IOURingFacadeImpl() {
@@ -67,6 +116,220 @@ public class IOURingImplTest extends AbstractTest {
         Assert.assertTrue(IOURingFacadeImpl.isAvailableOn("5.13.1"));
         Assert.assertTrue(IOURingFacadeImpl.isAvailableOn("6.2.2"));
         Assert.assertTrue(IOURingFacadeImpl.isAvailableOn("7.1.1"));
+    }
+
+    @Test
+    public void testFsync() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            final int bufLen = 4096;
+            long writeBuf = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < bufLen; i++) {
+                    Unsafe.getUnsafe().putByte(writeBuf + i, (byte) (i & 0xFF));
+                }
+
+                File file = temp.newFile();
+                try (Path path = new Path()) {
+                    long fd = Files.openRW(path.of(file.getAbsolutePath()).$());
+                    Assert.assertTrue(fd > -1);
+
+                    try (IOURing ring = rf.newInstance(4)) {
+                        // Write then fsync.
+                        long writeId = ring.enqueueWrite(fd, 0, writeBuf, bufLen);
+                        Assert.assertTrue(writeId > -1);
+                        long fsyncId = ring.enqueueFsync(fd);
+                        Assert.assertTrue(fsyncId > -1);
+
+                        int submitted = ring.submitAndWait();
+                        Assert.assertEquals(2, submitted);
+
+                        // Drain both CQEs.
+                        int cqeCount = 0;
+                        for (int i = 0; i < 2; i++) {
+                            while (!ring.nextCqe()) {
+                                Os.pause();
+                            }
+                            Assert.assertTrue("CQE res should be >= 0, got " + ring.getCqeRes(), ring.getCqeRes() >= 0);
+                            cqeCount++;
+                        }
+                        Assert.assertEquals(2, cqeCount);
+                    } finally {
+                        Files.close(fd);
+                    }
+                }
+            } finally {
+                Unsafe.free(writeBuf, bufLen, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testFsyncWithExplicitUserData() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            File file = temp.newFile();
+            try (Path path = new Path()) {
+                long fd = Files.openRW(path.of(file.getAbsolutePath()).$());
+                Assert.assertTrue(fd > -1);
+
+                try (IOURing ring = rf.newInstance(4)) {
+                    long expectedId = 0xCAFEBABEL;
+                    ring.enqueueFsync(fd, expectedId);
+
+                    ring.submitAndWait();
+                    Assert.assertTrue(ring.nextCqe());
+                    Assert.assertEquals(expectedId, ring.getCqeId());
+                    Assert.assertTrue(ring.getCqeRes() >= 0);
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWrite() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            final int bufLen = 4096;
+            long writeBuf = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+            long readBuf = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+            try {
+                // Fill write buffer with a known pattern.
+                for (int i = 0; i < bufLen; i++) {
+                    Unsafe.getUnsafe().putByte(writeBuf + i, (byte) (i & 0xFF));
+                }
+
+                File file = temp.newFile();
+                try (Path path = new Path()) {
+                    long fd = Files.openRW(path.of(file.getAbsolutePath()).$());
+                    Assert.assertTrue(fd > -1);
+
+                    try (IOURing ring = rf.newInstance(4)) {
+                        // Write via io_uring.
+                        long id = ring.enqueueWrite(fd, 0, writeBuf, bufLen);
+                        Assert.assertTrue(id > -1);
+
+                        int submitted = ring.submitAndWait();
+                        Assert.assertEquals(1, submitted);
+
+                        Assert.assertTrue(ring.nextCqe());
+                        Assert.assertEquals(id, ring.getCqeId());
+                        Assert.assertEquals(bufLen, ring.getCqeRes());
+
+                        // Read back via io_uring and verify.
+                        long readId = ring.enqueueRead(fd, 0, readBuf, bufLen);
+                        Assert.assertTrue(readId > -1);
+
+                        ring.submitAndWait();
+                        Assert.assertTrue(ring.nextCqe());
+                        Assert.assertEquals(readId, ring.getCqeId());
+                        Assert.assertEquals(bufLen, ring.getCqeRes());
+
+                        for (int i = 0; i < bufLen; i++) {
+                            Assert.assertEquals(
+                                    "mismatch at byte " + i,
+                                    (byte) (i & 0xFF),
+                                    Unsafe.getUnsafe().getByte(readBuf + i)
+                            );
+                        }
+                    } finally {
+                        Files.close(fd);
+                    }
+                }
+            } finally {
+                Unsafe.free(writeBuf, bufLen, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(readBuf, bufLen, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testWriteWithExplicitUserData() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            final int bufLen = 1024;
+            long writeBuf = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < bufLen; i++) {
+                    Unsafe.getUnsafe().putByte(writeBuf + i, (byte) 42);
+                }
+
+                File file = temp.newFile();
+                try (Path path = new Path()) {
+                    long fd = Files.openRW(path.of(file.getAbsolutePath()).$());
+                    Assert.assertTrue(fd > -1);
+
+                    try (IOURing ring = rf.newInstance(4)) {
+                        long expectedId = 0xDEADBEEFL;
+                        ring.enqueueWrite(fd, 0, writeBuf, bufLen, expectedId);
+
+                        ring.submitAndWait();
+                        Assert.assertTrue(ring.nextCqe());
+                        Assert.assertEquals(expectedId, ring.getCqeId());
+                        Assert.assertEquals(bufLen, ring.getCqeRes());
+                    } finally {
+                        Files.close(fd);
+                    }
+                }
+            } finally {
+                Unsafe.free(writeBuf, bufLen, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testWriteReadBackWithPread() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            final int bufLen = 8192;
+            long writeBuf = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+            long readBuf = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < bufLen; i++) {
+                    Unsafe.getUnsafe().putByte(writeBuf + i, (byte) ((i * 7) & 0xFF));
+                }
+
+                File file = temp.newFile();
+                try (Path path = new Path()) {
+                    long fd = Files.openRW(path.of(file.getAbsolutePath()).$());
+                    Assert.assertTrue(fd > -1);
+
+                    try (IOURing ring = rf.newInstance(4)) {
+                        long id = ring.enqueueWrite(fd, 0, writeBuf, bufLen);
+                        Assert.assertTrue(id > -1);
+
+                        ring.submitAndWait();
+                        Assert.assertTrue(ring.nextCqe());
+                        Assert.assertEquals(id, ring.getCqeId());
+                        Assert.assertEquals(bufLen, ring.getCqeRes());
+                    }
+
+                    // Read back with Files.read (pread) instead of io_uring.
+                    long bytesRead = Files.read(fd, readBuf, bufLen, 0);
+                    Assert.assertEquals(bufLen, bytesRead);
+
+                    for (int i = 0; i < bufLen; i++) {
+                        Assert.assertEquals(
+                                "mismatch at byte " + i,
+                                (byte) ((i * 7) & 0xFF),
+                                Unsafe.getUnsafe().getByte(readBuf + i)
+                        );
+                    }
+
+                    Files.close(fd);
+                }
+            } finally {
+                Unsafe.free(writeBuf, bufLen, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(readBuf, bufLen, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     @Test

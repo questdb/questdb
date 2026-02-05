@@ -154,6 +154,10 @@ public final class Files {
         }
     }
 
+    public static boolean fallocateKeepSize(long fd, long offset, long len) {
+        return fallocateKeepSize(toOsFd(fd), offset, len);
+    }
+
     public native static void findClose(long findPtr);
 
     public static long findFirst(LPSZ lpsz) {
@@ -609,6 +613,8 @@ public final class Files {
     private static native boolean exists0(long lpsz);
 
     private static native void fadvise0(int fd, long offset, long len, int advise);
+
+    private native static boolean fallocateKeepSize(int fd, long offset, long len);
 
     // caller must call findClose to free allocated struct
     private native static long findFirst(long lpszName);

@@ -294,6 +294,10 @@ public interface CairoConfiguration {
         return IOURingFacadeImpl.INSTANCE;
     }
 
+    default int getIOURingCapacity() {
+        return 256;
+    }
+
     int getIdGenerateBatchStep();
 
     long getIdleCheckInterval();

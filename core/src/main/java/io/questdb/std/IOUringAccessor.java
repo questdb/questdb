@@ -33,13 +33,16 @@ public class IOUringAccessor {
     static final short CQ_KRING_ENTRIES_OFFSET;
     static final short CQ_KRING_MASK_OFFSET;
     static final short CQ_KTAIL_OFFSET;
+    static final byte IORING_OP_FSYNC = 3;
     static final byte IORING_OP_NOP = 0;
     static final byte IORING_OP_READ = 22;
+    static final byte IORING_OP_WRITE = 23;
     static final short RING_FD_OFFSET;
     static final short SIZEOF_CQE;
     static final short SIZEOF_SQE;
     static final short SQE_ADDR_OFFSET;
     static final short SQE_FD_OFFSET;
+    static final short SQE_FLAGS_OFFSET;
     static final short SQE_LEN_OFFSET;
     static final short SQE_OFF_OFFSET;
     static final short SQE_OPCODE_OFFSET;
@@ -96,6 +99,8 @@ public class IOUringAccessor {
 
     static native short getSqeFDOffset();
 
+    static native short getSqeFlagsOffset();
+
     static native short getSqeLenOffset();
 
     static native short getSqeOffOffset();
@@ -127,6 +132,7 @@ public class IOUringAccessor {
         SIZEOF_SQE = getSqeSize();
         SQE_OPCODE_OFFSET = getSqeOpcodeOffset();
         SQE_FD_OFFSET = getSqeFDOffset();
+        SQE_FLAGS_OFFSET = getSqeFlagsOffset();
         SQE_OFF_OFFSET = getSqeOffOffset();
         SQE_ADDR_OFFSET = getSqeAddrOffset();
         SQE_LEN_OFFSET = getSqeLenOffset();

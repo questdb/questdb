@@ -133,6 +133,11 @@ public class FailureFileFacade implements FilesFacade {
         ff.fadvise(fd, offset, len, advise);
     }
 
+    @Override
+    public boolean fallocateKeepSize(long fd, long offset, long len) {
+        return ff.fallocateKeepSize(fd, offset, len);
+    }
+
     public int failureGenerated() {
         return failureGenerated.get();
     }
