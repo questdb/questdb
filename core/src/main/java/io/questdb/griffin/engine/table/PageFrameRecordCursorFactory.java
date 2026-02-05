@@ -202,29 +202,31 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     protected PageFrameCursor initBwdPageFrameCursor(
             PartitionFrameCursor partitionFrameCursor,
             SqlExecutionContext executionContext
-    ) {
+    ) throws SqlException {
         if (bwdPageFrameCursor == null) {
             bwdPageFrameCursor = new BwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
+                    pushdownFilterConditions,
                     executionContext.getSharedQueryWorkerCount()
             );
         }
-        return bwdPageFrameCursor.of(partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
+        return bwdPageFrameCursor.of(executionContext, partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
     }
 
     protected PageFrameCursor initFwdPageFrameCursor(
             PartitionFrameCursor partitionFrameCursor,
             SqlExecutionContext executionContext
-    ) {
+    ) throws SqlException {
         if (fwdPageFrameCursor == null) {
             fwdPageFrameCursor = new FwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
+                    pushdownFilterConditions,
                     executionContext.getSharedQueryWorkerCount()
             );
         }
-        return fwdPageFrameCursor.of(partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
+        return fwdPageFrameCursor.of(executionContext, partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
     }
 
     @Override

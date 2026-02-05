@@ -128,7 +128,7 @@ public class PushdownFilterExtractor implements Mutable {
 
         int columnType = metadata.getColumnType(columnIndex);
         PushdownFilterCondition condition = new PushdownFilterCondition(
-                columnIndex,
+                colNode.token,
                 columnType
         );
         condition.addValue(valueNode);
@@ -164,7 +164,7 @@ public class PushdownFilterExtractor implements Mutable {
 
         int columnType = metadata.getColumnType(columnIndex);
         PushdownFilterCondition condition = new PushdownFilterCondition(
-                columnIndex,
+                colNode.token,
                 columnType
         );
 
@@ -179,13 +179,13 @@ public class PushdownFilterExtractor implements Mutable {
     }
 
     public static class PushdownFilterCondition implements QuietCloseable {
-        private final int columnIndex;
+        private final CharSequence columnName;
         private final int columnType;
         private final ObjList<Function> valueFunctions = new ObjList<>();
         private final ObjList<ExpressionNode> values = new ObjList<>();
 
-        public PushdownFilterCondition(int columnIndex, int columnType) {
-            this.columnIndex = columnIndex;
+        public PushdownFilterCondition(CharSequence columnName, int columnType) {
+            this.columnName = columnName;
             this.columnType = columnType;
         }
 
@@ -202,8 +202,8 @@ public class PushdownFilterExtractor implements Mutable {
             Misc.freeObjListAndClear(valueFunctions);
         }
 
-        public int getColumnIndex() {
-            return columnIndex;
+        public CharSequence getColumnName() {
+            return columnName;
         }
 
         public int getColumnType() {

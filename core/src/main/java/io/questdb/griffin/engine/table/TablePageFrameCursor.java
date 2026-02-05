@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursor;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 
 /**
  * Defines a page frame cursor backed with an in-house database table.
@@ -40,5 +42,5 @@ public interface TablePageFrameCursor extends PageFrameCursor {
         return false;
     }
 
-    TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor, int pageFrameMinRows, int pageFrameMaxRows);
+    TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor, int pageFrameMinRows, int pageFrameMaxRows) throws SqlException;
 }

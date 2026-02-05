@@ -26,9 +26,10 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -39,10 +40,12 @@ import io.questdb.std.str.Utf8Sequence;
  * row groups can be skipped based on bloom filter conditions.
  */
 public final class ParquetRowGroupFilter {
+    public static final int FILTER_BUFFER_MAX_PAGES = 16;
+    public static final long FILTER_BUFFER_PAGE_SIZE = 4096;
     public static final int LONGS_PER_FILTER = 2;
 
     /**
-     * Check if a row group can be skipped based on bloom filter conditions.
+     * Check if a row group can be skipped based on min/max statistics and bloom filter conditions.
      *
      * @param rowGroupIndex            the row group index to check
      * @param decoder                  the Parquet partition decoder
@@ -57,36 +60,28 @@ public final class ParquetRowGroupFilter {
             PartitionDecoder decoder,
             ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions,
             DirectLongList filterList,
-            MemoryCARW filterValues
+            MemoryCARWImpl filterValues
     ) {
         if (pushdownFilterConditions == null || pushdownFilterConditions.size() == 0) {
             return false;
         }
         filterList.clear();
-        filterValues.truncate();
-        final PartitionDecoder.Metadata parquetMeta = decoder.metadata();
-        final int parquetColumnCount = parquetMeta.getColumnCount();
+        filterList.reopen();
+        filterValues.clear();
+        PartitionDecoder.Metadata metadata = decoder.metadata();
 
         for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
             final PushdownFilterExtractor.PushdownFilterCondition condition = pushdownFilterConditions.getQuick(i);
-            final int questdbColumnIndex = condition.getColumnIndex();
-            int parquetColumnIndex = questdbColumnIndex;
-/*            for (int j = 0; j < parquetColumnCount; j++) {
-                if (parquetMeta.getColumnId(j) == questdbColumnIndex) {
-                    parquetColumnIndex = j;
-                    break;
-                }
-            }*/
-            if (parquetColumnIndex < 0) {
-                continue;
-            }
-
             final ObjList<Function> valueFunctions = condition.getValueFunctions();
             final int valueCount = valueFunctions.size();
             if (valueCount == 0) {
                 continue;
             }
 
+            int columnIndex = metadata.getColumnIndex(condition.getColumnName());
+            if (columnIndex < 0) {
+                continue;
+            }
             final int columnType = condition.getColumnType();
             final long valuesOffset = filterValues.getAppendOffset();
             boolean supported = true;
@@ -128,37 +123,43 @@ public final class ParquetRowGroupFilter {
                         filterValues.putDouble(valueFunctions.getQuick(j).getDouble(null));
                     }
                     break;
+                case ColumnType.IPv4:
+                    for (int j = 0; j < valueCount; j++) {
+                        filterValues.putInt(valueFunctions.getQuick(j).getIPv4(null));
+                    }
+                    break;
+                case ColumnType.UUID:
+                    for (int j = 0; j < valueCount; j++) {
+                        long lo = valueFunctions.getQuick(j).getLong128Lo(null);
+                        long hi = valueFunctions.getQuick(j).getLong128Hi(null);
+                        if (lo == Numbers.LONG_NULL && hi == Numbers.LONG_NULL) {
+                            filterValues.putLong(lo);
+                            filterValues.putLong(hi);
+                        } else {
+                            filterValues.putLong(Long.reverseBytes(hi));
+                            filterValues.putLong(Long.reverseBytes(lo));
+                        }
+                    }
+                    break;
+                case ColumnType.LONG128:
+                    for (int j = 0; j < valueCount; j++) {
+                        long lo = valueFunctions.getQuick(j).getLong128Lo(null);
+                        long hi = valueFunctions.getQuick(j).getLong128Hi(null);
+                        filterValues.putLong(lo);
+                        filterValues.putLong(hi);
+                    }
+                    break;
                 case ColumnType.STRING:
-                    for (int j = 0; j < valueCount; j++) {
-                        CharSequence cs = valueFunctions.getQuick(j).getStrA(null);
-                        if (cs != null) {
-                            writeUtf16AsUtf8(filterValues, cs);
-                        } else {
-                            filterValues.putInt(0);
-                        }
-                    }
-                    break;
                 case ColumnType.SYMBOL:
-                    for (int j = 0; j < valueCount; j++) {
-                        CharSequence cs = valueFunctions.getQuick(j).getSymbol(null);
-                        if (cs != null) {
-                            writeUtf16AsUtf8(filterValues, cs);
-                        } else {
-                            filterValues.putInt(0);
-                        }
-                    }
-                    break;
                 case ColumnType.VARCHAR:
                     for (int j = 0; j < valueCount; j++) {
                         Utf8Sequence utf8 = valueFunctions.getQuick(j).getVarcharA(null);
                         if (utf8 != null) {
                             int len = utf8.size();
                             filterValues.putInt(len);
-                            for (int k = 0; k < len; k++) {
-                                filterValues.putByte(utf8.byteAt(k));
-                            }
+                            filterValues.putVarchar(utf8);
                         } else {
-                            filterValues.putInt(0);
+                            filterValues.putInt(-1);
                         }
                     }
                     break;
@@ -172,7 +173,7 @@ public final class ParquetRowGroupFilter {
             }
 
             final long valuesPtr = filterValues.getAddress() + valuesOffset;
-            filterList.add(encodeColumnAndCount(parquetColumnIndex, valueCount));
+            filterList.add(encodeColumnAndCount(columnIndex, valueCount));
             filterList.add(valuesPtr);
         }
         final int filterCount = (int) (filterList.size() / LONGS_PER_FILTER);
@@ -185,43 +186,5 @@ public final class ParquetRowGroupFilter {
 
     public static long encodeColumnAndCount(int columnIndex, int count) {
         return (columnIndex & 0xFFFFFFFFL) | ((long) count << 32);
-    }
-
-    private static void writeUtf16AsUtf8(MemoryCARW mem, CharSequence cs) {
-        int utf8Len = 0;
-        for (int i = 0, n = cs.length(); i < n; i++) {
-            char c = cs.charAt(i);
-            if (c < 0x80) {
-                utf8Len++;
-            } else if (c < 0x800) {
-                utf8Len += 2;
-            } else if (Character.isHighSurrogate(c) && i + 1 < n && Character.isLowSurrogate(cs.charAt(i + 1))) {
-                utf8Len += 4;
-                i++;
-            } else {
-                utf8Len += 3;
-            }
-        }
-        mem.putInt(utf8Len);
-
-        for (int i = 0, n = cs.length(); i < n; i++) {
-            char c = cs.charAt(i);
-            if (c < 0x80) {
-                mem.putByte((byte) c);
-            } else if (c < 0x800) {
-                mem.putByte((byte) (0xC0 | (c >> 6)));
-                mem.putByte((byte) (0x80 | (c & 0x3F)));
-            } else if (Character.isHighSurrogate(c) && i + 1 < n && Character.isLowSurrogate(cs.charAt(i + 1))) {
-                int codePoint = Character.toCodePoint(c, cs.charAt(++i));
-                mem.putByte((byte) (0xF0 | (codePoint >> 18)));
-                mem.putByte((byte) (0x80 | ((codePoint >> 12) & 0x3F)));
-                mem.putByte((byte) (0x80 | ((codePoint >> 6) & 0x3F)));
-                mem.putByte((byte) (0x80 | (codePoint & 0x3F)));
-            } else {
-                mem.putByte((byte) (0xE0 | (c >> 12)));
-                mem.putByte((byte) (0x80 | ((c >> 6) & 0x3F)));
-                mem.putByte((byte) (0x80 | (c & 0x3F)));
-            }
-        }
     }
 }

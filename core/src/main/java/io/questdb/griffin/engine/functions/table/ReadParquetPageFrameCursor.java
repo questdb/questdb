@@ -58,8 +58,6 @@ import static io.questdb.griffin.engine.functions.table.ReadParquetRecordCursor.
  * Page frame cursor for parallel read_parquet() SQL function.
  */
 public class ReadParquetPageFrameCursor implements PageFrameCursor {
-    private static final int FILTER_BUFFER_MAX_PAGES = 16;
-    private static final long FILTER_BUFFER_PAGE_SIZE = 4096;
     private static final Log LOG = LogFactory.getLog(ReadParquetPageFrameCursor.class);
     private final IntList columnIndexes;
     private final PartitionDecoder decoder;
@@ -84,12 +82,13 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         if (pushdownFilterConditions != null && pushdownFilterConditions.size() > 0) {
             this.filterList = new DirectLongList(
                     (long) pushdownFilterConditions.size() * ParquetRowGroupFilter.LONGS_PER_FILTER,
-                    MemoryTag.NATIVE_DEFAULT
+                    MemoryTag.NATIVE_PARQUET_PARTITION_DECODER,
+                    true
             );
             this.filterValues = new MemoryCARWImpl(
-                    FILTER_BUFFER_PAGE_SIZE,
-                    FILTER_BUFFER_MAX_PAGES,
-                    MemoryTag.NATIVE_DEFAULT
+                    ParquetRowGroupFilter.FILTER_BUFFER_PAGE_SIZE,
+                    ParquetRowGroupFilter.FILTER_BUFFER_MAX_PAGES,
+                    MemoryTag.NATIVE_PARQUET_PARTITION_DECODER
             );
         } else {
             this.filterList = null;

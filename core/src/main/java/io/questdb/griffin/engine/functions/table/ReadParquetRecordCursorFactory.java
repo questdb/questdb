@@ -31,9 +31,12 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Factory for single-threaded read_parquet() SQL function.
@@ -41,6 +44,7 @@ import io.questdb.std.str.Path;
 public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFactory {
     private ReadParquetRecordCursor cursor;
     private Path path;
+    private @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
 
     public ReadParquetRecordCursorFactory(@Transient Path path, RecordMetadata metadata) {
         super(metadata);
@@ -51,10 +55,10 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (cursor == null) {
             final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
-            cursor = new ReadParquetRecordCursor(configuration.getFilesFacade(), getMetadata());
+            cursor = new ReadParquetRecordCursor(configuration.getFilesFacade(), getMetadata(), pushdownFilterConditions);
         }
         try {
-            cursor.of(path.$());
+            cursor.of(path.$(), executionContext);
             return cursor;
         } catch (Throwable th) {
             cursor.close();
@@ -73,6 +77,11 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
     }
 
     @Override
+    public void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
+        this.pushdownFilterConditions = pushdownFilterConditions;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.type("parquet file sequential scan");
         sink.attr("columns").val(getMetadata());
@@ -82,5 +91,6 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
     protected void _close() {
         cursor = Misc.free(cursor);
         path = Misc.free(path);
+        Misc.freeObjList(pushdownFilterConditions);
     }
 }

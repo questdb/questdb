@@ -781,12 +781,23 @@ impl ParquetDecoder {
 
             let column_metadata = &columns_meta[column_idx];
             let physical_type = column_metadata.physical_type();
+            let has_nulls = column_metadata
+                .column_chunk()
+                .meta_data
+                .as_ref()
+                .and_then(|m| m.statistics.as_ref())
+                .and_then(|s| s.null_count)
+                .is_some_and(|c| c > 0);
             let bitset =
                 parquet2::bloom_filter::read_from_slice(column_metadata, file_data).unwrap_or(&[]);
 
             if !bitset.is_empty() {
-                let all_absent =
-                    Self::all_values_absent_from_bloom(bitset, &physical_type, &filter_desc);
+                let all_absent = Self::all_values_absent_from_bloom(
+                    bitset,
+                    &physical_type,
+                    &filter_desc,
+                    has_nulls,
+                );
                 if all_absent {
                     return Ok(true);
                 }
@@ -804,6 +815,7 @@ impl ParquetDecoder {
         bitset: &[u8],
         physical_type: &PhysicalType,
         filter_desc: &ColumnFilterValues,
+        has_nulls: bool,
     ) -> bool {
         let count = filter_desc.count as usize;
         if count == 0 {
@@ -815,7 +827,11 @@ impl ParquetDecoder {
             PhysicalType::Int32 => {
                 for i in 0..count {
                     let v = unsafe { (ptr as *const i32).add(i).read_unaligned() };
-                    if parquet2::bloom_filter::is_in_set(
+                    if v == i32::MIN {
+                        if has_nulls {
+                            return false;
+                        }
+                    } else if parquet2::bloom_filter::is_in_set(
                         bitset,
                         parquet2::bloom_filter::hash_native(v),
                     ) {
@@ -827,7 +843,11 @@ impl ParquetDecoder {
             PhysicalType::Int64 => {
                 for i in 0..count {
                     let v = unsafe { (ptr as *const i64).add(i).read_unaligned() };
-                    if parquet2::bloom_filter::is_in_set(
+                    if v == i64::MIN {
+                        if has_nulls {
+                            return false;
+                        }
+                    } else if parquet2::bloom_filter::is_in_set(
                         bitset,
                         parquet2::bloom_filter::hash_native(v),
                     ) {
@@ -839,7 +859,11 @@ impl ParquetDecoder {
             PhysicalType::Float => {
                 for i in 0..count {
                     let v = unsafe { (ptr as *const f32).add(i).read_unaligned() };
-                    if parquet2::bloom_filter::is_in_set(
+                    if v.is_nan() {
+                        if has_nulls {
+                            return false;
+                        }
+                    } else if parquet2::bloom_filter::is_in_set(
                         bitset,
                         parquet2::bloom_filter::hash_native(v),
                     ) {
@@ -851,7 +875,11 @@ impl ParquetDecoder {
             PhysicalType::Double => {
                 for i in 0..count {
                     let v = unsafe { (ptr as *const f64).add(i).read_unaligned() };
-                    if parquet2::bloom_filter::is_in_set(
+                    if v.is_nan() {
+                        if has_nulls {
+                            return false;
+                        }
+                    } else if parquet2::bloom_filter::is_in_set(
                         bitset,
                         parquet2::bloom_filter::hash_native(v),
                     ) {
@@ -863,15 +891,22 @@ impl ParquetDecoder {
             PhysicalType::ByteArray => {
                 let mut offset = 0usize;
                 for _ in 0..count {
-                    let len = unsafe { (ptr.add(offset) as *const i32).read_unaligned() } as usize;
+                    let len = unsafe { (ptr.add(offset) as *const i32).read_unaligned() };
                     offset += size_of::<i32>();
-                    let bytes = unsafe { slice::from_raw_parts(ptr.add(offset), len) };
-                    offset += len;
-                    if parquet2::bloom_filter::is_in_set(
-                        bitset,
-                        parquet2::bloom_filter::hash_byte(bytes),
-                    ) {
-                        return false;
+                    if len < 0 {
+                        if has_nulls {
+                            return false;
+                        }
+                    } else {
+                        let len = len as usize;
+                        let bytes = unsafe { slice::from_raw_parts(ptr.add(offset), len) };
+                        offset += len;
+                        if parquet2::bloom_filter::is_in_set(
+                            bitset,
+                            parquet2::bloom_filter::hash_byte(bytes),
+                        ) {
+                            return false;
+                        }
                     }
                 }
                 true
@@ -880,7 +915,11 @@ impl ParquetDecoder {
                 let size = *size;
                 for i in 0..count {
                     let bytes = unsafe { slice::from_raw_parts(ptr.add(i * size), size) };
-                    if parquet2::bloom_filter::is_in_set(
+                    if is_fixed_len_null(bytes) {
+                        if has_nulls {
+                            return false;
+                        }
+                    } else if parquet2::bloom_filter::is_in_set(
                         bitset,
                         parquet2::bloom_filter::hash_byte(bytes),
                     ) {
@@ -907,22 +946,16 @@ impl ParquetDecoder {
             Some(s) => s,
             None => return false,
         };
-        let min_bytes = match statistics
+
+        let has_nulls = statistics.null_count.is_some_and(|c| c > 0);
+        let min_bytes = statistics
             .min_value
             .as_deref()
-            .or(statistics.min.as_deref())
-        {
-            Some(v) => v,
-            None => return false,
-        };
-        let max_bytes = match statistics
+            .or(statistics.min.as_deref());
+        let max_bytes = statistics
             .max_value
             .as_deref()
-            .or(statistics.max.as_deref())
-        {
-            Some(v) => v,
-            None => return false,
-        };
+            .or(statistics.max.as_deref());
 
         let count = filter_desc.count as usize;
         if count == 0 {
@@ -931,71 +964,145 @@ impl ParquetDecoder {
         let ptr = filter_desc.ptr as *const u8;
 
         match physical_type {
-            PhysicalType::Int32 if min_bytes.len() == 4 && max_bytes.len() == 4 => {
-                let min_val = i32::from_le_bytes(min_bytes.try_into().unwrap());
-                let max_val = i32::from_le_bytes(max_bytes.try_into().unwrap());
+            PhysicalType::Int32 => {
+                let min_max = match (min_bytes, max_bytes) {
+                    (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => Some((
+                        i32::from_le_bytes(min_b.try_into().unwrap()),
+                        i32::from_le_bytes(max_b.try_into().unwrap()),
+                    )),
+                    _ => None,
+                };
                 for i in 0..count {
                     let v = unsafe { (ptr as *const i32).add(i).read_unaligned() };
-                    if v >= min_val && v <= max_val {
+                    if v == i32::MIN {
+                        if has_nulls {
+                            return false;
+                        }
+                    } else if let Some((min_val, max_val)) = min_max {
+                        if v >= min_val && v <= max_val {
+                            return false;
+                        }
+                    } else {
                         return false;
                     }
                 }
                 true
             }
-            PhysicalType::Int64 if min_bytes.len() == 8 && max_bytes.len() == 8 => {
-                let min_val = i64::from_le_bytes(min_bytes.try_into().unwrap());
-                let max_val = i64::from_le_bytes(max_bytes.try_into().unwrap());
+            PhysicalType::Int64 => {
+                let min_max = match (min_bytes, max_bytes) {
+                    (Some(min_b), Some(max_b)) if min_b.len() == 8 && max_b.len() == 8 => Some((
+                        i64::from_le_bytes(min_b.try_into().unwrap()),
+                        i64::from_le_bytes(max_b.try_into().unwrap()),
+                    )),
+                    _ => None,
+                };
                 for i in 0..count {
                     let v = unsafe { (ptr as *const i64).add(i).read_unaligned() };
-                    if v >= min_val && v <= max_val {
+                    if v == i64::MIN {
+                        if has_nulls {
+                            return false;
+                        }
+                    } else if let Some((min_val, max_val)) = min_max {
+                        if v >= min_val && v <= max_val {
+                            return false;
+                        }
+                    } else {
                         return false;
                     }
                 }
                 true
             }
-            PhysicalType::Float if min_bytes.len() == 4 && max_bytes.len() == 4 => {
-                let min_val = f32::from_le_bytes(min_bytes.try_into().unwrap());
-                let max_val = f32::from_le_bytes(max_bytes.try_into().unwrap());
+            PhysicalType::Float => {
+                let min_max = match (min_bytes, max_bytes) {
+                    (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => Some((
+                        f32::from_le_bytes(min_b.try_into().unwrap()),
+                        f32::from_le_bytes(max_b.try_into().unwrap()),
+                    )),
+                    _ => None,
+                };
                 for i in 0..count {
                     let v = unsafe { (ptr as *const f32).add(i).read_unaligned() };
-                    if v >= min_val && v <= max_val {
+                    if v.is_nan() {
+                        if has_nulls {
+                            return false;
+                        }
+                    } else if let Some((min_val, max_val)) = min_max {
+                        if v >= min_val && v <= max_val {
+                            return false;
+                        }
+                    } else {
                         return false;
                     }
                 }
                 true
             }
-            PhysicalType::Double if min_bytes.len() == 8 && max_bytes.len() == 8 => {
-                let min_val = f64::from_le_bytes(min_bytes.try_into().unwrap());
-                let max_val = f64::from_le_bytes(max_bytes.try_into().unwrap());
+            PhysicalType::Double => {
+                let min_max = match (min_bytes, max_bytes) {
+                    (Some(min_b), Some(max_b)) if min_b.len() == 8 && max_b.len() == 8 => Some((
+                        f64::from_le_bytes(min_b.try_into().unwrap()),
+                        f64::from_le_bytes(max_b.try_into().unwrap()),
+                    )),
+                    _ => None,
+                };
                 for i in 0..count {
                     let v = unsafe { (ptr as *const f64).add(i).read_unaligned() };
-                    if v >= min_val && v <= max_val {
+                    if v.is_nan() {
+                        if has_nulls {
+                            return false;
+                        }
+                    } else if let Some((min_val, max_val)) = min_max {
+                        if v >= min_val && v <= max_val {
+                            return false;
+                        }
+                    } else {
                         return false;
                     }
                 }
                 true
             }
             PhysicalType::ByteArray => {
+                let (min_b, max_b) = match (min_bytes, max_bytes) {
+                    (Some(min_b), Some(max_b)) => (min_b, max_b),
+                    _ => return false,
+                };
                 let mut offset = 0usize;
                 for _ in 0..count {
-                    let len = unsafe { (ptr.add(offset) as *const i32).read_unaligned() } as usize;
+                    let len = unsafe { (ptr.add(offset) as *const i32).read_unaligned() };
                     offset += size_of::<i32>();
-                    let bytes = unsafe { slice::from_raw_parts(ptr.add(offset), len) };
-                    offset += len;
-                    if bytes >= min_bytes && bytes <= max_bytes {
-                        return false;
+                    if len < 0 {
+                        if has_nulls {
+                            return false;
+                        }
+                    } else {
+                        let len = len as usize;
+                        let bytes = unsafe { slice::from_raw_parts(ptr.add(offset), len) };
+                        offset += len;
+                        if bytes >= min_b && bytes <= max_b {
+                            return false;
+                        }
                     }
                 }
                 true
             }
             PhysicalType::FixedLenByteArray(size) => {
                 let size = *size;
-                if min_bytes.len() != size || max_bytes.len() != size {
-                    return false;
-                }
+                let min_max = match (min_bytes, max_bytes) {
+                    (Some(min_b), Some(max_b)) if min_b.len() == size && max_b.len() == size => {
+                        Some((min_b, max_b))
+                    }
+                    _ => None,
+                };
                 for i in 0..count {
                     let bytes = unsafe { slice::from_raw_parts(ptr.add(i * size), size) };
-                    if bytes >= min_bytes && bytes <= max_bytes {
+                    if is_fixed_len_null(bytes) {
+                        if has_nulls {
+                            return false;
+                        }
+                    } else if let Some((min_b, max_b)) = min_max {
+                        if bytes >= min_b && bytes <= max_b {
+                            return false;
+                        }
+                    } else {
                         return false;
                     }
                 }
@@ -1099,6 +1206,13 @@ impl ParquetDecoder {
         // The value is to the right of the last row group, no need to decode (odd value).
         Ok((2 * row_group_count + 1) as u64)
     }
+}
+
+/// Check if a FixedLenByteArray value is the null sentinel.
+/// Matches the write path null_value: `i64::MIN` LE bytes repeated.
+fn is_fixed_len_null(bytes: &[u8]) -> bool {
+    let le_null = i64::MIN.to_le_bytes();
+    bytes.iter().enumerate().all(|(i, &b)| b == le_null[i % 8])
 }
 
 /// Decode a filtered data page.
