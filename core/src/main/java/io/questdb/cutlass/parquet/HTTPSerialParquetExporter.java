@@ -224,7 +224,10 @@ public class HTTPSerialParquetExporter {
         } else {
             copyExportContext.updateStatus(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
         }
+
         PageFrame frame;
+        // Initialize with current value to avoid spurious release after resume from PeerIsSlowToReadException
+        long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
         while ((frame = pageFrameCursor.next()) != null) {
             if (circuitBreaker.checkIfTripped()) {
                 LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
@@ -232,14 +235,26 @@ public class HTTPSerialParquetExporter {
             }
             long rowsInFrame = frame.getPartitionHi() - frame.getPartitionLo();
             int partitionIndex = frame.getPartitionIndex();
+
             exporter.setCurrentPartitionIndex(partitionIndex, rowsInFrame);
             exporter.writePageFrame(pageFrameCursor, frame);
+
+            // Release partitions only after Rust has written a row group.
+            // This ensures partition column data is not released while Rust
+            // still holds references in pending_partitions.
+            long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
+            if (currentRowsWritten > previousRowsWritten) {
+                pageFrameCursor.releaseOpenPartitions();
+                previousRowsWritten = currentRowsWritten;
+            }
+
             LOG.info().$("stream export progress [id=").$hexPadded(task.getCopyID())
                     .$(", rowsInFrame=").$(rowsInFrame)
                     .$(", exported totalRows=").$(exporter.getTotalRows())
                     .$(", partitionIndex=").$(partitionIndex)
                     .$(']').$();
         }
+
         long totalRows = exporter.getTotalRows();
         exporter.finishExport();
         copyExportContext.updateStatus(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
