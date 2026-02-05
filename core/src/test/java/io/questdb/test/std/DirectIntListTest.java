@@ -33,7 +33,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class DirectIntListTest {
-
     private static final Log LOG = LogFactory.getLog(DirectIntListTest.class);
 
     @Test
@@ -163,6 +162,32 @@ public class DirectIntListTest {
             Assert.assertEquals(N, list.size());
             for (long i = 0; i < list.size(); i++) {
                 Assert.assertEquals(N - i, list.get(i));
+            }
+        }
+    }
+
+    @Test
+    public void testSetCapacityOnClosedList() {
+        try (DirectIntList list = new DirectIntList(0, MemoryTag.NATIVE_DEFAULT, true)) {
+            // List is closed (keepClosed=true), setCapacity should allocate memory
+            list.setCapacity(10);
+            list.clear();
+            for (int i = 0; i < 10; i++) {
+                list.add(i * 2);
+            }
+            for (int i = 0; i < 10; i++) {
+                Assert.assertEquals(i * 2, list.get(i));
+            }
+
+            // Close and call setCapacity again - should re-allocate
+            list.close();
+            list.setCapacity(5);
+            list.clear();
+            for (int i = 0; i < 5; i++) {
+                list.add(i * 3);
+            }
+            for (int i = 0; i < 5; i++) {
+                Assert.assertEquals(i * 3, list.get(i));
             }
         }
     }

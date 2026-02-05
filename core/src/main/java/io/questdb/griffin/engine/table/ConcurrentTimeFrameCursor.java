@@ -39,9 +39,12 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
@@ -55,6 +58,8 @@ import org.jetbrains.annotations.NotNull;
  */
 public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
     private final PageFrameMemoryPool frameMemoryPool;
+    // Cache for frame timestamps: [tsLo0, tsHi0, tsLo1, tsHi1, ...] - avoids re-reading on repeated open()
+    private final DirectLongList frameTimestampCache;
     private final RecordMetadata metadata;
     private final PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     private final TimeFrame timeFrame = new TimeFrame();
@@ -71,7 +76,8 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
             @NotNull RecordMetadata metadata
     ) {
         this.metadata = metadata;
-        frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
+        this.frameTimestampCache = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true);
+        this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
     }
 
     public static void populatePartitionTimestamps(
@@ -98,6 +104,7 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
     @Override
     public void close() {
         Misc.free(frameMemoryPool);
+        Misc.free(frameTimestampCache);
     }
 
     @Override
@@ -168,6 +175,14 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
         this.frameCount = frameCount;
         frameMemoryPool.of(frameAddressCache);
         record.of(frameCursor);
+        // Initialize timestamp cache (2 entries per frame: tsLo, tsHi)
+        // Note: setCapacity is safe to call on a closed list - it will allocate memory.
+        final int cacheSize = 2 * frameCount;
+        frameTimestampCache.setCapacity(cacheSize);
+        frameTimestampCache.clear();
+        for (int i = 0; i < cacheSize; i++) {
+            frameTimestampCache.set(i, Numbers.LONG_NULL);
+        }
         toTop();
         return this;
     }
@@ -181,10 +196,21 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
         final long rowCount = frameRowCounts.getQuick(frameIndex);
         if (rowCount > 0) {
             frameMemoryPool.navigateTo(frameIndex, record);
-            record.setRowIndex(0);
-            final long timestampLo = record.getTimestamp(metadata.getTimestampIndex());
-            record.setRowIndex(rowCount - 1);
-            final long timestampHi = record.getTimestamp(metadata.getTimestampIndex());
+            final int cacheOffset = frameIndex * 2;
+            long timestampLo = frameTimestampCache.get(cacheOffset);
+            long timestampHi;
+            if (timestampLo != Numbers.LONG_NULL) {
+                // Cache hit - use cached timestamps
+                timestampHi = frameTimestampCache.get(cacheOffset + 1);
+            } else {
+                // Cache miss - read timestamps and cache them
+                record.setRowIndex(0);
+                timestampLo = record.getTimestamp(metadata.getTimestampIndex());
+                record.setRowIndex(rowCount - 1);
+                timestampHi = record.getTimestamp(metadata.getTimestampIndex());
+                frameTimestampCache.set(cacheOffset, timestampLo);
+                frameTimestampCache.set(cacheOffset + 1, timestampHi);
+            }
             timeFrame.ofOpen(
                     timestampLo,
                     timestampHi + 1,

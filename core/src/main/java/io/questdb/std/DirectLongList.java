@@ -43,7 +43,6 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     private long limit;
     private long pos;
 
-
     /**
      * Creates a DirectLongList with optional deferred memory allocation.
      * <p>
@@ -170,7 +169,8 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         Unsafe.getUnsafe().putLong(address + (p << 3), v);
     }
 
-    // desired capacity in LONGs (not count of bytes)
+    // Desired capacity in LONGs (not count of bytes).
+    // Safe to call on a closed list - it will allocate memory.
     public void setCapacity(long capacity) {
         assert capacity > 0;
         setCapacityBytes(capacity << 3);
