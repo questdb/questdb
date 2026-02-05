@@ -42,7 +42,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -88,6 +87,49 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         testFuzz(10);
     }
 
+    private static String generateOnClause(JoinKeyType joinKeyType, ProjectionType projectionType) {
+        boolean renamed = projectionType == ProjectionType.RENAME_COLUMN;
+        return switch (joinKeyType) {
+            case SINGLE_SYMBOL -> renamed ? " on t1.s = t2.s2 " : " on s ";
+            case SYMBOL_AND_INT -> renamed
+                    ? " on (t1.s = t2.s2) and (t1.val = t2.val2) "
+                    : " on (t1.s = t2.s) and (t1.val = t2.val) ";
+            case SYMBOL_AND_TIMESTAMP -> renamed
+                    ? " on (t1.s = t2.s2) and (t1.ts = t2.ts2) "
+                    : " on (t1.s = t2.s) and (t1.ts = t2.ts) ";
+        };
+    }
+
+    /**
+     * Checks if a parameter combination is valid and should be tested.
+     * Invalid combinations are filtered out before selecting the random subset.
+     */
+    private static boolean isValidPermutation(Object[] params) {
+        JoinType joinType = (JoinType) params[0];
+        ProjectionType projectionType = (ProjectionType) params[4];
+        JoinKeyType joinKeyType = (JoinKeyType) params[8];
+
+        // Multi-column join keys only make sense for keyed joins
+        if (joinKeyType != JoinKeyType.SINGLE_SYMBOL &&
+                (joinType == JoinType.ASOF_NONKEYED || joinType == JoinType.LT_NONKEYED)) {
+            return false;
+        }
+
+        // Known bug: ASOF/LT JOIN with timestamp in ON clause causes AssertionError in createFullFatJoin().
+        // See testLtJoinWithTimestampInOnClauseCrash() in AsOfJoinTest for the reproducer.
+        if (joinKeyType == JoinKeyType.SYMBOL_AND_TIMESTAMP) {
+            return false;
+        }
+
+        // Keyed joins can't remove symbol column since it is used as a JOIN key
+        if (projectionType == ProjectionType.REMOVE_SYMBOL_COLUMN &&
+                (joinType == JoinType.ASOF || joinType == JoinType.LT)) {
+            return false;
+        }
+
+        return true;
+    }
+
     private void assertResultSetsMatch0(Rnd rnd) {
         Object[][] allOpts = {
                 JoinType.values(),
@@ -98,16 +140,25 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 {true, false}, // apply outer projection
                 {-1L, 100_000L}, // max tolerance in seconds, -1 = no tolerance
                 HintType.values(), // ASOF_*_SEARCH hint to apply
+                JoinKeyType.values(), // single vs multi-column ON clause
         };
 
         final Object[][] allPermutations = TestUtils.cartesianProduct(allOpts);
+        // Filter out invalid combinations before selecting the random subset
+        List<Object[]> validPermutations = new java.util.ArrayList<>();
+        for (Object[] params : allPermutations) {
+            if (isValidPermutation(params)) {
+                validPermutations.add(params);
+            }
+        }
+
         final Object[][] permutations;
         if (RUN_ALL_PERMUTATIONS) {
-            permutations = allPermutations;
+            permutations = validPermutations.toArray(new Object[0][]);
         } else {
-            List<Object[]> allPermutationsList = Arrays.asList(allPermutations);
-            Collections.shuffle(allPermutationsList);
-            permutations = Arrays.copyOf(allPermutations, RUN_N_PERMUTATIONS);
+            Collections.shuffle(validPermutations);
+            int count = Math.min(RUN_N_PERMUTATIONS, validPermutations.size());
+            permutations = validPermutations.subList(0, count).toArray(new Object[0][]);
         }
 
         for (int i = 0, n = permutations.length; i < n; i++) {
@@ -120,19 +171,21 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             boolean applyOuterProjection = (boolean) params[5];
             long maxTolerance = (long) params[6];
             HintType hintType = (HintType) params[7];
+            JoinKeyType joinKeyType = (JoinKeyType) params[8];
 
             String paramsMsg = "joinType=" + joinType +
                     ", numIntervals=" + numIntervals +
                     ", limitType=" + limitType +
                     ", exerciseFilters=" + exerciseFilters +
                     ", projectionType=" + projectionType +
-                    ", applyOuterProjection = " + applyOuterProjection +
+                    ", applyOuterProjection=" + applyOuterProjection +
                     ", maxTolerance=" + maxTolerance +
-                    ", hintType=" + hintType;
+                    ", hintType=" + hintType +
+                    ", joinKeyType=" + joinKeyType;
             LOG.info().$("Testing with parameters: ").$(paramsMsg).$();
             try {
                 assertResultSetsMatch0(joinType, numIntervals, limitType, exerciseFilters, projectionType,
-                        applyOuterProjection, maxTolerance, hintType, rnd);
+                        applyOuterProjection, maxTolerance, hintType, joinKeyType, rnd);
             } catch (Throwable e) {
                 throw new AssertionError("Failed with parameters: " + paramsMsg, e);
             }
@@ -148,6 +201,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             boolean applyOuterProjection,
             long maxTolerance,
             HintType hintType,
+            JoinKeyType joinKeyType,
             Rnd rnd
     ) throws Exception {
         String join;
@@ -155,13 +209,13 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         switch (joinType) {
             case ASOF -> {
                 join = " ASOF";
-                onSuffix = (projectionType == ProjectionType.RENAME_COLUMN) ? " on t1.s = t2.s2 " : " on s ";
+                onSuffix = generateOnClause(joinKeyType, projectionType);
             }
             case ASOF_NONKEYED -> join = " ASOF";
             case LT_NONKEYED -> join = " LT";
             case LT -> {
                 join = " LT";
-                onSuffix = (projectionType == ProjectionType.RENAME_COLUMN) ? " on t1.s = t2.s2 " : " on s ";
+                onSuffix = generateOnClause(joinKeyType, projectionType);
             }
             default -> throw new IllegalArgumentException("Unexpected join type: " + joinType);
         }
@@ -211,31 +265,27 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         }
 
         String projection;
-        // (ts TIMESTAMP, i INT, s SYMBOL)
+        // (ts TIMESTAMP, i INT, s SYMBOL, val INT)
         String slaveTimestampColumnName = "ts1";
         switch (projectionType) {
             case NONE:
                 projection = "*";
                 break;
             case CROSS_COLUMN:
-                projection = "s, ts, i";
+                projection = "s, ts, i, val";
                 break;
             case RENAME_COLUMN:
-                projection = "s as s2, ts as ts2, i as i2";
+                projection = "s as s2, ts as ts2, i as i2, val as val2";
                 slaveTimestampColumnName = "ts2";
                 break;
             case ADD_COLUMN:
                 projection = "*, i as i2";
                 break;
             case REMOVE_SYMBOL_COLUMN:
-                if (joinType == JoinType.ASOF || joinType == JoinType.LT) {
-                    //  key-ed joins can't remove symbol column since it is used as a JOIN key
-                    return;
-                }
-                projection = "ts, i, ts";
+                projection = "ts, i, val";
                 break;
             case REMOVE_TIMESTAMP_COLUMN:
-                projection = "i, s";
+                projection = "i, s, val";
                 slaveTimestampColumnName = null;
                 break;
             default:
@@ -287,7 +337,9 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             TestUtils.assertNotContains(sink, "Lt Join Fast");
         } else if (joinType == JoinType.ASOF_NONKEYED && numIntervalsOpt == NumIntervals.MANY) {
             TestUtils.assertContains(sink, "AsOf Join Fast");
-        } else if (joinType == JoinType.ASOF && numIntervalsOpt != NumIntervals.MANY && !exerciseFilters) {
+        } else if (joinType == JoinType.ASOF && numIntervalsOpt != NumIntervals.MANY && !exerciseFilters
+                && joinKeyType == JoinKeyType.SINGLE_SYMBOL) {
+            // Single-symbol optimizations (INDEX, MEMOIZED, DENSE) only apply to single-column joins
             String algo = switch (hintType) {
                 case INDEX -> "Indexed";
                 case MEMOIZED, MEMOIZED_DRIVEBY -> "Memoized";
@@ -338,7 +390,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             final int table2Size = rnd.nextPositiveInt() % 1000;
 
             final TimestampDriver leftTimestampDriver = leftTableTimestampType.getDriver();
-            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL, val INT) timestamp(ts) partition by day bypass wal", leftTableTimestampType.getTypeName());
             long ts = leftTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
             ts += leftTimestampDriver.fromHours((int) (rnd.nextLong() % 48));
             for (int i = 0; i < table1Size; i++) {
@@ -346,12 +398,13 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                     ts += leftTimestampDriver.fromHours((int) rnd.nextLong(24));
                 }
                 String symbol = "s_" + rnd.nextInt(10);
-                execute("INSERT INTO t1 values (" + ts + ", " + i + ", '" + symbol + "');");
+                int val = rnd.nextInt(20);
+                execute("INSERT INTO t1 values (" + ts + ", " + i + ", '" + symbol + "', " + val + ");");
             }
 
             final TimestampDriver rightTimestampDriver = rightTableTimestampType.getDriver();
             executeWithRewriteTimestamp(
-                    "CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL INDEX) timestamp(ts) partition by day bypass wal",
+                    "CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL INDEX, val INT) timestamp(ts) partition by day bypass wal",
                     rightTableTimestampType.getTypeName());
             ts = rightTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
             ts += rightTimestampDriver.fromHours((int) rnd.nextLong(48));
@@ -360,7 +413,8 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                     ts += rightTimestampDriver.fromHours((int) rnd.nextLong(24));
                 }
                 String symbol = "s_" + rnd.nextInt(10);
-                execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "');");
+                int val = rnd.nextInt(20);
+                execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "', " + val + ");");
             }
 
             assertResultSetsMatch0(rnd);
@@ -374,7 +428,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             final int table2Size = rnd.nextPositiveInt() % 1000;
 
             final TimestampDriver leftTimestampDriver = leftTableTimestampType.getDriver();
-            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL, val INT) timestamp(ts)", leftTableTimestampType.getTypeName());
             long ts = leftTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
             ts += leftTimestampDriver.fromHours((int) (rnd.nextLong() % 48));
             for (int i = 0; i < table1Size; i++) {
@@ -382,12 +436,13 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                     ts += leftTimestampDriver.fromHours((int) rnd.nextLong(24));
                 }
                 String symbol = "s_" + rnd.nextInt(10);
-                execute("INSERT INTO t1 values (" + ts + ", " + i + ", '" + symbol + "');");
+                int val = rnd.nextInt(20);
+                execute("INSERT INTO t1 values (" + ts + ", " + i + ", '" + symbol + "', " + val + ");");
             }
 
             final TimestampDriver rightTimestampDriver = rightTableTimestampType.getDriver();
             executeWithRewriteTimestamp(
-                    "CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL INDEX) timestamp(ts)",
+                    "CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL INDEX, val INT) timestamp(ts)",
                     rightTableTimestampType.getTypeName());
             ts = rightTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
             ts += rightTimestampDriver.fromHours((int) rnd.nextLong(48));
@@ -396,7 +451,8 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                     ts += rightTimestampDriver.fromHours((int) rnd.nextLong(24));
                 }
                 String symbol = "s_" + rnd.nextInt(10);
-                execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "');");
+                int val = rnd.nextInt(20);
+                execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "', " + val + ");");
             }
 
             assertResultSetsMatch0(rnd);
@@ -410,6 +466,27 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         INDEX,
         DENSE,
         LINEAR,
+    }
+
+    /**
+     * Determines the number and types of columns in the ON clause.
+     * Multi-column joins test different code paths in SqlCodeGenerator.
+     */
+    private enum JoinKeyType {
+        /**
+         * Single symbol column: ON s (or ON t1.s = t2.s2)
+         */
+        SINGLE_SYMBOL,
+        /**
+         * Symbol + int columns: ON (t1.s = t2.s) AND (t1.val = t2.val)
+         * Tests multi-column join with symbol optimization disabled.
+         */
+        SYMBOL_AND_INT,
+        /**
+         * Symbol + timestamp columns: ON (t1.s = t2.s) AND (t1.ts = t2.ts)
+         * Tests multi-column join including the designated timestamp column.
+         */
+        SYMBOL_AND_TIMESTAMP,
     }
 
     private enum JoinType {

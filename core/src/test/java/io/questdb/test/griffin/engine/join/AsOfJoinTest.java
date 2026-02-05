@@ -39,6 +39,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class AsOfJoinTest extends AbstractCairoTest {
@@ -3397,6 +3398,40 @@ public class AsOfJoinTest extends AbstractCairoTest {
             // Execute and verify results
             printSql(query);
             Assert.assertFalse(sink.isEmpty());
+        });
+    }
+
+    @Test
+    @Ignore("See https://github.com/questdb/questdb/issues/6637")
+    public void testLtJoinWithTimestampInOnClauseCrash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL, val INT) timestamp(ts) partition by DAY");
+            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL INDEX, val INT) timestamp(ts) partition by DAY");
+
+            execute("INSERT INTO t1 VALUES ('2024-01-01T10:00:00.000000Z', 1, 'A', 10)");
+            execute("INSERT INTO t2 VALUES ('2024-01-01T10:00:00.000000Z', 2, 'A', 20)");
+
+            try {
+                // SAMPLE BY makes the slave factory return false for recordCursorSupportsRandomAccess()
+                // which triggers the full fat join code path without needing setFullFatJoins(true)
+                assertQueryNoLeakCheck(
+                        "", // expected - we don't care, expecting exception
+                        "SELECT t1.ts, sub.isum FROM t1 LT JOIN (" +
+                                "  SELECT ts, sum(i) as isum, s FROM t2 SAMPLE BY 1us ALIGN TO CALENDAR" +
+                                ") sub ON (t1.s = sub.s) AND (t1.ts = sub.ts)",
+                        null,
+                        false,
+                        sqlExecutionContext
+                );
+                Assert.fail("Query should have thrown SQLException, not succeeded");
+            } catch (SqlException e) {
+                // Expected behavior - proper error message about timestamp in join key
+                Assert.assertTrue("Expected error about timestamp in join key, got: " + e.getMessage(),
+                        e.getMessage().contains("timestamp"));
+            } catch (AssertionError e) {
+                // This is the BUG - AssertionError is thrown instead of SQLException
+                Assert.fail("Query threw AssertionError instead of proper SQLException: " + e.getMessage());
+            }
         });
     }
 
