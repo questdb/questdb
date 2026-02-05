@@ -391,10 +391,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         compileInner(executionContext, sqlText, true);
 
-        // Verify all input was consumed — reject trailing content
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok != null && !isSemicolon(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+        // Verify all input was consumed — reject trailing content.
+        // Skip in validation-only mode: handlers may return early without consuming all tokens.
+        if (!executionContext.isValidationOnly()) {
+            CharSequence tok = SqlUtil.fetchNext(lexer);
+            if (tok != null && !isSemicolon(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+            }
         }
 
         return compiledQuery;
