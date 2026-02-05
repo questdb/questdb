@@ -618,7 +618,7 @@ public final class Numbers {
     }
 
     public static int decodeLowInt(long val) {
-        return (int) (val & 0xffffffffL);
+        return (int) val;
     }
 
     public static short decodeLowShort(int val) {
