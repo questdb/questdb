@@ -7170,6 +7170,67 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTrailingContentAfterDdlRejected() throws Exception {
+        assertException(
+                "create table tab (x int) select",
+                25,
+                "unexpected token [select]"
+        );
+    }
+
+    @Test
+    public void testTrailingContentAfterNoOpRejected() throws Exception {
+        assertException(
+                "RESET ALL extra",
+                10,
+                "unexpected token [extra]"
+        );
+    }
+
+    @Test
+    public void testTrailingContentAfterSelectRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (x int)");
+            assertExceptionNoLeakCheck(
+                    "select x from tab select x from tab",
+                    18,
+                    "table and column names that are SQL keywords have to be enclosed in double quotes"
+            );
+        });
+    }
+
+    @Test
+    public void testTrailingContentAfterSetRejected() throws Exception {
+        assertException(
+                "SET x = y extra_token",
+                10,
+                "unexpected token [extra_token]"
+        );
+    }
+
+    @Test
+    public void testTrailingSemicolonAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (x int)");
+            // trailing semicolon should not cause an error
+            assertQuery("x\n",
+                    "select x from tab;",
+                    "", true, true);
+        });
+    }
+
+    @Test
+    public void testTrailingTokenAbsentIsOk() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (x int)");
+            // no trailing content should not cause an error
+            assertQuery("x\n",
+                    "select x from tab",
+                    "", true, true);
+        });
+    }
+
+    @Test
     public void testUnionAllWithFirstSubQueryUsingDistinct() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table ict ( event int );");
