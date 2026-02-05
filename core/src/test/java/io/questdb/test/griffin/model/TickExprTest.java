@@ -554,6 +554,15 @@ public class TickExprTest {
     }
 
     @Test
+    public void testBracketExpansionWithMultiUnitDurationUnderscoreNumber() throws SqlException {
+        // Duration with underscore number separator: 1_500T = 1500 millis = 1.5 seconds
+        assertBracketInterval(
+                "[{lo=2024-01-15T10:00:00.000000Z, hi=2024-01-15T10:00:01.499999Z}]",
+                "2024-01-15T10:00:00.000000;1_500T"
+        );
+    }
+
+    @Test
     public void testBracketExpansionWithNonZeroOffset() throws SqlException {
         // Tests that bracket parsing works correctly when lo > 0
         // The prefix "XXX" should be ignored, and padding should be calculated from the interval start
@@ -2369,6 +2378,64 @@ public class TickExprTest {
     public void testDateVariableTrailingCharactersAfterUnit() {
         // "$today + 3dabc" should fail - trailing characters after 'd' unit
         assertBracketIntervalError("[$today + 3dabc]", "Unexpected characters after unit");
+    }
+
+    @Test
+    public void testDateVariableUnderscoreConsecutiveInvalid() {
+        // Consecutive underscores should fail
+        assertBracketIntervalError("[$now - 1__000T]", "Invalid number in date expression");
+    }
+
+    @Test
+    public void testDateVariableUnderscoreInNumber() throws SqlException {
+        // $now - 10_000T should work the same as $now - 10000T
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T10:29:50.000000Z, hi=2026-01-22T10:29:50.000000Z}]",
+                "[$now - 10_000T]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableUnderscoreInNumberBusinessDays() throws SqlException {
+        // $today + 1_0bd should work as 10 business days
+        assertBracketIntervalWithNow(
+                "[{lo=2026-02-05T00:00:00.000000Z, hi=2026-02-05T23:59:59.999999Z}]",
+                "[$today + 1_0bd]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableUnderscoreInNumberCompact() throws SqlException {
+        // $now-10_000T compact form (no spaces)
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T10:29:50.000000Z, hi=2026-01-22T10:29:50.000000Z}]",
+                "[$now-10_000T]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableUnderscoreInNumberRange() throws SqlException {
+        // $now-10_000T..$now-9_900T range with underscores
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T10:29:50.000000Z, hi=2026-01-22T10:29:50.100000Z}]",
+                "$now-10_000T..$now-9_900T",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableUnderscoreLeadingInvalid() {
+        // Leading underscore should fail
+        assertBracketIntervalError("[$now - _100T]", "[7] Invalid number in date expression");
+    }
+
+    @Test
+    public void testDateVariableUnderscoreTrailingInvalid() {
+        // Trailing underscore: number is "100_", parseInt will reject it
+        assertBracketIntervalError("[$now - 100_T]", "Invalid number in date expression");
     }
 
     @Test
