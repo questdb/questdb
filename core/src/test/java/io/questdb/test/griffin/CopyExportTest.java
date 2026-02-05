@@ -1928,7 +1928,7 @@ public class CopyExportTest extends AbstractCairoTest {
         // This tests batch commits and symbol re-scaling during parquet export.
         final int symbolCount = 10_000;
         AtomicInteger symbolCapacityScaled = new AtomicInteger(0);
-        setProperty(PropertyKey.CAIRO_SQL_CREATE_TABLE_MODEL_BATCH_SIZE, 1000);
+        setProperty(PropertyKey.CAIRO_PARQUET_EXPORT_BATCH_SIZE, 1000);
 
         // Custom FilesFacade to intercept parquet file rename and verify symbol capacity
         // This happens when the parquet export is complete, just before temp table cleanup

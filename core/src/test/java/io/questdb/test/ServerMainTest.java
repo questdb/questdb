@@ -597,7 +597,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.copy.export.queue.capacity\tQDB_CAIRO_SQL_COPY_EXPORT_QUEUE_CAPACITY\t32\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.count.distinct.capacity\tQDB_CAIRO_SQL_COUNT_DISTINCT_CAPACITY\t3\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.count.distinct.load.factor\tQDB_CAIRO_SQL_COUNT_DISTINCT_LOAD_FACTOR\t0.5\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.create.table.model.batch.size\tQDB_CAIRO_SQL_CREATE_TABLE_MODEL_BATCH_SIZE\t100000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.create.table.model.batch.size\tQDB_CAIRO_SQL_CREATE_TABLE_MODEL_BATCH_SIZE\t1000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.distinct.timestamp.key.capacity\tQDB_CAIRO_SQL_DISTINCT_TIMESTAMP_KEY_CAPACITY\t512\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.distinct.timestamp.load.factor\tQDB_CAIRO_SQL_DISTINCT_TIMESTAMP_LOAD_FACTOR\t0.5\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.view.lexer.pool.capacity\tQDB_CAIRO_SQL_VIEW_LEXER_POOL_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
@@ -1050,6 +1050,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.parquet.export.version\tQDB_CAIRO_PARQUET_EXPORT_VERSION\t1\tdefault\tfalse\tfalse\n" +
                                     "cairo.parquet.export.row.group.size\tQDB_CAIRO_PARQUET_EXPORT_ROW_GROUP_SIZE\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.parquet.export.data.page.size\tQDB_CAIRO_PARQUET_EXPORT_DATA_PAGE_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
+                                    "cairo.parquet.export.batch.size\tQDB_CAIRO_PARQUET_EXPORT_BATCH_SIZE\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.parquet.export.compression.codec\tQDB_CAIRO_PARQUET_EXPORT_COMPRESSION_CODEC\tLZ4_RAW\tdefault\tfalse\tfalse\n" +
                                     "cairo.parquet.export.compression.level\tQDB_CAIRO_PARQUET_EXPORT_COMPRESSION_LEVEL\t0\tdefault\tfalse\tfalse\n" +
                                     "cairo.parquet.export.copy.report.frequency.lines\tQDB_CAIRO_PARQUET_EXPORT_COPY_REPORT_FREQUENCY_LINES\t500000\tdefault\tfalse\ttrue\n" +

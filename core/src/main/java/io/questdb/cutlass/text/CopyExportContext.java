@@ -381,7 +381,7 @@ public class CopyExportContext {
                         false
                 );
                 createOp.setTableKind(TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT);
-                createOp.setBatchSize(engine.getConfiguration().getCreateTableModelBatchSize());
+                createOp.setBatchSize(engine.getConfiguration().getParquetExportBatchSize());
                 createOp.validateAndUpdateMetadataFromSelect(rcf.getMetadata(), rcf.getScanDirection());
             }
         } catch (SqlException ex) {
