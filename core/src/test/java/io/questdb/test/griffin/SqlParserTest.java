@@ -4908,7 +4908,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testEraseColumnPrefixInJoinWithNestedUnion() throws Exception {
         assertQueryWithOuterJoinType(
-                "select-choose c.customerId customerId, o.customerId customerId1, o.x x from (select [customerId] from customers c #OUTER_JOIN_TYPE join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders where x = 10 and customerId = 100) union select-choose [customerId, x] customerId, x from (select [customerId, x] from orders where x = 10 and customerId = 100)) o where x = 10 and customerId = 100) o) o on customerId = c.customerId where customerId = 100) c",
+                "select-choose c.customerId customerId, o.customerId customerId1, o.x x from (select [customerId] from customers c #OUTER_JOIN_TYPE join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders) union select-choose [customerId, x] customerId, x from (select [customerId, x] from orders)) o where x = 10 and customerId = 100) o) o on customerId = c.customerId where customerId = 100) c",
                 "customers c" +
                         " #OUTER_JOIN_TYPE join ((orders union orders) o where o.x = 10) o on c.customerId = o.customerId" +
                         " where c.customerId = 100",
@@ -9908,17 +9908,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testPushFilterThroughUnionAllExprInAllBranches() throws SqlException {
-        // Both branches define c as expression x+y. Filter pushed to branches
-        // but stays at select-virtual level (can't descend past non-literal).
+        // Non-timestamp filter is not pushed into union branches.
         assertQuery(
                 "select-choose c from (" +
                         /**/ "select [c] from (" +
                         /**/   "select-virtual [x + y c] x + y c from (" +
                         /**/     "select [y, x] from t1" +
-                        /**/   ") where c > 5" +
-                        /**/   " union all select-virtual [x + y c] x + y c from (" +
+                        /**/   ") union all select-virtual [x + y c] x + y c from (" +
                         /**/     "select [y, x] from t2" +
-                        /**/   ") where c > 5" +
+                        /**/   ")" +
                         /**/ ") _xQdbA1 where c > 5" +
                         ")",
                 "select c from (select x + y c from t1 union all select x + y c from t2) where c > 5",
@@ -9929,8 +9927,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testPushFilterThroughUnionAllMixedPushability() throws SqlException {
-        // Two filters: ts is a literal (pushed all the way to base table),
-        // c is a non-literal expression (pushed to branch level but not further).
+        // Two filters: ts is the designated timestamp (pushed into branches for partition pruning),
+        // c is a non-timestamp expression (stays at parent level only).
         assertQuery(
                 "select-choose ts, c from (" +
                         /**/ "select [ts, c] from (" +
@@ -9938,12 +9936,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         /**/     "select-choose [ts1 ts, y, x] ts1 ts, y, x from (" +
                         /**/       "select [ts1, y, x] from t1 timestamp (ts1) where ts1 in '2025-12-01T01;2h'" +
                         /**/     ")" +
-                        /**/   ") where c > 5" +
+                        /**/   ")" +
                         /**/   " union all select-virtual [ts, x + y c] ts, x + y c from (" +
                         /**/     "select-choose [ts2 ts, y, x] ts2 ts, y, x from (" +
                         /**/       "select [ts2, y, x] from t2 timestamp (ts2) where ts2 in '2025-12-01T01;2h'" +
                         /**/     ")" +
-                        /**/   ") where c > 5" +
+                        /**/   ")" +
                         /**/ ") _xQdbA1 where ts in '2025-12-01T01;2h' and c > 5" +
                         ")",
                 "select ts, c from (select ts1 ts, x + y c from t1 union all select ts2 ts, x + y c from t2) where ts in '2025-12-01T01;2h' and c > 5",
@@ -9972,14 +9970,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testPushFilterWithMultipleColumnsThroughUnionAll() throws SqlException {
-        // Filter references two columns; both are literals in both branches, so pushed to both.
+        // Filter references two columns (ts and v); not pushed because it references a non-timestamp column.
         assertQuery(
                 "select-choose ts, v from (" +
                         /**/ "select [ts, v] from (" +
                         /**/   "select-choose [val1 v, ts1 ts] ts1 ts, val1 v from (" +
-                        /**/     "select [val1, ts1] from t1 where ts1 > val1" +
+                        /**/     "select [val1, ts1] from t1" +
                         /**/   ") union all select-choose [val2 v, ts2 ts] ts2 ts, val2 v from (" +
-                        /**/     "select [val2, ts2] from t2 where ts2 > val2" +
+                        /**/     "select [val2, ts2] from t2" +
                         /**/   ")" +
                         /**/ ") _xQdbA1 where ts > v" +
                         ")",

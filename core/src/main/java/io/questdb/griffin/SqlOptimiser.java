@@ -1351,6 +1351,26 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
+    private boolean allLiteralsMatchBranch(ExpressionNode node, LowerCaseCharSequenceObjHashMap<QueryColumn> branchColumns) {
+        if (node == null) {
+            return true;
+        }
+        if (node.type == LITERAL) {
+            int len = node.token.length();
+            int dot = Chars.indexOf(node.token, 0, len, '.');
+            if (branchColumns.excludes(node.token, dot + 1, len)) {
+                return false;
+            }
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (!allLiteralsMatchBranch(node.args.getQuick(i), branchColumns)) {
+                return false;
+            }
+        }
+        return allLiteralsMatchBranch(node.lhs, branchColumns)
+                && allLiteralsMatchBranch(node.rhs, branchColumns);
+    }
+
     //checks join equality condition and pushes it to optimal join contexts (could be a different join context)
     //NOTE on LEFT/RIGHT JOIN :
     // - left/right join condition MUST remain as is otherwise it'll produce wrong results
@@ -9235,6 +9255,14 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void tryPushFilterIntoSetOperationBranches(ExpressionNode node, QueryModel parent, QueryModel nested) throws SqlException {
+        // Only push filters on the designated timestamp into union branches.
+        // Timestamp filters enable partition pruning — the only high-value optimization here.
+        // Non-timestamp filters risk type mismatches and column resolution issues across branches.
+        CharSequence timestamp = findTimestamp(nested);
+        if (timestamp == null || !referencesOnlyTimestampAliasRecursive(node, timestamp, null)) {
+            return;
+        }
+
         QueryModel branch = nested;
         while (branch != null) {
             // Skip branches where pushing could change semantics
@@ -9250,7 +9278,9 @@ public class SqlOptimiser implements Mutable {
                 ExpressionNode clone = deepClone(expressionNodePool, node);
                 traversalAlgo.traverse(clone, literalCheckingVisitor.of(parent.getAliasToColumnMap()));
                 traversalAlgo.traverse(clone, literalRewritingVisitor.of(parent.getAliasToColumnNameMap()));
-                addWhereNode(branch, clone);
+                if (allLiteralsMatchBranch(clone, branch.getAliasToColumnMap())) {
+                    addWhereNode(branch, clone);
+                }
             } catch (NonLiteralException ignore) {
                 // skip this branch - the outer filter still guarantees correctness
             }
