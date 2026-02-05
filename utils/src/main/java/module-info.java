@@ -1,3 +1,4 @@
+@SuppressWarnings("Java9RedundantRequiresStatement")
 open module io.questdb.cliutil {
     uses io.questdb.griffin.FunctionFactory;
     requires transitive io.questdb;

@@ -229,6 +229,7 @@ public abstract class HttpClient implements QuietCloseable {
 
     protected abstract void setupIoWait();
 
+    @SuppressWarnings("unused")
     private static class BinarySequenceAdapter implements BinarySequence, Mutable {
         private final Utf8StringSink baseSink = new Utf8StringSink();
 
@@ -334,6 +335,7 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        @SuppressWarnings("unused")
         public int getContentLength() {
             if (contentStart > -1) {
                 return (int) (ptr - contentStart);
@@ -342,6 +344,7 @@ public abstract class HttpClient implements QuietCloseable {
             }
         }
 
+        @SuppressWarnings("unused")
         public long getContentStart() {
             return contentStart;
         }
