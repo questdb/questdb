@@ -80,6 +80,7 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
     private long dbgSnapshotBytesFree;
     private long dbgSnapshotAllocs;
     private long dbgSnapshotFrees;
+    private long lastSyncedAppendOffset;
     private boolean snapshotInFlight;
     private long snapshotBufAddr;
     private long snapshotBufCapacity;
@@ -134,6 +135,7 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         }
         allocatedFileSize = 0;
         distressed = false;
+        lastSyncedAppendOffset = 0;
         logDebugLeakCounters("close");
     }
 
@@ -150,6 +152,7 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         this.fd = -1;
         allocatedFileSize = 0;
         distressed = false;
+        lastSyncedAppendOffset = 0;
         logDebugLeakCounters("detach");
         return detachedFd;
     }
@@ -209,6 +212,9 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
             }
         }
         super.jumpTo(offset);
+        if (offset < lastSyncedAppendOffset) {
+            lastSyncedAppendOffset = 0;
+        }
     }
 
     @Override
@@ -359,7 +365,12 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
                         .put(']');
             }
         }
+        long appendOffset = getAppendOffset();
+        if (appendOffset == lastSyncedAppendOffset) {
+            return;
+        }
         submitCurrentPageDirtyRange();
+        lastSyncedAppendOffset = appendOffset;
     }
 
     /**
@@ -634,6 +645,9 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         if (appendOffset <= 0) {
             return;
         }
+        if (appendOffset == lastSyncedAppendOffset) {
+            return;
+        }
         int currentPage = pageIndex(appendOffset - 1);
         if (currentPage >= pageStates.size() || pageStates.getQuick(currentPage) != WRITING) {
             return;
@@ -668,6 +682,7 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
             ensureFileSize(pageStart + dirtyLen);
             ringManager.enqueueSnapshotWrite(columnSlot, fd, pageStart, snapshotBufAddr, dirtyLen);
             snapshotInFlight = true;
+            lastSyncedAppendOffset = appendOffset;
         } catch (Throwable th) {
             // Prevent leak if any step fails.
             freeSnapshotBuffer();
@@ -702,6 +717,7 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         submitCurrentPageDirtyRange();
         // Wait for all writes (including the partial page write).
         ringManager.waitForAll();
+        lastSyncedAppendOffset = getAppendOffset();
         // Submit fsync and wait.
         ringManager.enqueueFsync(columnSlot, fd);
         ringManager.waitForAll();

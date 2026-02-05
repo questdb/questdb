@@ -1201,10 +1201,20 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         for (int i = 0, n = columns.size(); i < n; i++) {
             MemoryMA column = columns.getQuick(i);
             if (column != null) {
-                column.sync(true);
+                if (column instanceof MemoryPURImpl) {
+                    ((MemoryPURImpl) column).syncAsyncNoSnapshot();
+                } else {
+                    column.sync(true);
+                }
             }
         }
         ringManager.waitForAll();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            MemoryMA column = columns.getQuick(i);
+            if (column instanceof MemoryPURImpl) {
+                ((MemoryPURImpl) column).resumeWriteAfterSync();
+            }
+        }
     }
 
     private void flushIoUringInitIfNeeded(MemoryMA mem, CharSequence columnName, int columnType, boolean isAux) {
@@ -1232,8 +1242,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     .$(", fd=").$(mem.getFd())
                     .I$();
             // STRING/BINARY aux vectors write initial 0; ensure it is pwrite'd
-            mem.sync(true);
+            ((MemoryPURImpl) mem).syncAsyncNoSnapshot();
             ringManager.waitForAll();
+            ((MemoryPURImpl) mem).resumeWriteAfterSync();
         }
     }
 

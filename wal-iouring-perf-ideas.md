@@ -10,15 +10,17 @@ This note collects potential performance optimizations for the io_uring-backed W
 
 ## Low‑Risk / High ROI Ideas
 
-- Use no‑snapshot sync at all barrier points:
-  - Replace `sync(true)` with `syncAsyncNoSnapshot()` in:
-    - `WalWriter.flushColumnsForSegmentRoll()`
-    - `WalWriter.flushIoUringInitIfNeeded()`
-  - Then call `ringManager.waitForAll()` and `resumeWriteAfterSync()`.
+- ~~Use no‑snapshot sync at all barrier points:~~
+  - ~~Replace `sync(true)` with `syncAsyncNoSnapshot()` in:~~
+    - ~~`WalWriter.flushColumnsForSegmentRoll()`~~
+    - ~~`WalWriter.flushIoUringInitIfNeeded()`~~
+  - ~~Then call `ringManager.waitForAll()` and `resumeWriteAfterSync()`.~~
+  - **Done.**
 
-- Skip columns that did not advance:
-  - Track `lastSyncedAppendOffset` per `MemoryPURImpl`.
-  - If `getAppendOffset()` is unchanged, skip flush for that column.
+- ~~Skip columns that did not advance:~~
+  - ~~Track `lastSyncedAppendOffset` per `MemoryPURImpl`.~~
+  - ~~If `getAppendOffset()` is unchanged, skip flush for that column.~~
+  - **Done.**
 
 ## Medium‑Risk / Medium ROI Ideas
 
@@ -42,7 +44,7 @@ This note collects potential performance optimizations for the io_uring-backed W
 
 ## Suggested Next Step
 
-- Apply no‑snapshot sync to all barrier points.
-- Add `lastSyncedAppendOffset` to skip clean columns.
+- ~~Apply no‑snapshot sync to all barrier points.~~ **Done.**
+- ~~Add `lastSyncedAppendOffset` to skip clean columns.~~ **Done.**
 - Measure with profiler; then consider page‑swap or writev batching if still CPU‑bound.
 

@@ -675,6 +675,126 @@ public class MemoryPURImplTest extends AbstractTest {
     }
 
     @Test
+    public void testSyncAsyncNoSnapshotSkipsCleanColumn() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            final long pageSize = 4096;
+
+            File file = temp.newFile();
+            try (
+                    Path path = new Path();
+                    WalWriterRingManager mgr = new WalWriterRingManager(rf, 64)
+            ) {
+                try (MemoryPURImpl mem = new MemoryPURImpl(ff, path.of(file.getAbsolutePath()).$(),
+                        pageSize, MemoryTag.NATIVE_TABLE_WAL_WRITER, 0, mgr)) {
+                    for (int i = 0; i < 50; i++) {
+                        mem.putLong(i);
+                    }
+
+                    // First no-snapshot sync: should submit data.
+                    mem.syncAsyncNoSnapshot();
+                    mgr.waitForAll();
+                    mem.resumeWriteAfterSync();
+
+                    // Second no-snapshot sync without new writes: should be a no-op.
+                    mem.syncAsyncNoSnapshot();
+                    Assert.assertEquals("clean column should skip submission", 0, mgr.getInFlightCount());
+                    // No waitForAll/resumeWriteAfterSync needed since nothing was submitted.
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSyncAsyncNoSnapshotAfterMoreWrites() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            final long pageSize = 4096;
+
+            File file = temp.newFile();
+            try (
+                    Path path = new Path();
+                    WalWriterRingManager mgr = new WalWriterRingManager(rf, 64)
+            ) {
+                try (MemoryPURImpl mem = new MemoryPURImpl(ff, path.of(file.getAbsolutePath()).$(),
+                        pageSize, MemoryTag.NATIVE_TABLE_WAL_WRITER, 0, mgr)) {
+                    for (int i = 0; i < 50; i++) {
+                        mem.putLong(i);
+                    }
+
+                    // First sync cycle.
+                    mem.syncAsyncNoSnapshot();
+                    mgr.waitForAll();
+                    mem.resumeWriteAfterSync();
+
+                    // Write more data.
+                    for (int i = 50; i < 100; i++) {
+                        mem.putLong(i);
+                    }
+
+                    // Second sync should submit new data.
+                    mem.syncAsyncNoSnapshot();
+                    Assert.assertTrue("dirty column should submit", mgr.getInFlightCount() > 0);
+                    mgr.waitForAll();
+                    mem.resumeWriteAfterSync();
+                }
+
+                // Verify all 100 longs written to disk.
+                long fd = Files.openRO(path.of(file.getAbsolutePath()).$());
+                Assert.assertTrue(fd > -1);
+                try {
+                    long bufLen = 100 * Long.BYTES;
+                    long buf = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        long bytesRead = Files.read(fd, buf, bufLen, 0);
+                        Assert.assertEquals(bufLen, bytesRead);
+                        for (int i = 0; i < 100; i++) {
+                            Assert.assertEquals("mismatch at " + i, i,
+                                    Unsafe.getUnsafe().getLong(buf + (long) i * Long.BYTES));
+                        }
+                    } finally {
+                        Unsafe.free(buf, bufLen, MemoryTag.NATIVE_DEFAULT);
+                    }
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSyncAsyncSkipsCleanColumn() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            final long pageSize = 4096;
+
+            File file = temp.newFile();
+            try (
+                    Path path = new Path();
+                    WalWriterRingManager mgr = new WalWriterRingManager(rf, 64)
+            ) {
+                try (MemoryPURImpl mem = new MemoryPURImpl(ff, path.of(file.getAbsolutePath()).$(),
+                        pageSize, MemoryTag.NATIVE_TABLE_WAL_WRITER, 0, mgr)) {
+                    for (int i = 0; i < 50; i++) {
+                        mem.putLong(i);
+                    }
+
+                    // First snapshot-based async sync.
+                    mem.sync(true);
+                    mgr.waitForAll();
+
+                    // Second sync(true) without new writes: should be a no-op.
+                    mem.sync(true);
+                    Assert.assertEquals("clean column should skip snapshot sync", 0, mgr.getInFlightCount());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMultipleCloseIsIdempotent() throws Exception {
         Assume.assumeTrue(rf.isAvailable());
 
