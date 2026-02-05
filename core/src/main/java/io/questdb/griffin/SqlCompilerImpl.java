@@ -2376,7 +2376,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
     }
 
-    private void compileBegin(SqlExecutionContext executionContext, @Transient CharSequence sqlText) {
+    private void compileBegin(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        // BEGIN [TRANSACTION] — consume the optional keyword
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isSemicolon(tok) && !isTransactionKeyword(tok)) {
+            lexer.unparseLast();
+        }
         compiledQuery.ofBegin();
     }
 
@@ -2429,7 +2434,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void compileCommit(SqlExecutionContext executionContext, @Transient CharSequence sqlText) {
+    private void compileCommit(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        // COMMIT [TRANSACTION] — consume the optional keyword
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isSemicolon(tok) && !isTransactionKeyword(tok)) {
+            lexer.unparseLast();
+        }
         compiledQuery.ofCommit();
     }
 
@@ -3303,7 +3313,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofRepair();
     }
 
-    private void compileRollback(SqlExecutionContext executionContext, @Transient CharSequence sqlText) {
+    private void compileRollback(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        // ROLLBACK [TRANSACTION] — consume the optional keyword
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isSemicolon(tok) && !isTransactionKeyword(tok)) {
+            lexer.unparseLast();
+        }
         compiledQuery.ofRollback();
     }
 
