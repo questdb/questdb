@@ -223,6 +223,13 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     }
 
     @Override
+    public void recordAt(Record record, int frameIndex, long rowIndex) {
+        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
+        frameMemoryPool.navigateTo(frameIndex, frameMemoryRecord);
+        frameMemoryRecord.setRowIndex(rowIndex);
+    }
+
+    @Override
     public void recordAtRowIndex(Record record, long rowIndex) {
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
         frameMemoryRecord.setRowIndex(rowIndex);

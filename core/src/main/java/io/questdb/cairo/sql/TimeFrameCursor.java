@@ -105,6 +105,16 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
     void recordAt(Record record, long rowId);
 
     /**
+     * Positions record at given frame index and row index. The frame must have been previously opened.
+     * This method avoids row id encoding/decoding overhead compared to {@link #recordAt(Record, long)}.
+     *
+     * @param record     to position
+     * @param frameIndex index of the frame
+     * @param rowIndex   row index within the frame
+     */
+    void recordAt(Record record, int frameIndex, long rowIndex);
+
+    /**
      * This sets the record to the given row index, without changing frame ID of the record. Given rowIndex
      * *must* be in the range of the current frame of the record.
      *

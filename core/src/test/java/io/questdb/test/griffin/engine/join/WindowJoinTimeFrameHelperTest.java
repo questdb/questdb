@@ -872,6 +872,15 @@ public class WindowJoinTimeFrameHelperTest {
         }
 
         @Override
+        public void recordAt(Record record, int frameIndex, long rowIndex) {
+            currentFrame = frameIndex;
+            loadEstimate(frameIndex);
+            FrameData data = frames.get(frameIndex);
+            timeFrame.ofOpen(data.actualLo, data.actualHi, 0, data.timestamps.length);
+            ((MockRecord) record).position(frameIndex, (int) rowIndex);
+        }
+
+        @Override
         public void recordAtRowIndex(Record record, long rowIndex) {
             int frameIndex = currentFrame >= 0 ? currentFrame : timeFrame.getFrameIndex();
             ((MockRecord) record).position(frameIndex, (int) rowIndex);

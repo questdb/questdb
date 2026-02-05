@@ -288,7 +288,7 @@ public class MarkoutTimeFrameHelper {
 
             // Search within the current frame for the ASOF row
             bookmarkCurrentFrame(rowLo);
-            timeFrameCursor.recordAt(record, Rows.toRowID(timeFrame.getFrameIndex(), timeFrame.getRowLo()));
+            timeFrameCursor.recordAt(record, timeFrame.getFrameIndex(), timeFrame.getRowLo());
 
             // Try linear scan first
             long scanResult = linearScanAsOf(targetTimestamp, rowLo);
