@@ -60,7 +60,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
-import io.questdb.std.ObjList;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
@@ -95,7 +94,6 @@ public class HttpQueryTestBuilder {
     private SecurityContext securityContext = null;
     private int sendBufferSize = -1;
     private HttpServerConfigurationBuilder serverConfigBuilder;
-    private ObjList<SqlExecutionContextImpl> sqlExecutionContexts;
     private long startWriterWaitTimeout = 500;
     private boolean telemetry;
     private String temp;
@@ -122,7 +120,8 @@ public class HttpQueryTestBuilder {
                 .withHealthCheckAuthRequired(httpHealthCheckAuthType)
                 .withNanosClock(nanosecondClock)
                 .withForceSendFragmentationChunkSize(forceSendFragmentationChunkSize)
-                .withForceRecvFragmentationChunkSize(forceRecvFragmentationChunkSize);
+                .withForceRecvFragmentationChunkSize(forceRecvFragmentationChunkSize)
+                .withQueryFutureUpdateListener(queryFutureUpdateListener);
         if (sendBufferSize != -1) {
             serverConfigBuilder.withSendBufferSize(sendBufferSize);
         }
@@ -240,8 +239,6 @@ public class HttpQueryTestBuilder {
                 }
             });
 
-            this.sqlExecutionContexts = new ObjList<>();
-
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
                 public ObjHashSet<String> getUrls() {
@@ -252,19 +249,10 @@ public class HttpQueryTestBuilder {
 
                 @Override
                 public HttpRequestHandler newInstance() {
-                    SqlExecutionContextImpl newContext = new SqlExecutionContextImpl(engine, workerCount) {
-                        @Override
-                        public QueryFutureUpdateListener getQueryFutureUpdateListener() {
-                            return queryFutureUpdateListener != null ? queryFutureUpdateListener : QueryFutureUpdateListener.EMPTY;
-                        }
-                    };
-
-                    sqlExecutionContexts.add(newContext);
-
                     return new JsonQueryProcessor(
                             httpConfiguration.getJsonQueryProcessorConfiguration(),
                             engine,
-                            newContext
+                            workerCount
                     );
                 }
             });
