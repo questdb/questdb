@@ -68,6 +68,7 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
     private long dbgSnapshotFrees;
     private boolean snapshotInFlight;
     private long snapshotBufAddr;
+    private long snapshotBufCapacity;
     private long snapshotBufSize;
 
     @TestOnly
@@ -228,7 +229,8 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
             distressed = true;
             cqeError = cqeRes < 0 ? -cqeRes : 0;
         }
-        freeSnapshotBuffer();
+        snapshotInFlight = false;
+        snapshotBufSize = 0;
     }
 
     public void refreshCurrentPageFromFile() {
@@ -503,12 +505,13 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
     private void freeSnapshotBuffer() {
         if (snapshotBufAddr != 0) {
             dbgSnapshotFrees++;
-            dbgSnapshotBytesFree += snapshotBufSize;
-            Unsafe.free(snapshotBufAddr, snapshotBufSize, MemoryTag.NATIVE_TABLE_WAL_WRITER);
+            dbgSnapshotBytesFree += snapshotBufCapacity;
+            Unsafe.free(snapshotBufAddr, snapshotBufCapacity, MemoryTag.NATIVE_TABLE_WAL_WRITER);
             snapshotBufAddr = 0;
-            snapshotBufSize = 0;
+            snapshotBufCapacity = 0;
         }
         snapshotInFlight = false;
+        snapshotBufSize = 0;
     }
 
     private long preadPage(int page) {
@@ -548,7 +551,7 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         // Backpressure: wait for previous snapshot if still in-flight.
         if (snapshotInFlight) {
             ringManager.waitForAll();
-            // onSnapshotCompleted will have been called, freeing the buffer.
+            // onSnapshotCompleted will have cleared the in-flight flag.
             if (snapshotInFlight) {
                 // Defensive: if CQE was lost or column detached, ensure we don't leak.
                 LOG.info().$("snapshot still in flight after wait; forcing free [fd=").$(fd).$(", columnSlot=").$(columnSlot).$(']').$();
@@ -575,15 +578,18 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         }
 
         // Snapshot the dirty range into a temp buffer.
-        if (snapshotBufAddr != 0) {
-            // Defensive: should not happen, but avoid leaking the previous buffer.
-            LOG.info().$("snapshot buffer not cleared before alloc; forcing free [fd=").$(fd).$(", columnSlot=").$(columnSlot).$(']').$();
-            freeSnapshotBuffer();
+        if (snapshotBufAddr == 0 || snapshotBufCapacity < dirtyLen) {
+            if (snapshotBufAddr != 0) {
+                dbgSnapshotFrees++;
+                dbgSnapshotBytesFree += snapshotBufCapacity;
+                Unsafe.free(snapshotBufAddr, snapshotBufCapacity, MemoryTag.NATIVE_TABLE_WAL_WRITER);
+            }
+            snapshotBufAddr = Unsafe.malloc(dirtyLen, MemoryTag.NATIVE_TABLE_WAL_WRITER);
+            snapshotBufCapacity = dirtyLen;
+            dbgSnapshotAllocs++;
+            dbgSnapshotBytesAlloc += dirtyLen;
         }
-        snapshotBufAddr = Unsafe.malloc(dirtyLen, MemoryTag.NATIVE_TABLE_WAL_WRITER);
         snapshotBufSize = dirtyLen;
-        dbgSnapshotAllocs++;
-        dbgSnapshotBytesAlloc += dirtyLen;
         Vect.memcpy(snapshotBufAddr, addr, dirtyLen);
 
         // Submit snapshot pwrite.
@@ -615,6 +621,7 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
                     .$(", snapshotInFlight=").$(snapshotInFlight)
                     .$(", inFlight=").$(ringManager != null ? ringManager.getInFlightCount() : -1)
                     .$(", snapshotBufSize=").$(snapshotBufSize)
+                    .$(", snapshotBufCap=").$(snapshotBufCapacity)
                     .I$();
         }
     }
