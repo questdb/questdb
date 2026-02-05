@@ -124,8 +124,11 @@ public class DateExpressionEvaluator {
 
         // Find end of number (underscores are allowed as separators, e.g. 10_000)
         int numEnd = offsetStart;
-        while (numEnd < hi && Character.isDigit(expression.charAt(numEnd))) {
-            numEnd++;
+        for (; numEnd < hi; numEnd++) {
+            char c = expression.charAt(numEnd);
+            if (c != '_' && !Character.isDigit(c)) {
+                break;
+            }
         }
 
         if (numEnd == offsetStart) {

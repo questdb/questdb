@@ -1140,7 +1140,7 @@ public final class IntervalUtils {
         int numStart = lo;
         for (int i = lo; i < lim; i++) {
             char c = seq.charAt(i);
-            if (c >= '0' && c <= '9') {
+            if ((c >= '0' && c <= '9') || c == '_') {
                 continue;
             }
             // Found a unit character
