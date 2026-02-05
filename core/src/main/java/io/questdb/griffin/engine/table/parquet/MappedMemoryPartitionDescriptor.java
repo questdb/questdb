@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table.parquet;
 
 import io.questdb.cairo.SymbolMapWriter;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 
@@ -45,18 +46,22 @@ public class MappedMemoryPartitionDescriptor extends PartitionDescriptor {
             final long columnAddr = columnData.get(rawIndex + COLUMN_ADDR_OFFSET);
             if (columnAddr != 0) {
                 final long columnSize = columnData.get(rawIndex + COLUMN_SIZE_OFFSET);
+                ff.madvise(columnAddr, columnSize, Files.POSIX_MADV_DONTNEED);
                 ff.munmap(columnAddr, columnSize, MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER);
             }
             final long columnSecondaryAddr = columnData.get(rawIndex + COLUMN_SECONDARY_ADDR_OFFSET);
             if (columnSecondaryAddr != 0) {
                 final long columnSecondarySize = columnData.get(rawIndex + COLUMN_SECONDARY_SIZE_OFFSET);
+                ff.madvise(columnSecondaryAddr, columnSecondarySize, Files.POSIX_MADV_DONTNEED);
                 ff.munmap(columnSecondaryAddr, columnSecondarySize, MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER);
             }
             final long symbolOffsetsAddr = columnData.get(rawIndex + SYMBOL_OFFSET_ADDR_OFFSET);
             if (symbolOffsetsAddr != 0) {
                 final long symbolOffsetsSize = columnData.get(rawIndex + SYMBOL_OFFSET_SIZE_OFFSET);
                 final long offsetsMemSize = SymbolMapWriter.keyToOffset((int) symbolOffsetsSize + 1);
-                ff.munmap(symbolOffsetsAddr - SymbolMapWriter.HEADER_SIZE, offsetsMemSize, MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER);
+                final long originalAddr = symbolOffsetsAddr - SymbolMapWriter.HEADER_SIZE;
+                ff.madvise(originalAddr, offsetsMemSize, Files.POSIX_MADV_DONTNEED);
+                ff.munmap(originalAddr, offsetsMemSize, MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER);
             }
         }
 
