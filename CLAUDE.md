@@ -18,7 +18,8 @@ time-series SQL extensions.
 
 ## Coding guidelines
 
-Java class members are grouped by kind and sorted alphabetically. Respect this sorting, and don't insert
+Java class members are grouped by kind and sorted alphabetically. When adding new methods or fields,
+insert them in the correct alphabetical position among existing members of the same kind. Don't insert
 comments as "section headings" because methods won't stay together after auto-sorting.
 
 Use modern Java features:
