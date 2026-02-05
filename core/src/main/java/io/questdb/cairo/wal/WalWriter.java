@@ -2026,7 +2026,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             for (int i = 0, n = columns.size(); i < n; i++) {
                 MemoryMA column = columns.getQuick(i);
                 if (column != null) {
-                    column.sync(async);
+                    if (async && ringManager != null && column instanceof MemoryPURImpl) {
+                        ((MemoryPURImpl) column).syncAsyncNoSnapshot();
+                    } else {
+                        column.sync(async);
+                    }
                 }
             }
             events.sync();
@@ -2034,6 +2038,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             // so WAL readers see fully materialized files before seqTxn is published.
             if (async && ringManager != null) {
                 ringManager.waitForAll();
+                // Restore WRITING state on current pages for io_uring columns.
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    MemoryMA column = columns.getQuick(i);
+                    if (column instanceof MemoryPURImpl) {
+                        ((MemoryPURImpl) column).resumeWriteAfterSync();
+                    }
+                }
             }
         } else if (ringManager != null) {
             // io_uring pwrite columns need an explicit flush even in NOSYNC mode.
@@ -2042,10 +2053,20 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             for (int i = 0, n = columns.size(); i < n; i++) {
                 MemoryMA column = columns.getQuick(i);
                 if (column != null) {
-                    column.sync(true);
+                    if (column instanceof MemoryPURImpl) {
+                        ((MemoryPURImpl) column).syncAsyncNoSnapshot();
+                    } else {
+                        column.sync(true);
+                    }
                 }
             }
             ringManager.waitForAll();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                MemoryMA column = columns.getQuick(i);
+                if (column instanceof MemoryPURImpl) {
+                    ((MemoryPURImpl) column).resumeWriteAfterSync();
+                }
+            }
         }
     }
 

@@ -40,7 +40,21 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.TestOnly;
 
-// paged io_uring-backed appendable readable
+/**
+ * Paged io_uring-backed appendable memory for WAL column files.
+ *
+ * Data is written into malloc-backed pages and flushed to disk via io_uring pwrite.
+ * Pages transition through WRITING -> SUBMITTED -> CONFIRMED. In ASYNC commit mode,
+ * {@link #sync(boolean)} may snapshot the dirty range into a temporary buffer so the
+ * writer can continue appending while the pwrite is in flight.
+ *
+ * Callers that already enforce a barrier (e.g., {@code ringManager.waitForAll()})
+ * may use {@link #syncAsyncNoSnapshot()} to avoid the snapshot copy, and then call
+ * {@link #resumeWriteAfterSync()} to restore the WRITING state of the current page.
+ *
+ * Not thread-safe; intended for a single WAL writer thread with CQE callbacks
+ * delivered by {@link WalWriterRingManager}.
+ */
 public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWriterRingColumn {
 
     static final int CONFIRMED = 2;
@@ -323,6 +337,58 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         }
     }
 
+    /**
+     * Submit the current dirty range using the live page buffer (no snapshot copy).
+     *
+     * Lifecycle contract:
+     * - Caller must ensure no further writes happen until a ring barrier completes
+     *   (typically {@code ringManager.waitForAll()}).
+     * - After the barrier, caller must invoke {@link #resumeWriteAfterSync()} before
+     *   any subsequent appends or commits, otherwise incremental flushes will be skipped.
+     */
+    public void syncAsyncNoSnapshot() {
+        checkDistressed();
+        if (snapshotInFlight) {
+            // Should not happen in no-snapshot mode; drain to be safe.
+            ringManager.waitForAll();
+            if (snapshotInFlight) {
+                distressed = true;
+                throw CairoException.critical(0)
+                        .put("snapshot still in flight after wait [fd=").put(fd)
+                        .put(", columnSlot=").put(columnSlot)
+                        .put(']');
+            }
+        }
+        submitCurrentPageDirtyRange();
+    }
+
+    /**
+     * Restore the current page to WRITING after a ring barrier completes.
+     *
+     * Must be called after {@code ringManager.waitForAll()} when the last sync used
+     * {@link #syncAsyncNoSnapshot()}.
+     */
+    public void resumeWriteAfterSync() {
+        long appendOffset = getAppendOffset();
+        if (appendOffset <= 0) {
+            return;
+        }
+        int currentPage = pageIndex(appendOffset - 1);
+        if (currentPage < pageStates.size()) {
+            int state = pageStates.getQuick(currentPage);
+            if (state == CONFIRMED) {
+                setPageState(currentPage, WRITING);
+            } else if (state == SUBMITTED) {
+                // Unexpected after waitForAll; keep state to avoid overlapping writes.
+                LOG.info().$("page still submitted after wait [fd=").$(fd)
+                        .$(", columnSlot=").$(columnSlot)
+                        .$(", page=").$(currentPage)
+                        .$(", appendOffset=").$(appendOffset)
+                        .I$();
+            }
+        }
+    }
+
     @Override
     public void truncate() {
         if (fd == -1) {
@@ -556,9 +622,11 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
             ringManager.waitForAll();
             // onSnapshotCompleted will have cleared the in-flight flag.
             if (snapshotInFlight) {
-                // Defensive: if CQE was lost or column detached, ensure we don't leak.
-                LOG.info().$("snapshot still in flight after wait; forcing free [fd=").$(fd).$(", columnSlot=").$(columnSlot).$(']').$();
-                freeSnapshotBuffer();
+                distressed = true;
+                throw CairoException.critical(0)
+                        .put("snapshot still in flight after wait [fd=").put(fd)
+                        .put(", columnSlot=").put(columnSlot)
+                        .put(']');
             }
         }
 
@@ -641,6 +709,10 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         // continued appends reuse the existing buffer (with its synced data intact).
         int activePage = getAppendOffset() > 0 ? pageIndex(getAppendOffset() - 1) : -1;
         evictConfirmedPages(activePage);
+        if (activePage > -1) {
+            // Allow continued appends to the current page after a sync commit.
+            setPageState(activePage, WRITING);
+        }
     }
 
     private void submitCurrentPageDirtyRange() {
