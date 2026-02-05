@@ -305,6 +305,9 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         long fileLen = ff.length(fd);
         this.allocatedFileSize = fileLen > 0 ? fileLen : 0;
         this.distressed = false;
+        if (columnSlot == -1) {
+            columnSlot = ringManager.registerColumn(this);
+        }
         setExtendSegmentSize(extendSegmentSize);
         jumpTo(offset);
     }
