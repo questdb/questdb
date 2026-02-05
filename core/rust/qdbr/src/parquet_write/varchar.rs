@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::mem;
 
 use super::util::ExactSizedIter;
@@ -7,6 +8,7 @@ use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
     build_plain_page, encode_primitive_def_levels, BinaryMaxMinStats,
 };
+use parquet2::bloom_filter::hash_byte;
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
@@ -55,6 +57,7 @@ pub fn varchar_to_page(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     assert!(
         mem::size_of::<AuxEntryInlined>() == 16 && mem::size_of::<AuxEntrySplit>() == 16,
@@ -100,10 +103,21 @@ pub fn varchar_to_page(
 
     match encoding {
         Encoding::Plain => {
-            encode_plain(&utf8_slices, &mut buffer, &mut stats);
+            encode_plain(
+                &utf8_slices,
+                &mut buffer,
+                &mut stats,
+                bloom_hashes.as_deref_mut(),
+            );
         }
         Encoding::DeltaLengthByteArray => {
-            encode_delta(&utf8_slices, null_count, &mut buffer, &mut stats);
+            encode_delta(
+                &utf8_slices,
+                null_count,
+                &mut buffer,
+                &mut stats,
+                bloom_hashes,
+            );
         }
         _ => {
             return Err(fmt_err!(
@@ -136,12 +150,16 @@ fn encode_plain(
     utf8_slices: &[Option<&[u8]>],
     buffer: &mut Vec<u8>,
     stats: &mut BinaryMaxMinStats,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) {
     for utf8 in utf8_slices.iter().filter_map(|&option| option) {
         let len = (utf8.len() as u32).to_le_bytes();
         buffer.extend_from_slice(&len);
         buffer.extend_from_slice(utf8);
         stats.update(utf8);
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_byte(utf8));
+        }
     }
 }
 
@@ -150,6 +168,7 @@ fn encode_delta(
     null_count: usize,
     buffer: &mut Vec<u8>,
     stats: &mut BinaryMaxMinStats,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) {
     let lengths = utf8_slices
         .iter()
@@ -160,6 +179,9 @@ fn encode_delta(
     for utf8 in utf8_slices.iter().filter_map(|&option| option) {
         buffer.extend_from_slice(utf8);
         stats.update(utf8);
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_byte(utf8));
+        }
     }
 }
 

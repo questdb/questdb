@@ -76,6 +76,29 @@ public class PartitionDecoder implements QuietCloseable {
 
     public static native void destroyDecodeContext(long decodeContextPtr);
 
+    /**
+     * Check if a row group can be skipped based on bloom filter conditions.
+     * <p>
+     * Filter list format: 2 longs per filter
+     * - Long 0: encoded(column_index, count) - lower 32 bits: column_index, upper 32 bits: count
+     * - Long 1: values_ptr
+     *
+     * @param rowGroupIndex the row group index to check
+     * @param filters       filter descriptors: [encoded(col_idx, count), ptr] per filter
+     * @return true if the row group can be safely skipped
+     */
+    public boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters) {
+        assert ptr != 0;
+        return canSkipRowGroup(
+                ptr,
+                rowGroupIndex,
+                fileAddr,
+                fileSize,
+                filters.getAddress(),
+                (int) (filters.size() / 2)  // 2 longs per filter
+        );
+    }
+
     @Override
     public void close() {
         destroy();
@@ -269,6 +292,15 @@ public class PartitionDecoder implements QuietCloseable {
         );
     }
 
+    private static native boolean canSkipRowGroup(
+            long decoderPtr,
+            int rowGroupIndex,
+            long filePtr,
+            long fileSize,
+            long filtersPtr,
+            int filterCount
+    ) throws CairoException;
+
     private static native long columnCountOffset();
 
     private static native long columnIdsOffset();
@@ -423,7 +455,7 @@ public class PartitionDecoder implements QuietCloseable {
         public int getColumnIndex(CharSequence name) {
             assert ptr != 0;
             for (int i = 0, n = columnNames.size(); i < n; i++) {
-                if (Chars.equals(columnNames.getQuick(i), name)) {
+                if (Chars.equalsIgnoreCase(columnNames.getQuick(i), name)) {
                     return i;
                 }
             }

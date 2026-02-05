@@ -32,6 +32,7 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
+import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
@@ -268,6 +269,10 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
+    default boolean mayHasParquetFormatPartition(SqlExecutionContext executionContext) {
+        return false;
+    }
+
     /**
      * Returns a new time frame cursor instance or null if time frames aren't supported by the factory.
      * The returned instance can be used by a worker thread, i.e. the underlying interaction with
@@ -301,6 +306,9 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     boolean recordCursorSupportsRandomAccess();
 
     default void revertFromSampleByIndexPageFrameCursorFactory() {
+    }
+
+    default void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
     }
 
     /**

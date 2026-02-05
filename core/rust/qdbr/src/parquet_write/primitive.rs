@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fmt::Debug;
 
 use crate::parquet::error::{fmt_err, ParquetResult};
@@ -6,6 +7,7 @@ use crate::parquet_write::util::{
     build_plain_page, encode_primitive_def_levels, ExactSizedIter, MaxMin,
 };
 use crate::parquet_write::Nullable;
+use parquet2::bloom_filter::hash_native;
 use parquet2::encoding::delta_bitpacked::encode;
 use parquet2::encoding::Encoding;
 use parquet2::page::{DataPage, Page};
@@ -19,6 +21,7 @@ pub fn float_slice_to_page_plain<T, P>(
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
+    bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page>
 where
     P: NativeType,
@@ -31,6 +34,7 @@ where
         primitive_type,
         Encoding::Plain,
         encode_plain_nullable,
+        bloom_hashes,
     )
     .map(Page::Data)
 }
@@ -41,6 +45,7 @@ pub fn int_slice_to_page_nullable<T, P>(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
+    bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page>
 where
     P: NativeType + num_traits::AsPrimitive<i64>,
@@ -54,6 +59,7 @@ where
             primitive_type,
             encoding,
             encode_plain_nullable,
+            bloom_hashes,
         ),
         Encoding::DeltaBinaryPacked => slice_to_page_nullable(
             slice,
@@ -62,6 +68,7 @@ where
             primitive_type,
             encoding,
             encode_delta_nullable,
+            bloom_hashes,
         ),
         other => {
             return Err(fmt_err!(
@@ -79,6 +86,7 @@ pub fn int_slice_to_page_notnull<T, P>(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
+    bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page>
 where
     P: NativeType + num_traits::AsPrimitive<i64>,
@@ -92,6 +100,7 @@ where
             primitive_type,
             encoding,
             encode_plain_notnull,
+            bloom_hashes,
         ),
         Encoding::DeltaBinaryPacked => slice_to_page_notnull(
             slice,
@@ -100,6 +109,7 @@ where
             primitive_type,
             encoding,
             encode_delta_notnull,
+            bloom_hashes,
         ),
         other => {
             return Err(fmt_err!(
@@ -118,24 +128,46 @@ fn slice_to_page_notnull<T, P, F: Fn(&[T], usize) -> Vec<u8>>(
     primitive_type: PrimitiveType,
     encoding: Encoding,
     encode_fn: F,
+    bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<DataPage>
 where
     P: NativeType,
     T: Default + num_traits::AsPrimitive<P> + Debug,
 {
     assert!(primitive_type.field_info.repetition == Repetition::Required);
-    let statistics = if options.write_statistics {
-        let mut statistics = MaxMin::new();
-        for value in slice {
-            statistics.update(value.as_());
+
+    let statistics = match (options.write_statistics, bloom_hashes) {
+        (true, Some(h)) => {
+            let mut statistics = MaxMin::new();
+            for value in slice {
+                let v: P = value.as_();
+                statistics.update(v);
+                h.insert(hash_native(v));
+            }
+            Some(build_statistics(
+                Some(column_top as i64),
+                statistics,
+                primitive_type.clone(),
+            ))
         }
-        Some(build_statistics(
-            Some(column_top as i64),
-            statistics,
-            primitive_type.clone(),
-        ))
-    } else {
-        None
+        (true, None) => {
+            let mut statistics = MaxMin::new();
+            for value in slice {
+                statistics.update(value.as_());
+            }
+            Some(build_statistics(
+                Some(column_top as i64),
+                statistics,
+                primitive_type.clone(),
+            ))
+        }
+        (false, Some(h)) => {
+            for value in slice {
+                h.insert(hash_native(value.as_()));
+            }
+            None
+        }
+        (false, None) => None,
     };
 
     build_plain_page(
@@ -158,6 +190,7 @@ fn slice_to_page_nullable<T, P, F>(
     primitive_type: PrimitiveType,
     encoding: Encoding,
     encode_fn: F,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<DataPage>
 where
     P: NativeType,
@@ -167,6 +200,7 @@ where
     assert!(primitive_type.field_info.repetition == Repetition::Optional);
     let num_rows = column_top + slice.len();
     let mut null_count = 0;
+    let write_stats = options.write_statistics;
     let mut statistics = MaxMin::new();
 
     let deflevels_iter = (0..num_rows).map(|i| {
@@ -179,7 +213,12 @@ where
                 false
             } else {
                 let v: P = value.as_();
-                statistics.update(v);
+                if write_stats {
+                    statistics.update(v);
+                }
+                if let Some(ref mut h) = bloom_hashes {
+                    h.insert(hash_native(v));
+                }
                 true
             }
         }

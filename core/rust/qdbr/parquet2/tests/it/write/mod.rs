@@ -59,6 +59,7 @@ fn test_column(column: &str, compression: CompressionOptions) -> Result<()> {
     let options = WriteOptions {
         write_statistics: true,
         version: Version::V1,
+        bloom_filter_fpp: 0.01,
     };
 
     // prepare schema
@@ -93,7 +94,7 @@ fn test_column(column: &str, compression: CompressionOptions) -> Result<()> {
     let writer = Cursor::new(vec![]);
     let mut writer = FileWriter::new(writer, schema, options, None);
 
-    writer.write(DynIter::new(columns))?;
+    writer.write(DynIter::new(columns), &[])?;
     writer.end(None)?;
 
     let data = writer.into_inner().into_inner();
@@ -192,6 +193,7 @@ fn basic() -> Result<()> {
     let options = WriteOptions {
         write_statistics: false,
         version: Version::V1,
+        bloom_filter_fpp: 0.01,
     };
 
     let schema = SchemaDescriptor::new(
@@ -216,7 +218,7 @@ fn basic() -> Result<()> {
     let writer = Cursor::new(vec![]);
     let mut writer = FileWriter::new(writer, schema, options, None);
 
-    writer.write(DynIter::new(columns))?;
+    writer.write(DynIter::new(columns), &[])?;
     writer.end(None)?;
 
     let data = writer.into_inner().into_inner();
@@ -241,6 +243,7 @@ async fn test_column_async(column: &str, compression: CompressionOptions) -> Res
     let options = WriteOptions {
         write_statistics: true,
         version: Version::V1,
+        bloom_filter_fpp: 0.01,
     };
 
     // prepare schema
