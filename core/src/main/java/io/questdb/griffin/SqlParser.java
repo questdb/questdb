@@ -2626,40 +2626,31 @@ public class SqlParser {
             // WINDOW clause pattern: WINDOW name AS (...)
             // WINDOW JOIN pattern: WINDOW JOIN table ON ... or WINDOW table ON ...
             if (isWindowKeyword(tok)) {
-                CharSequence nextTok = SqlUtil.fetchNext(lexer);
-                if (nextTok != null && isNotJoinKeyword(nextTok)) {
-                    // Could be WINDOW clause or WINDOW JOIN without explicit JOIN keyword
-                    // Save position info for the name token
-                    int nameLastPos = lexer.lastTokenPosition();
-                    int namePos = lexer.getPosition();
-                    CharSequence nameTok = Chars.toString(nextTok);
+                // Save lexer state before lookahead
+                int windowLastPos = lexer.lastTokenPosition();
+                int windowEndPos = lexer.getPosition();
 
-                    // Look for AS keyword after the identifier
+                // Lookahead to check for WINDOW clause pattern (name AS)
+                CharSequence nextTok = SqlUtil.fetchNext(lexer);
+                boolean isWindowClause = false;
+                if (nextTok != null && isNotJoinKeyword(nextTok)) {
                     CharSequence afterName = SqlUtil.fetchNext(lexer);
                     if (afterName != null && isAsKeyword(afterName)) {
-                        // This is a WINDOW clause (WINDOW name AS ...), not a join
-                        // Save position info for AS token
-                        int asLastPos = lexer.lastTokenPosition();
-                        int asPos = lexer.getPosition();
-                        // Put back tokens: name first (will be read second), then AS (will be read first)
-                        // Because: push adds to head, pollLast reads from tail
-                        lexer.unparse(nameTok, nameLastPos, namePos);
-                        lexer.unparse(Chars.toString(afterName), asLastPos, asPos);
-                        // tok stays as WINDOW, break out of join loop
-                        break;
+                        isWindowClause = true;
                     }
-                    // Not a WINDOW clause, restore tokens and continue with join parsing
-                    if (afterName != null) {
-                        int asLastPos = lexer.lastTokenPosition();
-                        int asPos = lexer.getPosition();
-                        lexer.unparse(Chars.toString(afterName), asLastPos, asPos);
-                    }
-                    lexer.unparse(nameTok, nameLastPos, namePos);
-                } else if (nextTok != null) {
-                    int tokLastPos = lexer.lastTokenPosition();
-                    int tokPos = lexer.getPosition();
-                    lexer.unparse(Chars.toString(nextTok), tokLastPos, tokPos);
                 }
+
+                // Restore lexer to start of "window" token so it can be re-read
+                lexer.backTo(windowLastPos, null);
+
+                if (isWindowClause) {
+                    // Break out of join loop - WINDOW clause will be parsed after the loop
+                    // Re-read "window" so tok is valid for WINDOW clause parsing
+                    tok = optTok(lexer);
+                    break;
+                }
+                // WINDOW JOIN - re-read "window" so tok is valid for parseJoin
+                tok = optTok(lexer);
             }
             if (hasWindowJoin && joinType != QueryModel.JOIN_WINDOW) {
                 throw SqlException.$((lexer.lastTokenPosition()), "no other join types allowed after window join");
@@ -2892,8 +2883,8 @@ public class SqlParser {
                 CharSequence windowName = Chars.toString(tok);
                 int windowNamePos = lexer.lastTokenPosition();
 
-                // Check for duplicate window name
-                if (model.getNamedWindows().keyIndex(windowName) < 0) {
+                // Check for duplicate window name in the outer (master) model
+                if (masterModel.getNamedWindows().keyIndex(windowName) < 0) {
                     throw SqlException.$(windowNamePos, "duplicate window name");
                 }
 
@@ -2914,8 +2905,9 @@ public class SqlParser {
                 windowSpec.clear();
                 expressionParser.parseWindowSpec(lexer, windowSpec, sqlParserCallback, model.getDecls());
 
-                // Store in model
-                model.getNamedWindows().put(windowName, windowSpec);
+                // Store named window in the outer (master) model where the SELECT columns are defined,
+                // not the FROM model. The window functions in SELECT reference these named windows.
+                masterModel.getNamedWindows().put(windowName, windowSpec);
 
                 tok = optTok(lexer);
             } while (tok != null && Chars.equals(tok, ','));
