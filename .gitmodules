@@ -16,4 +16,4 @@
 	shallow = true
 [submodule "java-questdb-client"]
 	path = java-questdb-client
-	url = git@github.com:questdb/java-questdb-client.git
+	url = https://github.com/questdb/java-questdb-client.git
