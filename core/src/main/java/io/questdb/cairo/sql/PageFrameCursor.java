@@ -144,6 +144,25 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     @Nullable
     PageFrame next(long skipTarget);
 
+    default void releaseOpenPartitions() {
+        // no-op by default
+    }
+
+    /**
+     * Enables or disables streaming mode for the cursor.
+     * When streaming mode is enabled, underlying resources (e.g., partitions) are opened
+     * with hints to release page cache after reading. This is useful for large sequential
+     * scans like Parquet export to avoid page cache exhaustion under memory pressure.
+     * <p>
+     * Default implementation is a no-op. Subclasses backed by TableReader should override
+     * this method to delegate to the TableReader's streaming mode setting.
+     *
+     * @param enabled true to enable streaming mode, false to disable
+     */
+    default void setStreamingMode(boolean enabled) {
+        // no-op by default
+    }
+
     /**
      * @return number of rows in all page frames
      */
