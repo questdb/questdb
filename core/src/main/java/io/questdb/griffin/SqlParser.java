@@ -2628,7 +2628,6 @@ public class SqlParser {
             if (isWindowKeyword(tok)) {
                 // Save lexer state before lookahead
                 int windowLastPos = lexer.lastTokenPosition();
-                int windowEndPos = lexer.getPosition();
 
                 // Lookahead to check for WINDOW clause pattern (name AS)
                 CharSequence nextTok = SqlUtil.fetchNext(lexer);
