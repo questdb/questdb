@@ -914,22 +914,14 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     public void testSimpleWhere() throws Exception {
         assertMemoryLeak(() -> {
                     createX("YEAR", 3 * 72000000000L);
+                    assertPartitionResult("count\n145\n", "2018");
+                    assertPartitionResult("count\n147\n", "2020");
 
-                    assertPartitionResult("count\n" +
-                                    "145\n",
-                            "2018");
-
-                    assertPartitionResult("count\n" +
-                            "147\n", "2020");
-
-                    execute("alter table x drop partition where timestamp  < to_timestamp('2020', 'yyyy')) ");
-
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
+                    execute("alter table x drop partition where timestamp  < to_timestamp('2020', 'yyyy')");
+                    String expectedAfterDrop = "count\n0\n";
 
                     assertPartitionResult(expectedAfterDrop, "2018");
-                    assertPartitionResult("count\n" +
-                            "147\n", "2020");
+                    assertPartitionResult("count\n147\n", "2020");
                 }
         );
     }
