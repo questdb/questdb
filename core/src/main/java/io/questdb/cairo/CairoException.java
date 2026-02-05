@@ -390,7 +390,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     // N.B.: Change the API with care! This method is called from native code via JNI.
-    // See `struct CairoException` in the `qdbr` Rust crate.
+    // See `struct CairoException` in the `qdb-core` Rust crate.
     @SuppressWarnings("unused")
     private static CairoException paramInstance(
             int errno, // pass `NON_CRITICAL` (-1) to create a non-critical exception

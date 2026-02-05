@@ -38,6 +38,7 @@ exclude:
   - name: unused
     paths:
       - benchmarks
+      - core/src/main/java/io/questdb/cairo/TickCalendarService.java
   # Exclude noisy style/migration inspections globally
   - name: EmptyMethod
   - name: JavadocBlankLines
@@ -64,13 +65,20 @@ exclude:
   - name: SameParameterValue
     paths:
       - core/src/test
+      - compat/src/test
   - name: SameReturnValue
     paths:
       - core/src/test
+      - core/src/main/java/io/questdb/cairo/TickCalendarService.java
+      - core/src/main/java/io/questdb/cairo/TickCalendarServiceFactory.java
+      - core/src/main/java/io/questdb/FactoryProvider.java
   - name: BooleanMethodIsAlwaysInverted
   - name: ThrowablePrintStackTrace
     paths:
       - core/src/test
   - name: ExtractMethodRecommender
   - name: RedundantMethodOverride
+  - name: AutoCloseableResource
+    paths:
+      - core/src/test/java/io/questdb/test/cutlass/http/ConcurrentParquetExportTest.java
   - name: RedundantSuppression

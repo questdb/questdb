@@ -654,7 +654,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.parallel.work.stealing.threshold\tQDB_CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD\t16\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.work.stealing.spin.timeout\tQDB_CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT\t50000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.read.parquet.enabled\tQDB_CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.parquet.frame.cache.capacity\tQDB_CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY\t3\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parquet.frame.cache.capacity\tQDB_CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.rename.table.model.pool.capacity\tQDB_CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY\t16\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.compile.view.model.pool.capacity\tQDB_CAIRO_SQL_COMPILE_VIEW_MODEL_POOL_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.sampleby.page.size\tQDB_CAIRO_SQL_SAMPLEBY_PAGE_SIZE\t0\tdefault\tfalse\tfalse\n" +
@@ -995,12 +995,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "log.sql.query.progress.exe\tQDB_LOG_SQL_QUERY_PROGRESS_EXE\ttrue\tdefault\tfalse\tfalse\n" +
                                     "log.level.verbose\tQDB_LOG_LEVEL_VERBOSE\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.statistics.enabled\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
-                                    "cairo.partition.encoder.parquet.raw.array.encoding.enabled\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.encoder.parquet.raw.array.encoding.enabled\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.version\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_VERSION\t1\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.row.group.size\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.data.page.size\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
-                                    "cairo.partition.encoder.parquet.compression.codec\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC\tZSTD\tdefault\tfalse\tfalse\n" +
-                                    "cairo.partition.encoder.parquet.compression.level\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL\t9\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.encoder.parquet.compression.codec\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC\tLZ4_RAW\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.encoder.parquet.compression.level\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL\t0\tdefault\tfalse\tfalse\n" +
                                     "http.min.request.header.buffer.size\tQDB_HTTP_MIN_REQUEST_HEADER_BUFFER_SIZE\t4096\tdefault\tfalse\tfalse\n" +
                                     "http.min.allow.deflate.before.send\tQDB_HTTP_MIN_ALLOW_DEFLATE_BEFORE_SEND\tfalse\tdefault\tfalse\tfalse\n" +
                                     "http.min.multipart.header.buffer.size\tQDB_HTTP_MIN_MULTIPART_HEADER_BUFFER_SIZE\t512\tdefault\tfalse\tfalse\n" +
@@ -1050,8 +1050,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.parquet.export.version\tQDB_CAIRO_PARQUET_EXPORT_VERSION\t1\tdefault\tfalse\tfalse\n" +
                                     "cairo.parquet.export.row.group.size\tQDB_CAIRO_PARQUET_EXPORT_ROW_GROUP_SIZE\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.parquet.export.data.page.size\tQDB_CAIRO_PARQUET_EXPORT_DATA_PAGE_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
-                                    "cairo.parquet.export.compression.codec\tQDB_CAIRO_PARQUET_EXPORT_COMPRESSION_CODEC\tZSTD\tdefault\tfalse\tfalse\n" +
-                                    "cairo.parquet.export.compression.level\tQDB_CAIRO_PARQUET_EXPORT_COMPRESSION_LEVEL\t9\tdefault\tfalse\tfalse\n" +
+                                    "cairo.parquet.export.compression.codec\tQDB_CAIRO_PARQUET_EXPORT_COMPRESSION_CODEC\tLZ4_RAW\tdefault\tfalse\tfalse\n" +
+                                    "cairo.parquet.export.compression.level\tQDB_CAIRO_PARQUET_EXPORT_COMPRESSION_LEVEL\t0\tdefault\tfalse\tfalse\n" +
                                     "cairo.parquet.export.copy.report.frequency.lines\tQDB_CAIRO_PARQUET_EXPORT_COPY_REPORT_FREQUENCY_LINES\t500000\tdefault\tfalse\ttrue\n" +
                                     "cairo.resource.pool.tracing.enabled\tQDB_CAIRO_RESOURCE_POOL_TRACING_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.rmdir.max.depth\tQDB_CAIRO_RMDIR_MAX_DEPTH\t5\tdefault\tfalse\tfalse\n" +
@@ -1100,6 +1100,92 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 try (TableMetadata meta = serverMain.getEngine().getTableMetadata(tableToken)) {
                     int ttl = meta.getTtlHoursOrMonths();
                     Assert.assertEquals(4 * 7 * 24, ttl);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testShowParametersSecretFromFileViaEnvVar() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a temporary file containing the secret password
+            final String secretsDir = root + Files.SEPARATOR + "secrets";
+            TestUtils.createTestPath(secretsDir);
+            final String secretFilePath = secretsDir + Files.SEPARATOR + "pg_password.txt";
+
+            try (java.io.PrintWriter writer = new java.io.PrintWriter(secretFilePath, CHARSET)) {
+                writer.print("  my_secret_password_from_file  "); // with whitespace to test trimming
+            }
+
+            // Start server with QDB_PG_PASSWORD_FILE environment variable pointing to the secret file
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.PG_PASSWORD.getEnvVarName() + "_FILE", secretFilePath
+            )) {
+                serverMain.start();
+
+                // Verify that the actual password value was read correctly (trimmed)
+                Assert.assertEquals(
+                        "my_secret_password_from_file",
+                        serverMain.getConfiguration().getPGWireConfiguration().getDefaultPassword()
+                );
+
+                // Verify that pg.password has value_source = 'file' in show parameters
+                serverMain.assertSql(
+                        "(show parameters) where property_path = 'pg.password'",
+                        """
+                                property_path\tenv_var_name\tvalue\tvalue_source\tsensitive\treloadable
+                                pg.password\tQDB_PG_PASSWORD\t****\tfile\ttrue\ttrue
+                                """
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testShowParametersSecretFromFileViaProperty() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a temporary file containing the secret password
+            final String secretsDir = root + Files.SEPARATOR + "secrets";
+            TestUtils.createTestPath(secretsDir);
+            final String secretFilePath = secretsDir + Files.SEPARATOR + "pg_password.txt";
+
+            try (java.io.PrintWriter writer = new java.io.PrintWriter(secretFilePath, CHARSET)) {
+                writer.print("my_secret_password_from_property_file");
+            }
+
+            // Create configuration with pg.password.file property
+            createDummyConfiguration(
+                    "pg.password.file=" + secretFilePath.replace("\\", "\\\\") // escape backslashes for properties file
+            );
+
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                serverMain.start();
+
+                // Verify that the actual password value was read correctly
+                Assert.assertEquals(
+                        "my_secret_password_from_property_file",
+                        serverMain.getConfiguration().getPGWireConfiguration().getDefaultPassword()
+                );
+
+                try (
+                        final SqlExecutionContext executionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 0);
+                        SqlCompiler compiler = serverMain.getEngine().getSqlCompiler()
+                ) {
+                    final StringSink actualSink = new StringSink();
+                    printSql(
+                            compiler,
+                            executionContext,
+                            "(show parameters) where property_path = 'pg.password'",
+                            actualSink
+                    );
+                    // Verify that pg.password has value_source = 'file' in show parameters
+                    TestUtils.assertEquals(
+                            """
+                                    property_path\tenv_var_name\tvalue\tvalue_source\tsensitive\treloadable
+                                    pg.password\tQDB_PG_PASSWORD\t****\tfile\ttrue\ttrue
+                                    """,
+                            actualSink
+                    );
                 }
             }
         });

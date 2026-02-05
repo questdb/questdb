@@ -13743,6 +13743,49 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
     }
 
+    @Test
+    public void testWithWindowFunctionRankAndOrderByAlias() throws SqlException {
+        assertQuery(
+                "select-virtual symbol, price, count, 100 * rank rank1 from (" +
+                        "select-window [symbol, price, count, rank() rank over (partition by symbol order by price)] " +
+                        "symbol, price, count, rank() rank over (partition by symbol order by price) from (" +
+                        "select-group-by [symbol, price, count() count] symbol, price, count() count from (" +
+                        "select [symbol, price] from trades where symbol = 'EURUSD')) d) d order by rank1",
+                """
+                        with d as (select symbol, price, count() from trades)
+                        select *
+                              , 100 * (rank() over(partition by symbol order by price)) as rank1
+                        from d
+                        where symbol = 'EURUSD'
+                        order by rank1""",
+                modelOf("trades")
+                        .col("symbol", ColumnType.SYMBOL)
+                        .col("price", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
+    public void testWithWindowFunctionRankAndOrderByPosition() throws SqlException {
+        // order by 4 should resolve to rank1 (the 4th column in the select list)
+        assertQuery(
+                "select-virtual symbol, price, count, 100 * rank rank1 from (" +
+                        "select-window [symbol, price, count, rank() rank over (partition by symbol order by price)] " +
+                        "symbol, price, count, rank() rank over (partition by symbol order by price) from (" +
+                        "select-group-by [symbol, price, count() count] symbol, price, count() count from (" +
+                        "select [symbol, price] from trades where symbol = 'EURUSD')) d) d order by rank1",
+                """
+                        with d as (select symbol, price, count() from trades)
+                        select *
+                              , 100 * (rank() over(partition by symbol order by price)) as rank1
+                        from d
+                        where symbol = 'EURUSD'
+                        order by 4""",
+                modelOf("trades")
+                        .col("symbol", ColumnType.SYMBOL)
+                        .col("price", ColumnType.DOUBLE)
+        );
+    }
+
     private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws SqlException {
         assertModel(expected, ddl, ExecutionModel.CREATE_TABLE, tableModels);
     }

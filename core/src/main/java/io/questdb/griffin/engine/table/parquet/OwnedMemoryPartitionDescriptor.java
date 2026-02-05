@@ -44,7 +44,7 @@ public class OwnedMemoryPartitionDescriptor extends PartitionDescriptor {
             Unsafe.free(columnAddr, columnSize, MemoryTag.NATIVE_O3);
             // for symbol columns, the secondary memory is provided by the symbol map
             // no need to free it here
-            if (!ColumnType.isSymbol(columnType)) {
+            if (!ColumnType.isSymbol(ColumnType.tagOf(columnType))) {
                 final long columnSecondaryAddr = columnData.get(rawIndex + COLUMN_SECONDARY_ADDR_OFFSET);
                 final long columnSecondarySize = columnData.get(rawIndex + COLUMN_SECONDARY_SIZE_OFFSET);
                 Unsafe.free(columnSecondaryAddr, columnSecondarySize, MemoryTag.NATIVE_O3);

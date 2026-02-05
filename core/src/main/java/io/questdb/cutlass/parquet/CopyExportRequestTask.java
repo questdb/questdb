@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
@@ -389,10 +390,23 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 CharSequence columnName = metadata.getColumnName(i);
-                int startSize = columnNames.size();
+                final int startSize = columnNames.size();
                 columnNames.put(columnName);
                 columnMetadata.add(columnNames.size() - startSize);
-                columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | metadata.getColumnType(i));
+                final int columnType = metadata.getColumnType(i);
+
+                if (ColumnType.isSymbol(columnType)) {
+                    assert pageFrameCursor != null;
+                    StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(i);
+                    assert symbolTable != null;
+                    int symbolColumnType = columnType;
+                    if (!symbolTable.containsNullValue()) {
+                        symbolColumnType |= 1 << 31;
+                    }
+                    columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | symbolColumnType);
+                } else {
+                    columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | columnType);
+                }
             }
             streamWriter = createStreamingParquetWriter(
                     Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_EXPORTER),

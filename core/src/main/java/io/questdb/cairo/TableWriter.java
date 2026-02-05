@@ -1466,9 +1466,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     if (columnRowCount > 0) {
                         if (ColumnType.isSymbol(columnType)) {
+                            final MapWriter symbolMapWriter = getSymbolMapWriter(columnIndex);
+                            int encodeColumnType = columnType;
+                            if (!symbolMapWriter.getNullFlag()) {
+                                encodeColumnType |= Integer.MIN_VALUE;
+                            }
+
                             partitionDescriptor.addColumn(
                                     columnName,
-                                    columnType,
+                                    encodeColumnType,
                                     columnId,
                                     columnTop
                             );
@@ -1492,7 +1498,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
                             }
 
-                            final int symbolCount = getSymbolMapWriter(columnIndex).getSymbolCount();
+                            final int symbolCount = symbolMapWriter.getSymbolCount();
                             final long offsetsMemSize = SymbolMapWriter.keyToOffset(symbolCount + 1);
                             final long symbolOffsetsAddr = mapRO(ff, path.$(), LOG, offsetsMemSize, memoryTag);
                             partitionDescriptor.setSymbolOffsetsAddr(symbolOffsetsAddr + HEADER_SIZE, symbolCount);
@@ -5358,7 +5364,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         if (metadata.getPartitionBy() == PartitionBy.NONE) {
-            LOG.error().$("TTL set on a non-partitioned table. Ignoring");
+            LOG.error().$("TTL set on a non-partitioned table. Ignoring").$();
             return;
         }
         if (getPartitionCount() < 2) {
