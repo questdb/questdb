@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.WalJobFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
@@ -44,6 +45,9 @@ public interface FactoryProvider extends QuietCloseable {
     @Override
     default void close() {
     }
+
+    @NotNull
+    TickCalendarServiceFactory getTickCalendarServiceFactory();
 
     @NotNull
     HttpAuthenticatorFactory getHttpAuthenticatorFactory();
