@@ -24,16 +24,16 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
-import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
@@ -84,67 +84,93 @@ public class TableConverter {
                                 .I$();
 
                         path.trimTo(rootLen).concat(dirNameSink);
-                        metaPath.trimTo(rootLen).concat(dirNameSink);
-                        try (final MemoryMARW metaMem = Vm.getCMARWInstance()) {
-                            openSmallFile(ff, metaPath, rootLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
-                            final String dirName = dirNameSink.toString();
-                            TableToken existingToken = tableNameRegistry.getTableTokenByDirName(dirName);
+                        metaPath.trimTo(rootLen).concat(dirNameSink).concat(META_FILE_NAME).$();
 
-                            if (metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED) == walEnabled && existingToken != null && existingToken.isWal() == walEnabled) {
-                                LOG.info().$("skipping conversion, table already has the expected type [dirName=").$(dirNameSink)
-                                        .$(", walEnabled=").$(walEnabled)
-                                        .I$();
+                        // Read current metadata using BlockFile format
+                        TableMetadataFileBlock.MetadataHolder holder = new TableMetadataFileBlock.MetadataHolder();
+                        try (BlockFileReader blockFileReader = new BlockFileReader(configuration)) {
+                            blockFileReader.of(metaPath.$());
+                            TableMetadataFileBlock.read(blockFileReader, holder, metaPath.$());
+                        }
+
+                        final String dirName = dirNameSink.toString();
+                        TableToken existingToken = tableNameRegistry.getTableTokenByDirName(dirName);
+
+                        if (holder.walEnabled == walEnabled && existingToken != null && existingToken.isWal() == walEnabled) {
+                            LOG.info().$("skipping conversion, table already has the expected type [dirName=").$(dirNameSink)
+                                    .$(", walEnabled=").$(walEnabled)
+                                    .I$();
+                        } else {
+                            final String tableName;
+                            try (final MemoryCMR mem = Vm.getCMRInstance()) {
+                                final String name = TableUtils.readTableName(path.of(configuration.getDbRoot()).concat(dirNameSink), rootLen, mem, ff);
+                                tableName = name != null ? name : dirName;
+                            }
+
+                            final int tableId = holder.tableId;
+                            boolean isProtected = tableFlagResolver.isProtected(tableName);
+                            boolean isSystem = tableFlagResolver.isSystem(tableName);
+                            boolean isPublic = tableFlagResolver.isPublic(tableName);
+                            boolean isView = isViewDefinitionFileExists(configuration, path, dirName);
+                            boolean isMatView = isMatViewDefinitionFileExists(configuration, path, dirName);
+                            final TableToken token = new TableToken(tableName, dirName, engine.getConfiguration().getDbLogName(), tableId, isView, isMatView, walEnabled, isSystem, isProtected, isPublic);
+
+                            if (txWriter == null) {
+                                txWriter = new TxWriter(ff, configuration);
+                            }
+                            txWriter.ofRW(path.trimTo(rootLen).concat(dirNameSink).concat(TXN_FILE_NAME).$());
+                            txWriter.resetLagValuesUnsafe();
+
+                            if (walEnabled) {
+                                // Converting to WAL - register with sequencer
+                                try (TableWriterMetadata metadata = new TableWriterMetadata(token)) {
+                                    metadata.reloadFromBlockFile(holder);
+                                    tableSequencerAPI.registerTable(tableId, metadata, token);
+                                }
+
+                                // Reset structure version
+                                holder.metadataVersion = 0;
+                                path.trimTo(rootLen).concat(dirNameSink);
+                                txWriter.resetStructureVersionUnsafe();
                             } else {
-                                final String tableName;
-                                try (final MemoryCMR mem = Vm.getCMRInstance()) {
-                                    final String name = TableUtils.readTableName(path.of(configuration.getDbRoot()).concat(dirNameSink), rootLen, mem, ff);
-                                    tableName = name != null ? name : dirName;
-                                }
-
-                                final int tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-                                boolean isProtected = tableFlagResolver.isProtected(tableName);
-                                boolean isSystem = tableFlagResolver.isSystem(tableName);
-                                boolean isPublic = tableFlagResolver.isPublic(tableName);
-                                boolean isView = isViewDefinitionFileExists(configuration, path, dirName);
-                                boolean isMatView = isMatViewDefinitionFileExists(configuration, path, dirName);
-                                final TableToken token = new TableToken(tableName, dirName, engine.getConfiguration().getDbLogName(), tableId, isView, isMatView, walEnabled, isSystem, isProtected, isPublic);
-
-                                if (txWriter == null) {
-                                    txWriter = new TxWriter(ff, configuration);
-                                }
-                                txWriter.ofRW(path.trimTo(rootLen).concat(dirNameSink).concat(TXN_FILE_NAME).$());
-                                txWriter.resetLagValuesUnsafe();
-
-                                if (walEnabled) {
-                                    try (TableWriterMetadata metadata = new TableWriterMetadata(token)) {
-                                        metadata.reload(metaPath, metaMem);
-                                        tableSequencerAPI.registerTable(tableId, metadata, token);
-                                    }
-
-                                    // Reset structure version in _meta and _txn files
-                                    metaMem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, 0);
-                                    path.trimTo(rootLen).concat(dirNameSink);
-                                    txWriter.resetStructureVersionUnsafe();
+                                // Converting from WAL to non-WAL
+                                if (!tableNameRegistry.isWalTableDropped(dirName) && tableSequencerAPI.prepareToConvertToNonWal(token)) {
+                                    removeWalPersistence(path, rootLen, ff, dirNameSink);
                                 } else {
-                                    if (!tableNameRegistry.isWalTableDropped(dirName) && tableSequencerAPI.prepareToConvertToNonWal(token)) {
-                                        removeWalPersistence(path, rootLen, ff, dirNameSink);
-                                    } else {
-                                        LOG.info().$("WAL table will not be converted to non-WAL, table is dropped [dirName=").$(dirNameSink).I$();
-                                        continue;
-                                    }
-                                }
-                                metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
-                                convertedTables.add(token);
-
-                                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                                    metadataRW.hydrateTable(token);
+                                    LOG.info().$("WAL table will not be converted to non-WAL, table is dropped [dirName=").$(dirNameSink).I$();
+                                    continue;
                                 }
                             }
 
-                            path.trimTo(rootLen).concat(dirNameSink).concat(CONVERT_FILE_NAME);
-                            if (!ff.removeQuiet(path.$())) {
-                                LOG.critical().$("could not remove _convert file [path=").$(path).I$();
+                            // Update walEnabled flag and write back using BlockFile
+                            holder.walEnabled = walEnabled;
+                            metaPath.trimTo(rootLen).concat(dirNameSink).concat(META_FILE_NAME).$();
+                            try (BlockFileWriter blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode())) {
+                                blockFileWriter.of(metaPath.$());
+                                TableMetadataFileBlock.write(
+                                        blockFileWriter,
+                                        ColumnType.VERSION,
+                                        holder.tableId,
+                                        holder.partitionBy,
+                                        holder.timestampIndex,
+                                        holder.metadataVersion,
+                                        holder.walEnabled,
+                                        holder.maxUncommittedRows,
+                                        holder.o3MaxLag,
+                                        holder.ttlHoursOrMonths,
+                                        holder.columns
+                                );
                             }
+                            convertedTables.add(token);
+
+                            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                                metadataRW.hydrateTable(token);
+                            }
+                        }
+
+                        path.trimTo(rootLen).concat(dirNameSink).concat(CONVERT_FILE_NAME);
+                        if (!ff.removeQuiet(path.$())) {
+                            LOG.critical().$("could not remove _convert file [path=").$(path).I$();
                         }
                     } catch (Exception e) {
                         LOG.error().$("table conversion failed [path=").$(path).$(", e=").$(e).I$();

@@ -1345,9 +1345,8 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void load() {
-        // TODO: Table conversion disabled during BlockFile migration - needs to be updated to use BlockFile format
-        // final ObjList<TableToken> convertedTables = TableConverter.convertTables(this, tableSequencerAPI, tableFlagResolver, tableNameRegistry);
-        tableNameRegistry.reload(null);
+        final ObjList<TableToken> convertedTables = TableConverter.convertTables(this, tableSequencerAPI, tableFlagResolver, tableNameRegistry);
+        tableNameRegistry.reload(convertedTables);
         matViewStateStore = createMatViewStateStore();
         viewStateStore = new ViewStateStoreImpl(this);
     }

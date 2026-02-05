@@ -32,10 +32,13 @@ import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableMetadataFileBlock;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -1778,11 +1781,29 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 other.of(configuration.getDbRoot()).concat(tableToken).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
                 Assert.assertTrue(Files.rename(path.$(), other.$()) > -1);
 
-                // Change table id in the metadata file in the partition
+                // Change table id in the metadata file in the partition using BlockFile format
                 other.concat(META_FILE_NAME).$();
-                try (MemoryCMARW mem2 = Vm.getCMARWInstance()) {
-                    mem2.smallFile(configuration.getFilesFacade(), other.$(), MemoryTag.NATIVE_DEFAULT);
-                    mem2.putInt(META_OFFSET_TABLE_ID, tableToken.getTableId());
+                TableMetadataFileBlock.MetadataHolder holder = new TableMetadataFileBlock.MetadataHolder();
+                try (BlockFileReader reader = new BlockFileReader(configuration)) {
+                    reader.of(other.$());
+                    TableMetadataFileBlock.read(reader, holder, other.$());
+                }
+                holder.tableId = tableToken.getTableId();
+                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
+                    writer.of(other.$());
+                    TableMetadataFileBlock.write(
+                            writer,
+                            ColumnType.VERSION,
+                            holder.tableId,
+                            holder.partitionBy,
+                            holder.timestampIndex,
+                            holder.metadataVersion,
+                            holder.walEnabled,
+                            holder.maxUncommittedRows,
+                            holder.o3MaxLag,
+                            holder.ttlHoursOrMonths,
+                            holder.columns
+                    );
                 }
 
                 try (TableWriter writer = getWriter(tableName)) {

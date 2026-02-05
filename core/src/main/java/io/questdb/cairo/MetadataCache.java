@@ -202,16 +202,28 @@ public class MetadataCache implements QuietCloseable {
             table.setTtlHoursOrMonths(holder.ttlHoursOrMonths);
             table.setSoftLinkFlag(isSoftLink);
 
-            // populate columns from BlockFile metadata
+            // Populate columns from BlockFile metadata
+            // Columns with replacingIndex take the logical position of the column they replace
+            // Sort by effective slot (replacingIndex if set, otherwise writerIndex) to get logical order
+            ObjList<TableColumnMetadata> sortedColumns = new ObjList<>(holder.columns.size());
             for (int i = 0, n = holder.columns.size(); i < n; i++) {
                 TableColumnMetadata colMeta = holder.columns.getQuick(i);
-                int columnType = colMeta.getColumnType();
-
-                // negative type means column was deleted
-                if (columnType < 0) {
+                // Skip deleted columns (tombstones) - they're placeholders for replaced columns
+                if (colMeta.getColumnType() < 0) {
                     continue;
                 }
+                sortedColumns.add(colMeta);
+            }
+            // Sort by effective slot: replacingIndex if >= 0, otherwise writerIndex
+            sortedColumns.sort((a, b) -> {
+                int slotA = a.getReplacingIndex() >= 0 ? a.getReplacingIndex() : a.getWriterIndex();
+                int slotB = b.getReplacingIndex() >= 0 ? b.getReplacingIndex() : b.getWriterIndex();
+                return Integer.compare(slotA, slotB);
+            });
 
+            for (int i = 0, n = sortedColumns.size(); i < n; i++) {
+                TableColumnMetadata colMeta = sortedColumns.getQuick(i);
+                int columnType = colMeta.getColumnType();
                 String columnName = colMeta.getColumnName();
                 int writerIndex = colMeta.getWriterIndex();
 
@@ -221,7 +233,7 @@ public class MetadataCache implements QuietCloseable {
 
                 column.setName(columnName);
 
-                // Column positions already determined
+                // Position is determined by sorted order (effective slot order)
                 column.setPosition(table.getColumnCount());
                 column.setType(columnType);
                 column.setIndexedFlag(colMeta.isSymbolIndexFlag());

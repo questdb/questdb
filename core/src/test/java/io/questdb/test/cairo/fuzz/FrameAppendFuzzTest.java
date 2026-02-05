@@ -25,16 +25,18 @@
 package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableMetadataFileBlock;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.tools.TestUtils;
@@ -135,19 +137,37 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
         FilesFacade ff = configuration.getFilesFacade();
         engine.releaseInactive();
 
-        // Force overwrite partitioning to by YEAR
+        // Force overwrite partitioning to by YEAR using BlockFile format
         Path path = Path.getThreadLocal(configuration.getDbRoot()).concat(merged).concat(TableUtils.META_FILE_NAME);
-        long metaFd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
 
-        long addr = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
-        Unsafe.getUnsafe().putInt(addr, PartitionBy.YEAR);
-        ff.write(metaFd, addr, 4, TableUtils.META_OFFSET_PARTITION_BY);
+        // Read current metadata
+        TableMetadataFileBlock.MetadataHolder holder = new TableMetadataFileBlock.MetadataHolder();
+        try (BlockFileReader reader = new BlockFileReader(configuration)) {
+            reader.of(path.$());
+            TableMetadataFileBlock.read(reader, holder, path.$());
+        }
 
-        Unsafe.getUnsafe().putInt(addr, merged.getTableId());
-        ff.write(metaFd, addr, 4, TableUtils.META_OFFSET_TABLE_ID);
+        // Update partition type and table ID
+        holder.partitionBy = PartitionBy.YEAR;
+        holder.tableId = merged.getTableId();
 
-        Unsafe.free(addr, 4, MemoryTag.NATIVE_DEFAULT);
-        ff.close(metaFd);
+        // Write back using BlockFile format
+        try (BlockFileWriter writer = new BlockFileWriter(ff, configuration.getCommitMode())) {
+            writer.of(path.$());
+            TableMetadataFileBlock.write(
+                    writer,
+                    ColumnType.VERSION,
+                    holder.tableId,
+                    holder.partitionBy,
+                    holder.timestampIndex,
+                    holder.metadataVersion,
+                    holder.walEnabled,
+                    holder.maxUncommittedRows,
+                    holder.o3MaxLag,
+                    holder.ttlHoursOrMonths,
+                    holder.columns
+            );
+        }
 
         try (TableWriter writer = getWriter(merged)) {
             writer.squashAllPartitionsIntoOne();

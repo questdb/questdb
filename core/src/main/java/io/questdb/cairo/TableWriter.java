@@ -440,6 +440,38 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.partitionBy = metadata.getPartitionBy();
             this.txWriter.initPartitionBy(timestampType, metadata.getPartitionBy());
 
+            // Validate metadata version matches txWriter
+            // If metadata is ahead, it means a DDL operation wrote to BlockFile but txWriter wasn't committed
+            // We sync txWriter to match metadata so the table can be opened
+            long txMetadataVersion = txWriter.getMetadataVersion();
+            long fileMetadataVersion = metadata.getMetadataVersion();
+            if (fileMetadataVersion != txMetadataVersion) {
+                if (fileMetadataVersion == txMetadataVersion + 1) {
+                    // Metadata file is ahead by 1 - sync txWriter to match
+                    // Note: This may leave table in inconsistent state if DDL failed after metadata write
+                    LOG.info().$("syncing metadata version [table=").$(tableToken)
+                            .$(", txnVersion=").$(txMetadataVersion)
+                            .$(", fileVersion=").$(fileMetadataVersion)
+                            .I$();
+                    txWriter.bumpMetadataVersion(null);
+                } else if (fileMetadataVersion > txMetadataVersion) {
+                    // Multiple versions ahead - try to sync
+                    LOG.critical().$("metadata version significantly ahead, syncing [table=").$(tableToken)
+                            .$(", txnVersion=").$(txMetadataVersion)
+                            .$(", fileVersion=").$(fileMetadataVersion)
+                            .I$();
+                    while (txWriter.getMetadataVersion() < fileMetadataVersion) {
+                        txWriter.bumpMetadataVersion(null);
+                    }
+                } else {
+                    // Metadata version behind txWriter - this shouldn't happen
+                    throw CairoException.critical(0).put("metadata version behind txWriter [table=").put(tableToken)
+                            .put(", txnVersion=").put(txMetadataVersion)
+                            .put(", fileVersion=").put(fileMetadataVersion)
+                            .put(']');
+                }
+            }
+
             this.txnScoreboard = txnScoreboardPool.getTxnScoreboard(tableToken);
             path.trimTo(pathSize);
             this.columnVersionWriter = openColumnVersionFile(configuration, path, pathSize, partitionBy != PartitionBy.NONE);
@@ -9131,8 +9163,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void recoverFromSymbolMapWriterFailure(CharSequence columnName) {
         removeSymbolMapFilesQuiet(columnName, getTxn());
-        removeMetaFile();
-        recoverFromSwapRenameFailure();
+        // With BlockFile format, we don't delete meta file - the previous version is in the inactive region.
+        // The caller should mark as distressed and the next writer open will handle recovery.
     }
 
     private void recoverFromTodoWriteFailure() {
@@ -9142,8 +9174,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void recoverOpenColumnFailure() {
-        removeMetaFile();
-        recoverFromSwapRenameFailure();
+        // With BlockFile format, the previous metadata is still in the inactive region.
+        // We don't delete the meta file - just mark as distressed.
+        // The next writer open will handle any version mismatch.
         // Some writer in-memory state will be still dirty, and it's not easy to roll everything back
         // for all the failure points. It's safer to re-open the writer object after a column-add failure.
         distressed = true;
@@ -9654,9 +9687,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.concat(META_FILE_NAME).$();
             blockFileWriter.of(path.$());
 
-            // Collect column metadata into ObjList for TableMetadataFileBlock
-            ObjList<TableColumnMetadata> columns = new ObjList<>(metadata.getColumnCount());
-            for (int i = 0; i < metadata.getColumnCount(); i++) {
+            // Collect ALL column metadata (including deleted/tombstone columns) in slot order
+            // Deleted columns act as tombstones - they maintain position for columns that replace them
+            // The columnMetadata list is already in writerIndex/slot order
+            int totalColumns = metadata.getColumnCount();
+            ObjList<TableColumnMetadata> columns = new ObjList<>(totalColumns);
+            for (int i = 0; i < totalColumns; i++) {
                 columns.add(metadata.getColumnMetadata(i));
             }
 
