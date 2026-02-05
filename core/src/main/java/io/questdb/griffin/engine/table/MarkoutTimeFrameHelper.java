@@ -121,8 +121,14 @@ public class MarkoutTimeFrameHelper {
             return Long.MIN_VALUE;
         }
 
+        // Pre-compute master key hash once (avoids re-hashing on every iteration)
+        final MapKey masterKey = keyToRowIdMap.withKey();
+        masterKey.put(masterRecord, masterKeyCopier);
+        masterKey.commit();
+        final long masterHash = masterKey.hash();
+
         while (true) {
-            long currentRowId = Rows.toRowID(frameIndex, rowIndex);
+            final long currentRowId = Rows.toRowID(frameIndex, rowIndex);
 
             // Update backward watermark
             if (backwardWatermark == Long.MAX_VALUE || currentRowId < backwardWatermark) {
@@ -133,20 +139,26 @@ public class MarkoutTimeFrameHelper {
             timeFrameCursor.recordAtRowIndex(record, rowIndex);
 
             // Add key to map only if not already present (we want latest/highest rowId)
-            MapKey key = keyToRowIdMap.withKey();
-            key.put(record, slaveKeyCopier);
-            MapValue value = key.createValue();
+            final MapKey slaveKey = keyToRowIdMap.withKey();
+            slaveKey.put(record, slaveKeyCopier);
+            slaveKey.commit();
+            final long slaveHash = slaveKey.hash();
+            final MapValue value = slaveKey.createValue(slaveHash);
             if (value.isNew()) {
                 value.putLong(0, currentRowId);
             }
 
-            // Check if this matches the target key
-            MapKey targetKey = keyToRowIdMap.withKey();
-            targetKey.put(masterRecord, masterKeyCopier);
-            MapValue targetValue = targetKey.findValue();
-            if (targetValue != null) {
-                // Found the target key in the map
-                return targetValue.getLong(0);
+            // Fast path: only check for master key match when hashes match
+            // This eliminates N-1 redundant master key lookups
+            if (slaveHash == masterHash) {
+                // Hashes match - verify with actual map lookup (handles rare hash collisions)
+                final MapKey targetKey = keyToRowIdMap.withKey();
+                targetKey.put(masterRecord, masterKeyCopier);
+                final MapValue targetValue = targetKey.findValue();
+                if (targetValue != null) {
+                    // Found the target key in the map
+                    return targetValue.getLong(0);
+                }
             }
 
             // Move backward
@@ -205,7 +217,7 @@ public class MarkoutTimeFrameHelper {
             if (rowLo == Long.MIN_VALUE) {
                 // Navigate through frames to find one containing or before the target
                 while (timeFrameCursor.next()) {
-                    long frameEstimateHi = scaleTimestamp(timeFrame.getTimestampEstimateHi(), slaveTsScale);
+                    final long frameEstimateHi = scaleTimestamp(timeFrame.getTimestampEstimateHi(), slaveTsScale);
 
                     if (frameEstimateHi <= targetTimestamp) {
                         // Frame is entirely before target, record as candidate
@@ -224,8 +236,8 @@ public class MarkoutTimeFrameHelper {
                         }
 
                         // Scale slave frame timestamps to common unit
-                        long frameTsLo = scaleTimestamp(timeFrame.getTimestampLo(), slaveTsScale);
-                        long frameTsHi = scaleTimestamp(timeFrame.getTimestampHi() - 1, slaveTsScale);
+                        final long frameTsLo = scaleTimestamp(timeFrame.getTimestampLo(), slaveTsScale);
+                        final long frameTsHi = scaleTimestamp(timeFrame.getTimestampHi() - 1, slaveTsScale);
 
                         if (frameTsHi <= targetTimestamp) {
                             // Entire frame is <= target
@@ -294,8 +306,8 @@ public class MarkoutTimeFrameHelper {
             }
 
             // Need binary search
-            long searchStart = -scanResult - 1;
-            long searchResult = binarySearchAsOf(targetTimestamp, searchStart);
+            final long searchStart = -scanResult - 1;
+            final long searchResult = binarySearchAsOf(targetTimestamp, searchStart);
             if (searchResult != Long.MIN_VALUE) {
                 bookmarkCurrentFrame(searchResult);
                 return Rows.toRowID(timeFrame.getFrameIndex(), searchResult);

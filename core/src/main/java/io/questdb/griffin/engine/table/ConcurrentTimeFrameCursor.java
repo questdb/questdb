@@ -123,7 +123,8 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
     @Override
     public void jumpTo(int frameIndex) {
         if (frameIndex >= frameCount || frameIndex < 0) {
-            throw CairoException.nonCritical().put("frame index out of bounds. [frameIndex=]").put(frameIndex).put(", frameCount=").put(frameCount).put(']');
+            throw CairoException.nonCritical().put("frame index out of bounds. [frameIndex=]").put(frameIndex)
+                    .put(", frameCount=").put(frameCount).put(']');
         }
 
         int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
