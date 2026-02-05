@@ -52,37 +52,13 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConvertAllPartitions() throws Exception {
+    public void testConvertAllPartition() throws Exception {
         assertConvertAllPartitionsWithKeyword("partition");
     }
 
     @Test
-    public void testConvertAllPartitionsPlural() throws Exception {
+    public void testConvertAllPartitions() throws Exception {
         assertConvertAllPartitionsWithKeyword("partitions");
-    }
-
-    @Test
-    public void testConvertAllPartitionsPlural() throws Exception {
-        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-            final String tableName = "testConvertAllPartitionsPlural";
-            createTable(
-                    tableName,
-                    "insert into " + tableName + " values(1, '2024-06-10T00:00:00.000000Z')",
-                    "insert into " + tableName + " values(2, '2024-06-11T00:00:00.000000Z')",
-                    "insert into " + tableName + " values(3, '2024-06-12T00:00:00.000000Z')",
-                    "insert into " + tableName + " values(4, '2024-06-12T00:00:01.000000Z')",
-                    "insert into " + tableName + " values(5, '2024-06-15T00:00:00.000000Z')",
-                    "insert into " + tableName + " values(6, '2024-06-12T00:00:02.000000Z')"
-            );
-
-            // Use plural 'partitions' keyword instead of singular 'partition'
-            execute("alter table " + tableName + " convert partitions to parquet where timestamp > 0");
-
-            assertPartitionExists(tableName, "2024-06-10.8");
-            assertPartitionExists(tableName, "2024-06-11.6");
-            assertPartitionExists(tableName, "2024-06-12.7");
-            // last partition is not converted
-        });
     }
 
     @Test
@@ -147,25 +123,12 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testConvertListPartitions() throws Exception {
-        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-            final String tableName = "testConvertListPartitions";
-            createTable(
-                    tableName,
-                    "insert into " + tableName + " values(1, '2024-06-10T00:00:00.000000Z')",
-                    "insert into " + tableName + " values(2, '2024-06-11T00:00:00.000000Z')",
-                    "insert into " + tableName + " values(3, '2024-06-12T00:00:00.000000Z')",
-                    "insert into " + tableName + " values(4, '2024-06-12T00:00:01.000000Z')",
-                    "insert into " + tableName + " values(5, '2024-06-15T00:00:00.000000Z')",
-                    "insert into " + tableName + " values(6, '2024-06-12T00:00:02.000000Z')"
-            );
+        assertConvertListPartitionsWithKeyword("partition");
+    }
 
-            execute("alter table " + tableName + " convert partition to parquet list '2024-06-10', '2024-06-11', '2024-06-12'");
-
-            assertPartitionExists(tableName, "2024-06-10.6");
-            assertPartitionExists(tableName, "2024-06-11.7");
-            assertPartitionExists(tableName, "2024-06-12.8");
-            assertPartitionDoesNotExist(tableName, "2024-06-15.3");
-        });
+    @Test
+    public void testConvertListPartitionsPlural() throws Exception {
+        assertConvertListPartitionsWithKeyword("partitions");
     }
 
     @Test
@@ -566,6 +529,28 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             assertPartitionExists(tableName, "2024-06-11.6");
             assertPartitionExists(tableName, "2024-06-12.7");
             // last partition is not converted
+        });
+    }
+
+    private void assertConvertListPartitionsWithKeyword(String partitionKeyword) throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = "testConvertListPartitions_" + partitionKeyword;
+            createTable(
+                    tableName,
+                    "insert into " + tableName + " values(1, '2024-06-10T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(2, '2024-06-11T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(3, '2024-06-12T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(4, '2024-06-12T00:00:01.000000Z')",
+                    "insert into " + tableName + " values(5, '2024-06-15T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(6, '2024-06-12T00:00:02.000000Z')"
+            );
+
+            execute("alter table " + tableName + " convert " + partitionKeyword + " to parquet list '2024-06-10', '2024-06-11', '2024-06-12'");
+
+            assertPartitionExists(tableName, "2024-06-10.6");
+            assertPartitionExists(tableName, "2024-06-11.7");
+            assertPartitionExists(tableName, "2024-06-12.8");
+            assertPartitionDoesNotExist(tableName, "2024-06-15.3");
         });
     }
 }
