@@ -34,6 +34,7 @@ import io.questdb.test.tools.TestUtils;
 
 import java.net.URLEncoder;
 
+@SuppressWarnings("unused")
 public final class ClientHttpUtils {
 
     private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);

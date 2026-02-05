@@ -37,7 +37,11 @@ import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
-import io.questdb.cutlass.line.tcp.*;
+import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
+import io.questdb.cutlass.line.tcp.LineTcpReceiver;
+import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
+import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
+import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -46,7 +50,12 @@ import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
@@ -58,7 +67,6 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 
-import java.lang.ThreadLocal;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
@@ -83,6 +91,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected static final int WAIT_NO_WAIT = 0x0;
     private final static Log LOG = LogFactory.getLog(AbstractLineTcpReceiverTest.class);
     protected final int bindPort = 9002; // Don't clash with other tests since they may run in parallel
+    protected final boolean useLegacyStringDefault = true;
     private final ThreadLocal<Socket> tlSocket = new ThreadLocal<>();
     protected String authKeyId = null;
     private final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
@@ -99,6 +108,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     };
     protected boolean autoCreateNewColumns = true;
     protected long commitIntervalDefault = 2000;
+    @SuppressWarnings("CanBeFinal")
     protected double commitIntervalFraction = 0.5;
     protected boolean disconnectOnError = false;
     protected long maintenanceInterval = 25;
@@ -108,7 +118,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     protected int partitionByDefault = PartitionBy.DAY;
     protected TestTimestampType timestampType = TestTimestampType.MICRO;
-    protected boolean useLegacyStringDefault = true;
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration(configuration) {
 
         @Override
@@ -224,14 +233,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         assertEventually(() -> assertTableExists(engine, tableName));
     }
 
-    public static LineTcpReceiver createLineTcpReceiver(
-            LineTcpReceiverConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool workerPool
-    ) {
-        return new LineTcpReceiver(configuration, cairoEngine, workerPool, workerPool);
-    }
-
     public static void assertTableSizeEventually(CairoEngine engine, CharSequence tableName, long expectedSize) throws Exception {
         TestUtils.assertEventually(() -> {
             assertTableExists(engine, tableName);
@@ -247,6 +248,14 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                 fail("table +" + tableName + " is locked");
             }
         });
+    }
+
+    public static LineTcpReceiver createLineTcpReceiver(
+            LineTcpReceiverConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool
+    ) {
+        return new LineTcpReceiver(configuration, cairoEngine, workerPool, workerPool);
     }
 
     @After

@@ -37,28 +37,34 @@ public class LineReceiverException extends RuntimeException {
 
     private int errno = Integer.MIN_VALUE;
 
+    @SuppressWarnings("unused")
     public LineReceiverException(CharSequence message) {
         this.message.put(message);
     }
 
+    @SuppressWarnings("unused")
     public LineReceiverException(CharSequence message, boolean retryable) {
         this.message.put(message);
     }
 
+    @SuppressWarnings("unused")
     public LineReceiverException(Throwable t) {
         super(t);
     }
 
+    @SuppressWarnings("unused")
     public LineReceiverException(String message, Throwable cause) {
         super(message, cause);
         this.message.put(message);
     }
 
+    @SuppressWarnings("unused")
     public LineReceiverException appendIPv4(int ip) {
         Net.appendIP4(message, ip);
         return this;
     }
 
+    @SuppressWarnings("unused")
     public LineReceiverException errno(int errno) {
         this.errno = errno;
         return this;
@@ -70,27 +76,31 @@ public class LineReceiverException extends RuntimeException {
             return message.toString();
         }
         String errNoRender = "[" + errno + "]";
-        if (message.length() == 0) {
+        if (message.isEmpty()) {
             return errNoRender;
         }
         return errNoRender + " " + message;
     }
 
+    @SuppressWarnings("unused")
     public LineReceiverException put(char ch) {
         message.put(ch);
         return this;
     }
 
+    @SuppressWarnings("unused")
     public LineReceiverException put(long value) {
         message.put(value);
         return this;
     }
 
+    @SuppressWarnings("unused")
     public LineReceiverException put(CharSequence cs) {
         message.put(cs);
         return this;
     }
 
+    @SuppressWarnings("unused")
     public LineReceiverException putAsPrintable(CharSequence nonPrintable) {
         message.putAsPrintable(nonPrintable);
         return this;

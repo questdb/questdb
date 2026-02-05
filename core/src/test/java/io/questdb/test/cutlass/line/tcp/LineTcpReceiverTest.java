@@ -25,7 +25,12 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.Record;
@@ -51,7 +56,13 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.Net;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Path;
@@ -64,7 +75,11 @@ import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.Test;
 
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
@@ -693,7 +708,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     Net.parseIPv4("127.0.0.1"), bindPort, 4096);
             AbstractLineTcpSender sender = new LineTcpSenderV2(channel, 4096, 127) {
                 @Override
-                protected byte[] signAndEncode(PrivateKey privateKey, byte[] challengeBytes) {
+                @SuppressWarnings("unused")
+                protected byte[] signAndEncode(PrivateKey unused, byte[] challengeBytes) {
                     byte[] rawSignature = new byte[64];
                     return Base64.getEncoder().encode(rawSignature);
                 }

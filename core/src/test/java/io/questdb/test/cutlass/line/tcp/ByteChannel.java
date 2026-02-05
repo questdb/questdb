@@ -29,6 +29,7 @@ import io.questdb.std.Unsafe;
 
 import java.util.Base64;
 
+@SuppressWarnings("unused")
 public class ByteChannel implements LineChannel {
     private static final int BUFFER_SIZE = 1024;
 

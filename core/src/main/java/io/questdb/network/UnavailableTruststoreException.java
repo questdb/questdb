@@ -36,6 +36,7 @@ public class UnavailableTruststoreException extends RuntimeException {
         this.message.put(message);
     }
 
+    @SuppressWarnings("unused")
     public UnavailableTruststoreException errno(int errno) {
         this.errno = errno;
         return this;
@@ -47,27 +48,31 @@ public class UnavailableTruststoreException extends RuntimeException {
             return message.toString();
         }
         String errNoRender = "[" + errno + "]";
-        if (message.length() == 0) {
+        if (message.isEmpty()) {
             return errNoRender;
         }
         return errNoRender + " " + message;
     }
 
+    @SuppressWarnings("unused")
     public UnavailableTruststoreException put(char ch) {
         message.put(ch);
         return this;
     }
 
+    @SuppressWarnings("unused")
     public UnavailableTruststoreException put(long value) {
         message.put(value);
         return this;
     }
 
+    @SuppressWarnings("unused")
     public UnavailableTruststoreException put(CharSequence cs) {
         message.put(cs);
         return this;
     }
 
+    @SuppressWarnings("unused")
     public UnavailableTruststoreException putAsPrintable(CharSequence nonPrintable) {
         message.putAsPrintable(nonPrintable);
         return this;

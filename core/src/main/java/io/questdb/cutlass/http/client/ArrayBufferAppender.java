@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http.client;
 
+@SuppressWarnings("unused")
 public interface ArrayBufferAppender {
     void putBlockOfBytes(long from, long len);
 
