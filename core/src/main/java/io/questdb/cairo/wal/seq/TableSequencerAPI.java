@@ -182,6 +182,16 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public int getCurrentWalId(final TableToken tableToken) {
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
+            try {
+                return tableSequencer.getCurrentWalId();
+            } finally {
+                tableSequencer.unlockRead();
+            }
+        }
+    }
+
     public @NotNull TransactionLogCursor getCursor(final TableToken tableToken, long seqTxn) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
             TransactionLogCursor cursor;
