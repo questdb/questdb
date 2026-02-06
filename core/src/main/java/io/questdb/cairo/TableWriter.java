@@ -1480,7 +1480,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             );
 
                             final long columnSize = columnRowCount * ColumnType.sizeOf(columnType);
-                            final long columnAddr = mapRO(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, columnSize, memoryTag);
+                            final long columnAddr = mapRONoCache(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, columnSize, memoryTag);
+                            ff.madvise(columnAddr, columnSize, Files.POSIX_MADV_SEQUENTIAL);
                             partitionDescriptor.setColumnAddr(columnAddr, columnSize);
 
                             // root symbol files use separate txn
@@ -1500,12 +1501,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             final int symbolCount = symbolMapWriter.getSymbolCount();
                             final long offsetsMemSize = SymbolMapWriter.keyToOffset(symbolCount + 1);
-                            final long symbolOffsetsAddr = mapRO(ff, path.$(), LOG, offsetsMemSize, memoryTag);
+                            final long symbolOffsetsAddr = mapRONoCache(ff, path.$(), LOG, offsetsMemSize, memoryTag);
+                            ff.madvise(symbolOffsetsAddr, offsetsMemSize, Files.POSIX_MADV_SEQUENTIAL);
                             partitionDescriptor.setSymbolOffsetsAddr(symbolOffsetsAddr + HEADER_SIZE, symbolCount);
 
                             final LPSZ charFileName = charFileName(path.trimTo(pathSize), columnName, symbolTableNameTxn);
                             final long columnSecondarySize = ff.length(charFileName);
-                            final long columnSecondaryAddr = mapRO(ff, charFileName, LOG, columnSecondarySize, memoryTag);
+                            final long columnSecondaryAddr = mapRONoCache(ff, charFileName, LOG, columnSecondarySize, memoryTag);
+                            ff.madvise(columnSecondaryAddr, columnSecondarySize, Files.POSIX_MADV_SEQUENTIAL);
                             partitionDescriptor.setSecondaryColumnAddr(columnSecondaryAddr, columnSecondarySize);
 
                             // recover the partition path
@@ -1515,7 +1518,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
                             final long auxVectorSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
-                            final long auxVectorAddr = mapRO(ff, iFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, auxVectorSize, memoryTag);
+                            final long auxVectorAddr = mapRONoCache(ff, iFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, auxVectorSize, memoryTag);
+                            ff.madvise(auxVectorAddr, auxVectorSize, Files.POSIX_MADV_SEQUENTIAL);
                             partitionDescriptor.setSecondaryColumnAddr(auxVectorAddr, auxVectorSize);
 
                             final long dataSize = columnTypeDriver.getDataVectorSizeAt(auxVectorAddr, columnRowCount - 1);
@@ -1529,13 +1533,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         .put(']');
                             }
 
-                            final long dataAddr = dataSize > 0
-                                    ? mapRO(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, dataSize, memoryTag)
-                                    : 0;
+                            final long dataAddr;
+                            if (dataSize > 0) {
+                                dataAddr = mapRONoCache(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, dataSize, memoryTag);
+                                ff.madvise(dataAddr, dataSize, Files.POSIX_MADV_SEQUENTIAL);
+                            } else {
+                                dataAddr = 0;
+                            }
                             partitionDescriptor.setColumnAddr(dataAddr, dataSize);
                         } else {
                             final long mapBytes = columnRowCount * ColumnType.sizeOf(columnType);
-                            final long fixedAddr = mapRO(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, mapBytes, memoryTag);
+                            final long fixedAddr = mapRONoCache(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, mapBytes, memoryTag);
+                            ff.madvise(fixedAddr, mapBytes, Files.POSIX_MADV_SEQUENTIAL);
                             partitionDescriptor.addColumn(
                                     columnName,
                                     columnType,
