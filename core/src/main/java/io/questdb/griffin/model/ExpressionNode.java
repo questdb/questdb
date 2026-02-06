@@ -93,9 +93,15 @@ public class ExpressionNode implements Mutable, Sinkable {
         }
         // Compare named window reference (OVER w1 vs OVER w2)
         // This must be checked before comparing frame specs because named windows
-        // haven't been resolved yet at deduplication time
-        // Use equalsNullable since inline windows (OVER ()) have null windowName
-        if (!Chars.equalsNullable(a.getWindowName(), b.getWindowName())) {
+        // haven't been resolved yet at deduplication time.
+        // Case-insensitive to match lowerCaseHashCode in hashWindowExpression()
+        // and the LowerCaseCharSequenceObjHashMap used for named window storage.
+        CharSequence aName = a.getWindowName();
+        CharSequence bName = b.getWindowName();
+        if ((aName == null) != (bName == null)) {
+            return false;
+        }
+        if (aName != null && !Chars.equalsIgnoreCase(aName, bName)) {
             return false;
         }
         // Compare frame specification

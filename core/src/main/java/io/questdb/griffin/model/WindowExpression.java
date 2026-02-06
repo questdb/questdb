@@ -324,6 +324,12 @@ public final class WindowExpression extends QueryColumn {
     }
 
     public boolean stopOrderByPropagate(ObjList<ExpressionNode> modelOrder, IntList modelOrderDirection) {
+        // Named window references haven't been resolved yet during optimization.
+        // Conservatively keep the ORDER BY since the named window may depend on it.
+        if (windowName != null) {
+            return true;
+        }
+
         CharSequence token = getAst().token;
 
         // If this is an 'order' sensitive window function and there is no ORDER BY, it may depend on its child's ORDER BY clause.

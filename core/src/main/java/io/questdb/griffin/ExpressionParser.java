@@ -520,127 +520,15 @@ public class ExpressionParser {
 
         // Check if this is a named window reference (OVER w) or inline spec (OVER (...))
         if (tok.charAt(0) != '(') {
-            // Named window reference - store the window name for later resolution
-            // Validate it's a valid identifier (not a keyword or special character)
-            if (tok.length() == 1 && !Character.isLetterOrDigit(tok.charAt(0))) {
-                throw SqlException.$(lexer.lastTokenPosition(), "'(' or window name expected after OVER");
-            }
+            // Named window reference - validate and store the name for later resolution
+            SqlParser.validateIdentifier(lexer, tok);
+            SqlKeywords.assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
             windowCol.setWindowName(Chars.toString(tok), lexer.lastTokenPosition());
             return;
         }
 
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok == null) {
-            throw SqlException.$(lexer.lastTokenPosition(), "')' or window specification expected");
-        }
-
-        // Handle PARTITION BY
-        if (SqlKeywords.isPartitionKeyword(tok)) {
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || !SqlKeywords.isByKeyword(tok)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "'by' expected after 'partition'");
-            }
-
-            boolean expectingExpression = true;
-            do {
-                tok = SqlUtil.fetchNext(lexer);
-                if (tok == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "column name expected");
-                }
-                if (SqlKeywords.isOrderKeyword(tok) || tok.charAt(0) == ')') {
-                    if (expectingExpression) {
-                        throw SqlException.$(lexer.lastTokenPosition(), "column name expected");
-                    }
-                    break;
-                }
-                lexer.unparseLast();
-                ExpressionNode partitionExpr = parseWindowExpr(lexer, sqlParserCallback, decls);
-                windowCol.getPartitionBy().add(partitionExpr);
-                expectingExpression = false;
-                tok = SqlUtil.fetchNext(lexer);
-                if (tok == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'order', ',' or ')' expected");
-                }
-                if (tok.charAt(0) == ',') {
-                    expectingExpression = true;
-                }
-            } while (tok.charAt(0) == ',');
-        }
-
-        // Handle ORDER BY
-        if (SqlKeywords.isOrderKeyword(tok)) {
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || !SqlKeywords.isByKeyword(tok)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "'by' expected after 'order'");
-            }
-
-            do {
-                ExpressionNode orderExpr = parseWindowExpr(lexer, sqlParserCallback, decls);
-                if (orderExpr == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "Expression expected");
-                }
-                tok = SqlUtil.fetchNext(lexer);
-
-                int direction = QueryModel.ORDER_DIRECTION_ASCENDING;
-                if (tok != null && SqlKeywords.isDescKeyword(tok)) {
-                    direction = QueryModel.ORDER_DIRECTION_DESCENDING;
-                    tok = SqlUtil.fetchNext(lexer);
-                } else if (tok != null && SqlKeywords.isAscKeyword(tok)) {
-                    tok = SqlUtil.fetchNext(lexer);
-                }
-                windowCol.addOrderBy(orderExpr, direction);
-
-                if (tok == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "')' expected to close OVER clause");
-                }
-            } while (tok.charAt(0) == ',');
-        }
-
-        // Handle ROWS/RANGE/GROUPS/CUMULATIVE frame specification
-        if (!Chars.equals(tok, ')')) {
-            int framingMode = -1;
-            int frameModePos = lexer.lastTokenPosition();
-
-            if (SqlKeywords.isCumulativeKeyword(tok)) {
-                // CUMULATIVE is shorthand for ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-                if (windowCol.getOrderBy().size() == 0) {
-                    throw SqlException.$(frameModePos, "CUMULATIVE requires an ORDER BY clause");
-                }
-                windowCol.setFramingMode(WindowExpression.FRAMING_ROWS);
-                windowCol.setRowsLoKind(WindowExpression.PRECEDING, frameModePos);
-                windowCol.setRowsHiKind(WindowExpression.CURRENT, frameModePos);
-                tok = SqlUtil.fetchNext(lexer);
-            } else {
-                if (SqlKeywords.isRowsKeyword(tok)) {
-                    framingMode = WindowExpression.FRAMING_ROWS;
-                } else if (SqlKeywords.isRangeKeyword(tok)) {
-                    framingMode = WindowExpression.FRAMING_RANGE;
-                } else if (SqlKeywords.isGroupsKeyword(tok)) {
-                    framingMode = WindowExpression.FRAMING_GROUPS;
-                }
-
-                if (framingMode == -1) {
-                    // Unrecognized keyword after ORDER BY - provide helpful error message
-                    throw SqlException.$(frameModePos, "'rows', 'range', 'groups', 'cumulative' or ')' expected");
-                }
-
-                // GROUPS mode requires ORDER BY
-                if (framingMode == WindowExpression.FRAMING_GROUPS && windowCol.getOrderBy().size() == 0) {
-                    throw SqlException.$(frameModePos, "GROUPS mode requires an ORDER BY clause");
-                }
-                windowCol.setFramingMode(framingMode);
-                tok = parseWindowFrameClause(lexer, windowCol, sqlParserCallback, decls);
-
-                // RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column
-                if (framingMode == WindowExpression.FRAMING_RANGE && windowCol.getOrderBy().size() != 1 && hasOffset(windowCol)) {
-                    throw SqlException.$(frameModePos, "RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column");
-                }
-            }
-        }
-
-        if (tok == null || tok.charAt(0) != ')') {
-            throw SqlException.$(lexer.lastTokenPosition(), "')' expected to close OVER clause");
-        }
+        // Inline window specification - delegate to shared parsing method
+        parseWindowSpec(lexer, windowCol, sqlParserCallback, decls);
     }
 
     /**

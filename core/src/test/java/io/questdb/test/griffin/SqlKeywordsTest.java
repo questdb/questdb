@@ -252,6 +252,5 @@ public class SqlKeywordsTest {
         specialCases.put("isCurrentTimestampKeyword", "current_timestamp");
 
         excludedCases.add("isPublicKeyword");
-        excludedCases.add("isWindowKeyword");
     }
 }

@@ -12636,7 +12636,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testUnderTerminatedOver2() throws Exception {
-        assertSyntaxError("select a,b, f(c) over (partition by b order by ts", 47, "')' expected to close OVER clause");
+        assertSyntaxError("select a,b, f(c) over (partition by b order by ts", 47, "')' expected to close window specification");
     }
 
     @Test
@@ -13625,6 +13625,62 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("b", ColumnType.INT)
                         .col("a", ColumnType.INT)
                         .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowNameKeywordInOverClause() throws Exception {
+        // SQL keyword as window name in OVER clause should fail
+        assertSyntaxError(
+                "select sum(x) OVER select from xyz",
+                19,
+                "SQL keywords have to be enclosed in double quotes",
+                modelOf("xyz").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowNameKeywordInWindowClause() throws Exception {
+        // SQL keyword as window name in WINDOW clause should fail
+        assertSyntaxError(
+                "select sum(x) OVER w from xyz WINDOW select AS (ORDER BY ts)",
+                37,
+                "SQL keywords have to be enclosed in double quotes",
+                modelOf("xyz").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowNameNumberInOverClause() throws Exception {
+        // Number as window name should fail
+        assertSyntaxError(
+                "select sum(x) OVER 42 from xyz",
+                19,
+                "identifier should start with a letter or '_'",
+                modelOf("xyz").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowNameNumberInWindowClause() throws Exception {
+        // Number as window name in WINDOW clause should fail
+        assertSyntaxError(
+                "select sum(x) OVER w from xyz WINDOW 42 AS (ORDER BY ts)",
+                37,
+                "identifier should start with a letter or '_'",
+                modelOf("xyz").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testWindowNameJoinKeywordInWindowClause() throws Exception {
+        // Join keyword as window name in WINDOW clause should be caught by disambiguation
+        // and then rejected by identifier validation
+        assertSyntaxError(
+                "select sum(x) OVER w from xyz WINDOW join AS (ORDER BY ts)",
+                37,
+                "SQL keywords have to be enclosed in double quotes",
+                modelOf("xyz").col("x", ColumnType.INT).timestamp("ts")
         );
     }
 

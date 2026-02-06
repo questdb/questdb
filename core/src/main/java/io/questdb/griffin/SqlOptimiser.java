@@ -2887,17 +2887,29 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void emitColumnLiteralsTopDown(ObjList<QueryColumn> columns, QueryModel target, QueryModel sourceModel) {
+        // Cache named window lookups to avoid repeated model hierarchy traversals
+        // when multiple columns reference the same named window
+        LowerCaseCharSequenceObjHashMap<WindowExpression> resolvedWindows = null;
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
             emitLiteralsTopDown(qc.getAst(), target);
             if (qc.isWindowExpression()) {
                 final WindowExpression ac = (WindowExpression) qc;
-                // For named window references, look up the actual window definition
-                // by walking the model hierarchy (named windows may be on a nested model)
                 ObjList<ExpressionNode> partitionBy = ac.getPartitionBy();
                 ObjList<ExpressionNode> orderBy = ac.getOrderBy();
                 if (ac.isNamedWindowReference() && sourceModel != null) {
-                    WindowExpression namedWindow = lookupNamedWindow(sourceModel, ac.getWindowName());
+                    if (resolvedWindows == null) {
+                        resolvedWindows = new LowerCaseCharSequenceObjHashMap<>();
+                    }
+                    CharSequence windowName = ac.getWindowName();
+                    int idx = resolvedWindows.keyIndex(windowName);
+                    WindowExpression namedWindow;
+                    if (idx < 0) {
+                        namedWindow = resolvedWindows.valueAt(idx);
+                    } else {
+                        namedWindow = lookupNamedWindow(sourceModel, windowName);
+                        resolvedWindows.putAt(idx, windowName, namedWindow);
+                    }
                     if (namedWindow != null) {
                         partitionBy = namedWindow.getPartitionBy();
                         orderBy = namedWindow.getOrderBy();
@@ -8492,6 +8504,8 @@ public class SqlOptimiser implements Mutable {
             // We need one more pass for window model to emit potentially missing columns.
             // For example, 'SELECT row_number() over (partition by col_c order by col_c), col_a, col_b FROM tab'
             // needs col_c to be emitted.
+            // Cache named window lookups to avoid repeated model hierarchy traversals
+            LowerCaseCharSequenceObjHashMap<WindowExpression> resolvedWindows = null;
             for (int i = 0, k = columns.size(); i < k; i++) {
                 QueryColumn qc = columns.getQuick(i);
                 final boolean window = qc.isWindowExpression();
@@ -8510,12 +8524,21 @@ public class SqlOptimiser implements Mutable {
                     final WindowExpression ac = (WindowExpression) qc;
                     int innerColumnsPre = innerVirtualModel.getBottomUpColumns().size();
 
-                    // For named window references, look up the actual window definition
-                    // to get the partition by and order by columns (search model hierarchy)
                     ObjList<ExpressionNode> partitionBy = ac.getPartitionBy();
                     ObjList<ExpressionNode> orderBy = ac.getOrderBy();
                     if (ac.isNamedWindowReference()) {
-                        WindowExpression namedWindow = lookupNamedWindow(model, ac.getWindowName());
+                        if (resolvedWindows == null) {
+                            resolvedWindows = new LowerCaseCharSequenceObjHashMap<>();
+                        }
+                        CharSequence windowName = ac.getWindowName();
+                        int idx = resolvedWindows.keyIndex(windowName);
+                        WindowExpression namedWindow;
+                        if (idx < 0) {
+                            namedWindow = resolvedWindows.valueAt(idx);
+                        } else {
+                            namedWindow = lookupNamedWindow(model, windowName);
+                            resolvedWindows.putAt(idx, windowName, namedWindow);
+                        }
                         if (namedWindow != null) {
                             partitionBy = namedWindow.getPartitionBy();
                             orderBy = namedWindow.getOrderBy();
@@ -8767,7 +8790,8 @@ public class SqlOptimiser implements Mutable {
                 QueryModel innerWm = innerWindowModels.getQuick(i);
                 innerWm.setNestedModel(root);
                 innerWm.copyHints(model.getHints());
-                // Copy named windows from original model for WINDOW clause support
+                // Copy named windows so codegen can resolve OVER window_name references.
+                // Shared references are safe: named windows are read-only after parsing.
                 innerWm.getNamedWindows().putAll(model.getNamedWindows());
                 root = innerWm;
             }
@@ -8778,7 +8802,8 @@ public class SqlOptimiser implements Mutable {
             windowModel.moveLimitFrom(limitSource);
             windowModel.moveJoinAliasFrom(limitSource);
             windowModel.copyHints(model.getHints());
-            // Copy named windows from original model for WINDOW clause support
+            // Copy named windows so codegen can resolve OVER window_name references.
+            // Shared references are safe: named windows are read-only after parsing.
             windowModel.getNamedWindows().putAll(model.getNamedWindows());
             root = windowModel;
             limitSource = windowModel;
@@ -9611,7 +9636,6 @@ public class SqlOptimiser implements Mutable {
                             rowsLo = rowsLo != Long.MAX_VALUE ? -rowsLo : Long.MIN_VALUE;
                             break;
                         case WindowExpression.FOLLOWING:
-                            //rowsLo = rowsLo;
                             break;
                         default:
                             // CURRENT ROW
@@ -9653,7 +9677,6 @@ public class SqlOptimiser implements Mutable {
                             rowsLo = rowsLo != Long.MAX_VALUE ? -rowsLo : Long.MIN_VALUE;
                             break;
                         case WindowExpression.FOLLOWING:
-                            //rowsLo = rowsLo;
                             break;
                         default:
                             // CURRENT ROW

@@ -6776,6 +6776,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * @param windowExpr the WindowExpression with a named window reference
      * @param model      the QueryModel containing named window definitions
      * @throws SqlException if the named window is not found
+     *
+     * TODO: consider resolving named windows earlier (e.g., at the start of optimization) so the
+     *  optimizer sees the full window spec. Currently, the optimizer works on unresolved references,
+     *  which requires ad-hoc lookupNamedWindow() calls in SqlOptimiser and conservative behavior in
+     *  stopOrderByPropagate(). Early resolution would simplify the pipeline at the cost of coupling
+     *  parsing to semantic analysis.
      */
     private void resolveNamedWindowReference(WindowExpression windowExpr, QueryModel model) throws SqlException {
         CharSequence windowName = windowExpr.getWindowName();

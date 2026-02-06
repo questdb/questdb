@@ -2628,11 +2628,15 @@ public class SqlParser {
             if (isWindowKeyword(tok)) {
                 // Save lexer state before lookahead
                 int windowLastPos = lexer.lastTokenPosition();
+                CharSequence windowTok = tok;
 
-                // Lookahead to check for WINDOW clause pattern (name AS)
+                // Lookahead: read two tokens after WINDOW to distinguish
+                // WINDOW clause (WINDOW name AS ...) from WINDOW JOIN (WINDOW JOIN table ON ...).
+                // We always check both tokens because join keywords like "join", "cross",
+                // "left" etc. could theoretically be quoted window names.
                 CharSequence nextTok = SqlUtil.fetchNext(lexer);
                 boolean isWindowClause = false;
-                if (nextTok != null && isNotJoinKeyword(nextTok)) {
+                if (nextTok != null) {
                     CharSequence afterName = SqlUtil.fetchNext(lexer);
                     if (afterName != null && isAsKeyword(afterName)) {
                         isWindowClause = true;
@@ -2640,7 +2644,7 @@ public class SqlParser {
                 }
 
                 // Restore lexer to start of "window" token so it can be re-read
-                lexer.backTo(windowLastPos, null);
+                lexer.backTo(windowLastPos, windowTok);
 
                 if (isWindowClause) {
                     // Break out of join loop - WINDOW clause will be parsed after the loop
@@ -2872,10 +2876,8 @@ public class SqlParser {
                 if (tok == null) {
                     throw SqlException.$(lexer.lastTokenPosition(), "window name expected");
                 }
-                // Verify it's a valid identifier (not a keyword or special character)
-                if (tok.length() == 1 && !Character.isLetterOrDigit(tok.charAt(0))) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "window name expected");
-                }
+                validateIdentifier(lexer, tok);
+                SqlKeywords.assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
                 // Intern the window name immediately before any more lexer operations
                 // (the lexer reuses its buffer, so tok would be overwritten)
@@ -4613,7 +4615,7 @@ public class SqlParser {
         return tok;
     }
 
-    private void validateIdentifier(GenericLexer lexer, CharSequence tok) throws SqlException {
+    static void validateIdentifier(GenericLexer lexer, CharSequence tok) throws SqlException {
         if (tok == null || tok.isEmpty()) {
             throw SqlException.position(lexer.lastTokenPosition()).put("non-empty identifier expected");
         }
