@@ -328,4 +328,9 @@ public class AlterOperationBuilder implements Mutable {
     public void setDedupKeyFlag(int writerColumnIndex) {
         extraInfo.add(writerColumnIndex);
     }
+
+    public void setParquetConversionOptions(@Nullable CharSequence bloomFilterColumns, double fpp) {
+        extraStrInfo.add(bloomFilterColumns);
+        extraInfo.add(Double.doubleToLongBits(fpp));
+    }
 }

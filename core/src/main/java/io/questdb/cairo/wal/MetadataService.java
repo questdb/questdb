@@ -127,6 +127,10 @@ public interface MetadataService {
 
     boolean convertPartitionNativeToParquet(long partitionTimestamp);
 
+    default boolean convertPartitionNativeToParquet(long partitionTimestamp, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp) {
+        return convertPartitionNativeToParquet(partitionTimestamp);
+    }
+
     boolean convertPartitionParquetToNative(long partitionTimestamp);
 
     AttachDetachStatus detachPartition(long partitionTimestamp);

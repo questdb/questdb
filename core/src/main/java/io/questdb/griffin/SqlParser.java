@@ -628,6 +628,23 @@ public class SqlParser {
         return expectExpr(lexer, sqlParserCallback, null);
     }
 
+    private double expectDouble(GenericLexer lexer) throws SqlException {
+        CharSequence tok = tok(lexer, "number");
+        boolean negative;
+        if (Chars.equals(tok, '-')) {
+            negative = true;
+            tok = tok(lexer, "number");
+        } else {
+            negative = false;
+        }
+        try {
+            double result = Numbers.parseDouble(tok);
+            return negative ? -result : result;
+        } catch (NumericException e) {
+            throw err(lexer, tok, "bad number");
+        }
+    }
+
     private int expectInt(GenericLexer lexer) throws SqlException {
         CharSequence tok = tok(lexer, "integer");
         boolean negative;
@@ -1114,6 +1131,17 @@ public class SqlParser {
                             throw SqlException.$(lexer.lastTokenPosition(), "invalid parquet version: ").put(parquetVersion).put(", expected 1 or 2");
                         }
                         model.setParquetVersion(parquetVersion);
+                        break;
+                    case ExportModel.COPY_OPTION_BLOOM_FILTER_COLUMNS:
+                        ExpressionNode bloomFilterColumnsExpr = expectLiteral(lexer);
+                        model.setBloomFilterColumns(GenericLexer.unquote(bloomFilterColumnsExpr.token));
+                        break;
+                    case ExportModel.COPY_OPTION_BLOOM_FILTER_FPP:
+                        double fpp = expectDouble(lexer);
+                        if (fpp <= 0 || fpp >= 1) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "bloom_filter_fpp must be between 0 and 1 (exclusive)");
+                        }
+                        model.setBloomFilterFpp(fpp);
                         break;
                     case ExportModel.COPY_OPTION_UNKNOWN:
                         throw SqlException.$(lexer.lastTokenPosition(), "unrecognised option [option=")

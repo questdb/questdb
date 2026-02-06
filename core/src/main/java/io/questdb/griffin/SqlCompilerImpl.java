@@ -1361,6 +1361,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                             .put("no partitions matched WHERE clause");
                                 }
                             }
+                            // Check for WITH clause for CONVERT TO PARQUET
+                            CharSequence nextTok = SqlUtil.fetchNext(lexer);
+                            if (action == PartitionAction.CONVERT_TO_PARQUET && nextTok != null && isWithKeyword(nextTok)) {
+                                parseConvertToParquetWithClause(alterOperationBuilder, tableMetadata);
+                            } else if (nextTok != null && !isSemicolon(nextTok)) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token");
+                            }
                             compiledQuery.ofAlter(this.alterOperationBuilder.build());
                         } else {
                             throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
@@ -1457,6 +1464,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
             if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
+                if (action == PartitionAction.CONVERT_TO_PARQUET && isWithKeyword(tok)) {
+                    parseConvertToParquetWithClause(alterOperationBuilder, tableMetadata);
+                    break;
+                }
                 throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
             }
         } while (true);
@@ -4593,6 +4604,65 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    // TODO: We may need a better approach to let users specify which columns should have bloom filters
+    //  when converting partitions to Parquet. The current WITH clause approach only works for explicit
+    //  ALTER TABLE ... CONVERT PARTITION ... TO PARQUET statements. When automatic partition conversion
+    //  to Parquet is supported in the future, we will need a different mechanism (e.g., table-level
+    //  configuration or metadata) to specify bloom filter columns and FPP.
+    private void parseConvertToParquetWithClause(
+            AlterOperationBuilder alterOperationBuilder,
+            TableRecordMetadata tableMetadata
+    ) throws SqlException {
+        CharSequence bloomFilterColumns = null;
+        double fpp = Double.NaN;
+
+        CharSequence tok = expectToken(lexer, "'('");
+        if (!Chars.equals(tok, '(')) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'(' expected");
+        }
+
+        while (true) {
+            tok = expectToken(lexer, "bloom_filter_columns or fpp");
+
+            if (isBloomFilterColumnsKeyword(tok)) {
+                tok = expectToken(lexer, "'='");
+                if (!Chars.equals(tok, '=')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
+                }
+                tok = expectToken(lexer, "column names");
+                int bloomFilterColumnsPosition = lexer.lastTokenPosition();
+                bloomFilterColumns = unquote(tok);
+                validateBloomFilterColumns(bloomFilterColumns, tableMetadata, bloomFilterColumnsPosition);
+            } else if (isFppKeyword(tok)) {
+                tok = expectToken(lexer, "'='");
+                if (!Chars.equals(tok, '=')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
+                }
+                tok = expectToken(lexer, "fpp value");
+                try {
+                    fpp = Numbers.parseDouble(tok);
+                    if (fpp <= 0 || fpp >= 1) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "fpp must be between 0 and 1 (exclusive)");
+                    }
+                } catch (NumericException e) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "invalid fpp value");
+                }
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "bloom_filter_columns or fpp expected");
+            }
+
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || Chars.equals(tok, ')')) {
+                break;
+            }
+            if (!Chars.equals(tok, ',')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "',' or ')' expected");
+            }
+        }
+
+        alterOperationBuilder.setParquetConversionOptions(bloomFilterColumns, fpp);
+    }
+
     private void parseResumeWal(TableToken tableToken, int tableNamePosition, SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok = expectToken(lexer, "'wal'");
         if (!isWalKeyword(tok)) {
@@ -4691,6 +4761,30 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         model.setQueryModel(queryModel);
     }
 
+    private void validateBloomFilterColumns(CharSequence bloomFilterColumns, RecordMetadata metadata, int position) throws SqlException {
+        if (bloomFilterColumns == null || bloomFilterColumns.isEmpty()) {
+            return;
+        }
+        int start = 0;
+        int len = bloomFilterColumns.length();
+        for (int i = 0; i <= len; i++) {
+            if (i == len || bloomFilterColumns.charAt(i) == ',') {
+                int lo = start;
+                while (lo < i && Character.isWhitespace(bloomFilterColumns.charAt(lo))) {
+                    lo++;
+                }
+                int hi = i;
+                while (hi > lo && Character.isWhitespace(bloomFilterColumns.charAt(hi - 1))) {
+                    hi--;
+                }
+                if (hi > lo && metadata.getColumnIndexQuiet(bloomFilterColumns, lo, hi) < 0) {
+                    throw SqlException.$(position, "bloom filter column not found [column=").put(bloomFilterColumns, lo, hi).put(']');
+                }
+                start = i + 1;
+            }
+        }
+    }
+
     private TableToken viewExistsOrFail(CharSequence viewName, SqlExecutionContext executionContext, SqlException notExistException) throws SqlException {
         if (executionContext.getTableStatus(path, viewName) != TableUtils.TABLE_EXISTS) {
             throw notExistException;
@@ -4761,6 +4855,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'materialized' or 'view' expected");
     }
 
+    protected void compileBackup(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        throw SqlException.$(lexer.lastTokenPosition(),
+                "incremental backup is supported in QuestDB enterprise version only, please use SNAPSHOT backup"
+        );
+    }
+
     protected void compileCreate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         int rollbackPosition = lexer.lastTokenPosition();
         CharSequence tok = expectToken(lexer, "'atomic' or 'table' or 'batch' or 'materialized' or 'view' or 'or replace'");
@@ -4808,12 +4908,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final String viewSql = parser.parseViewSql(lexer, this);
 
         alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
-    }
-
-    protected void compileBackup(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
-        throw SqlException.$(lexer.lastTokenPosition(),
-                "incremental backup is supported in QuestDB enterprise version only, please use SNAPSHOT backup"
-        );
     }
 
     protected void compileDropExt(

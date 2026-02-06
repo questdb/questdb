@@ -66,6 +66,8 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private final StringSink exportIdSink = new StringSink();
     private final CopyImportFactory.CopyRecord record = new CopyImportFactory.CopyRecord();
     private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
+    private @Nullable CharSequence bloomFilterColumns;
+    private double bloomFilterFpp = Double.NaN;
     private int compressionCodec;
     private int compressionLevel;
     private CopyExportContext copyContext;
@@ -183,7 +185,9 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         false,
                         null,
                         null,
-                        null
+                        null,
+                        bloomFilterColumns,
+                        bloomFilterFpp
                 );
             } finally {
                 copyRequestPubSeq.done(processingCursor);
@@ -248,6 +252,8 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         this.statisticsEnabled = model.isStatisticsEnabled();
         this.parquetVersion = model.getParquetVersion();
         this.rawArrayEncoding = model.isRawArrayEncoding();
+        this.bloomFilterColumns = model.getBloomFilterColumns();
+        this.bloomFilterFpp = model.getBloomFilterFpp();
         this.sqlText = sqlText;
     }
 

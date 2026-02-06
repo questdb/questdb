@@ -39,6 +39,7 @@ import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -53,6 +54,8 @@ import static io.questdb.griffin.engine.table.parquet.PartitionEncoder.*;
 
 public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private final StreamPartitionParquetExporter streamPartitionParquetExporter = new StreamPartitionParquetExporter();
+    private @Nullable CharSequence bloomFilterColumns;
+    private double bloomFilterFpp = Double.NaN;
     private int compressionCodec;
     private int compressionLevel;
     private @Nullable CreateTableOperation createOp;
@@ -93,6 +96,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         metadata = null;
         streamPartitionParquetExporter.clear();
         descending = false;
+        bloomFilterColumns = null;
+        bloomFilterFpp = Double.NaN;
         if (factory != null) { // owned only if setUpStreamPartitionParquetExporter called with factory
             factory = Misc.free(factory);
             pageFrameCursor = Misc.free(pageFrameCursor);
@@ -102,6 +107,14 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     @Override
     public void close() {
         Misc.free(streamPartitionParquetExporter);
+    }
+
+    public @Nullable CharSequence getBloomFilterColumns() {
+        return bloomFilterColumns;
+    }
+
+    public double getBloomFilterFpp() {
+        return bloomFilterFpp;
     }
 
     public SqlExecutionCircuitBreaker getCircuitBreaker() {
@@ -205,7 +218,9 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             boolean descending,
             PageFrameCursor pageFrameCursor, // for streaming export
             RecordMetadata metadata,
-            StreamWriteParquetCallBack writeCallback
+            StreamWriteParquetCallBack writeCallback,
+            @Nullable CharSequence bloomFilterColumns,
+            double bloomFilterFpp
     ) {
         this.entry = entry;
         this.tableName = tableName;
@@ -224,6 +239,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.writeCallback = writeCallback;
         this.now = now;
         this.nowTimestampType = nowTimestampType;
+        this.bloomFilterColumns = bloomFilterColumns;
+        this.bloomFilterFpp = bloomFilterFpp;
     }
 
     public void setUpStreamPartitionParquetExporter() {
@@ -286,6 +303,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     }
 
     public class StreamPartitionParquetExporter implements Mutable, QuietCloseable {
+        private DirectIntList bloomFilterColumnIndexes = new DirectIntList(16, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         private DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         private DirectLongList columnMetadata = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         private DirectUtf8Sink columnNames = new DirectUtf8Sink(32, false, MemoryTag.NATIVE_PARQUET_EXPORTER);
@@ -300,9 +318,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         @Override
         public void clear() {
             // free memory after one query finished, will re-malloc on next query
-            columnNames.close();
-            columnData.close();
-            columnMetadata.close();
+            Misc.free(columnNames);
+            Misc.free(columnData);
+            Misc.free(columnMetadata);
+            Misc.free(bloomFilterColumnIndexes);
             closeWriter();
             streamExportCurrentPtr = 0;
             streamExportCurrentSize = 0;
@@ -318,6 +337,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             columnNames = Misc.free(columnNames);
             columnData = Misc.free(columnData);
             columnMetadata = Misc.free(columnMetadata);
+            bloomFilterColumnIndexes = Misc.free(bloomFilterColumnIndexes);
         }
 
         public void finishExport() throws Exception {
@@ -408,6 +428,20 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | columnType);
                 }
             }
+
+            long bloomFilterIndexesPtr = 0;
+            int bloomFilterCount = 0;
+            double fpp = Double.isNaN(bloomFilterFpp) ? 0.01 : bloomFilterFpp;
+
+            if (bloomFilterColumns != null && !bloomFilterColumns.isEmpty()) {
+                bloomFilterColumnIndexes.reopen();
+                parseBloomFilterColumnIndexes(bloomFilterColumns, metadata, bloomFilterColumnIndexes);
+                if (bloomFilterColumnIndexes.size() > 0) {
+                    bloomFilterIndexesPtr = bloomFilterColumnIndexes.getAddress();
+                    bloomFilterCount = (int) bloomFilterColumnIndexes.size();
+                }
+            }
+
             streamWriter = createStreamingParquetWriter(
                     Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_EXPORTER),
                     metadata.getColumnCount(),
@@ -422,9 +456,9 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     rowGroupSize,
                     dataPageSize,
                     parquetVersion,
-                    0,
-                    0,
-                    0.01
+                    bloomFilterIndexesPtr,
+                    bloomFilterCount,
+                    fpp
             );
         }
 
@@ -524,6 +558,31 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             if (streamWriter != -1) {
                 closeStreamingParquetWriter(streamWriter);
                 streamWriter = -1;
+            }
+        }
+
+        private void parseBloomFilterColumnIndexes(CharSequence columns, RecordMetadata meta, DirectIntList indexes) {
+            int start = 0;
+            int len = columns.length();
+            for (int i = 0; i <= len; i++) {
+                if (i == len || columns.charAt(i) == ',') {
+                    int nameStart = start;
+                    int nameEnd = i;
+                    while (nameStart < nameEnd && Character.isWhitespace(columns.charAt(nameStart))) {
+                        nameStart++;
+                    }
+                    while (nameEnd > nameStart && Character.isWhitespace(columns.charAt(nameEnd - 1))) {
+                        nameEnd--;
+                    }
+                    if (nameStart < nameEnd) {
+                        CharSequence columnName = columns.subSequence(nameStart, nameEnd);
+                        int columnIndex = meta.getColumnIndexQuiet(columnName);
+                        if (columnIndex >= 0) {
+                            indexes.add(columnIndex);
+                        }
+                    }
+                    start = i + 1;
+                }
             }
         }
     }

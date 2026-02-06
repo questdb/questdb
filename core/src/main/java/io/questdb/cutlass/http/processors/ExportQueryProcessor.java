@@ -65,6 +65,7 @@ import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
+import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
@@ -621,6 +622,30 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             exportModel.setRawArrayEncoding(enabled);
         }
 
+        DirectUtf8Sequence bloomFilterColumns = request.getUrlParam(EXPORT_PARQUET_OPTION_BLOOM_FILTER_COLUMNS);
+        if (bloomFilterColumns != null && bloomFilterColumns.size() > 0) {
+            exportModel.setBloomFilterColumns(Chars.toString(bloomFilterColumns.asAsciiCharSequence()));
+        }
+
+        DirectUtf8Sequence bloomFilterFpp = request.getUrlParam(EXPORT_PARQUET_OPTION_BLOOM_FILTER_FPP);
+        if (bloomFilterFpp != null && bloomFilterFpp.size() > 0) {
+            try {
+                double fpp = Numbers.parseDouble(bloomFilterFpp.asAsciiCharSequence());
+                if (fpp <= 0 || fpp >= 1) {
+                    errSink.clear();
+                    errSink.put("bloom_filter_fpp must be between 0 and 1 (exclusive): ").put(bloomFilterFpp);
+                    sendException(response, 0, errSink, state);
+                    return false;
+                }
+                exportModel.setBloomFilterFpp(fpp);
+            } catch (NumericException e) {
+                errSink.clear();
+                errSink.put("invalid bloom_filter_fpp value: ").put(bloomFilterFpp);
+                sendException(response, 0, errSink, state);
+                return false;
+            }
+        }
+
         return true;
     }
 
@@ -655,7 +680,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.descending,
                         state.pageFrameCursor,
                         state.metadata,
-                        this
+                        this,
+                        state.getExportModel().getBloomFilterColumns(),
+                        state.getExportModel().getBloomFilterFpp()
                 );
 
                 serialParquetExporter.of(state.task);

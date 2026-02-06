@@ -106,8 +106,21 @@ public final class ParquetRowGroupFilter {
                         filterValues.putInt(valueFunctions.getQuick(j).getInt(null));
                     }
                     break;
-                case ColumnType.LONG:
+                // don't support timestamp because it may be the value is interval.
                 case ColumnType.TIMESTAMP:
+                    boolean allTimestamp = true;
+                    for (int j = 0; j < valueCount; j++) {
+                        if (!ColumnType.isTimestamp(valueFunctions.getQuick(j).getType())) {
+                            allTimestamp = false;
+                            break;
+                        }
+                    }
+                    if (!allTimestamp) {
+                        supported = false;
+                        break;
+                    }
+                    // fallthrough
+                case ColumnType.LONG:
                 case ColumnType.DATE:
                     for (int j = 0; j < valueCount; j++) {
                         filterValues.putLong(valueFunctions.getQuick(j).getLong(null));
