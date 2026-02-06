@@ -261,13 +261,11 @@ public class DeltaBitmapIndexFwdReader implements BitmapIndexReader {
             long seq = keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
             int keyCount;
             long valueMemSize;
-//            int blockCapacity;
 
             Unsafe.getUnsafe().loadFence();
             if (keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
                 keyCount = keyMem.getInt(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
                 valueMemSize = keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
-//                blockCapacity = keyMem.getInt(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_CAPACITY);
 
                 Unsafe.getUnsafe().loadFence();
                 if (keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) == seq) {
@@ -295,7 +293,7 @@ public class DeltaBitmapIndexFwdReader implements BitmapIndexReader {
     private class Cursor implements RowCursor {
         protected long next;
         protected long totalValueCount;
-        private final long[] decodeResult = new long[2];
+        private long blockDataAddress;    // raw memory address, incremented per value
         private int blockCount;          // values in current block
         private long blockDataEnd;       // end of data area in current block
         private long blockDataOffset;    // current read position in block data
@@ -309,8 +307,6 @@ public class DeltaBitmapIndexFwdReader implements BitmapIndexReader {
 
         @Override
         public boolean hasNext() {
-            final long memSize = valueMemSize;
-
             while (totalPosition < totalValueCount) {
                 // Check if we need to move to next block
                 if (positionInBlock >= blockCount) {
@@ -322,36 +318,23 @@ public class DeltaBitmapIndexFwdReader implements BitmapIndexReader {
                 long value;
                 if (positionInBlock == 0) {
                     // First value in block is stored in header
-                    if (currentBlockOffset < 0 || currentBlockOffset + DeltaBitmapIndexUtils.BLOCK_OFFSET_FIRST_VALUE + 8 > memSize) {
+                    if (currentBlockOffset < 0) {
                         return false;
                     }
-                    value = valueMem.getLong(currentBlockOffset + DeltaBitmapIndexUtils.BLOCK_OFFSET_FIRST_VALUE);
+                    value = Unsafe.getUnsafe().getLong(
+                            valueMem.addressOf(currentBlockOffset + DeltaBitmapIndexUtils.BLOCK_OFFSET_FIRST_VALUE)
+                    );
                 } else {
                     // Subsequent values are delta-encoded
-                    if (blockDataOffset >= blockDataEnd || blockDataOffset >= memSize) {
+                    if (blockDataOffset >= blockDataEnd) {
                         return false;
                     }
 
-                    // Peek at first byte to check bounds
-                    int firstByte = valueMem.getByte(blockDataOffset) & 0xFF;
-                    int bytesNeeded;
-                    if ((firstByte & 0x80) == 0) {
-                        bytesNeeded = 1;
-                    } else if ((firstByte & 0xC0) == 0x80) {
-                        bytesNeeded = 2;
-                    } else if ((firstByte & 0xE0) == 0xC0) {
-                        bytesNeeded = 4;
-                    } else {
-                        bytesNeeded = 9;
-                    }
-
-                    if (blockDataOffset + bytesNeeded > memSize) {
-                        return false;
-                    }
-
-                    DeltaBitmapIndexUtils.decodeDelta(valueMem, blockDataOffset, decodeResult);
-                    value = currentValue + decodeResult[0];
-                    blockDataOffset += decodeResult[1];
+                    long packed = DeltaBitmapIndexUtils.decodeDeltaUnsafe(blockDataAddress);
+                    value = currentValue + DeltaBitmapIndexUtils.getDelta(packed);
+                    int consumed = DeltaBitmapIndexUtils.getBytesConsumed(packed);
+                    blockDataOffset += consumed;
+                    blockDataAddress += consumed;
                 }
 
                 currentValue = value;
@@ -439,6 +422,7 @@ public class DeltaBitmapIndexFwdReader implements BitmapIndexReader {
             this.blockCount = valueMem.getInt(blockOffset + DeltaBitmapIndexUtils.BLOCK_OFFSET_COUNT);
             int dataLen = valueMem.getInt(blockOffset + DeltaBitmapIndexUtils.BLOCK_OFFSET_DATA_LEN);
             this.blockDataOffset = blockOffset + DeltaBitmapIndexUtils.BLOCK_HEADER_SIZE;
+            this.blockDataAddress = valueMem.addressOf(this.blockDataOffset);
             this.blockDataEnd = this.blockDataOffset + dataLen;
             // Ensure dataEnd doesn't exceed valueMemSize
             if (this.blockDataEnd > valueMemSize) {

@@ -111,14 +111,20 @@ public class DeltaBitmapIndexBenchmark {
     private Path deltaReadPath;
     private String deltaReadRoot;
     private String deltaRoot;
+    private DeltaBitmapIndexWriter deltaWriter;
+    private Path deltaWritePath;
     private FORBitmapIndexFwdReader forFwdReader;
     private Path forReadPath;
     private String forReadRoot;
     private String forRoot;
+    private FORBitmapIndexWriter forWriter;
+    private Path forWritePath;
     private BitmapIndexFwdReader legacyFwdReader;
     private Path legacyReadPath;
     private String legacyReadRoot;
     private String legacyRoot;
+    private BitmapIndexWriter legacyWriter;
+    private Path legacyWritePath;
     // Pre-computed: keyAssignment[rowId] = key that owns this row ID
     private int[] keyAssignment;
     // Pre-computed: random keys to read during read benchmarks
@@ -200,12 +206,18 @@ public class DeltaBitmapIndexBenchmark {
             return;
         }
 
-        Options opt = new OptionsBuilder()
-                .include(DeltaBitmapIndexBenchmark.class.getSimpleName())
+        // Run write benchmarks without GC profiler (writes allocate inherently)
+        Options writeOpt = new OptionsBuilder()
+                .include(DeltaBitmapIndexBenchmark.class.getSimpleName() + ".write.*")
+                .build();
+        new Runner(writeOpt).run();
+
+        // Run read benchmarks with GC profiler to verify zero-alloc reads
+        Options readOpt = new OptionsBuilder()
+                .include(DeltaBitmapIndexBenchmark.class.getSimpleName() + ".read.*")
                 .addProfiler("gc")
                 .build();
-
-        new Runner(opt).run();
+        new Runner(readOpt).run();
     }
 
     @Benchmark
@@ -257,6 +269,20 @@ public class DeltaBitmapIndexBenchmark {
         new File(legacyRoot).mkdirs();
         new File(deltaRoot).mkdirs();
         new File(forRoot).mkdirs();
+
+        // Pre-allocate writers so benchmark methods measure only write throughput
+        legacyWritePath = new Path().of(legacyRoot);
+        legacyWriter = new BitmapIndexWriter(configuration);
+        legacyWriter.of(legacyWritePath, "test", COLUMN_NAME_TXN, 256);
+
+        createDeltaIndex(configuration, deltaRoot);
+        deltaWritePath = new Path().of(deltaRoot);
+        deltaWriter = new DeltaBitmapIndexWriter(configuration, deltaWritePath, "test", COLUMN_NAME_TXN);
+
+        createFORIndex(configuration, forRoot);
+        forWritePath = new Path().of(forRoot);
+        forWriter = new FORBitmapIndexWriter(configuration);
+        forWriter.of(forWritePath, "test", COLUMN_NAME_TXN);
     }
 
     @Setup(Level.Trial)
@@ -308,6 +334,30 @@ public class DeltaBitmapIndexBenchmark {
 
     @TearDown(Level.Invocation)
     public void tearDownInvocation() {
+        if (legacyWriter != null) {
+            legacyWriter.close();
+            legacyWriter = null;
+        }
+        if (deltaWriter != null) {
+            deltaWriter.close();
+            deltaWriter = null;
+        }
+        if (forWriter != null) {
+            forWriter.close();
+            forWriter = null;
+        }
+        if (legacyWritePath != null) {
+            legacyWritePath.close();
+            legacyWritePath = null;
+        }
+        if (deltaWritePath != null) {
+            deltaWritePath.close();
+            deltaWritePath = null;
+        }
+        if (forWritePath != null) {
+            forWritePath.close();
+            forWritePath = null;
+        }
         deleteDirectory(legacyRoot);
         deleteDirectory(deltaRoot);
         deleteDirectory(forRoot);
@@ -341,36 +391,20 @@ public class DeltaBitmapIndexBenchmark {
 
     @Benchmark
     public void writeDelta(Blackhole bh) {
-        createDeltaIndex(configuration, deltaRoot);
-        try (Path path = new Path().of(deltaRoot)) {
-            try (DeltaBitmapIndexWriter writer = new DeltaBitmapIndexWriter(configuration, path, "test", COLUMN_NAME_TXN)) {
-                writeInterleaved(writer, keyAssignment);
-                bh.consume(writer.getMaxValue());
-            }
-        }
+        writeInterleaved(deltaWriter, keyAssignment);
+        bh.consume(deltaWriter.getMaxValue());
     }
 
     @Benchmark
     public void writeFOR(Blackhole bh) {
-        createFORIndex(configuration, forRoot);
-        try (Path path = new Path().of(forRoot)) {
-            try (FORBitmapIndexWriter writer = new FORBitmapIndexWriter(configuration)) {
-                writer.of(path, "test", COLUMN_NAME_TXN);
-                writeInterleaved(writer, keyAssignment);
-                bh.consume(writer.getMaxValue());
-            }
-        }
+        writeInterleaved(forWriter, keyAssignment);
+        bh.consume(forWriter.getMaxValue());
     }
 
     @Benchmark
     public void writeLegacy(Blackhole bh) {
-        try (Path path = new Path().of(legacyRoot)) {
-            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration)) {
-                writer.of(path, "test", COLUMN_NAME_TXN, 256);
-                writeInterleaved(writer, keyAssignment);
-                bh.consume(writer.getMaxValue());
-            }
-        }
+        writeInterleaved(legacyWriter, keyAssignment);
+        bh.consume(legacyWriter.getMaxValue());
     }
 
     // ==================== Helper Methods ====================

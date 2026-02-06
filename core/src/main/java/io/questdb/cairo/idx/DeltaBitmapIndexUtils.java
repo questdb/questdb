@@ -169,7 +169,7 @@ public final class DeltaBitmapIndexUtils {
     /**
      * Encodes a delta value and writes it to memory.
      */
-    public static int encodeDelta(MemoryA mem, long delta) {
+    public static void encodeDelta(MemoryA mem, long delta) {
         if (delta < 0) {
             throw CairoException.critical(0)
                     .put("delta index value cannot be negative [delta=").put(delta).put(']');
@@ -177,13 +177,13 @@ public final class DeltaBitmapIndexUtils {
 
         if (delta <= PREFIX_1BYTE_MAX) {
             mem.putByte((byte) delta);
-            return 1;
+            return;
         }
 
         if (delta <= PREFIX_2BYTE_MAX) {
             mem.putByte((byte) (PREFIX_2BYTE_MASK | (delta >> 8)));
             mem.putByte((byte) (delta & 0xFF));
-            return 2;
+            return;
         }
 
         if (delta <= PREFIX_4BYTE_MAX) {
@@ -191,7 +191,7 @@ public final class DeltaBitmapIndexUtils {
             mem.putByte((byte) ((delta >> 16) & 0xFF));
             mem.putByte((byte) ((delta >> 8) & 0xFF));
             mem.putByte((byte) (delta & 0xFF));
-            return 4;
+            return;
         }
 
         if (delta > MAX_DELTA) {
@@ -202,46 +202,6 @@ public final class DeltaBitmapIndexUtils {
 
         mem.putByte((byte) PREFIX_9BYTE_MARKER);
         mem.putLong(delta);
-        return 9;
-    }
-
-    /**
-     * Encodes a delta value directly to memory address.
-     */
-    public static int encodeDeltaUnsafe(long address, long delta) {
-        if (delta < 0) {
-            throw CairoException.critical(0)
-                    .put("delta index value cannot be negative [delta=").put(delta).put(']');
-        }
-
-        if (delta <= PREFIX_1BYTE_MAX) {
-            Unsafe.getUnsafe().putByte(address, (byte) delta);
-            return 1;
-        }
-
-        if (delta <= PREFIX_2BYTE_MAX) {
-            Unsafe.getUnsafe().putByte(address, (byte) (PREFIX_2BYTE_MASK | (delta >> 8)));
-            Unsafe.getUnsafe().putByte(address + 1, (byte) (delta & 0xFF));
-            return 2;
-        }
-
-        if (delta <= PREFIX_4BYTE_MAX) {
-            Unsafe.getUnsafe().putByte(address, (byte) (PREFIX_4BYTE_MASK | (delta >> 24)));
-            Unsafe.getUnsafe().putByte(address + 1, (byte) ((delta >> 16) & 0xFF));
-            Unsafe.getUnsafe().putByte(address + 2, (byte) ((delta >> 8) & 0xFF));
-            Unsafe.getUnsafe().putByte(address + 3, (byte) (delta & 0xFF));
-            return 4;
-        }
-
-        if (delta > MAX_DELTA) {
-            throw CairoException.critical(0)
-                    .put("delta index value exceeds maximum [delta=").put(delta)
-                    .put(", max=").put(MAX_DELTA).put(']');
-        }
-
-        Unsafe.getUnsafe().putByte(address, (byte) PREFIX_9BYTE_MARKER);
-        Unsafe.getUnsafe().putLong(address + 1, delta);
-        return 9;
     }
 
     /**
