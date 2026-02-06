@@ -3238,6 +3238,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             filterFactory.halfClose();
         }
 
+        // HORIZON JOIN tasks are "heavy", hence smaller frame sizes
+        masterFactory.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
+
         if (!supportsParallelism) {
             throw SqlException.position(slaveModel.getJoinKeywordPosition())
                     .put("HORIZON JOIN master table must support page frames");
@@ -4491,6 +4494,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         filterFactory.halfClose();
                                     }
 
+                                    // WINDOW JOIN tasks are "heavy", hence smaller frame sizes
                                     master.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
                                     if (leftSymbolIndex != -1) {
                                         assert rightSymbolIndex != -1;
@@ -4635,7 +4639,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             case JOIN_HORIZON:
                                 // Find the synthetic offset model (previous join model with HorizonJoinContext)
-                                HorizonJoinContext horizonContext = findHorizonOffsetContext(model, index);
+                                final HorizonJoinContext horizonContext = findHorizonOffsetContext(model, index);
                                 if (horizonContext == null) {
                                     throw SqlException.position(slaveModel.getJoinKeywordPosition())
                                             .put("HORIZON JOIN requires offset configuration (RANGE or LIST)");
