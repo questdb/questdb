@@ -520,8 +520,23 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
         execute("alter table x add column a int");
         execute("alter table x add column if not exists a int");
 
-        assertException("alter table x add column if not exists a hohoho", 41, "unrecognized column type: hohoho");
+        assertException("alter table x add column if not exists a hohoho", 41, "unsupported column type: hohoho");
         assertException("alter table x add column if not exists a long", 41, "column already exists with a different column type [current type=INT, requested type=LONG]");
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsArray() throws Exception {
+        createX();
+        execute("alter table x add column arr_col double[]");
+        // same type — should be a no-op
+        execute("alter table x add column if not exists arr_col double[]");
+
+        // different dimensionality — should fail
+        assertException(
+                "alter table x add column if not exists arr_col double[][]",
+                47,
+                "column already exists with a different column type"
+        );
     }
 
     @Test

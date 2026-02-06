@@ -752,32 +752,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return ColumnType.isTimestamp(to) && ColumnType.isConvertibleFrom(from, to);
     }
 
-    private static int parseGeoHashColumnType(GenericLexer lexer) throws SqlException {
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || tok.charAt(0) != '(') {
-            throw SqlException.position(lexer.getPosition()).put("missing GEOHASH precision");
-        }
-
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok != null && tok.charAt(0) != ')') {
-            int geoHashBits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, tok);
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || tok.charAt(0) != ')') {
-                if (tok != null) {
-                    throw SqlException.position(lexer.lastTokenPosition())
-                            .put("invalid GEOHASH type literal, expected ')'")
-                            .put(" found='").put(tok.charAt(0)).put("'");
-                }
-                throw SqlException.position(lexer.getPosition())
-                        .put("invalid GEOHASH type literal, expected ')'");
-            }
-            return ColumnType.getGeoHashTypeWithBits(geoHashBits);
-        } else {
-            throw SqlException.position(lexer.lastTokenPosition())
-                    .put("missing GEOHASH precision");
-        }
-    }
-
     private int addColumnWithType(
             AlterOperationBuilder addColumn,
             CharSequence columnName,
@@ -814,7 +788,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         if (columnType == ColumnType.GEOHASH) {
-            columnType = parseGeoHashColumnType(lexer);
+            columnType = SqlParser.parseGeoHashColumnType(lexer);
         }
 
         tok = SqlUtil.fetchNext(lexer);
@@ -958,14 +932,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         if (columnIndex != -1) {
                             tok = expectToken(lexer, "column type");
                             final int typePosition = lexer.lastTokenPosition();
-                            int columnType = ColumnType.typeOf(tok);
-                            if (columnType == -1) {
-                                throw SqlException.$(typePosition, "unrecognized column type: ").put(tok);
+                            int columnType = SqlUtil.toPersistedType(tok, typePosition);
+                            int dim = SqlUtil.parseArrayDimensionality(lexer, columnType, typePosition);
+                            if (dim > 0) {
+                                columnType = ColumnType.encodeArrayType(ColumnType.tagOf(columnType), dim);
                             }
                             if (columnType == ColumnType.DECIMAL) {
                                 columnType = SqlParser.parseDecimalColumnType(lexer);
                             } else if (columnType == ColumnType.GEOHASH) {
-                                columnType = parseGeoHashColumnType(lexer);
+                                columnType = SqlParser.parseGeoHashColumnType(lexer);
                             }
                             final int existingType = tableMetadata.getColumnType(columnIndex);
                             if (existingType != columnType) {
