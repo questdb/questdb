@@ -286,7 +286,12 @@ public class WalWriterRingManager implements Closeable {
                 pool.release(bufIdx);
             }
             case (int) OP_FSYNC -> {
-                // Handled internally -- inFlightCount already decremented.
+                if (cqeRes < 0) {
+                    WalWriterRingColumn column = columns.getQuick(columnSlot);
+                    if (column != null) {
+                        column.onFsyncCompleted(cqeRes);
+                    }
+                }
             }
         }
     }
@@ -325,6 +330,8 @@ public class WalWriterRingManager implements Closeable {
         boolean isDistressed();
 
         boolean isPageConfirmed(long pageId);
+
+        void onFsyncCompleted(int cqeRes);
 
         void onSnapshotCompleted(int cqeRes);
 

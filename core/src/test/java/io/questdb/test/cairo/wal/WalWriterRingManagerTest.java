@@ -286,12 +286,34 @@ public class WalWriterRingManagerTest extends AbstractTest {
                     mgr.waitForAll();
                     Assert.assertEquals(0, mgr.getInFlightCount());
 
-                    // Fsync should not dispatch to column callbacks.
+                    // Successful fsync should not dispatch to column callbacks.
                     Assert.assertEquals(0, col.writeCompletedCount.get());
                     Assert.assertEquals(0, col.snapshotCompletedCount.get());
+                    Assert.assertEquals(0, col.lastFsyncRes.get());
                 } finally {
                     Files.close(fd);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testFsyncErrorMarksDistressed() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (WalWriterRingManager mgr = new WalWriterRingManager(rf, 32)) {
+                DistressedColumn col = new DistressedColumn();
+                int slot = mgr.registerColumn(col);
+
+                // Enqueue fsync on an invalid fd to trigger a negative CQE.
+                mgr.enqueueFsync(slot, -1);
+                Assert.assertEquals(1, mgr.getInFlightCount());
+
+                mgr.submitAndDrainAll();
+                Assert.assertEquals(0, mgr.getInFlightCount());
+
+                Assert.assertTrue("Column should be distressed after fsync error", col.isDistressed());
             }
         });
     }
@@ -405,6 +427,7 @@ public class WalWriterRingManagerTest extends AbstractTest {
 
     private static class TestColumn implements WalWriterRingColumn {
         final IntList confirmedPages = new IntList();
+        final AtomicInteger lastFsyncRes = new AtomicInteger();
         final AtomicInteger lastSnapshotRes = new AtomicInteger();
         final AtomicLong lastWritePageId = new AtomicLong(-1);
         final AtomicInteger lastWriteRes = new AtomicInteger();
@@ -424,6 +447,11 @@ public class WalWriterRingManagerTest extends AbstractTest {
                 }
             }
             return false;
+        }
+
+        @Override
+        public void onFsyncCompleted(int cqeRes) {
+            lastFsyncRes.set(cqeRes);
         }
 
         @Override
@@ -458,6 +486,13 @@ public class WalWriterRingManagerTest extends AbstractTest {
         @Override
         public boolean isPageConfirmed(long pageId) {
             return false;
+        }
+
+        @Override
+        public void onFsyncCompleted(int cqeRes) {
+            if (cqeRes < 0) {
+                distressed = true;
+            }
         }
 
         @Override

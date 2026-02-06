@@ -230,6 +230,12 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
     }
 
     @Override
+    public void onFsyncCompleted(int cqeRes) {
+        distressed = true;
+        cqeError = cqeRes < 0 ? -cqeRes : 0;
+    }
+
+    @Override
     public void onSnapshotCompleted(int cqeRes) {
         // Legacy snapshot path — kept for interface compatibility.
         // With pool-based swap sync, snapshots are no longer used.
