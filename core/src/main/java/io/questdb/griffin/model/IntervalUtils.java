@@ -1140,7 +1140,7 @@ public final class IntervalUtils {
         int numStart = lo;
         for (int i = lo; i < lim; i++) {
             char c = seq.charAt(i);
-            if (c >= '0' && c <= '9') {
+            if ((c >= '0' && c <= '9') || c == '_') {
                 continue;
             }
             // Found a unit character
@@ -2411,7 +2411,7 @@ public final class IntervalUtils {
         // and '$' is not whitespace, so whitespace trimming always preserves at least '$'.
         assert elementStart < startExprHi : "Empty start expression in date range";
         if (endExprLo >= endExprHi) {
-            throw SqlException.$(errorPos, "Empty end expression in date range");
+            throw SqlException.$(errorPos + rangeOpPos - elementStart, "Empty end expression in date range");
         }
 
         // Evaluate start and end timestamps
@@ -2424,7 +2424,7 @@ public final class IntervalUtils {
 
         // Validate start <= end
         if (startTimestamp > endTimestamp) {
-            throw SqlException.$(errorPos, "Invalid date range: start is after end");
+            throw SqlException.$(errorPos + rangeOpPos - elementStart, "Invalid date range: start is after end");
         }
 
         // Check if BOTH endpoints have time precision (not at start of day)
