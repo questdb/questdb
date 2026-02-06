@@ -321,6 +321,10 @@ public class TableSequencerAPI implements QuietCloseable {
         engine.getWalListener().segmentClosed(tableToken, txn, walId, segmentId);
     }
 
+    public void notifyWalClosed(TableToken tableToken, long txn, int walId) {
+        engine.getWalListener().walClosed(tableToken, txn, walId);
+    }
+
     @TestOnly
     public void openSequencer(TableToken tableToken) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {

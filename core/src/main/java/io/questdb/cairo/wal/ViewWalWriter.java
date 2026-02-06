@@ -154,6 +154,7 @@ public class ViewWalWriter extends WalWriterBase {
                 Misc.free(path);
                 LOG.info().$("closed [view=").$(tableToken).I$();
             }
+            notifyWalClosure();
         }
     }
 
