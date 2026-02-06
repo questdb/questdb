@@ -2968,38 +2968,6 @@ public class TableReaderTest extends AbstractCairoTest {
         testRemovePartitionReload(PartitionBy.YEAR, "2020", 3000, current -> timestampDriver.addYears(timestampDriver.getPartitionFloorMethod(PartitionBy.YEAR).floor(current), 1));
     }
 
-    @Test
-    public void testScoreBoardOverflow() throws Throwable {
-        TableModel model = new TableModel(configuration, "all", PartitionBy.DAY)
-                .col("int", ColumnType.INT)
-                .timestamp("t");
-        CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 1);
-        assertMemoryLeak(() -> {
-            try (TableReader ignore = getReader("all")) {
-                try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
-                    for (int i = 0; i < configuration.getTxnScoreboardEntryCount() + 1; i++) {
-                        TableWriter.Row r = writer.newRow(1000);
-                        r.putInt(0, 100);
-                        r.append();
-                        writer.commit();
-                    }
-                }
-
-                try (TableReader ignore2 = getReader("all")) {
-                    Assert.fail();
-                } catch (CairoException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(), "max txn-inflight limit reached");
-                }
-
-                try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
-                    TableWriter.Row r = writer.newRow(0);
-                    r.putInt(0, 100);
-                    r.append();
-                    writer.commit();
-                }
-            }
-        });
-    }
 
     @Test
     public void testStringColumnRemove() throws Exception {

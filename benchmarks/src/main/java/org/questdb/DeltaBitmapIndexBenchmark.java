@@ -24,16 +24,13 @@
 
 package org.questdb;
 
-import io.questdb.cairo.idx.BitmapIndexBwdReader;
-import io.questdb.cairo.idx.BitmapIndexFwdReader;
-import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.idx.DeltaBitmapIndexBwdReader;
+import io.questdb.cairo.idx.BitmapIndexFwdReader;
+import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.idx.DeltaBitmapIndexFwdReader;
 import io.questdb.cairo.idx.DeltaBitmapIndexUtils;
 import io.questdb.cairo.idx.DeltaBitmapIndexWriter;
-import io.questdb.cairo.idx.FORBitmapIndexBwdReader;
 import io.questdb.cairo.idx.FORBitmapIndexFwdReader;
 import io.questdb.cairo.idx.FORBitmapIndexUtils;
 import io.questdb.cairo.idx.FORBitmapIndexWriter;
@@ -51,7 +48,6 @@ import org.openjdk.jmh.annotations.Level;
 import org.openjdk.jmh.annotations.Measurement;
 import org.openjdk.jmh.annotations.Mode;
 import org.openjdk.jmh.annotations.OutputTimeUnit;
-import org.openjdk.jmh.annotations.Param;
 import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
@@ -64,18 +60,19 @@ import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 
 import java.io.File;
+import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 
 /**
- * Benchmark comparing QuestDB's existing BitmapIndex with the new Delta-encoded Bitmap Index.
+ * Benchmark comparing Legacy, Delta-encoded, and FOR Bitmap Indexes
+ * with a realistic interleaved-key workload.
  * <p>
- * Tests write performance, forward read performance, backward read performance,
- * and storage sizes across different data sizes and densities.
- * <p>
- * Delta encoding achieves compression by storing deltas between consecutive values
- * using variable-length encoding (1-9 bytes per delta depending on size).
+ * Simulates 10,000 symbol keys with 1,000 row IDs each (10M total).
+ * Row IDs are randomly assigned to keys (uniform distribution), so within
+ * each key the values have large, non-consecutive gaps — matching real
+ * time-series symbol column behavior.
  * <p>
  * <b>How to run:</b>
  * <pre>
@@ -104,30 +101,28 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 public class DeltaBitmapIndexBenchmark {
 
     private static final long COLUMN_NAME_TXN = COLUMN_NAME_TXN_NONE;
-    @Param({"SEQUENTIAL", "SMALL_GAPS", "LARGE_GAPS"})
-    public DataPattern dataPattern;
-    @Param({"1", "10", "100"})
-    public int keyCount;
-    @Param({"10000", "100000", "1000000"})
-    public int valueCount;
+    private static final int KEY_COUNT = 10_000;
+    private static final int VALUES_PER_KEY = 1_000;
+    private static final int TOTAL_ROW_IDS = KEY_COUNT * VALUES_PER_KEY;
+    private static final int READ_BATCH_SIZE = 100;
+
     private CairoConfiguration configuration;
-    private DeltaBitmapIndexBwdReader deltaBwdReader;
     private DeltaBitmapIndexFwdReader deltaFwdReader;
     private Path deltaReadPath;
     private String deltaReadRoot;
     private String deltaRoot;
-    private FORBitmapIndexBwdReader forBwdReader;
     private FORBitmapIndexFwdReader forFwdReader;
     private Path forReadPath;
     private String forReadRoot;
     private String forRoot;
-    private BitmapIndexBwdReader legacyBwdReader;
-    // Pre-allocated readers for read benchmarks (avoid allocation during measurement)
     private BitmapIndexFwdReader legacyFwdReader;
     private Path legacyReadPath;
-    // Pre-built indexes for read benchmarks
     private String legacyReadRoot;
     private String legacyRoot;
+    // Pre-computed: keyAssignment[rowId] = key that owns this row ID
+    private int[] keyAssignment;
+    // Pre-computed: random keys to read during read benchmarks
+    private int[] readKeys;
     private Rnd rnd;
 
     /**
@@ -136,198 +131,88 @@ public class DeltaBitmapIndexBenchmark {
     public static void compareStorageSizes() {
         String tmpDir = System.getProperty("java.io.tmpdir");
         CairoConfiguration config = new DefaultCairoConfiguration(tmpDir);
-        Rnd rnd = new Rnd();
 
-        int[] valueCounts = {10_000, 100_000, 1_000_000};
-        int[] keyCounts = {1, 10, 100};
-        DataPattern[] patterns = {DataPattern.SEQUENTIAL, DataPattern.SMALL_GAPS, DataPattern.LARGE_GAPS};
+        int[] keyAssignment = buildKeyAssignment();
 
-        System.out.printf("%-12s %-8s %-12s %-15s %-15s %-15s %-15s %-15s%n",
-                "Values", "Keys", "Pattern", "Legacy (KB)", "Delta (KB)", "FOR (KB)", "Delta Ratio", "FOR Ratio");
-        System.out.println("-".repeat(120));
+        System.out.printf("%-15s %-15s %-15s %-15s %-15s%n",
+                "Legacy (KB)", "Delta (KB)", "FOR (KB)", "Delta Ratio", "FOR Ratio");
+        System.out.println("-".repeat(75));
 
-        for (int valueCount : valueCounts) {
-            for (int keyCount : keyCounts) {
-                for (DataPattern pattern : patterns) {
-                    String legacyDir = tmpDir + File.separator + "legacy_size_" + System.nanoTime();
-                    String deltaDir = tmpDir + File.separator + "delta_size_" + System.nanoTime();
-                    String forDir = tmpDir + File.separator + "for_size_" + System.nanoTime();
+        String legacyDir = tmpDir + File.separator + "legacy_size_" + System.nanoTime();
+        String deltaDir = tmpDir + File.separator + "delta_size_" + System.nanoTime();
+        String forDir = tmpDir + File.separator + "for_size_" + System.nanoTime();
 
-                    new File(legacyDir).mkdirs();
-                    new File(deltaDir).mkdirs();
-                    new File(forDir).mkdirs();
+        new File(legacyDir).mkdirs();
+        new File(deltaDir).mkdirs();
+        new File(forDir).mkdirs();
 
-                    try {
-                        // Build legacy index
-                        rnd.reset();
-                        try (Path path = new Path().of(legacyDir)) {
-                            try (BitmapIndexWriter writer = new BitmapIndexWriter(config)) {
-                                writer.of(path, "test", COLUMN_NAME_TXN, 256);
-                                writeDataStatic(writer, valueCount, keyCount, pattern, rnd);
-                            }
-                        }
-
-                        // Build delta index
-                        rnd.reset();
-                        createDeltaIndex(config, deltaDir);
-                        try (Path path = new Path().of(deltaDir)) {
-                            try (DeltaBitmapIndexWriter writer = new DeltaBitmapIndexWriter(config, path, "test", COLUMN_NAME_TXN)) {
-                                writeDataStaticDelta(writer, valueCount, keyCount, pattern, rnd);
-                            }
-                        }
-
-                        // Build FOR index
-                        rnd.reset();
-                        createFORIndex(config, forDir);
-                        try (Path path = new Path().of(forDir)) {
-                            try (FORBitmapIndexWriter writer = new FORBitmapIndexWriter(config)) {
-                                writer.of(path, "test", COLUMN_NAME_TXN);
-                                writeDataStaticFOR(writer, valueCount, keyCount, pattern, rnd);
-                            }
-                        }
-
-                        // Measure sizes
-                        long legacySize = getDirectorySize(legacyDir);
-                        long deltaSize = getDirectorySize(deltaDir);
-                        long forSize = getDirectorySize(forDir);
-                        double deltaRatio = (double) legacySize / deltaSize;
-                        double forRatio = (double) legacySize / forSize;
-
-                        System.out.printf("%-12d %-8d %-12s %-15.1f %-15.1f %-15.1f %-15.2fx %-15.2fx%n",
-                                valueCount, keyCount, pattern,
-                                legacySize / 1024.0, deltaSize / 1024.0, forSize / 1024.0, deltaRatio, forRatio);
-                    } finally {
-                        deleteDir(legacyDir);
-                        deleteDir(deltaDir);
-                        deleteDir(forDir);
-                    }
+        try {
+            // Build legacy index
+            try (Path path = new Path().of(legacyDir)) {
+                try (BitmapIndexWriter writer = new BitmapIndexWriter(config)) {
+                    writer.of(path, "test", COLUMN_NAME_TXN, 256);
+                    writeInterleaved(writer, keyAssignment);
                 }
             }
+
+            // Build delta index
+            createDeltaIndex(config, deltaDir);
+            try (Path path = new Path().of(deltaDir)) {
+                try (DeltaBitmapIndexWriter writer = new DeltaBitmapIndexWriter(config, path, "test", COLUMN_NAME_TXN)) {
+                    writeInterleaved(writer, keyAssignment);
+                }
+            }
+
+            // Build FOR index
+            createFORIndex(config, forDir);
+            try (Path path = new Path().of(forDir)) {
+                try (FORBitmapIndexWriter writer = new FORBitmapIndexWriter(config)) {
+                    writer.of(path, "test", COLUMN_NAME_TXN);
+                    writeInterleaved(writer, keyAssignment);
+                }
+            }
+
+            // Measure sizes
+            long legacySize = getDirectorySize(legacyDir);
+            long deltaSize = getDirectorySize(deltaDir);
+            long forSize = getDirectorySize(forDir);
+            double deltaRatio = (double) legacySize / deltaSize;
+            double forRatio = (double) legacySize / forSize;
+
+            System.out.printf("%-15.1f %-15.1f %-15.1f %-15.2fx %-15.2fx%n",
+                    legacySize / 1024.0, deltaSize / 1024.0, forSize / 1024.0, deltaRatio, forRatio);
+        } finally {
+            deleteDir(legacyDir);
+            deleteDir(deltaDir);
+            deleteDir(forDir);
         }
     }
 
     public static void main(String[] args) throws RunnerException {
-        // Run storage size comparison first
-        System.out.println("=== Storage Size Comparison: Legacy vs Delta vs FOR Index ===\n");
+        System.out.println("=== Storage Size Comparison: Legacy vs Delta vs FOR Index ===");
+        System.out.printf("    %d keys, %d values/key, %d total row IDs (interleaved)%n%n",
+                KEY_COUNT, VALUES_PER_KEY, TOTAL_ROW_IDS);
         compareStorageSizes();
         System.out.println();
 
-        // Check if we should skip JMH (useful for quick size comparisons)
         if (args.length > 0 && "sizeOnly".equals(args[0])) {
             System.out.println("Skipping JMH benchmarks (sizeOnly mode)");
             return;
         }
 
-        // Then run JMH benchmarks
         Options opt = new OptionsBuilder()
                 .include(DeltaBitmapIndexBenchmark.class.getSimpleName())
-                .addProfiler("gc")  // Add GC profiler to track allocations
+                .addProfiler("gc")
                 .build();
 
         new Runner(opt).run();
     }
 
     @Benchmark
-    public long rangeQueryDelta(Blackhole bh) {
-        long sum = 0;
-        int valuesPerKey = valueCount / keyCount;
-        long multiplier = getPatternMultiplier(dataPattern);
-
-        for (int key = 0; key < keyCount; key++) {
-            long keyBase = (long) key * valuesPerKey * multiplier;
-            long rangeStart = keyBase + valuesPerKey / 4;
-            long rangeEnd = keyBase + valuesPerKey * 3 / 4;
-            RowCursor cursor = deltaFwdReader.getCursor(true, key, rangeStart, rangeEnd);
-            while (cursor.hasNext()) {
-                sum += cursor.next();
-            }
-        }
-        bh.consume(sum);
-        return sum;
-    }
-
-    @Benchmark
-    public long rangeQueryFOR(Blackhole bh) {
-        long sum = 0;
-        int valuesPerKey = valueCount / keyCount;
-        long multiplier = getPatternMultiplier(dataPattern);
-
-        for (int key = 0; key < keyCount; key++) {
-            long keyBase = (long) key * valuesPerKey * multiplier;
-            long rangeStart = keyBase + valuesPerKey / 4;
-            long rangeEnd = keyBase + valuesPerKey * 3 / 4;
-            RowCursor cursor = forFwdReader.getCursor(true, key, rangeStart, rangeEnd);
-            while (cursor.hasNext()) {
-                sum += cursor.next();
-            }
-        }
-        bh.consume(sum);
-        return sum;
-    }
-
-    @Benchmark
-    public long rangeQueryLegacy(Blackhole bh) {
-        long sum = 0;
-        int valuesPerKey = valueCount / keyCount;
-        long multiplier = getPatternMultiplier(dataPattern);
-
-        for (int key = 0; key < keyCount; key++) {
-            long keyBase = (long) key * valuesPerKey * multiplier;
-            long rangeStart = keyBase + valuesPerKey / 4;
-            long rangeEnd = keyBase + valuesPerKey * 3 / 4;
-            RowCursor cursor = legacyFwdReader.getCursor(true, key, rangeStart, rangeEnd);
-            while (cursor.hasNext()) {
-                sum += cursor.next();
-            }
-        }
-        bh.consume(sum);
-        return sum;
-    }
-
-    @Benchmark
-    public long readBackwardDelta(Blackhole bh) {
-        long sum = 0;
-        for (int key = 0; key < keyCount; key++) {
-            RowCursor cursor = deltaBwdReader.getCursor(true, key, 0, Long.MAX_VALUE);
-            while (cursor.hasNext()) {
-                sum += cursor.next();
-            }
-        }
-        bh.consume(sum);
-        return sum;
-    }
-
-    @Benchmark
-    public long readBackwardFOR(Blackhole bh) {
-        long sum = 0;
-        for (int key = 0; key < keyCount; key++) {
-            RowCursor cursor = forBwdReader.getCursor(true, key, 0, Long.MAX_VALUE);
-            while (cursor.hasNext()) {
-                sum += cursor.next();
-            }
-        }
-        bh.consume(sum);
-        return sum;
-    }
-
-    @Benchmark
-    public long readBackwardLegacy(Blackhole bh) {
-        long sum = 0;
-        for (int key = 0; key < keyCount; key++) {
-            RowCursor cursor = legacyBwdReader.getCursor(true, key, 0, Long.MAX_VALUE);
-            while (cursor.hasNext()) {
-                sum += cursor.next();
-            }
-        }
-        bh.consume(sum);
-        return sum;
-    }
-
-    @Benchmark
     public long readForwardDelta(Blackhole bh) {
         long sum = 0;
-        for (int key = 0; key < keyCount; key++) {
-            RowCursor cursor = deltaFwdReader.getCursor(true, key, 0, Long.MAX_VALUE);
+        for (int i = 0; i < READ_BATCH_SIZE; i++) {
+            RowCursor cursor = deltaFwdReader.getCursor(true, readKeys[i], 0, Long.MAX_VALUE);
             while (cursor.hasNext()) {
                 sum += cursor.next();
             }
@@ -339,8 +224,8 @@ public class DeltaBitmapIndexBenchmark {
     @Benchmark
     public long readForwardFOR(Blackhole bh) {
         long sum = 0;
-        for (int key = 0; key < keyCount; key++) {
-            RowCursor cursor = forFwdReader.getCursor(true, key, 0, Long.MAX_VALUE);
+        for (int i = 0; i < READ_BATCH_SIZE; i++) {
+            RowCursor cursor = forFwdReader.getCursor(true, readKeys[i], 0, Long.MAX_VALUE);
             while (cursor.hasNext()) {
                 sum += cursor.next();
             }
@@ -352,8 +237,8 @@ public class DeltaBitmapIndexBenchmark {
     @Benchmark
     public long readForwardLegacy(Blackhole bh) {
         long sum = 0;
-        for (int key = 0; key < keyCount; key++) {
-            RowCursor cursor = legacyFwdReader.getCursor(true, key, 0, Long.MAX_VALUE);
+        for (int i = 0; i < READ_BATCH_SIZE; i++) {
+            RowCursor cursor = legacyFwdReader.getCursor(true, readKeys[i], 0, Long.MAX_VALUE);
             while (cursor.hasNext()) {
                 sum += cursor.next();
             }
@@ -372,8 +257,6 @@ public class DeltaBitmapIndexBenchmark {
         new File(legacyRoot).mkdirs();
         new File(deltaRoot).mkdirs();
         new File(forRoot).mkdirs();
-
-        rnd.reset();
     }
 
     @Setup(Level.Trial)
@@ -381,6 +264,15 @@ public class DeltaBitmapIndexBenchmark {
         String tmpDir = System.getProperty("java.io.tmpdir");
         configuration = new DefaultCairoConfiguration(tmpDir);
         rnd = new Rnd();
+
+        // Pre-compute interleaved key assignments
+        keyAssignment = buildKeyAssignment();
+
+        // Pre-compute random keys for read benchmarks
+        readKeys = new int[READ_BATCH_SIZE];
+        for (int i = 0; i < READ_BATCH_SIZE; i++) {
+            readKeys[i] = rnd.nextInt(KEY_COUNT);
+        }
 
         // Create directories for read benchmarks and pre-populate indexes
         legacyReadRoot = tmpDir + File.separator + "legacy_read_" + System.nanoTime();
@@ -396,7 +288,7 @@ public class DeltaBitmapIndexBenchmark {
         buildDeltaIndex(deltaReadRoot);
         buildFORIndex(forReadRoot);
 
-        // Pre-allocate readers (avoid allocation during measurement)
+        // Pre-allocate readers
         legacyReadPath = new Path().of(legacyReadRoot);
         deltaReadPath = new Path().of(deltaReadRoot);
         forReadPath = new Path().of(forReadRoot);
@@ -405,24 +297,13 @@ public class DeltaBitmapIndexBenchmark {
                 configuration, legacyReadPath, "test", COLUMN_NAME_TXN, -1, 0);
         legacyReadPath.trimTo(legacyReadPath.size() - legacyReadRoot.length()).of(legacyReadRoot);
 
-        legacyBwdReader = new BitmapIndexBwdReader(
-                configuration, legacyReadPath, "test", COLUMN_NAME_TXN, -1, 0);
-        legacyReadPath.trimTo(legacyReadPath.size() - legacyReadRoot.length()).of(legacyReadRoot);
-
         deltaFwdReader = new DeltaBitmapIndexFwdReader(
-                configuration, deltaReadPath, "test", COLUMN_NAME_TXN, -1, 0);
-        deltaReadPath.trimTo(deltaReadPath.size() - deltaReadRoot.length()).of(deltaReadRoot);
-
-        deltaBwdReader = new DeltaBitmapIndexBwdReader(
                 configuration, deltaReadPath, "test", COLUMN_NAME_TXN, -1, 0);
         deltaReadPath.trimTo(deltaReadPath.size() - deltaReadRoot.length()).of(deltaReadRoot);
 
         forFwdReader = new FORBitmapIndexFwdReader(
                 configuration, forReadPath, "test", COLUMN_NAME_TXN, -1, 0);
         forReadPath.trimTo(forReadPath.size() - forReadRoot.length()).of(forReadRoot);
-
-        forBwdReader = new FORBitmapIndexBwdReader(
-                configuration, forReadPath, "test", COLUMN_NAME_TXN, -1, 0);
     }
 
     @TearDown(Level.Invocation)
@@ -434,24 +315,14 @@ public class DeltaBitmapIndexBenchmark {
 
     @TearDown(Level.Trial)
     public void tearDownTrial() {
-        // Close pre-allocated readers
         if (legacyFwdReader != null) {
             legacyFwdReader.close();
-        }
-        if (legacyBwdReader != null) {
-            legacyBwdReader.close();
         }
         if (deltaFwdReader != null) {
             deltaFwdReader.close();
         }
-        if (deltaBwdReader != null) {
-            deltaBwdReader.close();
-        }
         if (forFwdReader != null) {
             forFwdReader.close();
-        }
-        if (forBwdReader != null) {
-            forBwdReader.close();
         }
         if (legacyReadPath != null) {
             legacyReadPath.close();
@@ -468,14 +339,12 @@ public class DeltaBitmapIndexBenchmark {
         deleteDirectory(forReadRoot);
     }
 
-    // ==================== Write Benchmarks ====================
-
     @Benchmark
     public void writeDelta(Blackhole bh) {
         createDeltaIndex(configuration, deltaRoot);
         try (Path path = new Path().of(deltaRoot)) {
             try (DeltaBitmapIndexWriter writer = new DeltaBitmapIndexWriter(configuration, path, "test", COLUMN_NAME_TXN)) {
-                writeDataDelta(writer);
+                writeInterleaved(writer, keyAssignment);
                 bh.consume(writer.getMaxValue());
             }
         }
@@ -487,7 +356,7 @@ public class DeltaBitmapIndexBenchmark {
         try (Path path = new Path().of(forRoot)) {
             try (FORBitmapIndexWriter writer = new FORBitmapIndexWriter(configuration)) {
                 writer.of(path, "test", COLUMN_NAME_TXN);
-                writeDataFOR(writer);
+                writeInterleaved(writer, keyAssignment);
                 bh.consume(writer.getMaxValue());
             }
         }
@@ -498,13 +367,36 @@ public class DeltaBitmapIndexBenchmark {
         try (Path path = new Path().of(legacyRoot)) {
             try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration)) {
                 writer.of(path, "test", COLUMN_NAME_TXN, 256);
-                writeData(writer);
+                writeInterleaved(writer, keyAssignment);
                 bh.consume(writer.getMaxValue());
             }
         }
     }
 
-    // ==================== Forward Read Benchmarks ====================
+    // ==================== Helper Methods ====================
+
+    /**
+     * Builds the key assignment array: each key gets exactly VALUES_PER_KEY row IDs,
+     * shuffled via Fisher-Yates so that row IDs are interleaved across keys.
+     */
+    private static int[] buildKeyAssignment() {
+        int[] assignment = new int[TOTAL_ROW_IDS];
+        // Fill: key k owns indices [k*VALUES_PER_KEY .. (k+1)*VALUES_PER_KEY)
+        for (int k = 0; k < KEY_COUNT; k++) {
+            for (int i = 0; i < VALUES_PER_KEY; i++) {
+                assignment[k * VALUES_PER_KEY + i] = k;
+            }
+        }
+        // Fisher-Yates shuffle
+        Random random = new Random(42);
+        for (int i = TOTAL_ROW_IDS - 1; i > 0; i--) {
+            int j = random.nextInt(i + 1);
+            int tmp = assignment[i];
+            assignment[i] = assignment[j];
+            assignment[j] = tmp;
+        }
+        return assignment;
+    }
 
     private static void createDeltaIndex(CairoConfiguration config, String root) {
         try (Path path = new Path().of(root)) {
@@ -551,8 +443,6 @@ public class DeltaBitmapIndexBenchmark {
         }
     }
 
-    // ==================== Backward Read Benchmarks ====================
-
     private static long getDirectorySize(String path) {
         File dir = new File(path);
         long size = 0;
@@ -565,74 +455,34 @@ public class DeltaBitmapIndexBenchmark {
         return size;
     }
 
-    private static long getNextDelta(DataPattern pattern, Rnd rnd) {
-        switch (pattern) {
-            case SEQUENTIAL:
-                return 1;  // Delta = 1, best compression (1 byte per value)
-            case SMALL_GAPS:
-                return 1 + rnd.nextInt(10);  // Delta 1-10, good compression (1-2 bytes)
-            case LARGE_GAPS:
-                return 100 + rnd.nextInt(1000);  // Delta 100-1100, moderate compression (2-4 bytes)
-            default:
-                return 1;
+    /**
+     * Writes data with interleaved keys: iterates row IDs 0..TOTAL_ROW_IDS-1 in order,
+     * assigning each to keyAssignment[rowId]. This satisfies the ascending-order-per-key
+     * constraint since row IDs are encountered in ascending order globally.
+     */
+    private static void writeInterleaved(BitmapIndexWriter writer, int[] keyAssignment) {
+        for (int rowId = 0; rowId < TOTAL_ROW_IDS; rowId++) {
+            writer.add(keyAssignment[rowId], rowId);
         }
     }
 
-    private static int getPatternMultiplier(DataPattern pattern) {
-        switch (pattern) {
-            case SEQUENTIAL:
-                return 1;
-            case SMALL_GAPS:
-                return 5;
-            case LARGE_GAPS:
-                return 1000;
-            default:
-                return 1;
+    private static void writeInterleaved(DeltaBitmapIndexWriter writer, int[] keyAssignment) {
+        for (int rowId = 0; rowId < TOTAL_ROW_IDS; rowId++) {
+            writer.add(keyAssignment[rowId], rowId);
         }
     }
 
-    // ==================== Range Query Benchmarks ====================
-
-    private static void writeDataStatic(BitmapIndexWriter writer, int valueCount, int keyCount, DataPattern pattern, Rnd rnd) {
-        int valuesPerKey = valueCount / keyCount;
-        for (int key = 0; key < keyCount; key++) {
-            long value = (long) key * valuesPerKey * getPatternMultiplier(pattern);
-            for (int i = 0; i < valuesPerKey; i++) {
-                writer.add(key, value);
-                value += getNextDelta(pattern, rnd);
-            }
+    private static void writeInterleaved(FORBitmapIndexWriter writer, int[] keyAssignment) {
+        for (int rowId = 0; rowId < TOTAL_ROW_IDS; rowId++) {
+            writer.add(keyAssignment[rowId], rowId);
         }
     }
-
-    private static void writeDataStaticDelta(DeltaBitmapIndexWriter writer, int valueCount, int keyCount, DataPattern pattern, Rnd rnd) {
-        int valuesPerKey = valueCount / keyCount;
-        for (int key = 0; key < keyCount; key++) {
-            long value = (long) key * valuesPerKey * getPatternMultiplier(pattern);
-            for (int i = 0; i < valuesPerKey; i++) {
-                writer.add(key, value);
-                value += getNextDelta(pattern, rnd);
-            }
-        }
-    }
-
-    private static void writeDataStaticFOR(FORBitmapIndexWriter writer, int valueCount, int keyCount, DataPattern pattern, Rnd rnd) {
-        int valuesPerKey = valueCount / keyCount;
-        for (int key = 0; key < keyCount; key++) {
-            long value = (long) key * valuesPerKey * getPatternMultiplier(pattern);
-            for (int i = 0; i < valuesPerKey; i++) {
-                writer.add(key, value);
-                value += getNextDelta(pattern, rnd);
-            }
-        }
-    }
-
-    // ==================== Helper Methods ====================
 
     private void buildDeltaIndex(String root) {
         createDeltaIndex(configuration, root);
         try (Path path = new Path().of(root)) {
             try (DeltaBitmapIndexWriter writer = new DeltaBitmapIndexWriter(configuration, path, "test", COLUMN_NAME_TXN)) {
-                writeDataDelta(writer);
+                writeInterleaved(writer, keyAssignment);
             }
         }
     }
@@ -642,7 +492,7 @@ public class DeltaBitmapIndexBenchmark {
         try (Path path = new Path().of(root)) {
             try (FORBitmapIndexWriter writer = new FORBitmapIndexWriter(configuration)) {
                 writer.of(path, "test", COLUMN_NAME_TXN);
-                writeDataFOR(writer);
+                writeInterleaved(writer, keyAssignment);
             }
         }
     }
@@ -651,7 +501,7 @@ public class DeltaBitmapIndexBenchmark {
         try (Path path = new Path().of(root)) {
             try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration)) {
                 writer.of(path, "test", COLUMN_NAME_TXN, 256);
-                writeData(writer);
+                writeInterleaved(writer, keyAssignment);
             }
         }
     }
@@ -670,65 +520,5 @@ public class DeltaBitmapIndexBenchmark {
             }
             dir.delete();
         }
-    }
-
-    private void writeData(BitmapIndexWriter writer) {
-        int valuesPerKey = valueCount / keyCount;
-        rnd.reset();
-
-        for (int key = 0; key < keyCount; key++) {
-            long value = (long) key * valuesPerKey * getPatternMultiplier(dataPattern);
-            for (int i = 0; i < valuesPerKey; i++) {
-                writer.add(key, value);
-                value += getNextDelta(dataPattern, rnd);
-            }
-        }
-    }
-
-    private void writeDataDelta(DeltaBitmapIndexWriter writer) {
-        int valuesPerKey = valueCount / keyCount;
-        rnd.reset();
-
-        for (int key = 0; key < keyCount; key++) {
-            long value = (long) key * valuesPerKey * getPatternMultiplier(dataPattern);
-            for (int i = 0; i < valuesPerKey; i++) {
-                writer.add(key, value);
-                value += getNextDelta(dataPattern, rnd);
-            }
-        }
-    }
-
-    private void writeDataFOR(FORBitmapIndexWriter writer) {
-        int valuesPerKey = valueCount / keyCount;
-        rnd.reset();
-
-        for (int key = 0; key < keyCount; key++) {
-            long value = (long) key * valuesPerKey * getPatternMultiplier(dataPattern);
-            for (int i = 0; i < valuesPerKey; i++) {
-                writer.add(key, value);
-                value += getNextDelta(dataPattern, rnd);
-            }
-        }
-    }
-
-    /**
-     * Data patterns for benchmarking different compression scenarios.
-     */
-    public enum DataPattern {
-        /**
-         * Consecutive row IDs (delta=1). Best case for delta encoding.
-         * Expected: ~8x compression (8 bytes -> 1 byte per value after first)
-         */
-        SEQUENTIAL,
-        /**
-         * Small gaps between values (delta 1-10). Good compression.
-         * Expected: ~4-6x compression (1-2 bytes per delta)
-         */
-        SMALL_GAPS,
-        /**
-         * Large gaps between values (delta 100-1100). Moderate compression.
-         * Expected: ~2-3x compression (2-4 bytes per delta)
-         */
-        LARGE_GAPS
     }
 }
