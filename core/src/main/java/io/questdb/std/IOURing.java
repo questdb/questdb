@@ -46,6 +46,8 @@ public interface IOURing extends Closeable {
 
     void enqueueWrite(long fd, long offset, long bufPtr, int len, long userData);
 
+    void enqueueWriteFixed(long fd, long offset, long bufAddr, int len, int bufIndex, long userData);
+
     long getCqeId();
 
     int getCqeRes();
@@ -57,6 +59,8 @@ public interface IOURing extends Closeable {
      * @return true - if cqe was read; false - otherwise.
      */
     boolean nextCqe();
+
+    int registerBuffers(long iovsAddr, int count);
 
     /**
      * Submits pending sqes, if any.
@@ -72,4 +76,8 @@ public interface IOURing extends Closeable {
      * @return number of submitted sqes.
      */
     int submitAndWait();
+
+    int submitAndWait(int waitNr);
+
+    int unregisterBuffers();
 }

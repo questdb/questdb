@@ -88,6 +88,11 @@ public class IOURingFacadeImpl implements IOURingFacade {
     }
 
     @Override
+    public int registerBuffers(long ptr, long iovecs, int count) {
+        return IOUringAccessor.registerBuffers(ptr, iovecs, count);
+    }
+
+    @Override
     public int submit(long ptr) {
         return IOUringAccessor.submit(ptr);
     }
@@ -95,6 +100,11 @@ public class IOURingFacadeImpl implements IOURingFacade {
     @Override
     public int submitAndWait(long ptr, int waitNr) {
         return IOUringAccessor.submitAndWait(ptr, waitNr);
+    }
+
+    @Override
+    public int unregisterBuffers(long ptr) {
+        return IOUringAccessor.unregisterBuffers(ptr);
     }
 
     static {

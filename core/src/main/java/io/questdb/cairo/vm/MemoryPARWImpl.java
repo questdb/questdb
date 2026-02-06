@@ -70,13 +70,13 @@ public class MemoryPARWImpl implements MemoryARW {
     private final FlyweightDirectUtf16Sink utf8FloatingSink = new FlyweightDirectUtf16Sink();
     protected int memoryTag;
     private long absolutePointer;
-    private long appendPointer = -1;
-    private long baseOffset = 1;
+    protected long appendPointer = -1;
+    protected long baseOffset = 1;
     private long extendSegmentMod;
     private int extendSegmentMsb;
     private long extendSegmentSize;
-    private long pageHi = -1;
-    private long pageLo = -1;
+    protected long pageHi = -1;
+    protected long pageLo = -1;
     private long roOffsetHi = 0;
     private long roOffsetLo = 0;
 
@@ -1044,7 +1044,7 @@ public class MemoryPARWImpl implements MemoryARW {
         return computeHotPage(page, pageAddress);
     }
 
-    private long computeHotPage(int page, long pageAddress) {
+    protected long computeHotPage(int page, long pageAddress) {
         roOffsetLo = pageOffset(page) - 1;
         roOffsetHi = roOffsetLo + getPageSize() + 1;
         absolutePointer = pageAddress - roOffsetLo - 1;

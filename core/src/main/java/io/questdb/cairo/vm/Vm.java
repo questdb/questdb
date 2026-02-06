@@ -107,8 +107,8 @@ public class Vm {
         return new MemoryPMARImpl(configuration);
     }
 
-    public static MemoryMAR getPURInstance(io.questdb.cairo.wal.WalWriterRingManager ringManager) {
-        return new MemoryPURImpl(ringManager);
+    public static MemoryMAR getPURInstance(io.questdb.cairo.wal.WalWriterRingManager ringManager, io.questdb.cairo.wal.WalWriterBufferPool pool) {
+        return new MemoryPURImpl(ringManager, pool);
     }
 
     public static MemoryCMARW getSmallCMARWInstance(FilesFacade ff, LPSZ name, int memoryTag, int opts) {

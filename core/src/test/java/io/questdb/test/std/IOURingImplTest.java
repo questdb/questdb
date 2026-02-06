@@ -333,6 +333,366 @@ public class IOURingImplTest extends AbstractTest {
     }
 
     @Test
+    public void testRegisterAndUnregisterBuffers() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            final int bufCount = 4;
+            final int bufLen = 4096;
+            long[] bufs = new long[bufCount];
+            for (int i = 0; i < bufCount; i++) {
+                bufs[i] = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            // Build native iovec array: 16 bytes per entry (8 iov_base + 8 iov_len).
+            long iovecSize = 16L;
+            long iovsAddr = Unsafe.malloc(iovecSize * bufCount, MemoryTag.NATIVE_DEFAULT);
+            try (IOURing ring = rf.newInstance(4)) {
+                for (int i = 0; i < bufCount; i++) {
+                    Unsafe.getUnsafe().putLong(iovsAddr + i * iovecSize, bufs[i]);
+                    Unsafe.getUnsafe().putLong(iovsAddr + i * iovecSize + 8, bufLen);
+                }
+
+                int ret = ring.registerBuffers(iovsAddr, bufCount);
+                Assert.assertEquals("registerBuffers should return 0", 0, ret);
+
+                ret = ring.unregisterBuffers();
+                Assert.assertEquals("unregisterBuffers should return 0", 0, ret);
+            } finally {
+                Unsafe.free(iovsAddr, iovecSize * bufCount, MemoryTag.NATIVE_DEFAULT);
+                for (int i = 0; i < bufCount; i++) {
+                    Unsafe.free(bufs[i], bufLen, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRegisterBuffersDoubleRegisterFails() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            final int bufLen = 4096;
+            long buf = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+            long iovecSize = 16L;
+            long iovsAddr = Unsafe.malloc(iovecSize, MemoryTag.NATIVE_DEFAULT);
+            try (IOURing ring = rf.newInstance(4)) {
+                Unsafe.getUnsafe().putLong(iovsAddr, buf);
+                Unsafe.getUnsafe().putLong(iovsAddr + 8, bufLen);
+
+                int ret = ring.registerBuffers(iovsAddr, 1);
+                Assert.assertEquals(0, ret);
+
+                // Second register without unregister should fail with -EBUSY.
+                ret = ring.registerBuffers(iovsAddr, 1);
+                Assert.assertTrue("double register should fail", ret < 0);
+
+                ring.unregisterBuffers();
+            } finally {
+                Unsafe.free(iovsAddr, iovecSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(buf, bufLen, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testWriteFixedBasic() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            final int bufLen = 4096;
+            long buf = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+            long readBuf = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < bufLen; i++) {
+                    Unsafe.getUnsafe().putByte(buf + i, (byte) (i & 0xFF));
+                }
+
+                // Build and register iovec.
+                long iovecSize = 16L;
+                long iovsAddr = Unsafe.malloc(iovecSize, MemoryTag.NATIVE_DEFAULT);
+
+                File file = temp.newFile();
+                try (Path path = new Path()) {
+                    long fd = Files.openRW(path.of(file.getAbsolutePath()).$());
+                    Assert.assertTrue(fd > -1);
+
+                    try (IOURing ring = rf.newInstance(4)) {
+                        Unsafe.getUnsafe().putLong(iovsAddr, buf);
+                        Unsafe.getUnsafe().putLong(iovsAddr + 8, bufLen);
+                        Assert.assertEquals(0, ring.registerBuffers(iovsAddr, 1));
+
+                        long expectedId = 0xCAFEL;
+                        ring.enqueueWriteFixed(fd, 0, buf, bufLen, 0, expectedId);
+
+                        ring.submitAndWait();
+                        Assert.assertTrue(ring.nextCqe());
+                        Assert.assertEquals(expectedId, ring.getCqeId());
+                        Assert.assertEquals(bufLen, ring.getCqeRes());
+
+                        ring.unregisterBuffers();
+                    } finally {
+                        Files.close(fd);
+                    }
+
+                    // Read back with pread and verify.
+                    long fdRead = Files.openRO(path.of(file.getAbsolutePath()).$());
+                    try {
+                        long bytesRead = Files.read(fdRead, readBuf, bufLen, 0);
+                        Assert.assertEquals(bufLen, bytesRead);
+                        for (int i = 0; i < bufLen; i++) {
+                            Assert.assertEquals(
+                                    "mismatch at byte " + i,
+                                    (byte) (i & 0xFF),
+                                    Unsafe.getUnsafe().getByte(readBuf + i)
+                            );
+                        }
+                    } finally {
+                        Files.close(fdRead);
+                    }
+                }
+                Unsafe.free(iovsAddr, iovecSize, MemoryTag.NATIVE_DEFAULT);
+            } finally {
+                Unsafe.free(buf, bufLen, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(readBuf, bufLen, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testWriteFixedMultipleBuffers() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            final int bufCount = 4;
+            final int bufLen = 4096;
+            long[] bufs = new long[bufCount];
+            for (int i = 0; i < bufCount; i++) {
+                bufs[i] = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+                for (int j = 0; j < bufLen; j++) {
+                    Unsafe.getUnsafe().putByte(bufs[i] + j, (byte) (i + 1));
+                }
+            }
+
+            long iovecSize = 16L;
+            long iovsAddr = Unsafe.malloc(iovecSize * bufCount, MemoryTag.NATIVE_DEFAULT);
+            long readBuf = Unsafe.malloc(bufLen * bufCount, MemoryTag.NATIVE_DEFAULT);
+
+            File file = temp.newFile();
+            try (Path path = new Path()) {
+                long fd = Files.openRW(path.of(file.getAbsolutePath()).$());
+                Assert.assertTrue(fd > -1);
+
+                try (IOURing ring = rf.newInstance(8)) {
+                    for (int i = 0; i < bufCount; i++) {
+                        Unsafe.getUnsafe().putLong(iovsAddr + i * iovecSize, bufs[i]);
+                        Unsafe.getUnsafe().putLong(iovsAddr + i * iovecSize + 8, bufLen);
+                    }
+                    Assert.assertEquals(0, ring.registerBuffers(iovsAddr, bufCount));
+
+                    for (int i = 0; i < bufCount; i++) {
+                        ring.enqueueWriteFixed(fd, (long) i * bufLen, bufs[i], bufLen, i, i);
+                    }
+
+                    ring.submitAndWait();
+                    int drained = 0;
+                    while (drained < bufCount) {
+                        while (!ring.nextCqe()) {
+                            Os.pause();
+                        }
+                        Assert.assertEquals(bufLen, ring.getCqeRes());
+                        drained++;
+                    }
+
+                    ring.unregisterBuffers();
+                } finally {
+                    Files.close(fd);
+                }
+
+                // Read back and verify each region.
+                long fdRead = Files.openRO(path.of(file.getAbsolutePath()).$());
+                try {
+                    long totalLen = (long) bufLen * bufCount;
+                    long bytesRead = Files.read(fdRead, readBuf, totalLen, 0);
+                    Assert.assertEquals(totalLen, bytesRead);
+                    for (int i = 0; i < bufCount; i++) {
+                        for (int j = 0; j < bufLen; j++) {
+                            Assert.assertEquals(
+                                    "mismatch at buffer " + i + " byte " + j,
+                                    (byte) (i + 1),
+                                    Unsafe.getUnsafe().getByte(readBuf + (long) i * bufLen + j)
+                            );
+                        }
+                    }
+                } finally {
+                    Files.close(fdRead);
+                }
+            } finally {
+                Unsafe.free(iovsAddr, iovecSize * bufCount, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(readBuf, (long) bufLen * bufCount, MemoryTag.NATIVE_DEFAULT);
+                for (int i = 0; i < bufCount; i++) {
+                    Unsafe.free(bufs[i], bufLen, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWriteFixedPartialBuffer() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            final int bufLen = 4096;
+            long buf = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+            long readBuf = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
+            try {
+                // Fill only bytes [1024..2048) with pattern, rest zeros.
+                Unsafe.getUnsafe().setMemory(buf, bufLen, (byte) 0);
+                for (int i = 0; i < 1024; i++) {
+                    Unsafe.getUnsafe().putByte(buf + 1024 + i, (byte) 0xAB);
+                }
+
+                long iovecSize = 16L;
+                long iovsAddr = Unsafe.malloc(iovecSize, MemoryTag.NATIVE_DEFAULT);
+
+                File file = temp.newFile();
+                try (Path path = new Path()) {
+                    long fd = Files.openRW(path.of(file.getAbsolutePath()).$());
+                    Assert.assertTrue(fd > -1);
+
+                    try (IOURing ring = rf.newInstance(4)) {
+                        Unsafe.getUnsafe().putLong(iovsAddr, buf);
+                        Unsafe.getUnsafe().putLong(iovsAddr + 8, bufLen);
+                        Assert.assertEquals(0, ring.registerBuffers(iovsAddr, 1));
+
+                        // Write partial: 1024 bytes starting at offset 1024 within the buffer.
+                        ring.enqueueWriteFixed(fd, 0, buf + 1024, 1024, 0, 0xBEEF);
+
+                        ring.submitAndWait();
+                        Assert.assertTrue(ring.nextCqe());
+                        Assert.assertEquals(0xBEEF, ring.getCqeId());
+                        Assert.assertEquals(1024, ring.getCqeRes());
+
+                        ring.unregisterBuffers();
+                    } finally {
+                        Files.close(fd);
+                    }
+
+                    long fdRead = Files.openRO(path.of(file.getAbsolutePath()).$());
+                    try {
+                        long bytesRead = Files.read(fdRead, readBuf, 1024, 0);
+                        Assert.assertEquals(1024, bytesRead);
+                        for (int i = 0; i < 1024; i++) {
+                            Assert.assertEquals((byte) 0xAB, Unsafe.getUnsafe().getByte(readBuf + i));
+                        }
+                    } finally {
+                        Files.close(fdRead);
+                    }
+                }
+                Unsafe.free(iovsAddr, iovecSize, MemoryTag.NATIVE_DEFAULT);
+            } finally {
+                Unsafe.free(buf, bufLen, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(readBuf, 1024, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testWriteFixedAfterReRegister() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            final int bufLen = 4096;
+            // Phase 1: register 2 buffers, write via WRITE_FIXED.
+            long buf0 = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+            long buf1 = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+            // Phase 2: re-register with 4 buffers (2 old + 2 new).
+            long buf2 = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+            long buf3 = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+            long readBuf = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+
+            for (int i = 0; i < bufLen; i++) {
+                Unsafe.getUnsafe().putByte(buf0 + i, (byte) 0xAA);
+                Unsafe.getUnsafe().putByte(buf2 + i, (byte) 0xCC);
+                Unsafe.getUnsafe().putByte(buf3 + i, (byte) 0xDD);
+            }
+
+            long iovecSize = 16L;
+            long iovsAddr2 = Unsafe.malloc(iovecSize * 2, MemoryTag.NATIVE_DEFAULT);
+            long iovsAddr4 = Unsafe.malloc(iovecSize * 4, MemoryTag.NATIVE_DEFAULT);
+
+            File file = temp.newFile();
+            try (Path path = new Path()) {
+                long fd = Files.openRW(path.of(file.getAbsolutePath()).$());
+                Assert.assertTrue(fd > -1);
+
+                try (IOURing ring = rf.newInstance(8)) {
+                    // Phase 1: register 2 buffers.
+                    Unsafe.getUnsafe().putLong(iovsAddr2, buf0);
+                    Unsafe.getUnsafe().putLong(iovsAddr2 + 8, bufLen);
+                    Unsafe.getUnsafe().putLong(iovsAddr2 + iovecSize, buf1);
+                    Unsafe.getUnsafe().putLong(iovsAddr2 + iovecSize + 8, bufLen);
+                    Assert.assertEquals(0, ring.registerBuffers(iovsAddr2, 2));
+
+                    ring.enqueueWriteFixed(fd, 0, buf0, bufLen, 0, 1);
+                    ring.submitAndWait();
+                    Assert.assertTrue(ring.nextCqe());
+                    Assert.assertEquals(bufLen, ring.getCqeRes());
+
+                    // Phase 2: unregister, re-register with 4 buffers.
+                    ring.unregisterBuffers();
+
+                    Unsafe.getUnsafe().putLong(iovsAddr4, buf0);
+                    Unsafe.getUnsafe().putLong(iovsAddr4 + 8, bufLen);
+                    Unsafe.getUnsafe().putLong(iovsAddr4 + iovecSize, buf1);
+                    Unsafe.getUnsafe().putLong(iovsAddr4 + iovecSize + 8, bufLen);
+                    Unsafe.getUnsafe().putLong(iovsAddr4 + 2 * iovecSize, buf2);
+                    Unsafe.getUnsafe().putLong(iovsAddr4 + 2 * iovecSize + 8, bufLen);
+                    Unsafe.getUnsafe().putLong(iovsAddr4 + 3 * iovecSize, buf3);
+                    Unsafe.getUnsafe().putLong(iovsAddr4 + 3 * iovecSize + 8, bufLen);
+                    Assert.assertEquals(0, ring.registerBuffers(iovsAddr4, 4));
+
+                    // Write using new buffer index 2.
+                    ring.enqueueWriteFixed(fd, bufLen, buf2, bufLen, 2, 2);
+                    ring.submitAndWait();
+                    Assert.assertTrue(ring.nextCqe());
+                    Assert.assertEquals(bufLen, ring.getCqeRes());
+
+                    ring.unregisterBuffers();
+                } finally {
+                    Files.close(fd);
+                }
+
+                // Verify file: first 4096 bytes = 0xAA, next 4096 = 0xCC.
+                long fdRead = Files.openRO(path.of(file.getAbsolutePath()).$());
+                try {
+                    long bytesRead = Files.read(fdRead, readBuf, bufLen, 0);
+                    Assert.assertEquals(bufLen, bytesRead);
+                    for (int i = 0; i < bufLen; i++) {
+                        Assert.assertEquals((byte) 0xAA, Unsafe.getUnsafe().getByte(readBuf + i));
+                    }
+
+                    bytesRead = Files.read(fdRead, readBuf, bufLen, bufLen);
+                    Assert.assertEquals(bufLen, bytesRead);
+                    for (int i = 0; i < bufLen; i++) {
+                        Assert.assertEquals((byte) 0xCC, Unsafe.getUnsafe().getByte(readBuf + i));
+                    }
+                } finally {
+                    Files.close(fdRead);
+                }
+            } finally {
+                Unsafe.free(iovsAddr2, iovecSize * 2, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(iovsAddr4, iovecSize * 4, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(buf0, bufLen, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(buf1, bufLen, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(buf2, bufLen, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(buf3, bufLen, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(readBuf, bufLen, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testRead() throws Exception {
         Assume.assumeTrue(rf.isAvailable());
 

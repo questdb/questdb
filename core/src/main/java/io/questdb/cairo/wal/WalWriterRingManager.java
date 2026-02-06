@@ -29,7 +29,6 @@ import io.questdb.std.IOURing;
 import io.questdb.std.IOURingFacade;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.Os;
 
 import java.io.Closeable;
 
@@ -37,6 +36,7 @@ public class WalWriterRingManager implements Closeable {
 
     public static final long OP_FSYNC = 2L;
     public static final long OP_SNAPSHOT = 1L;
+    public static final long OP_SWAP_WRITE = 3L;
     public static final long OP_WRITE = 0L;
     private static final int COLUMN_SLOT_BITS = 18;
     private static final long COLUMN_SLOT_MASK = (1L << COLUMN_SLOT_BITS) - 1;
@@ -50,6 +50,7 @@ public class WalWriterRingManager implements Closeable {
     private boolean closed;
     private int inFlightCount;
     private int nextColumnSlot;
+    private WalWriterBufferPool pool;
 
     public WalWriterRingManager(IOURingFacade facade, int ringCapacity) {
         this.ring = facade.newInstance(Numbers.ceilPow2(ringCapacity));
@@ -63,6 +64,12 @@ public class WalWriterRingManager implements Closeable {
     public static long packSnapshotId(int columnSlot) {
         return (OP_SNAPSHOT << (COLUMN_SLOT_BITS + PAGE_ID_BITS))
                 | ((long) columnSlot << PAGE_ID_BITS);
+    }
+
+    public static long packSwapWriteId(int columnSlot, int bufferIndex) {
+        return (OP_SWAP_WRITE << (COLUMN_SLOT_BITS + PAGE_ID_BITS))
+                | ((long) columnSlot << PAGE_ID_BITS)
+                | (bufferIndex & PAGE_ID_MASK);
     }
 
     public static long packWriteId(int columnSlot, long pageId) {
@@ -108,6 +115,25 @@ public class WalWriterRingManager implements Closeable {
         }
     }
 
+    public void enqueueSwapWrite(int columnSlot, int bufferIndex, long fd, long fileOffset, long bufAddr, int len) {
+        long userData = packSwapWriteId(columnSlot, bufferIndex);
+        if (pool != null && pool.isRegistered()) {
+            if (!tryEnqueueWriteFixed(fd, fileOffset, bufAddr, len, bufferIndex, userData)) {
+                submitAndDrainAll();
+                if (!tryEnqueueWriteFixed(fd, fileOffset, bufAddr, len, bufferIndex, userData)) {
+                    throw CairoException.critical(0).put("io_uring SQ full after drain");
+                }
+            }
+        } else {
+            if (!tryEnqueueWrite(fd, fileOffset, bufAddr, len, userData)) {
+                submitAndDrainAll();
+                if (!tryEnqueueWrite(fd, fileOffset, bufAddr, len, userData)) {
+                    throw CairoException.critical(0).put("io_uring SQ full after drain");
+                }
+            }
+        }
+    }
+
     public void enqueueSnapshotWrite(int columnSlot, long fd, long fileOffset, long bufAddr, int len) {
         long userData = packSnapshotId(columnSlot);
         if (!tryEnqueueWrite(fd, fileOffset, bufAddr, len, userData)) {
@@ -128,8 +154,31 @@ public class WalWriterRingManager implements Closeable {
         }
     }
 
+    public void enqueueWrite(int columnSlot, long pageId, int bufferIndex, long fd, long fileOffset, long bufAddr, int len) {
+        long userData = packWriteId(columnSlot, pageId);
+        if (pool != null && pool.isRegistered()) {
+            if (!tryEnqueueWriteFixed(fd, fileOffset, bufAddr, len, bufferIndex, userData)) {
+                submitAndDrainAll();
+                if (!tryEnqueueWriteFixed(fd, fileOffset, bufAddr, len, bufferIndex, userData)) {
+                    throw CairoException.critical(0).put("io_uring SQ full after drain");
+                }
+            }
+        } else {
+            if (!tryEnqueueWrite(fd, fileOffset, bufAddr, len, userData)) {
+                submitAndDrainAll();
+                if (!tryEnqueueWrite(fd, fileOffset, bufAddr, len, userData)) {
+                    throw CairoException.critical(0).put("io_uring SQ full after drain");
+                }
+            }
+        }
+    }
+
     public int getInFlightCount() {
         return inFlightCount;
+    }
+
+    public int registerBuffers(long iovsAddr, int count) {
+        return ring.registerBuffers(iovsAddr, count);
     }
 
     public int registerColumn(WalWriterRingColumn column) {
@@ -151,31 +200,44 @@ public class WalWriterRingManager implements Closeable {
         }
     }
 
+    public void setPool(WalWriterBufferPool pool) {
+        this.pool = pool;
+    }
+
+    public int unregisterBuffers() {
+        return ring.unregisterBuffers();
+    }
+
     public void unregisterColumn(int columnSlot) {
         columns.setQuick(columnSlot, null);
     }
 
     public void waitForAll() {
+        // Submit any pending SQEs first.
+        ring.submit();
         while (inFlightCount > 0) {
-            ring.submitAndWait();
+            // Drain already-available CQEs before blocking.
             drainCqes();
             if (inFlightCount > 0) {
                 checkDistressed();
+                ring.submitAndWait(1);
+                drainCqes();
             }
         }
     }
 
     public void waitForPage(int columnSlot, long pageId) {
+        ring.submit();
         while (inFlightCount > 0) {
-            ring.submitAndWait();
             drainCqes();
-            // Check if the page CQE has been consumed by checking the column state.
-            // The column's onWriteCompleted callback will have fired during drainCqes.
             WalWriterRingColumn column = columns.getQuick(columnSlot);
             if (column == null || column.isPageConfirmed(pageId)) {
                 return;
             }
-            checkDistressed();
+            if (inFlightCount > 0) {
+                checkDistressed();
+                ring.submitAndWait(1);
+            }
         }
     }
 
@@ -210,6 +272,16 @@ public class WalWriterRingManager implements Closeable {
                     column.onSnapshotCompleted(cqeRes);
                 }
             }
+            case (int) OP_SWAP_WRITE -> {
+                int bufIdx = (int) unpackPageId(userData);
+                if (cqeRes < 0) {
+                    WalWriterRingColumn col = columns.getQuick(columnSlot);
+                    if (col != null) {
+                        col.onSwapWriteError(cqeRes);
+                    }
+                }
+                pool.release(bufIdx);
+            }
             case (int) OP_FSYNC -> {
                 // Handled internally -- inFlightCount already decremented.
             }
@@ -236,12 +308,24 @@ public class WalWriterRingManager implements Closeable {
         }
     }
 
+    private boolean tryEnqueueWriteFixed(long fd, long fileOffset, long bufAddr, int len, int bufIndex, long userData) {
+        try {
+            ring.enqueueWriteFixed(fd, fileOffset, bufAddr, len, bufIndex, userData);
+            inFlightCount++;
+            return true;
+        } catch (CairoException e) {
+            return false;
+        }
+    }
+
     public interface WalWriterRingColumn {
         boolean isDistressed();
 
         boolean isPageConfirmed(long pageId);
 
         void onSnapshotCompleted(int cqeRes);
+
+        void onSwapWriteError(int cqeRes);
 
         void onWriteCompleted(long pageId, int cqeRes);
     }

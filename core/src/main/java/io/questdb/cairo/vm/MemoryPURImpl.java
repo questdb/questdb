@@ -27,6 +27,7 @@ package io.questdb.cairo.vm;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryMAR;
+import io.questdb.cairo.wal.WalWriterBufferPool;
 import io.questdb.cairo.wal.WalWriterRingManager;
 import io.questdb.cairo.wal.WalWriterRingManager.WalWriterRingColumn;
 import io.questdb.log.Log;
@@ -36,22 +37,21 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.TestOnly;
 
 /**
  * Paged io_uring-backed appendable memory for WAL column files.
- *
- * Data is written into malloc-backed pages and flushed to disk via io_uring pwrite.
+ * <p>
+ * Data is written into pool-acquired pages and flushed to disk via io_uring pwrite.
  * Pages transition through WRITING -> SUBMITTED -> CONFIRMED. In ASYNC commit mode,
- * {@link #sync(boolean)} may snapshot the dirty range into a temporary buffer so the
- * writer can continue appending while the pwrite is in flight.
- *
+ * {@link #syncSwap()} submits the current buffer as a swap-write and acquires a fresh
+ * buffer from the pool, allowing the writer to continue appending without blocking.
+ * <p>
  * Callers that already enforce a barrier (e.g., {@code ringManager.waitForAll()})
- * may use {@link #syncAsyncNoSnapshot()} to avoid the snapshot copy, and then call
+ * may use {@link #syncSubmitInPlace()} to submit the live buffer directly, and then call
  * {@link #resumeWriteAfterSync()} to restore the WRITING state of the current page.
- *
+ * <p>
  * Not thread-safe; intended for a single WAL writer thread with CQE callbacks
  * delivered by {@link WalWriterRingManager}.
  */
@@ -62,8 +62,10 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
     static final int SUBMITTED = 1;
     static final int WRITING = 0;
     private static final Log LOG = LogFactory.getLog(MemoryPURImpl.class);
-    private final IntList pageStates = new IntList();
+    private final IntList pageBufferIndices = new IntList();
     private final LongList pageExpectedLens = new LongList();
+    private final LongList pageDirtyStarts = new LongList();
+    private final IntList pageStates = new IntList();
     private final WalWriterRingManager ringManager;
     private long allocatedFileSize;
     private int cqeError;
@@ -71,30 +73,19 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
     private boolean distressed;
     private long fd = -1;
     private FilesFacade ff;
-    // Debug counters for leak isolation (bytes and counts)
-    private long dbgPageBytesAlloc;
-    private long dbgPageBytesFree;
-    private long dbgPageAllocs;
-    private long dbgPageFrees;
-    private long dbgSnapshotBytesAlloc;
-    private long dbgSnapshotBytesFree;
-    private long dbgSnapshotAllocs;
-    private long dbgSnapshotFrees;
     private long lastSyncedAppendOffset;
-    private boolean snapshotInFlight;
-    private long snapshotBufAddr;
-    private long snapshotBufCapacity;
-    private long snapshotBufSize;
+    private WalWriterBufferPool pool;
 
     @TestOnly
     public MemoryPURImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag, int opts,
-                         WalWriterRingManager ringManager) {
-        this(ringManager);
+                         WalWriterRingManager ringManager, WalWriterBufferPool pool) {
+        this(ringManager, pool);
         of(ff, name, pageSize, 0, memoryTag, opts, -1);
     }
 
-    public MemoryPURImpl(WalWriterRingManager ringManager) {
+    public MemoryPURImpl(WalWriterRingManager ringManager, WalWriterBufferPool pool) {
         this.ringManager = ringManager;
+        this.pool = pool;
     }
 
     @Override
@@ -114,12 +105,10 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
 
     public final void close(boolean truncate, byte truncateMode) {
         if (fd != -1) {
-            // Flush any remaining WRITING pages before draining.
             flushAllWritingPages();
-            // Drain all in-flight CQEs before freeing any buffers.
             ringManager.waitForAll();
-            freeSnapshotBuffer();
             long sz = truncate ? getAppendOffset() : -1L;
+            releaseAllPageBuffersToPool();
             super.close();
             clearPageStates();
             try {
@@ -128,32 +117,27 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
                 fd = -1;
             }
         } else {
-            // Even if fd is already detached, ensure buffers are released.
-            freeSnapshotBuffer();
+            releaseAllPageBuffersToPool();
             super.close();
             clearPageStates();
         }
         allocatedFileSize = 0;
         distressed = false;
         lastSyncedAppendOffset = 0;
-        logDebugLeakCounters("close");
     }
 
     @Override
     public long detachFdClose() {
         long detachedFd = this.fd;
-        // Flush and drain while fd is still valid.
         flushAllWritingPages();
         ringManager.waitForAll();
-        freeSnapshotBuffer();
+        releaseAllPageBuffersToPool();
         super.close();
         clearPageStates();
-        // Detach fd without closing it — caller takes ownership.
         this.fd = -1;
         allocatedFileSize = 0;
         distressed = false;
         lastSyncedAppendOffset = 0;
-        logDebugLeakCounters("detach");
         return detachedFd;
     }
 
@@ -174,7 +158,6 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
             if (addr != 0) {
                 return addr;
             }
-            // Page was evicted. Pread it back.
             if (page < pageStates.size()) {
                 int state = pageStates.getQuick(page);
                 if (state == CONFIRMED || state == ERROR) {
@@ -201,15 +184,18 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
 
     @Override
     public void jumpTo(long offset) {
-        // Wait for any SUBMITTED pages between the target and current append position.
         int targetPage = pageIndex(offset);
         int currentPage = getAppendOffset() > 0 ? pageIndex(getAppendOffset() - 1) : -1;
 
-        // Wait for SUBMITTED pages that we're rolling back over.
         for (int i = targetPage; i <= currentPage && i < pageStates.size(); i++) {
             if (pageStates.getQuick(i) == SUBMITTED) {
                 ringManager.waitForPage(columnSlot, i);
             }
+        }
+        // If rolling back within the target page, reset dirty start so that
+        // subsequent writes from the rollback point are flushed correctly.
+        if (offset < getPageDirtyStart(targetPage)) {
+            setPageDirtyStart(targetPage, offset);
         }
         super.jumpTo(offset);
         if (offset < lastSyncedAppendOffset) {
@@ -245,12 +231,36 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
 
     @Override
     public void onSnapshotCompleted(int cqeRes) {
-        if (cqeRes < 0 || cqeRes != snapshotBufSize) {
+        // Legacy snapshot path — kept for interface compatibility.
+        // With pool-based swap sync, snapshots are no longer used.
+    }
+
+    @Override
+    public void onSwapWriteError(int cqeRes) {
+        distressed = true;
+        cqeError = cqeRes < 0 ? -cqeRes : 0;
+    }
+
+    @Override
+    public void onWriteCompleted(long pageId, int cqeRes) {
+        int page = (int) pageId;
+        if (page >= pageExpectedLens.size()) {
             distressed = true;
-            cqeError = cqeRes < 0 ? -cqeRes : 0;
+            cqeError = 0;
+            return;
         }
-        snapshotInFlight = false;
-        snapshotBufSize = 0;
+        long expectedLen = pageExpectedLens.getQuick(page);
+        if (cqeRes < 0) {
+            distressed = true;
+            cqeError = -cqeRes;
+            setPageState(page, ERROR);
+        } else if (cqeRes != expectedLen) {
+            distressed = true;
+            cqeError = 0;
+            setPageState(page, ERROR);
+        } else {
+            setPageState(page, CONFIRMED);
+        }
     }
 
     public void refreshCurrentPageFromFile() {
@@ -293,33 +303,34 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         }
     }
 
-    @Override
-    public void onWriteCompleted(long pageId, int cqeRes) {
-        int page = (int) pageId;
-        if (page >= pageExpectedLens.size()) {
-            distressed = true;
-            cqeError = 0;
+    /**
+     * Restore the current page to WRITING after a ring barrier completes.
+     * Must be called after {@code ringManager.waitForAll()} when the last sync used
+     * {@link #syncSubmitInPlace()}.
+     */
+    public void resumeWriteAfterSync() {
+        long appendOffset = getAppendOffset();
+        if (appendOffset <= 0) {
             return;
         }
-        long expectedLen = pageExpectedLens.getQuick(page);
-        if (cqeRes < 0) {
-            distressed = true;
-            cqeError = -cqeRes;
-            setPageState(page, ERROR);
-        } else if (cqeRes != expectedLen) {
-            distressed = true;
-            cqeError = 0;
-            setPageState(page, ERROR);
-        } else {
-            setPageState(page, CONFIRMED);
+        int currentPage = pageIndex(appendOffset - 1);
+        if (currentPage < pageStates.size()) {
+            int state = pageStates.getQuick(currentPage);
+            if (state == CONFIRMED) {
+                setPageState(currentPage, WRITING);
+            } else if (state == SUBMITTED) {
+                LOG.info().$("page still submitted after wait [fd=").$(fd)
+                        .$(", columnSlot=").$(columnSlot)
+                        .$(", page=").$(currentPage)
+                        .$(", appendOffset=").$(appendOffset)
+                        .I$();
+            }
         }
     }
 
     @Override
     public void switchTo(FilesFacade ff, long fd, long extendSegmentSize, long offset, boolean truncate, byte truncateMode) {
-        // Close the old fd first (flushes all pages, drains CQEs, truncates).
         close(truncate, truncateMode);
-        // Now set up for the new fd.
         this.ff = ff;
         this.fd = fd;
         long fileLen = ff.length(fd);
@@ -335,36 +346,24 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
     @Override
     public void sync(boolean async) {
         checkDistressed();
-
         if (async) {
-            syncAsync();
+            syncSwap();
         } else {
             syncSync();
         }
     }
 
     /**
-     * Submit the current dirty range using the live page buffer (no snapshot copy).
-     *
+     * Submit the current dirty range using the live page buffer (no swap, no copy).
+     * <p>
      * Lifecycle contract:
      * - Caller must ensure no further writes happen until a ring barrier completes
-     *   (typically {@code ringManager.waitForAll()}).
+     * (typically {@code ringManager.waitForAll()}).
      * - After the barrier, caller must invoke {@link #resumeWriteAfterSync()} before
-     *   any subsequent appends or commits, otherwise incremental flushes will be skipped.
+     * any subsequent appends or commits.
      */
-    public void syncAsyncNoSnapshot() {
+    public void syncSubmitInPlace() {
         checkDistressed();
-        if (snapshotInFlight) {
-            // Should not happen in no-snapshot mode; drain to be safe.
-            ringManager.waitForAll();
-            if (snapshotInFlight) {
-                distressed = true;
-                throw CairoException.critical(0)
-                        .put("snapshot still in flight after wait [fd=").put(fd)
-                        .put(", columnSlot=").put(columnSlot)
-                        .put(']');
-            }
-        }
         long appendOffset = getAppendOffset();
         if (appendOffset == lastSyncedAppendOffset) {
             return;
@@ -374,30 +373,56 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
     }
 
     /**
-     * Restore the current page to WRITING after a ring barrier completes.
-     *
-     * Must be called after {@code ringManager.waitForAll()} when the last sync used
-     * {@link #syncAsyncNoSnapshot()}.
+     * Swap-based async sync: submit the current buffer via swap-write and acquire
+     * a fresh buffer from the pool. The writer can continue appending immediately.
+     * <p>
+     * The old buffer is released back to the pool when the CQE completes.
+     * No memcpy, no blocking, no snapshot buffer management.
      */
-    public void resumeWriteAfterSync() {
+    public void syncSwap() {
+        checkDistressed();
         long appendOffset = getAppendOffset();
+        if (appendOffset == lastSyncedAppendOffset) {
+            return;
+        }
         if (appendOffset <= 0) {
             return;
         }
         int currentPage = pageIndex(appendOffset - 1);
-        if (currentPage < pageStates.size()) {
-            int state = pageStates.getQuick(currentPage);
-            if (state == CONFIRMED) {
-                setPageState(currentPage, WRITING);
-            } else if (state == SUBMITTED) {
-                // Unexpected after waitForAll; keep state to avoid overlapping writes.
-                LOG.info().$("page still submitted after wait [fd=").$(fd)
-                        .$(", columnSlot=").$(columnSlot)
-                        .$(", page=").$(currentPage)
-                        .$(", appendOffset=").$(appendOffset)
-                        .I$();
-            }
+        if (currentPage >= pageStates.size() || pageStates.getQuick(currentPage) != WRITING) {
+            return;
         }
+        long addr = currentPage < pages.size() ? pages.getQuick(currentPage) : 0;
+        if (addr == 0) {
+            return;
+        }
+
+        long dirtyStart = getPageDirtyStart(currentPage);
+        long pageStart = pageOffset(currentPage);
+        long bufOffset = dirtyStart - pageStart;
+        int dirtyLen = (int) (appendOffset - dirtyStart);
+        if (dirtyLen <= 0) {
+            return;
+        }
+
+        ensureFileSize(dirtyStart + dirtyLen);
+
+        // Submit old buffer as swap-write (CQE will release it to pool).
+        int oldBufIdx = getPageBufferIndex(currentPage);
+        ringManager.enqueueSwapWrite(columnSlot, oldBufIdx, fd, dirtyStart, addr + bufOffset, dirtyLen);
+
+        // Acquire fresh buffer from pool.
+        int newBufIdx = pool.acquire();
+        long newAddr = pool.address(newBufIdx);
+        cachePageAddress(currentPage, newAddr);
+        setPageBufferIndex(currentPage, newBufIdx);
+        setPageDirtyStart(currentPage, appendOffset);
+
+        // Adjust hot-path pointers to point into new buffer.
+        long offsetInPage = appendOffset - pageStart;
+        updateWritePointers(currentPage, newAddr, offsetInPage);
+
+        lastSyncedAppendOffset = appendOffset;
     }
 
     @Override
@@ -406,6 +431,7 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
             return;
         }
         ringManager.waitForAll();
+        releaseAllPageBuffersToPool();
         super.close();
         clearPageStates();
         if (!ff.truncate(Math.abs(fd), getExtendSegmentSize())) {
@@ -428,19 +454,14 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
     protected long mapWritePage(int page, long offset) {
         checkDistressed();
 
-        // Submit previous page's pwrite if it's in WRITING state.
         submitPreviousPage(page);
-
-        // Non-blocking drain to surface errors early.
         ringManager.drainCqes();
 
-        // Check if page already exists.
         if (page < pages.size()) {
             long existingAddr = pages.getQuick(page);
             if (existingAddr != 0) {
                 int state = page < pageStates.size() ? pageStates.getQuick(page) : -1;
                 if (state == CONFIRMED) {
-                    // Re-entering a confirmed page for writing (e.g. after rollback).
                     setPageState(page, WRITING);
                     return existingAddr;
                 }
@@ -450,18 +471,14 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
             }
         }
 
-        // Evict confirmed pages to bound memory.
         evictConfirmedPages(page);
-
-        // Ensure file is large enough.
         ensureFileSize(pageOffset(page) + getExtendSegmentSize());
 
-        // Allocate new page buffer.
-        long addr = Unsafe.malloc(getExtendSegmentSize(), MemoryTag.NATIVE_TABLE_WAL_WRITER);
-        dbgPageAllocs++;
-        dbgPageBytesAlloc += getExtendSegmentSize();
-        // If the file already contains data for this page, pread it to avoid clobbering
-        // existing contents (e.g., pre-initialized null vectors).
+        // Acquire buffer from pool.
+        int bufIdx = pool.acquire();
+        long addr = pool.address(bufIdx);
+
+        // Pread existing file data if needed.
         long fileLen = ff.length(fd);
         if (fileLen > allocatedFileSize) {
             allocatedFileSize = fileLen;
@@ -472,18 +489,14 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
                 int readLen = (int) Math.min(getExtendSegmentSize(), fileLen - pageStart);
                 long bytesRead = ff.read(fd, addr, readLen, pageStart);
                 if (bytesRead < 0) {
-                    Unsafe.free(addr, getExtendSegmentSize(), MemoryTag.NATIVE_TABLE_WAL_WRITER);
-                    dbgPageFrees++;
-                    dbgPageBytesFree += getExtendSegmentSize();
+                    pool.release(bufIdx);
                     distressed = true;
                     cqeError = ff.errno();
                     throw CairoException.critical(cqeError)
                             .put("pread failed [fd=").put(fd).put(", offset=").put(pageStart).put(']');
                 }
                 if (bytesRead != readLen) {
-                    Unsafe.free(addr, getExtendSegmentSize(), MemoryTag.NATIVE_TABLE_WAL_WRITER);
-                    dbgPageFrees++;
-                    dbgPageBytesFree += getExtendSegmentSize();
+                    pool.release(bufIdx);
                     distressed = true;
                     cqeError = 0;
                     throw CairoException.critical(0)
@@ -498,6 +511,8 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         cachePageAddress(page, addr);
         setPageState(page, WRITING);
         setPageExpectedLen(page, 0);
+        setPageBufferIndex(page, bufIdx);
+        setPageDirtyStart(page, pageOffset(page));
 
         return addr;
     }
@@ -505,11 +520,12 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
     @Override
     protected void release(long address) {
         if (address != 0) {
-            // Clear hot-page cache if the freed address falls within the cached range.
             clearHotPage();
-            Unsafe.free(address, getPageSize(), MemoryTag.NATIVE_TABLE_WAL_WRITER);
-            dbgPageFrees++;
-            dbgPageBytesFree += getPageSize();
+            if (pool != null) {
+                pool.releaseByAddress(address);
+            } else {
+                Unsafe.free(address, getPageSize(), MemoryTag.NATIVE_TABLE_WAL_WRITER);
+            }
         }
     }
 
@@ -522,51 +538,8 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
     private void clearPageStates() {
         pageStates.clear();
         pageExpectedLens.clear();
-    }
-
-    private void flushAllWritingPages() {
-        long appendOffset = getAppendOffset();
-        for (int i = 0, n = Math.min(pages.size(), pageStates.size()); i < n; i++) {
-            long addr = pages.getQuick(i);
-            if (addr != 0 && pageStates.getQuick(i) == WRITING) {
-                long fileOffset = pageOffset(i);
-                long pageEnd = fileOffset + getExtendSegmentSize();
-                // Determine how much of this page is dirty.
-                int writeLen;
-                if (appendOffset <= fileOffset) {
-                    continue; // Page is beyond append offset, nothing to write.
-                } else if (appendOffset >= pageEnd) {
-                    writeLen = (int) getExtendSegmentSize(); // Full page.
-                } else {
-                    writeLen = (int) (appendOffset - fileOffset); // Partial page.
-                }
-                ensureFileSize(fileOffset + writeLen);
-                ringManager.enqueueWrite(columnSlot, i, fd, fileOffset, addr, writeLen);
-                setPageExpectedLen(i, writeLen);
-                setPageState(i, SUBMITTED);
-            }
-        }
-    }
-
-    private void ensureFileSize(long requiredSize) {
-        if (requiredSize <= allocatedFileSize) {
-            return;
-        }
-        // Allocate in chunks aligned to page size.
-        long chunkSize = getExtendSegmentSize() * 4;
-        long newSize = Math.max(requiredSize, allocatedFileSize + chunkSize);
-        // Round up to page size.
-        newSize = ((newSize + getExtendSegmentSize() - 1) / getExtendSegmentSize()) * getExtendSegmentSize();
-
-        if (!ff.fallocateKeepSize(fd, allocatedFileSize, newSize - allocatedFileSize)) {
-            // Fallback to allocate (changes visible size).
-            LOG.info().$("fallocateKeepSize failed, falling back to allocate [fd=").$(fd).$(']').$();
-            if (!ff.allocate(fd, newSize)) {
-                throw CairoException.critical(ff.errno())
-                        .put("Cannot extend file fd=").put(fd).put(" to ").put(newSize);
-            }
-        }
-        allocatedFileSize = newSize;
+        pageDirtyStarts.clear();
+        pageBufferIndices.clear();
     }
 
     private void evictConfirmedPages(int currentPage) {
@@ -582,35 +555,120 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         }
     }
 
-    private void freeSnapshotBuffer() {
-        if (snapshotBufAddr != 0) {
-            dbgSnapshotFrees++;
-            dbgSnapshotBytesFree += snapshotBufCapacity;
-            Unsafe.free(snapshotBufAddr, snapshotBufCapacity, MemoryTag.NATIVE_TABLE_WAL_WRITER);
-            snapshotBufAddr = 0;
-            snapshotBufCapacity = 0;
+    private void ensureFileSize(long requiredSize) {
+        if (requiredSize <= allocatedFileSize) {
+            return;
         }
-        snapshotInFlight = false;
-        snapshotBufSize = 0;
+        long chunkSize = getExtendSegmentSize() * 4;
+        long newSize = Math.max(requiredSize, allocatedFileSize + chunkSize);
+        newSize = ((newSize + getExtendSegmentSize() - 1) / getExtendSegmentSize()) * getExtendSegmentSize();
+
+        if (!ff.fallocateKeepSize(fd, allocatedFileSize, newSize - allocatedFileSize)) {
+            LOG.info().$("fallocateKeepSize failed, falling back to allocate [fd=").$(fd).$(']').$();
+            if (!ff.allocate(fd, newSize)) {
+                throw CairoException.critical(ff.errno())
+                        .put("Cannot extend file fd=").put(fd).put(" to ").put(newSize);
+            }
+        }
+        allocatedFileSize = newSize;
+    }
+
+    private void flushAllWritingPages() {
+        long appendOffset = getAppendOffset();
+        for (int i = 0, n = Math.min(pages.size(), pageStates.size()); i < n; i++) {
+            long addr = pages.getQuick(i);
+            if (addr != 0 && pageStates.getQuick(i) == WRITING) {
+                long dirtyStart = getPageDirtyStart(i);
+                long fileOffset = pageOffset(i);
+                long pageEnd = fileOffset + getExtendSegmentSize();
+                long writeEnd;
+                if (appendOffset <= fileOffset) {
+                    continue;
+                } else if (appendOffset >= pageEnd) {
+                    writeEnd = pageEnd;
+                } else {
+                    writeEnd = appendOffset;
+                }
+                long bufOffset = dirtyStart - fileOffset;
+                int writeLen = (int) (writeEnd - dirtyStart);
+                if (writeLen <= 0) {
+                    continue;
+                }
+                ensureFileSize(dirtyStart + writeLen);
+                int bufIdx = getPageBufferIndex(i);
+                ringManager.enqueueWrite(columnSlot, i, bufIdx, fd, dirtyStart, addr + bufOffset, writeLen);
+                setPageExpectedLen(i, writeLen);
+                setPageState(i, SUBMITTED);
+            }
+        }
+    }
+
+    private int getPageBufferIndex(int page) {
+        if (page < pageBufferIndices.size()) {
+            return pageBufferIndices.getQuick(page);
+        }
+        return -1;
+    }
+
+    private long getPageDirtyStart(int page) {
+        if (page < pageDirtyStarts.size()) {
+            return pageDirtyStarts.getQuick(page);
+        }
+        return pageOffset(page);
     }
 
     private long preadPage(int page) {
         long pageSize = getExtendSegmentSize();
-        long buf = Unsafe.malloc(pageSize, MemoryTag.NATIVE_TABLE_WAL_WRITER);
-        dbgPageAllocs++;
-        dbgPageBytesAlloc += pageSize;
+        int bufIdx = pool.acquire();
+        long buf = pool.address(bufIdx);
         long fileOffset = pageOffset(page);
         long bytesRead = ff.read(fd, buf, pageSize, fileOffset);
         if (bytesRead < 0) {
-            Unsafe.free(buf, pageSize, MemoryTag.NATIVE_TABLE_WAL_WRITER);
-            dbgPageFrees++;
-            dbgPageBytesFree += pageSize;
+            pool.release(bufIdx);
             throw CairoException.critical(ff.errno())
                     .put("pread failed [fd=").put(fd).put(", offset=").put(fileOffset).put(']');
         }
         cachePageAddress(page, buf);
         setPageState(page, CONFIRMED);
+        setPageBufferIndex(page, bufIdx);
         return buf;
+    }
+
+    /**
+     * Release all page buffers back to the pool before super.close() frees them.
+     * We release by index (O(1)) where available, then zero the pages list
+     * so that super.close() / releaseAllPagesButFirst() won't double-free.
+     */
+    private void releaseAllPageBuffersToPool() {
+        if (pool == null) {
+            return;
+        }
+        for (int i = 0, n = pages.size(); i < n; i++) {
+            long addr = pages.getQuick(i);
+            if (addr != 0) {
+                int bufIdx = getPageBufferIndex(i);
+                if (bufIdx >= 0) {
+                    pool.release(bufIdx);
+                } else {
+                    pool.releaseByAddress(addr);
+                }
+                pages.setQuick(i, 0);
+            }
+        }
+    }
+
+    private void setPageBufferIndex(int page, int bufIdx) {
+        while (pageBufferIndices.size() <= page) {
+            pageBufferIndices.add(-1);
+        }
+        pageBufferIndices.setQuick(page, bufIdx);
+    }
+
+    private void setPageDirtyStart(int page, long offset) {
+        while (pageDirtyStarts.size() <= page) {
+            pageDirtyStarts.add(0);
+        }
+        pageDirtyStarts.setQuick(page, offset);
     }
 
     private void setPageExpectedLen(int page, long len) {
@@ -627,110 +685,6 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         pageStates.setQuick(page, state);
     }
 
-    private void syncAsync() {
-        // Backpressure: wait for previous snapshot if still in-flight.
-        if (snapshotInFlight) {
-            ringManager.waitForAll();
-            // onSnapshotCompleted will have cleared the in-flight flag.
-            if (snapshotInFlight) {
-                distressed = true;
-                throw CairoException.critical(0)
-                        .put("snapshot still in flight after wait [fd=").put(fd)
-                        .put(", columnSlot=").put(columnSlot)
-                        .put(']');
-            }
-        }
-
-        long appendOffset = getAppendOffset();
-        if (appendOffset <= 0) {
-            return;
-        }
-        if (appendOffset == lastSyncedAppendOffset) {
-            return;
-        }
-        int currentPage = pageIndex(appendOffset - 1);
-        if (currentPage >= pageStates.size() || pageStates.getQuick(currentPage) != WRITING) {
-            return;
-        }
-        long addr = currentPage < pages.size() ? pages.getQuick(currentPage) : 0;
-        if (addr == 0) {
-            return;
-        }
-        long pageStart = pageOffset(currentPage);
-        int dirtyLen = (int) (appendOffset - pageStart);
-        if (dirtyLen <= 0) {
-            return;
-        }
-
-        // Snapshot the dirty range into a temp buffer.
-        if (snapshotBufAddr == 0 || snapshotBufCapacity < dirtyLen) {
-            if (snapshotBufAddr != 0) {
-                dbgSnapshotFrees++;
-                dbgSnapshotBytesFree += snapshotBufCapacity;
-                Unsafe.free(snapshotBufAddr, snapshotBufCapacity, MemoryTag.NATIVE_TABLE_WAL_WRITER);
-            }
-            snapshotBufAddr = Unsafe.malloc(dirtyLen, MemoryTag.NATIVE_TABLE_WAL_WRITER);
-            snapshotBufCapacity = dirtyLen;
-            dbgSnapshotAllocs++;
-            dbgSnapshotBytesAlloc += dirtyLen;
-        }
-        snapshotBufSize = dirtyLen;
-        Vect.memcpy(snapshotBufAddr, addr, dirtyLen);
-
-        // Submit snapshot pwrite.
-        try {
-            ensureFileSize(pageStart + dirtyLen);
-            ringManager.enqueueSnapshotWrite(columnSlot, fd, pageStart, snapshotBufAddr, dirtyLen);
-            snapshotInFlight = true;
-            lastSyncedAppendOffset = appendOffset;
-        } catch (Throwable th) {
-            // Prevent leak if any step fails.
-            freeSnapshotBuffer();
-            throw th;
-        }
-        // Do NOT block. The WRITING page remains writable.
-    }
-
-    private void logDebugLeakCounters(CharSequence stage) {
-        if ((dbgPageBytesAlloc != dbgPageBytesFree) || (dbgSnapshotBytesAlloc != dbgSnapshotBytesFree)) {
-            LOG.info().$("wal writer mem stats [stage=").$safe(stage)
-                    .$(", fd=").$(fd)
-                    .$(", columnSlot=").$(columnSlot)
-                    .$(", pageAlloc=").$(dbgPageAllocs)
-                    .$(", pageFree=").$(dbgPageFrees)
-                    .$(", pageBytesAlloc=").$(dbgPageBytesAlloc)
-                    .$(", pageBytesFree=").$(dbgPageBytesFree)
-                    .$(", snapAlloc=").$(dbgSnapshotAllocs)
-                    .$(", snapFree=").$(dbgSnapshotFrees)
-                    .$(", snapBytesAlloc=").$(dbgSnapshotBytesAlloc)
-                    .$(", snapBytesFree=").$(dbgSnapshotBytesFree)
-                    .$(", snapshotInFlight=").$(snapshotInFlight)
-                    .$(", inFlight=").$(ringManager != null ? ringManager.getInFlightCount() : -1)
-                    .$(", snapshotBufSize=").$(snapshotBufSize)
-                    .$(", snapshotBufCap=").$(snapshotBufCapacity)
-                    .I$();
-        }
-    }
-
-    private void syncSync() {
-        // Submit dirty range of current WRITING page.
-        submitCurrentPageDirtyRange();
-        // Wait for all writes (including the partial page write).
-        ringManager.waitForAll();
-        lastSyncedAppendOffset = getAppendOffset();
-        // Submit fsync and wait.
-        ringManager.enqueueFsync(columnSlot, fd);
-        ringManager.waitForAll();
-        // Evict confirmed pages, but keep the current page resident so that
-        // continued appends reuse the existing buffer (with its synced data intact).
-        int activePage = getAppendOffset() > 0 ? pageIndex(getAppendOffset() - 1) : -1;
-        evictConfirmedPages(activePage);
-        if (activePage > -1) {
-            // Allow continued appends to the current page after a sync commit.
-            setPageState(activePage, WRITING);
-        }
-    }
-
     private void submitCurrentPageDirtyRange() {
         long appendOffset = getAppendOffset();
         if (appendOffset <= 0) {
@@ -744,13 +698,16 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         if (addr == 0) {
             return;
         }
+        long dirtyStart = getPageDirtyStart(currentPage);
         long pageStart = pageOffset(currentPage);
-        int dirtyLen = (int) (appendOffset - pageStart);
+        long bufOffset = dirtyStart - pageStart;
+        int dirtyLen = (int) (appendOffset - dirtyStart);
         if (dirtyLen <= 0) {
             return;
         }
-        ensureFileSize(pageStart + dirtyLen);
-        ringManager.enqueueWrite(columnSlot, currentPage, fd, pageStart, addr, dirtyLen);
+        ensureFileSize(dirtyStart + dirtyLen);
+        int bufIdx = getPageBufferIndex(currentPage);
+        ringManager.enqueueWrite(columnSlot, currentPage, bufIdx, fd, dirtyStart, addr + bufOffset, dirtyLen);
         setPageExpectedLen(currentPage, dirtyLen);
         setPageState(currentPage, SUBMITTED);
     }
@@ -763,12 +720,46 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         if (prevPage < pageStates.size() && pageStates.getQuick(prevPage) == WRITING) {
             long prevAddr = pages.getQuick(prevPage);
             if (prevAddr != 0) {
-                long pageSize = getExtendSegmentSize();
+                long dirtyStart = getPageDirtyStart(prevPage);
                 long fileOffset = pageOffset(prevPage);
-                ringManager.enqueueWrite(columnSlot, prevPage, fd, fileOffset, prevAddr, (int) pageSize);
-                setPageExpectedLen(prevPage, pageSize);
-                setPageState(prevPage, SUBMITTED);
+                long pageSize = getExtendSegmentSize();
+                long bufOffset = dirtyStart - fileOffset;
+                int writeLen = (int) (fileOffset + pageSize - dirtyStart);
+                if (writeLen > 0) {
+                    int bufIdx = getPageBufferIndex(prevPage);
+                    ringManager.enqueueWrite(columnSlot, prevPage, bufIdx, fd, dirtyStart, prevAddr + bufOffset, writeLen);
+                    setPageExpectedLen(prevPage, writeLen);
+                    setPageState(prevPage, SUBMITTED);
+                }
             }
         }
+    }
+
+    private void syncSync() {
+        submitCurrentPageDirtyRange();
+        ringManager.waitForAll();
+        lastSyncedAppendOffset = getAppendOffset();
+        ringManager.enqueueFsync(columnSlot, fd);
+        ringManager.waitForAll();
+        int activePage = getAppendOffset() > 0 ? pageIndex(getAppendOffset() - 1) : -1;
+        evictConfirmedPages(activePage);
+        if (activePage > -1) {
+            setPageState(activePage, WRITING);
+            // Reset dirty start after sync — the whole page is on disk.
+            setPageDirtyStart(activePage, pageOffset(activePage));
+        }
+    }
+
+    /**
+     * Update hot-path write pointers after swapping the page buffer.
+     * Mirrors the logic in MemoryPARWImpl.jumpTo0() / updateLimits().
+     */
+    private void updateWritePointers(int page, long newAddr, long offsetInPage) {
+        long pageSize = getExtendSegmentSize();
+        pageLo = newAddr - 1;
+        pageHi = newAddr + pageSize;
+        baseOffset = pageOffset(page + 1) - pageHi;
+        appendPointer = newAddr + offsetInPage;
+        computeHotPage(page, newAddr);
     }
 }

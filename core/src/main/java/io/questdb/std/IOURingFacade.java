@@ -36,7 +36,11 @@ public interface IOURingFacade {
 
     IOURing newInstance(int capacity);
 
+    int registerBuffers(long ptr, long iovecs, int count);
+
     int submit(long ptr);
 
     int submitAndWait(long ptr, int waitNr);
+
+    int unregisterBuffers(long ptr);
 }

@@ -206,3 +206,24 @@ JNIEXPORT jshort JNICALL Java_io_questdb_std_IOUringAccessor_getCqeResOffset
         (JNIEnv *e, jclass cl) {
     return (jshort) offsetof(struct io_uring_cqe, res);
 }
+
+// io_uring_register_buffers / io_uring_unregister_buffers
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_IOUringAccessor_registerBuffers
+        (JNIEnv *e, jclass cl, jlong ptr, jlong iovecs, jint count) {
+    struct io_uring *ring = (struct io_uring *) ptr;
+    return (jint) io_uring_register_buffers(ring, (const struct iovec *) iovecs, (unsigned) count);
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_IOUringAccessor_unregisterBuffers
+        (JNIEnv *e, jclass cl, jlong ptr) {
+    struct io_uring *ring = (struct io_uring *) ptr;
+    return (jint) io_uring_unregister_buffers(ring);
+}
+
+// io_uring_sqe buf_index offset
+
+JNIEXPORT jshort JNICALL Java_io_questdb_std_IOUringAccessor_getSqeBufIndexOffset
+        (JNIEnv *e, jclass cl) {
+    return (jshort) offsetof(struct io_uring_sqe, buf_index);
+}

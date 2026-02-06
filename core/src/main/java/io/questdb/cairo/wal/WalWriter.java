@@ -151,6 +151,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private long lastReplaceRangeLowTs = 0;
     private long lastTxnMaxTimestamp = -1;
     private byte lastTxnType = WalTxnType.DATA;
+    private WalWriterBufferPool bufferPool;
     private WalWriterRingManager ringManager;
     private long segmentRowCount = -1;
     private long totalSegmentsRowCount;
@@ -188,6 +189,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
             columnCount = metadata.getColumnCount();
             timestampIndex = metadata.getTimestampIndex();
+
+            if (ringManager != null) {
+                int poolSize = Math.max(64, columnCount * 2 * 3);
+                this.bufferPool = new WalWriterBufferPool(
+                        getDataAppendPageSize(), poolSize, MemoryTag.NATIVE_TABLE_WAL_WRITER
+                );
+                bufferPool.setRingManager(ringManager);
+                ringManager.setPool(bufferPool);
+                bufferPool.registerWithKernel();
+            }
+
             columns = new ObjList<>(columnCount * 2);
             nullSetters = new ObjList<>(columnCount);
             initialSymbolCounts = new AtomicIntList(columnCount);
@@ -1154,7 +1166,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private MemoryMA createDataColumnMem() {
-        return ringManager != null ? Vm.getPURInstance(ringManager) : Vm.getPMARInstance(configuration);
+        return ringManager != null ? Vm.getPURInstance(ringManager, bufferPool) : Vm.getPMARInstance(configuration);
     }
 
     private SegmentColumnRollSink createSegmentColumnRollSink() {
@@ -1177,6 +1189,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             }
             freeSymbolMapReaders();
             freeColumns(truncate);
+            Misc.free(bufferPool);
             Misc.free(ringManager);
 
             if (minSegmentLocked > -1) {
@@ -1202,19 +1215,14 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             MemoryMA column = columns.getQuick(i);
             if (column != null) {
                 if (column instanceof MemoryPURImpl) {
-                    ((MemoryPURImpl) column).syncAsyncNoSnapshot();
+                    ((MemoryPURImpl) column).syncSwap();
                 } else {
                     column.sync(true);
                 }
             }
         }
         ringManager.waitForAll();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            MemoryMA column = columns.getQuick(i);
-            if (column instanceof MemoryPURImpl) {
-                ((MemoryPURImpl) column).resumeWriteAfterSync();
-            }
-        }
+        // No resumeWriteAfterSync needed — swap provides a fresh buffer.
     }
 
     private void flushIoUringInitIfNeeded(MemoryMA mem, CharSequence columnName, int columnType, boolean isAux) {
@@ -1242,7 +1250,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     .$(", fd=").$(mem.getFd())
                     .I$();
             // STRING/BINARY aux vectors write initial 0; ensure it is pwrite'd
-            ((MemoryPURImpl) mem).syncAsyncNoSnapshot();
+            ((MemoryPURImpl) mem).syncSubmitInPlace();
             ringManager.waitForAll();
             ((MemoryPURImpl) mem).resumeWriteAfterSync();
         }
@@ -2038,24 +2046,16 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 MemoryMA column = columns.getQuick(i);
                 if (column != null) {
                     if (async && ringManager != null && column instanceof MemoryPURImpl) {
-                        ((MemoryPURImpl) column).syncAsyncNoSnapshot();
+                        ((MemoryPURImpl) column).syncSwap();
                     } else {
                         column.sync(async);
                     }
                 }
             }
             events.sync();
-            // For io_uring, async sync still needs to wait for pwrite completion
-            // so WAL readers see fully materialized files before seqTxn is published.
             if (async && ringManager != null) {
                 ringManager.waitForAll();
-                // Restore WRITING state on current pages for io_uring columns.
-                for (int i = 0, n = columns.size(); i < n; i++) {
-                    MemoryMA column = columns.getQuick(i);
-                    if (column instanceof MemoryPURImpl) {
-                        ((MemoryPURImpl) column).resumeWriteAfterSync();
-                    }
-                }
+                // No resumeWriteAfterSync needed — swap provides a fresh buffer.
             }
         } else if (ringManager != null) {
             // io_uring pwrite columns need an explicit flush even in NOSYNC mode.
@@ -2065,7 +2065,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 MemoryMA column = columns.getQuick(i);
                 if (column != null) {
                     if (column instanceof MemoryPURImpl) {
-                        ((MemoryPURImpl) column).syncAsyncNoSnapshot();
+                        ((MemoryPURImpl) column).syncSubmitInPlace();
                     } else {
                         column.sync(true);
                     }

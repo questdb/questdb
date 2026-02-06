@@ -416,6 +416,10 @@ public class WalWriterRingManagerTest extends AbstractTest {
         }
 
         @Override
+        public void onSwapWriteError(int cqeRes) {
+        }
+
+        @Override
         public void onWriteCompleted(long pageId, int cqeRes) {
             writeCompletedCount.incrementAndGet();
             lastWritePageId.set(pageId);
@@ -441,6 +445,11 @@ public class WalWriterRingManagerTest extends AbstractTest {
 
         @Override
         public void onSnapshotCompleted(int cqeRes) {
+        }
+
+        @Override
+        public void onSwapWriteError(int cqeRes) {
+            distressed = true;
         }
 
         @Override

@@ -124,6 +124,16 @@ public class IOURingImpl implements IOURing {
     }
 
     @Override
+    public void enqueueWriteFixed(long fd, long offset, long bufAddr, int len, int bufIndex, long userData) {
+        final long sqeAddr = nextSqe();
+        if (sqeAddr == 0) {
+            throw CairoException.critical(0).put("io_uring SQ full");
+        }
+        fillSqe(sqeAddr, IORING_OP_WRITE_FIXED, fd, offset, bufAddr, len, userData);
+        Unsafe.getUnsafe().putShort(sqeAddr + SQE_BUF_INDEX_OFFSET, (short) bufIndex);
+    }
+
+    @Override
     public long getCqeId() {
         if (cachedIndex < cachedSize) {
             return cachedCqes[2 * cachedIndex];
@@ -137,6 +147,11 @@ public class IOURingImpl implements IOURing {
             return (int) cachedCqes[2 * cachedIndex + 1];
         }
         return -1;
+    }
+
+    @Override
+    public int registerBuffers(long iovsAddr, int count) {
+        return facade.registerBuffers(ringAddr, iovsAddr, count);
     }
 
     @Override
@@ -171,6 +186,16 @@ public class IOURingImpl implements IOURing {
     @Override
     public int submitAndWait() {
         return facade.submitAndWait(ringAddr, 1);
+    }
+
+    @Override
+    public int submitAndWait(int waitNr) {
+        return facade.submitAndWait(ringAddr, waitNr);
+    }
+
+    @Override
+    public int unregisterBuffers() {
+        return facade.unregisterBuffers(ringAddr);
     }
 
     private long enqueueSqe(byte op, long fd, long offset, long bufAddr, int len) {

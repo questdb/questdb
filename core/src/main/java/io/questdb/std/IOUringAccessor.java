@@ -37,10 +37,12 @@ public class IOUringAccessor {
     static final byte IORING_OP_NOP = 0;
     static final byte IORING_OP_READ = 22;
     static final byte IORING_OP_WRITE = 23;
+    static final byte IORING_OP_WRITE_FIXED = 5;
     static final short RING_FD_OFFSET;
     static final short SIZEOF_CQE;
     static final short SIZEOF_SQE;
     static final short SQE_ADDR_OFFSET;
+    static final short SQE_BUF_INDEX_OFFSET;
     static final short SQE_FD_OFFSET;
     static final short SQE_FLAGS_OFFSET;
     static final short SQE_LEN_OFFSET;
@@ -97,6 +99,8 @@ public class IOUringAccessor {
 
     static native short getSqeAddrOffset();
 
+    static native short getSqeBufIndexOffset();
+
     static native short getSqeFDOffset();
 
     static native short getSqeFlagsOffset();
@@ -113,9 +117,13 @@ public class IOUringAccessor {
 
     static native String kernelVersion();
 
+    static native int registerBuffers(long ptr, long iovecs, int count);
+
     static native int submit(long ptr);
 
     static native int submitAndWait(long ptr, int waitNr);
+
+    static native int unregisterBuffers(long ptr);
 
     static {
         RING_FD_OFFSET = getRingFdOffset();
@@ -135,6 +143,7 @@ public class IOUringAccessor {
         SQE_FLAGS_OFFSET = getSqeFlagsOffset();
         SQE_OFF_OFFSET = getSqeOffOffset();
         SQE_ADDR_OFFSET = getSqeAddrOffset();
+        SQE_BUF_INDEX_OFFSET = getSqeBufIndexOffset();
         SQE_LEN_OFFSET = getSqeLenOffset();
         SQE_USER_DATA_OFFSET = getSqeUserDataOffset();
 
