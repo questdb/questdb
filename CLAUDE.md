@@ -136,6 +136,13 @@ cmake --build build/release --config Release
 - `SqlCompiler.java` / `SqlCompilerImpl.java` - SQL compilation
 - `TableWriter.java` / `TableReader.java` - Table I/O
 
+## QuestDB's SQL dialect
+
+- QuestDB supports multidimensional arrays (e.g., `DOUBLE[]`, `DOUBLE[][]`).
+  Dimensionality is encoded in the column type itself, so `DOUBLE[]` and
+  `DOUBLE[][]` are distinct column types.
+- QuestDB does not support DELETE.
+
 ## Code Style
 
 - Follow Conventional Commits: `feat(sql):`, `fix(core):`, `test(ilp):`
