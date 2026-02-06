@@ -776,6 +776,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         if (columnType == ColumnType.DECIMAL) {
             columnType = SqlParser.parseDecimalColumnType(lexer);
+        } else if (columnType == ColumnType.GEOHASH) {
+            columnType = SqlParser.parseGeoHashColumnType(lexer);
         }
 
         tok = SqlUtil.fetchNext(lexer);
@@ -785,10 +787,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.position(typePosition).put(columnName).put(" has an unmatched `]` - were you trying to define an array?");
         } else {
             lexer.unparseLast();
-        }
-
-        if (columnType == ColumnType.GEOHASH) {
-            columnType = SqlParser.parseGeoHashColumnType(lexer);
         }
 
         tok = SqlUtil.fetchNext(lexer);
