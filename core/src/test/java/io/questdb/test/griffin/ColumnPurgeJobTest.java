@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -1097,7 +1098,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     ) throws NumericException {
         ColumnPurgeTask tsk = new ColumnPurgeTask();
         TimestampDriver timestampDriver = timestampType.getDriver();
-        tsk.of(tblName, colName, tableId, 0, columnType, timestampDriver.getTimestampType(), PartitionBy.NONE, updateTxn, new LongList());
+        tsk.of(tblName, colName, tableId, 0, columnType, IndexType.SYMBOL, timestampDriver.getTimestampType(), PartitionBy.NONE, updateTxn, new LongList());
         tsk.appendColumnInfo(columnVersion, timestampDriver.parseFloorLiteral(partitionTs), partitionNameTxn);
         return tsk;
     }

@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.idx.BitmapIndexUtils;
+import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -2560,18 +2560,21 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final CharSequence columnName = tableWriterMetadata.getColumnName(columnIndex);
                     final long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
 
+                    // Get index type first for file name generation
+                    byte indexType = tableWriterMetadata.getColumnIndexType(columnIndex);
+
                     long kFd = 0;
                     long vFd = 0;
                     try {
                         kFd = openRW(
                                 ff,
-                                BitmapIndexUtils.keyFileName(path.trimTo(pLen), columnName, columnNameTxn),
+                                IndexFactory.keyFileName(indexType, path.trimTo(pLen), columnName, columnNameTxn),
                                 LOG,
                                 tableWriter.getConfiguration().getWriterFileOpenOpts()
                         );
                         vFd = openRW(
                                 ff,
-                                BitmapIndexUtils.valueFileName(path.trimTo(pLen), columnName, columnNameTxn),
+                                IndexFactory.valueFileName(indexType, path.trimTo(pLen), columnName, columnNameTxn),
                                 LOG,
                                 tableWriter.getConfiguration().getWriterFileOpenOpts()
                         );
@@ -2582,7 +2585,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
 
                     // Get new writer when type changes to support different index types per column
-                    byte indexType = tableWriterMetadata.getColumnIndexType(columnIndex);
                     if (currentWriterType != indexType || indexWriter == null) {
                         indexWriter = o3Basket.nextIndexer(indexType);
                         currentWriterType = indexType;

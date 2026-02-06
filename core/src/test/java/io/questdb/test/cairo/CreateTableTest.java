@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -648,6 +649,49 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableWithNoIndex() throws Exception {
         execute("create table tab (s symbol) ");
         assertSql("s\n", "select * from tab");
+    }
+
+    @Test
+    public void testCreateTableWithDeltaIndexType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (s symbol index type delta, ts timestamp) timestamp(ts)");
+            assertSql("s\tts\n", "select * from tab");
+            try (TableReader r = engine.getReader("tab")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int colIndex = metadata.getColumnIndex("s");
+                assertTrue(metadata.isColumnIndexed(colIndex));
+                assertEquals(IndexType.DELTA, metadata.getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableWithSymbolIndexType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (s symbol index type legacy, ts timestamp) timestamp(ts)");
+            assertSql("s\tts\n", "select * from tab");
+            try (TableReader r = engine.getReader("tab")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int colIndex = metadata.getColumnIndex("s");
+                assertTrue(metadata.isColumnIndexed(colIndex));
+                assertEquals(IndexType.SYMBOL, metadata.getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableWithDefaultIndexType() throws Exception {
+        // Default index type (no TYPE keyword) should be SYMBOL
+        assertMemoryLeak(() -> {
+            execute("create table tab (s symbol index, ts timestamp) timestamp(ts)");
+            assertSql("s\tts\n", "select * from tab");
+            try (TableReader r = engine.getReader("tab")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int colIndex = metadata.getColumnIndex("s");
+                assertTrue(metadata.isColumnIndexed(colIndex));
+                assertEquals(IndexType.SYMBOL, metadata.getColumnIndexType(colIndex));
+            }
+        });
     }
 
     @Test

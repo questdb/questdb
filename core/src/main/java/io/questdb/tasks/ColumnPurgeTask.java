@@ -25,6 +25,7 @@
 package io.questdb.tasks;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.LongList;
@@ -41,6 +42,7 @@ public class ColumnPurgeTask implements Mutable {
     private final LongList updatedColumnInfo = new LongList();
     private CharSequence columnName;
     private int columnType;
+    private byte indexType;
     private int partitionBy;
     private int tableId;
     private TableToken tableToken;
@@ -70,6 +72,7 @@ public class ColumnPurgeTask implements Mutable {
         this.partitionBy = inTask.partitionBy;
         this.updateTxn = inTask.updateTxn;
         this.columnType = inTask.columnType;
+        this.indexType = inTask.indexType;
         this.truncateVersion = inTask.truncateVersion;
         this.updatedColumnInfo.clear();
         this.updatedColumnInfo.add(inTask.updatedColumnInfo);
@@ -82,6 +85,10 @@ public class ColumnPurgeTask implements Mutable {
 
     public int getColumnType() {
         return columnType;
+    }
+
+    public byte getIndexType() {
+        return indexType;
     }
 
     public int getPartitionBy() {
@@ -127,6 +134,7 @@ public class ColumnPurgeTask implements Mutable {
             int tableId,
             long truncateVersion,
             int columnType,
+            byte indexType,
             int timestampType,
             int partitionBy,
             long updateTxn
@@ -135,6 +143,7 @@ public class ColumnPurgeTask implements Mutable {
         this.columnName = columnName;
         this.tableId = tableId;
         this.columnType = columnType;
+        this.indexType = indexType;
         this.timestampType = timestampType;
         this.partitionBy = partitionBy;
         this.updateTxn = updateTxn;
@@ -150,12 +159,13 @@ public class ColumnPurgeTask implements Mutable {
             int tableId,
             int truncateVersion,
             int columnType,
+            byte indexType,
             int timestampType,
             int partitionBy,
             long updateTxn,
             @Transient LongList columnVersions
     ) {
-        of(tableToken, columnName, tableId, truncateVersion, columnType, timestampType, partitionBy, updateTxn);
+        of(tableToken, columnName, tableId, truncateVersion, columnType, indexType, timestampType, partitionBy, updateTxn);
         this.updatedColumnInfo.add(columnVersions);
     }
 
@@ -166,6 +176,7 @@ public class ColumnPurgeTask implements Mutable {
             int tableId,
             int truncateVersion,
             int columnType,
+            byte indexType,
             int timestampType,
             int partitionBy,
             long updateTxn,
@@ -173,7 +184,7 @@ public class ColumnPurgeTask implements Mutable {
             int columnVersionsLo,
             int columnVersionsHi
     ) {
-        of(tableToken, columnName, tableId, truncateVersion, columnType, timestampType, partitionBy, updateTxn);
+        of(tableToken, columnName, tableId, truncateVersion, columnType, indexType, timestampType, partitionBy, updateTxn);
         this.updatedColumnInfo.add(columnVersions, columnVersionsLo, columnVersionsHi);
     }
 }

@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
@@ -72,7 +71,7 @@ public class IndexBuilder extends RebuildColumnBase {
 
     private void createIndexFiles(FilesFacade ff, CharSequence columnName, int indexValueBlockCapacity, int plen, long columnNameTxn) {
         try {
-            LPSZ lpsz = BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn);
+            LPSZ lpsz = IndexFactory.keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn);
             try {
                 LOG.info().$("writing ").$(path).$();
                 ddlMem.smallFile(ff, lpsz, MemoryTag.MMAP_TABLE_WRITER);
@@ -96,7 +95,7 @@ public class IndexBuilder extends RebuildColumnBase {
                 // this close() closes the underlying file, but ddlMem object remains reusable
                 ddlMem.close();
             }
-            if (!ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn))) {
+            if (!ff.touch(IndexFactory.valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn))) {
                 LOG.error().$("could not create index [name=").$(path).I$();
                 throw CairoException.critical(ff.errno()).put("could not create index [name=").put(path).put(']');
             }
@@ -121,8 +120,8 @@ public class IndexBuilder extends RebuildColumnBase {
 
     private void removeIndexFiles(FilesFacade ff, CharSequence columnName, long columnNameTxn) {
         final int plen = path.size();
-        removeFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn));
-        removeFile(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn));
+        removeFile(ff, IndexFactory.keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
+        removeFile(ff, IndexFactory.valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
     }
 
     protected void doReindex(

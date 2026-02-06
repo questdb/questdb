@@ -49,7 +49,8 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.idx.BitmapIndexUtils;
+import io.questdb.cairo.IndexType;
+import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -1002,8 +1003,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         tempPath.trimTo(tempPathTripLen);
         path.trimTo(pathSize);
-        BitmapIndexUtils.keyFileName(tempPath, columnName, columnNameTxn);
-        BitmapIndexUtils.keyFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        // Symbol map files always use SYMBOL format (.k/.v)
+        IndexFactory.keyFileName(IndexType.SYMBOL, tempPath, columnName, columnNameTxn);
+        IndexFactory.keyFileName(IndexType.SYMBOL, path, columnName, COLUMN_NAME_TXN_NONE);
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
             // This is fine, Table Writer can rename or drop the column.
             LOG.info().$("failed to link key file [from=").$(tempPath)
@@ -1017,8 +1019,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         tempPath.trimTo(tempPathTripLen);
         path.trimTo(pathSize);
-        BitmapIndexUtils.valueFileName(tempPath, columnName, columnNameTxn);
-        BitmapIndexUtils.valueFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        // Symbol map files always use SYMBOL format (.k/.v)
+        IndexFactory.valueFileName(IndexType.SYMBOL, tempPath, columnName, columnNameTxn);
+        IndexFactory.valueFileName(IndexType.SYMBOL, path, columnName, COLUMN_NAME_TXN_NONE);
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
             // This is fine, Table Writer can rename or drop the column.
             LOG.info().$("failed to link value file [from=").$(tempPath)
@@ -1368,12 +1371,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         // ACCESS_DENIED error, caused by the fact hard link destination file is open.
         // For those reasons we do not put maximum effort into removing the files here.
 
+        // Symbol map files always use SYMBOL format (.k/.v)
         path.trimTo(rootLen);
-        BitmapIndexUtils.valueFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        IndexFactory.valueFileName(IndexType.SYMBOL, path, columnName, COLUMN_NAME_TXN_NONE);
         ff.removeQuiet(path.$());
 
         path.trimTo(rootLen);
-        BitmapIndexUtils.keyFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        IndexFactory.keyFileName(IndexType.SYMBOL, path, columnName, COLUMN_NAME_TXN_NONE);
         ff.removeQuiet(path.$());
 
         path.trimTo(rootLen);

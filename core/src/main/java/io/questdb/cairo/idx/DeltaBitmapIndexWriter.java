@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.EmptyRowCursor;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
@@ -35,7 +36,6 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -44,97 +44,170 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.TestOnly;
 
+import static io.questdb.cairo.idx.DeltaBitmapIndexUtils.*;
+
 /**
- * Writer for delta-encoded bitmap index.
+ * Delta-encoded bitmap index writer with linked blocks.
  * <p>
- * Delta encoding achieves 2-4x compression for sequential row IDs common in time-series data.
- * Values for each key are stored as: first_value (8 bytes) followed by delta-encoded differences.
+ * Combines the linked-block structure of the legacy BitmapIndexWriter
+ * (for O(1) append without relocation) with delta encoding for compression.
+ * <p>
+ * Each key has a linked list of blocks. Each block contains:
+ * - Header: next/prev pointers, count, data length, first/last values
+ * - Data: delta-encoded row IDs (first value stored absolute, rest as deltas)
+ * <p>
+ * Supports concurrent reads while appending.
  */
 public class DeltaBitmapIndexWriter implements IndexWriter {
     private static final Log LOG = LogFactory.getLog(DeltaBitmapIndexWriter.class);
 
     private final CairoConfiguration configuration;
-    private final Cursor cursor = new Cursor();
     private final FilesFacade ff;
     private final MemoryMARW keyMem = Vm.getCMARWInstance();
-    private final IntList keyDataLens = new IntList();
-    // Cached key entry metadata to avoid mmap reads on hot path
-    private final LongList keyDataOffsets = new LongList();
-    private final LongList keyValueCounts = new LongList();
-    // Cached state for each key: last value written (for delta calculation)
-    private final LongList lastValues = new LongList();
-    // Reusable list for rollback operations to avoid allocations
-    private final LongList rollbackValues = new LongList();
     private final MemoryMARW valueMem = Vm.getCMARWInstance();
-    private int keyCount = -1;
-    private long valueMemSize = -1;
 
-    @TestOnly
-    public DeltaBitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn) {
-        this(configuration);
-        of(path, name, columnNameTxn);
-    }
+    private int blockCapacity;
+    private int blockDataCapacity;
+    private int keyCount;
+    private long valueMemSize;
 
     public DeltaBitmapIndexWriter(CairoConfiguration configuration) {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
     }
 
-    /**
-     * Initializes key memory for a new delta-encoded index.
-     * Header is 8-byte aligned for better performance.
-     */
-    public static void initKeyMemory(MemoryMA keyMem) {
-        keyMem.jumpTo(0);
-        keyMem.truncate();
-        // Offset 0: Signature (1 byte) + 7 bytes padding
-        keyMem.putByte(DeltaBitmapIndexUtils.SIGNATURE);
-        keyMem.skip(7);
-        // Offset 8: Sequence
-        keyMem.putLong(1);
-        Unsafe.getUnsafe().storeFence();
-        // Offset 16: Value mem size
-        keyMem.putLong(0);
-        // Offset 24: Key count (4 bytes) + 4 bytes padding
-        keyMem.putInt(0);
-        keyMem.skip(4);
-        Unsafe.getUnsafe().storeFence();
-        // Offset 32: Sequence check
-        keyMem.putLong(1);
-        // Offset 40: Max value
-        keyMem.putLong(-1);
-        // Offset 48-63: Reserved
-        keyMem.skip(DeltaBitmapIndexUtils.KEY_FILE_RESERVED - keyMem.getAppendOffset());
+    @TestOnly
+    public DeltaBitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn) {
+        this(configuration);
+        // Open existing index (false = don't init/create new)
+        of(path, name, columnNameTxn, false);
     }
 
     /**
-     * Adds a key-value pair to the index. Values for the same key must be added in ascending order.
-     *
-     * @param key   the index key (must be non-negative)
-     * @param value the row ID value to add
-     * @throws CairoException if key is negative
+     * Returns a backward cursor for the given key. For testing purposes only.
+     * Values are returned in descending order (most recent first).
      */
-    public void add(int key, long value) {
-        if (key < 0) {
-            throw CairoException.critical(0)
-                    .put("index key cannot be negative [key=").put(key).put(']');
+    @TestOnly
+    public RowCursor getCursor(int key) {
+        if (key >= keyCount || key < 0) {
+            return EmptyRowCursor.INSTANCE;
         }
 
-        final long keyOffset = DeltaBitmapIndexUtils.getKeyEntryOffset(key);
+        LongList values = new LongList();
+        long keyOffset = getKeyEntryOffset(key);
+        long valueCount = keyMem.getLong(keyOffset + KEY_ENTRY_OFFSET_VALUE_COUNT);
+
+        if (valueCount == 0) {
+            return EmptyRowCursor.INSTANCE;
+        }
+
+        // Check countCheck matches valueCount (corrupted entry detection)
+        int countCheck = keyMem.getInt(keyOffset + KEY_ENTRY_OFFSET_COUNT_CHECK);
+        if (countCheck != (int) valueCount) {
+            return EmptyRowCursor.INSTANCE;  // Treat as invalid/empty
+        }
+
+        long blockOffset = keyMem.getLong(keyOffset + KEY_ENTRY_OFFSET_FIRST_BLOCK);
+
+        if (blockOffset < 0 || blockOffset >= valueMemSize) {
+            return EmptyRowCursor.INSTANCE;
+        }
+
+        // Decode all values from blocks
+        while (blockOffset >= 0 && blockOffset + BLOCK_HEADER_SIZE <= valueMemSize) {
+            int blockCount = valueMem.getInt(blockOffset + BLOCK_OFFSET_COUNT);
+            int dataLen = valueMem.getInt(blockOffset + BLOCK_OFFSET_DATA_LEN);
+            long firstValue = valueMem.getLong(blockOffset + BLOCK_OFFSET_FIRST_VALUE);
+            long nextBlock = valueMem.getLong(blockOffset + BLOCK_OFFSET_NEXT);
+
+            // First value in block
+            values.add(firstValue);
+            long currentValue = firstValue;
+
+            // Decode deltas
+            long dataOffset = blockOffset + BLOCK_HEADER_SIZE;
+            long dataEnd = dataOffset + dataLen;
+            // Ensure dataEnd doesn't exceed valueMemSize
+            if (dataEnd > valueMemSize) {
+                dataEnd = valueMemSize;
+            }
+            int count = 1;
+            long[] result = new long[2];
+
+            while (dataOffset < dataEnd && count < blockCount) {
+                decodeDelta(valueMem, dataOffset, result);
+                currentValue += result[0];
+                values.add(currentValue);
+                dataOffset += result[1];
+                count++;
+            }
+
+            blockOffset = nextBlock;
+        }
+
+        // Return backward cursor
+        return new TestBwdCursor(values);
+    }
+
+    @TestOnly
+    public long getValueMemSize() {
+        return valueMemSize;
+    }
+
+    /**
+     * Initializes key memory for a new index with default block capacity.
+     */
+    public static void initKeyMemory(MemoryMA keyMem) {
+        initKeyMemory(keyMem, DEFAULT_BLOCK_CAPACITY);
+    }
+
+    /**
+     * Initializes key memory for a new index.
+     */
+    public static void initKeyMemory(MemoryMA keyMem, int blockCapacity) {
+        keyMem.jumpTo(0);
+        keyMem.truncate();
+        keyMem.putByte(SIGNATURE);
+        keyMem.skip(7); // padding to offset 8
+        keyMem.putLong(1); // SEQUENCE
+        Unsafe.getUnsafe().storeFence();
+        keyMem.putLong(0); // VALUE_MEM_SIZE
+        keyMem.putInt(blockCapacity); // BLOCK_CAPACITY
+        keyMem.putInt(0); // KEY_COUNT
+        Unsafe.getUnsafe().storeFence();
+        keyMem.putLong(1); // SEQUENCE_CHECK
+        keyMem.putLong(-1); // MAX_VALUE (-1 means no rows)
+        keyMem.skip(KEY_FILE_RESERVED - keyMem.getAppendOffset());
+    }
+
+    /**
+     * Adds a key-value pair to the index.
+     * Values must be added in ascending order per key.
+     */
+    @Override
+    public void add(int key, long value) {
+        if (key < 0) {
+            throw CairoException.critical(0).put("index key cannot be negative [key=").put(key).put(']');
+        }
+
+        final long keyOffset = getKeyEntryOffset(key);
 
         if (key < keyCount) {
-            // Existing key - use cached metadata
-            long valueCount = keyValueCounts.getQuick(key);
-            if (valueCount > 0) {
-                // Append delta-encoded value
-                appendDeltaEncodedValue(keyOffset, key, value);
+            // Existing key
+            long valueCount = keyMem.getLong(keyOffset + KEY_ENTRY_OFFSET_VALUE_COUNT);
+
+            if (valueCount == 0) {
+                // Key exists but has no values (sparse key creation)
+                initFirstBlock(keyOffset, value);
             } else {
-                // Key exists but has no values yet (created as byproduct of sparse key)
-                initValueDataAndStoreValue(keyOffset, key, value);
+                // Key has values - append to last block
+                long lastBlockOffset = keyMem.getLong(keyOffset + KEY_ENTRY_OFFSET_LAST_BLOCK);
+                appendToBlock(keyOffset, lastBlockOffset, valueCount, value);
             }
         } else {
-            // New key - initialize value data and update header atomically
-            initValueDataForNewKey(keyOffset, key, value);
+            // New key
+            initFirstBlock(keyOffset, value);
+            updateKeyCount(key);
         }
     }
 
@@ -146,507 +219,564 @@ public class DeltaBitmapIndexWriter implements IndexWriter {
     @Override
     public void close() {
         if (keyMem.isOpen()) {
-            if (keyCount > -1) {
+            if (keyCount > 0) {
                 keyMem.setSize(keyMemSize());
             }
             Misc.free(keyMem);
         }
-
         if (valueMem.isOpen()) {
-            if (valueMemSize > -1) {
+            if (valueMemSize > 0) {
                 valueMem.setSize(valueMemSize);
             }
             Misc.free(valueMem);
         }
-
-        // Reset state so reopening works correctly
-        keyCount = -1;
-        valueMemSize = -1;
-        clearCaches();
+        keyCount = 0;
+        valueMemSize = 0;
     }
 
+    @Override
     public void closeNoTruncate() {
-        keyMem.close(false);
-        valueMem.close(false);
-        clearCaches();
+        close();
     }
 
+    @Override
     public void commit() {
-        int commitMode = configuration.getCommitMode();
-        if (commitMode != CommitMode.NOSYNC) {
-            sync(commitMode == CommitMode.ASYNC);
+        if (configuration.getCommitMode() != CommitMode.NOSYNC) {
+            sync(configuration.getCommitMode() == CommitMode.ASYNC);
         }
     }
 
-    public RowCursor getCursor(int key) {
-        if (key < keyCount) {
-            cursor.of(key);
-            return cursor;
-        }
-        return EmptyRowCursor.INSTANCE;
+    @Override
+    public byte getIndexType() {
+        return IndexType.DELTA;
     }
 
+    @Override
     public int getKeyCount() {
         return keyCount;
     }
 
+    @Override
     public long getMaxValue() {
-        return keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_MAX_VALUE);
+        return keyMem.getLong(KEY_RESERVED_OFFSET_MAX_VALUE);
     }
 
-    @TestOnly
-    public long getValueMemSize() {
-        return valueMemSize;
-    }
-
+    @Override
     public boolean isOpen() {
         return keyMem.isOpen();
     }
 
-    public final void of(Path path, CharSequence name, long columnNameTxn) {
+    @Override
+    public void of(Path path, CharSequence name, long columnNameTxn) {
         of(path, name, columnNameTxn, false);
     }
 
-    public final void of(Path path, CharSequence name, long columnNameTxn, boolean create) {
+    public void of(Path path, CharSequence name, long columnNameTxn, boolean init) {
         close();
+
         final int plen = path.size();
+        boolean kFdUnassigned = true;
+
         try {
-            LPSZ keyFile = DeltaBitmapIndexUtils.keyFileName(path, name, columnNameTxn);
+            LPSZ keyFile = keyFileName(path, name, columnNameTxn);
 
-            if (create) {
+            if (init) {
+                // Create new index
                 keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), 0L, MemoryTag.MMAP_INDEX_WRITER);
-                initKeyMemory(keyMem);
+                this.blockCapacity = DeltaBitmapIndexUtils.DEFAULT_BLOCK_CAPACITY;
+                initKeyMemory(keyMem, blockCapacity);
+                kFdUnassigned = false;
             } else {
-                boolean exists = ff.exists(keyFile);
-                if (!exists) {
-                    LOG.error().$(path).$(" not found").$();
-                    throw CairoException.fileNotFound().put("index does not exist [path=").put(path).put(']');
+                // Open existing
+                if (!ff.exists(keyFile)) {
+                    throw CairoException.critical(0).put("index does not exist [path=").put(path).put(']');
                 }
-                keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), ff.length(keyFile), MemoryTag.MMAP_INDEX_WRITER);
+
+                // Check file size before mapping
+                long keyFileSize = ff.length(keyFile);
+                if (keyFileSize < KEY_FILE_RESERVED) {
+                    throw CairoException.critical(0)
+                            .put("Index file too short [expected>=").put(KEY_FILE_RESERVED)
+                            .put(", actual=").put(keyFileSize).put(']');
+                }
+
+                keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), -1L, MemoryTag.MMAP_INDEX_WRITER);
+                kFdUnassigned = false;
+
+                // Validate signature
+                byte sig = keyMem.getByte(KEY_RESERVED_OFFSET_SIGNATURE);
+                if (sig != SIGNATURE) {
+                    throw CairoException.critical(0)
+                            .put("Unknown format: invalid delta index signature [expected=").put(SIGNATURE)
+                            .put(", actual=").put(sig).put(']');
+                }
+
+                // Validate sequence consistency
+                long seq = keyMem.getLong(KEY_RESERVED_OFFSET_SEQUENCE);
+                long seqCheck = keyMem.getLong(KEY_RESERVED_OFFSET_SEQUENCE_CHECK);
+                if (seq != seqCheck) {
+                    throw CairoException.critical(0)
+                            .put("Sequence mismatch (partial write detected) [seq=").put(seq)
+                            .put(", seqCheck=").put(seqCheck).put(']');
+                }
             }
 
-            long keyMemSize = keyMem.getAppendOffset();
-            if (keyMemSize < DeltaBitmapIndexUtils.KEY_FILE_RESERVED) {
-                LOG.error().$("file too short [corrupt] [path=").$(path).I$();
-                throw CairoException.critical(0).put("Index file too short (w): ").put(path);
+            // Read header
+            this.valueMemSize = keyMem.getLong(KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
+            this.blockCapacity = keyMem.getInt(KEY_RESERVED_OFFSET_BLOCK_CAPACITY);
+            this.blockDataCapacity = blockDataCapacity(blockCapacity);
+            this.keyCount = keyMem.getInt(KEY_RESERVED_OFFSET_KEY_COUNT);
+
+            // Validate keyCount matches file length (only for existing files)
+            if (!init && keyCount > 0) {
+                long keyFileSize = keyMem.size();
+                long expectedSize = KEY_FILE_RESERVED + (long) keyCount * KEY_ENTRY_SIZE;
+                if (keyFileSize < expectedSize) {
+                    throw CairoException.critical(0)
+                            .put("Key count does not match file length [keyCount=").put(keyCount)
+                            .put(", fileSize=").put(keyFileSize)
+                            .put(", expectedSize=").put(expectedSize).put(']');
+                }
             }
 
-            if (keyMem.getByte(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) != DeltaBitmapIndexUtils.SIGNATURE) {
-                LOG.error().$("unknown format [corrupt] ").$(path).$();
-                throw CairoException.critical(0).put("Unknown format: ").put(path);
-            }
-
-            this.keyCount = keyMem.getInt(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
-            if (keyMemSize < keyMemSize()) {
-                LOG.error().$("key count does not match file length [corrupt] of ").$(path).$(" [keyCount=").$(keyCount).I$();
-                throw CairoException.critical(0).put("Key count does not match file length of ").put(path);
-            }
-
-            if (keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) != keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {
-                LOG.error().$("sequence mismatch [corrupt] at ").$(path).$();
-                throw CairoException.critical(0).put("Sequence mismatch on ").put(path);
-            }
-
-            this.valueMemSize = keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
+            // Open value file
             valueMem.of(
                     ff,
-                    DeltaBitmapIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn),
+                    valueFileName(path.trimTo(plen), name, columnNameTxn),
                     configuration.getDataIndexValueAppendPageSize(),
-                    this.valueMemSize,
+                    init ? 0 : valueMemSize,
                     MemoryTag.MMAP_INDEX_WRITER
             );
 
-            if (create) {
-                assert valueMemSize == 0;
-                valueMem.truncate();
+            if (!init && valueMemSize > 0) {
+                valueMem.jumpTo(valueMemSize);
             }
-
-            // Rebuild all caches from existing data
-            rebuildCaches();
-
         } catch (Throwable e) {
-            this.close();
+            close();
+            if (kFdUnassigned) {
+                LOG.error().$("could not open delta index [path=").$(path).$(']').$();
+            }
             throw e;
         } finally {
             path.trimTo(plen);
         }
     }
 
-    public void rollbackConditionally(long row) {
-        final long currentMaxRow;
-        if (row >= 0 && ((currentMaxRow = getMaxValue()) < 1 || currentMaxRow >= row)) {
-            if (row == 0) {
-                truncate();
+    @Override
+    public void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int blockCapacity) {
+        close();
+        final FilesFacade ff = configuration.getFilesFacade();
+        boolean kFdUnassigned = true;
+        boolean vFdUnassigned = true;
+        final long keyAppendPageSize = configuration.getDataIndexKeyAppendPageSize();
+        final long valueAppendPageSize = configuration.getDataIndexValueAppendPageSize();
+
+        try {
+            if (init) {
+                // Initialize new index
+                if (ff.truncate(keyFd, 0)) {
+                    kFdUnassigned = false;
+                    keyMem.of(ff, keyFd, false, null, keyAppendPageSize, keyAppendPageSize, MemoryTag.MMAP_INDEX_WRITER);
+                    this.blockCapacity = blockCapacity > 0 ? blockCapacity : DEFAULT_BLOCK_CAPACITY;
+                    this.blockDataCapacity = blockDataCapacity(this.blockCapacity);
+                    initKeyMemory(keyMem, this.blockCapacity);
+                } else {
+                    throw CairoException.critical(ff.errno()).put("Could not truncate [fd=").put(keyFd).put(']');
+                }
             } else {
-                rollbackValues(row - 1);
+                // Open existing index
+                final long keyFileSize = ff.length(keyFd);
+
+                // Check file size before mapping
+                if (keyFileSize < KEY_FILE_RESERVED) {
+                    throw CairoException.critical(0)
+                            .put("Index file too short [fd=").put(keyFd)
+                            .put(", expected>=").put(KEY_FILE_RESERVED)
+                            .put(", actual=").put(keyFileSize).put(']');
+                }
+
+                kFdUnassigned = false;
+                keyMem.of(ff, keyFd, null, keyFileSize, MemoryTag.MMAP_INDEX_WRITER);
+
+                // Validate signature
+                byte sig = keyMem.getByte(KEY_RESERVED_OFFSET_SIGNATURE);
+                if (sig != SIGNATURE) {
+                    throw CairoException.critical(0)
+                            .put("Unknown format: invalid delta index signature [fd=").put(keyFd)
+                            .put(", expected=").put(SIGNATURE)
+                            .put(", actual=").put(sig).put(']');
+                }
+
+                // Validate sequence consistency
+                long seq = keyMem.getLong(KEY_RESERVED_OFFSET_SEQUENCE);
+                long seqCheck = keyMem.getLong(KEY_RESERVED_OFFSET_SEQUENCE_CHECK);
+                if (seq != seqCheck) {
+                    throw CairoException.critical(0)
+                            .put("Sequence mismatch [fd=").put(keyFd)
+                            .put(", seq=").put(seq)
+                            .put(", seqCheck=").put(seqCheck).put(']');
+                }
+
+                // Read header
+                this.keyCount = keyMem.getInt(KEY_RESERVED_OFFSET_KEY_COUNT);
+                this.blockCapacity = keyMem.getInt(KEY_RESERVED_OFFSET_BLOCK_CAPACITY);
+                this.blockDataCapacity = blockDataCapacity(this.blockCapacity);
+
+                // Validate keyCount matches file length
+                if (keyCount > 0) {
+                    long expectedSize = KEY_FILE_RESERVED + (long) keyCount * KEY_ENTRY_SIZE;
+                    if (keyFileSize < expectedSize) {
+                        throw CairoException.critical(0)
+                                .put("Key count does not match file length [fd=").put(keyFd)
+                                .put(", keyCount=").put(keyCount)
+                                .put(", fileSize=").put(keyFileSize)
+                                .put(", expectedSize=").put(expectedSize).put(']');
+                    }
+                }
             }
+
+            this.valueMemSize = keyMem.getLong(KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
+
+            if (init) {
+                // Initialize value file
+                if (ff.truncate(valueFd, 0)) {
+                    vFdUnassigned = false;
+                    valueMem.of(ff, valueFd, false, null, valueAppendPageSize, valueAppendPageSize, MemoryTag.MMAP_INDEX_WRITER);
+                    valueMem.jumpTo(0);
+                    valueMemSize = 0;
+                } else {
+                    throw CairoException.critical(ff.errno()).put("Could not truncate [fd=").put(valueFd).put(']');
+                }
+            } else {
+                // Open existing value file
+                vFdUnassigned = false;
+                valueMem.of(ff, valueFd, false, null, valueAppendPageSize, valueMemSize, MemoryTag.MMAP_INDEX_WRITER);
+                if (valueMemSize > 0) {
+                    valueMem.jumpTo(valueMemSize);
+                }
+            }
+        } catch (Throwable e) {
+            close();
+            if (kFdUnassigned) {
+                ff.close(keyFd);
+            }
+            if (vFdUnassigned) {
+                ff.close(valueFd);
+            }
+            throw e;
         }
     }
 
-    /**
-     * Rolls back values to remove entries strictly greater than maxValue.
-     * This requires re-reading and re-encoding the data for affected keys.
-     * Note: This operation may leave garbage data in the value file (fragmentation).
-     */
+    @Override
+    public void rollbackConditionally(long row) {
+        long maxValue = getMaxValue();
+        if (maxValue > row) {
+            rollbackValues(row);
+        }
+    }
+
+    @Override
     public void rollbackValues(long maxValue) {
-        long newValueMemSize = 0;
+        // For each key, walk blocks backwards to find values <= maxValue
+        for (int key = 0; key < keyCount; key++) {
+            final long keyOffset = getKeyEntryOffset(key);
+            long valueCount = keyMem.getLong(keyOffset + KEY_ENTRY_OFFSET_VALUE_COUNT);
 
-        for (int k = 0; k < keyCount; k++) {
-            long offset = DeltaBitmapIndexUtils.getKeyEntryOffset(k);
-            // Read from cache
-            long valueCount = keyValueCounts.getQuick(k);
-
-            if (valueCount > 0) {
-                long dataOffset = keyDataOffsets.getQuick(k);
-                int dataLen = keyDataLens.getQuick(k);
-
-                // Decode all values for this key (reusing pre-allocated list)
-                decodeAllValues(dataOffset, dataLen, valueCount, rollbackValues);
-
-                // Find how many values to keep
-                long keepCount = 0;
-                for (long i = 0; i < rollbackValues.size(); i++) {
-                    if (rollbackValues.getQuick((int) i) <= maxValue) {
-                        keepCount++;
-                    } else {
-                        break; // Values are ordered, so we can stop here
-                    }
-                }
-
-                if (keepCount != valueCount) {
-                    // Need to re-encode with fewer values
-                    if (keepCount == 0) {
-                        // Clear this key's data
-                        keyMem.putLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, 0);
-                        keyMem.putLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET, 0);
-                        keyMem.putInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN, 0);
-                        keyMem.putInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, 0);
-                        // Update caches
-                        keyDataOffsets.setQuick(k, 0);
-                        keyDataLens.setQuick(k, 0);
-                        keyValueCounts.setQuick(k, 0);
-                        lastValues.setQuick(k, Long.MIN_VALUE);
-                    } else {
-                        // Re-encode with kept values at newValueMemSize
-                        long newDataOffset = newValueMemSize;
-                        valueMem.jumpTo(newValueMemSize);
-
-                        // Write first value
-                        long firstValue = rollbackValues.getQuick(0);
-                        valueMem.putLong(firstValue);
-                        long lastValue = firstValue;
-                        int bytesWritten = 8;
-
-                        // Write deltas
-                        for (int i = 1; i < keepCount; i++) {
-                            long val = rollbackValues.getQuick(i);
-                            long delta = val - lastValue;
-                            bytesWritten += DeltaBitmapIndexUtils.encodeDelta(valueMem, delta);
-                            lastValue = val;
-                        }
-
-                        newValueMemSize = valueMem.getAppendOffset();
-
-                        // Update key entry with reduced fences
-                        Unsafe.getUnsafe().storeFence();
-                        keyMem.putLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, keepCount);
-                        keyMem.putLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET, newDataOffset);
-                        keyMem.putLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE, lastValue);
-                        keyMem.putInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN, bytesWritten);
-                        Unsafe.getUnsafe().storeFence();
-                        keyMem.putInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, (int) keepCount);
-
-                        // Update caches
-                        keyDataOffsets.setQuick(k, newDataOffset);
-                        keyDataLens.setQuick(k, bytesWritten);
-                        keyValueCounts.setQuick(k, keepCount);
-                        lastValues.setQuick(k, lastValue);
-                    }
-                } else {
-                    // Keep track of data end for this key
-                    if (dataOffset + dataLen > newValueMemSize) {
-                        newValueMemSize = dataOffset + dataLen;
-                    }
-                }
+            if (valueCount == 0) {
+                continue;
             }
+
+            long lastBlockOffset = keyMem.getLong(keyOffset + KEY_ENTRY_OFFSET_LAST_BLOCK);
+            long lastValue = valueMem.getLong(lastBlockOffset + BLOCK_OFFSET_LAST_VALUE);
+
+            if (lastValue <= maxValue) {
+                continue; // No rollback needed for this key
+            }
+
+            // Need to rollback - walk blocks backwards
+            rollbackKey(keyOffset, maxValue);
         }
 
-        valueMemSize = newValueMemSize;
+        // Recalculate valueMemSize based on remaining blocks
+        recalculateValueMemSize();
         updateValueMemSize();
+
+        // Recalculate keyCount - find highest key with values
+        recalculateKeyCount();
+
         setMaxValue(maxValue);
     }
 
     public void setMaxValue(long maxValue) {
-        keyMem.putLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_MAX_VALUE, maxValue);
+        keyMem.putLong(KEY_RESERVED_OFFSET_MAX_VALUE, maxValue);
     }
 
+    @Override
     public void sync(boolean async) {
-        keyMem.sync(async);
-        valueMem.sync(async);
+        if (keyMem.isOpen()) {
+            keyMem.sync(async);
+        }
+        if (valueMem.isOpen()) {
+            valueMem.sync(async);
+        }
     }
 
     public void truncate() {
-        initKeyMemory(keyMem);
+        initKeyMemory(keyMem, blockCapacity);
         valueMem.truncate();
         keyCount = 0;
         valueMemSize = 0;
-        clearCaches();
     }
 
-    private void appendDeltaEncodedValue(long keyOffset, int key, long value) {
-        // Get last value for this key to compute delta (from cache)
-        long lastValue = lastValues.getQuick(key);
+    private void appendToBlock(long keyOffset, long blockOffset, long totalValueCount, long value) {
+        // Get current block state
+        int blockCount = valueMem.getInt(blockOffset + BLOCK_OFFSET_COUNT);
+        int dataLen = valueMem.getInt(blockOffset + BLOCK_OFFSET_DATA_LEN);
+        long lastValue = valueMem.getLong(blockOffset + BLOCK_OFFSET_LAST_VALUE);
+
+        // Validate ordering
         if (value < lastValue) {
             throw CairoException.critical(0)
-                    .put("index values must be added in ascending order [key=").put(key)
-                    .put(", lastValue=").put(lastValue)
-                    .put(", newValue=").put(value).put(']');
+                    .put("index values must be added in ascending order [lastValue=")
+                    .put(lastValue).put(", newValue=").put(value).put(']');
         }
 
         long delta = value - lastValue;
-        int deltaSize = DeltaBitmapIndexUtils.encodedSize(delta);
+        int deltaSize = encodedSize(delta);
 
-        // Get current data info from cache
-        long valueCount = keyValueCounts.getQuick(key);
-        int dataLen = keyDataLens.getQuick(key);
-        long dataOffset = keyDataOffsets.getQuick(key);
+        // Check if delta fits in current block
+        if (dataLen + deltaSize <= blockDataCapacity) {
+            // Append delta to current block
+            long dataOffset = blockOffset + BLOCK_HEADER_SIZE + dataLen;
+            valueMem.jumpTo(dataOffset);
+            encodeDelta(valueMem, delta);
 
-        // Check if this key's data ends at the current valueMemSize
-        // If so, we can append in place. Otherwise, we need to relocate the data.
-        // Note: The slow path leaves the old data as garbage (fragmentation trade-off).
-        long dataEnd = dataOffset + dataLen;
-        if (dataEnd == valueMemSize) {
-            // Fast path: data is at the end, can append in place
-            valueMem.jumpTo(dataEnd);
-            DeltaBitmapIndexUtils.encodeDelta(valueMem, delta);
+            // Update block header
+            valueMem.putInt(blockOffset + BLOCK_OFFSET_COUNT, blockCount + 1);
+            valueMem.putInt(blockOffset + BLOCK_OFFSET_DATA_LEN, dataLen + deltaSize);
+            valueMem.putLong(blockOffset + BLOCK_OFFSET_LAST_VALUE, value);
 
-            int newDataLen = dataLen + deltaSize;
-            long newValueCount = valueCount + 1;
-            valueMemSize = valueMem.getAppendOffset();
-            updateValueMemSize();
-
-            // Update key entry atomically with reduced fences
-            // Reader checks: countCheck == (int)valueCount, so we update countCheck last
+            // Update key entry atomically
             Unsafe.getUnsafe().storeFence();
-            keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, newValueCount);
-            keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE, value);
-            keyMem.putInt(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN, newDataLen);
+            keyMem.putLong(keyOffset + KEY_ENTRY_OFFSET_VALUE_COUNT, totalValueCount + 1);
             Unsafe.getUnsafe().storeFence();
-            keyMem.putInt(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, (int) newValueCount);
-
-            // Update caches
-            keyDataLens.setQuick(key, newDataLen);
-            keyValueCounts.setQuick(key, newValueCount);
+            keyMem.putInt(keyOffset + KEY_ENTRY_OFFSET_COUNT_CHECK, (int) (totalValueCount + 1));
         } else {
-            // Slow path: need to relocate data to the end
-            long newDataOffset = valueMemSize;
-            valueMem.jumpTo(newDataOffset);
-
-            // Copy existing encoded data
-            for (long i = 0; i < dataLen; i++) {
-                valueMem.putByte(valueMem.getByte(dataOffset + i));
-            }
-
-            // Append new delta
-            DeltaBitmapIndexUtils.encodeDelta(valueMem, delta);
-
-            int newDataLen = dataLen + deltaSize;
-            long newValueCount = valueCount + 1;
-            valueMemSize = valueMem.getAppendOffset();
-            updateValueMemSize();
-
-            // Update key entry atomically with reduced fences
-            Unsafe.getUnsafe().storeFence();
-            keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, newValueCount);
-            keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET, newDataOffset);
-            keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE, value);
-            keyMem.putInt(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN, newDataLen);
-            Unsafe.getUnsafe().storeFence();
-            keyMem.putInt(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, (int) newValueCount);
-
-            // Update caches
-            keyDataOffsets.setQuick(key, newDataOffset);
-            keyDataLens.setQuick(key, newDataLen);
-            keyValueCounts.setQuick(key, newValueCount);
-        }
-
-        // Update last value cache
-        lastValues.setQuick(key, value);
-    }
-
-    private void decodeAllValues(long dataOffset, int dataLen, long valueCount, LongList result) {
-        result.clear();
-        if (valueCount == 0) {
-            return;
-        }
-
-        // Read first value (full 8 bytes)
-        long value = valueMem.getLong(dataOffset);
-        result.add(value);
-
-        // Read delta-encoded values
-        long[] decodeResult = new long[2];
-        long offset = dataOffset + 8;
-        long endOffset = dataOffset + dataLen;
-
-        while (offset < endOffset && result.size() < valueCount) {
-            DeltaBitmapIndexUtils.decodeDelta(valueMem, offset, decodeResult);
-            value += decodeResult[0]; // Apply delta
-            result.add(value);
-            offset += decodeResult[1]; // Move by bytes consumed
+            // Block is full - allocate new block
+            allocateNewBlock(keyOffset, blockOffset, totalValueCount, value);
         }
     }
 
-    /**
-     * Clears all cached key metadata.
-     */
-    private void clearCaches() {
-        keyDataOffsets.clear();
-        keyDataLens.clear();
-        keyValueCounts.clear();
-        lastValues.clear();
-        rollbackValues.clear();
+    private void allocateNewBlock(long keyOffset, long prevBlockOffset, long totalValueCount, long value) {
+        // Allocate new block at end of value file
+        long newBlockOffset = valueMemSize;
+        valueMem.jumpTo(newBlockOffset);
+
+        // Write block header
+        valueMem.putLong(-1L);  // next = none
+        valueMem.putLong(prevBlockOffset);  // prev
+        valueMem.putInt(1);  // count = 1
+        valueMem.putInt(0);  // dataLen = 0 (first value stored separately)
+        valueMem.putLong(value);  // firstValue
+        valueMem.putLong(value);  // lastValue
+
+        // Reserve space for data area
+        valueMem.skip(blockDataCapacity);
+
+        // Update previous block's next pointer
+        valueMem.putLong(prevBlockOffset + BLOCK_OFFSET_NEXT, newBlockOffset);
+
+        valueMemSize += blockCapacity;
+        updateValueMemSize();
+
+        // Update key entry atomically
+        Unsafe.getUnsafe().storeFence();
+        keyMem.putLong(keyOffset + KEY_ENTRY_OFFSET_VALUE_COUNT, totalValueCount + 1);
+        keyMem.putLong(keyOffset + KEY_ENTRY_OFFSET_LAST_BLOCK, newBlockOffset);
+        Unsafe.getUnsafe().storeFence();
+        keyMem.putInt(keyOffset + KEY_ENTRY_OFFSET_COUNT_CHECK, (int) (totalValueCount + 1));
     }
 
-    /**
-     * Extends all caches to accommodate the given key.
-     */
-    private void extendCachesForKey(int key) {
-        while (keyDataOffsets.size() <= key) {
-            keyDataOffsets.add(0);
-            keyDataLens.add(0);
-            keyValueCounts.add(0);
-            lastValues.add(Long.MIN_VALUE);
-        }
+    private void initFirstBlock(long keyOffset, long value) {
+        // Allocate first block for this key
+        long blockOffset = valueMemSize;
+        valueMem.jumpTo(blockOffset);
+
+        // Write block header
+        valueMem.putLong(-1L);  // next = none
+        valueMem.putLong(-1L);  // prev = none (first block)
+        valueMem.putInt(1);  // count = 1
+        valueMem.putInt(0);  // dataLen = 0 (first value stored separately)
+        valueMem.putLong(value);  // firstValue
+        valueMem.putLong(value);  // lastValue
+
+        // Reserve space for data area
+        valueMem.skip(blockDataCapacity);
+
+        valueMemSize += blockCapacity;
+        updateValueMemSize();
+
+        // Update key entry atomically
+        Unsafe.getUnsafe().storeFence();
+        keyMem.putLong(keyOffset + KEY_ENTRY_OFFSET_VALUE_COUNT, 1);
+        keyMem.putLong(keyOffset + KEY_ENTRY_OFFSET_FIRST_BLOCK, blockOffset);
+        keyMem.putLong(keyOffset + KEY_ENTRY_OFFSET_LAST_BLOCK, blockOffset);
+        Unsafe.getUnsafe().storeFence();
+        keyMem.putInt(keyOffset + KEY_ENTRY_OFFSET_COUNT_CHECK, 1);
     }
 
     private long keyMemSize() {
-        return (long) this.keyCount * DeltaBitmapIndexUtils.KEY_ENTRY_SIZE + DeltaBitmapIndexUtils.KEY_FILE_RESERVED;
+        return KEY_FILE_RESERVED + (long) keyCount * KEY_ENTRY_SIZE;
     }
 
-    /**
-     * Initializes value data for an existing key that had no values (sparse key byproduct).
-     */
-    private void initValueDataAndStoreValue(long keyOffset, int key, long value) {
-        // Write first value at current end of value memory
-        long dataOffset = valueMemSize;
-        valueMem.jumpTo(dataOffset);
-        valueMem.putLong(value);
-
-        int dataLen = 8; // First value is always 8 bytes
-        valueMemSize = valueMem.getAppendOffset();
-        updateValueMemSize();
-
-        // Update key entry atomically with reduced fences
-        Unsafe.getUnsafe().storeFence();
-        keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, 1);
-        keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET, dataOffset);
-        keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE, value);
-        keyMem.putInt(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN, dataLen);
-        Unsafe.getUnsafe().storeFence();
-        keyMem.putInt(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, 1);
-
-        // Update caches
-        keyDataOffsets.setQuick(key, dataOffset);
-        keyDataLens.setQuick(key, dataLen);
-        keyValueCounts.setQuick(key, 1);
-        lastValues.setQuick(key, value);
-    }
-
-    /**
-     * Initializes value data for a new key (key >= keyCount).
-     * Uses combined header update for efficiency.
-     */
-    private void initValueDataForNewKey(long keyOffset, int key, long value) {
-        // Write first value at current end of value memory
-        long dataOffset = valueMemSize;
-        valueMem.jumpTo(dataOffset);
-        valueMem.putLong(value);
-
-        int dataLen = 8; // First value is always 8 bytes
-        long newValueMemSize = valueMem.getAppendOffset();
-
-        // Combined header update (single sequence bump for both keyCount and valueMemSize)
-        updateHeaderAtomically(key + 1, newValueMemSize);
-
-        // Update key entry atomically with reduced fences
-        Unsafe.getUnsafe().storeFence();
-        keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, 1);
-        keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET, dataOffset);
-        keyMem.putLong(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE, value);
-        keyMem.putInt(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN, dataLen);
-        Unsafe.getUnsafe().storeFence();
-        keyMem.putInt(keyOffset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, 1);
-
-        // Update caches - extend if needed
-        extendCachesForKey(key);
-        keyDataOffsets.setQuick(key, dataOffset);
-        keyDataLens.setQuick(key, dataLen);
-        keyValueCounts.setQuick(key, 1);
-        lastValues.setQuick(key, value);
-    }
-
-    /**
-     * Rebuilds all caches from key entries.
-     * O(k) where k = keyCount, since all metadata is stored directly in each key entry.
-     */
-    private void rebuildCaches() {
-        clearCaches();
-        for (int k = 0; k < keyCount; k++) {
-            long offset = DeltaBitmapIndexUtils.getKeyEntryOffset(k);
-            long valueCount = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
-            int countCheck = keyMem.getInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK);
-            long dataOffset = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET);
-
-            // Verify the entry is valid
-            if (valueCount > 0 && countCheck == (int) valueCount && dataOffset >= 0 && dataOffset < valueMemSize) {
-                int dataLen = keyMem.getInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN);
-                long lastValue = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE);
-                keyDataOffsets.add(dataOffset);
-                keyDataLens.add(dataLen);
-                keyValueCounts.add(valueCount);
-                lastValues.add(lastValue);
-            } else {
-                keyDataOffsets.add(0);
-                keyDataLens.add(0);
-                keyValueCounts.add(0);
-                lastValues.add(Long.MIN_VALUE);
+    private void recalculateKeyCount() {
+        // Only reset keyCount to 0 if ALL keys have no values
+        // Otherwise keep the high water mark (sparse key support)
+        boolean hasAnyValues = false;
+        for (int key = 0; key < keyCount; key++) {
+            long keyOffset = getKeyEntryOffset(key);
+            long valueCount = keyMem.getLong(keyOffset + KEY_ENTRY_OFFSET_VALUE_COUNT);
+            if (valueCount > 0) {
+                hasAnyValues = true;
+                break;
             }
+        }
+        if (!hasAnyValues) {
+            keyCount = 0;
+            keyMem.putInt(KEY_RESERVED_OFFSET_KEY_COUNT, keyCount);
         }
     }
 
-    /**
-     * Updates header with new key count and value mem size in a single atomic operation.
-     * This is more efficient than separate updateKeyCount + updateValueMemSize calls.
-     */
-    private void updateHeaderAtomically(int newKeyCount, long newValueMemSize) {
-        keyCount = newKeyCount;
-        valueMemSize = newValueMemSize;
+    private void recalculateValueMemSize() {
+        // Find the maximum block offset + blockCapacity among all keys
+        long maxBlockEnd = 0;
+        for (int key = 0; key < keyCount; key++) {
+            long keyOffset = getKeyEntryOffset(key);
+            long valueCount = keyMem.getLong(keyOffset + KEY_ENTRY_OFFSET_VALUE_COUNT);
+            if (valueCount > 0) {
+                long lastBlock = keyMem.getLong(keyOffset + KEY_ENTRY_OFFSET_LAST_BLOCK);
+                long blockEnd = lastBlock + blockCapacity;
+                if (blockEnd > maxBlockEnd) {
+                    maxBlockEnd = blockEnd;
+                }
+            }
+        }
+        valueMemSize = maxBlockEnd;
+    }
 
-        long seq = keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) + 1;
-        keyMem.putLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE, seq);
-        Unsafe.getUnsafe().storeFence();
-        keyMem.putInt(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT, newKeyCount);
-        keyMem.putLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE, newValueMemSize);
-        Unsafe.getUnsafe().storeFence();
-        keyMem.putLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);
+    private void rollbackKey(long keyOffset, long maxValue) {
+        long blockOffset = keyMem.getLong(keyOffset + KEY_ENTRY_OFFSET_LAST_BLOCK);
+        long newValueCount = 0;
+        long newLastBlock = -1;
+
+        // Walk backwards through blocks
+        while (blockOffset >= 0) {
+            long firstValue = valueMem.getLong(blockOffset + BLOCK_OFFSET_FIRST_VALUE);
+
+            if (firstValue <= maxValue) {
+                // This block contains valid values - scan to find cutoff
+                int blockCount = valueMem.getInt(blockOffset + BLOCK_OFFSET_COUNT);
+                int dataLen = valueMem.getInt(blockOffset + BLOCK_OFFSET_DATA_LEN);
+
+                // Decode values to find how many are <= maxValue
+                long currentValue = firstValue;
+                int validCount = 1;  // firstValue is valid if firstValue <= maxValue
+                int validDataLen = 0;
+                long validLastValue = firstValue;
+
+                long dataOffset = blockOffset + BLOCK_HEADER_SIZE;
+                long dataEnd = dataOffset + dataLen;
+                long[] result = new long[2];
+
+                while (dataOffset < dataEnd && validCount < blockCount) {
+                    decodeDelta(valueMem, dataOffset, result);
+                    long delta = result[0];
+                    int bytesConsumed = (int) result[1];
+
+                    currentValue += delta;
+                    if (currentValue <= maxValue) {
+                        validCount++;
+                        validDataLen += bytesConsumed;
+                        validLastValue = currentValue;
+                        dataOffset += bytesConsumed;
+                    } else {
+                        break;
+                    }
+                }
+
+                if (validCount > 0) {
+                    // Update this block with truncated data
+                    valueMem.putInt(blockOffset + BLOCK_OFFSET_COUNT, validCount);
+                    valueMem.putInt(blockOffset + BLOCK_OFFSET_DATA_LEN, validDataLen);
+                    valueMem.putLong(blockOffset + BLOCK_OFFSET_LAST_VALUE, validLastValue);
+                    valueMem.putLong(blockOffset + BLOCK_OFFSET_NEXT, -1L);  // This becomes last block
+
+                    newValueCount += validCount;
+                    newLastBlock = blockOffset;
+
+                    // Add values from previous blocks
+                    long prevBlock = valueMem.getLong(blockOffset + BLOCK_OFFSET_PREV);
+                    while (prevBlock >= 0) {
+                        newValueCount += valueMem.getInt(prevBlock + BLOCK_OFFSET_COUNT);
+                        prevBlock = valueMem.getLong(prevBlock + BLOCK_OFFSET_PREV);
+                    }
+                    break;
+                }
+            }
+
+            // Move to previous block
+            blockOffset = valueMem.getLong(blockOffset + BLOCK_OFFSET_PREV);
+        }
+
+        // Update key entry
+        if (newLastBlock >= 0) {
+            keyMem.putLong(keyOffset + KEY_ENTRY_OFFSET_VALUE_COUNT, newValueCount);
+            keyMem.putLong(keyOffset + KEY_ENTRY_OFFSET_LAST_BLOCK, newLastBlock);
+            keyMem.putInt(keyOffset + KEY_ENTRY_OFFSET_COUNT_CHECK, (int) newValueCount);
+        } else {
+            // All values rolled back
+            keyMem.putLong(keyOffset + KEY_ENTRY_OFFSET_VALUE_COUNT, 0);
+            keyMem.putLong(keyOffset + KEY_ENTRY_OFFSET_FIRST_BLOCK, -1L);
+            keyMem.putLong(keyOffset + KEY_ENTRY_OFFSET_LAST_BLOCK, -1L);
+            keyMem.putInt(keyOffset + KEY_ENTRY_OFFSET_COUNT_CHECK, 0);
+        }
+    }
+
+    private void updateKeyCount(int key) {
+        if (key >= keyCount) {
+            keyCount = key + 1;
+            // Update header atomically with sequence
+            updateHeaderAtomically();
+        }
     }
 
     private void updateValueMemSize() {
-        long seq = keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) + 1;
-        keyMem.putLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE, seq);
+        // Update header atomically with sequence
+        updateHeaderAtomically();
+    }
+
+    private void updateHeaderAtomically() {
+        // Increment sequence, update data, set sequence check
+        long seq = keyMem.getLong(KEY_RESERVED_OFFSET_SEQUENCE) + 1;
+        keyMem.putLong(KEY_RESERVED_OFFSET_SEQUENCE, seq);
         Unsafe.getUnsafe().storeFence();
-        keyMem.putLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE, valueMemSize);
+        keyMem.putLong(KEY_RESERVED_OFFSET_VALUE_MEM_SIZE, valueMemSize);
+        keyMem.putInt(KEY_RESERVED_OFFSET_KEY_COUNT, keyCount);
         Unsafe.getUnsafe().storeFence();
-        keyMem.putLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);
+        keyMem.putLong(KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);
     }
 
     /**
-     * Internal cursor for reading values in backward order (most recent first).
+     * Simple backward cursor for testing. Returns values in descending order.
      */
-    private class Cursor implements RowCursor {
-        private final LongList values = new LongList();
+    private static class TestBwdCursor implements RowCursor {
+        private final LongList values;
         private int position;
+
+        TestBwdCursor(LongList values) {
+            this.values = values;
+            this.position = values.size() - 1;
+        }
 
         @Override
         public boolean hasNext() {
@@ -656,16 +786,6 @@ public class DeltaBitmapIndexWriter implements IndexWriter {
         @Override
         public long next() {
             return values.getQuick(position--);
-        }
-
-        void of(int key) {
-            // Use cached metadata
-            long valueCount = keyValueCounts.getQuick(key);
-            long dataOffset = keyDataOffsets.getQuick(key);
-            int dataLen = keyDataLens.getQuick(key);
-
-            decodeAllValues(dataOffset, dataLen, valueCount, values);
-            position = values.size() - 1;
         }
     }
 }

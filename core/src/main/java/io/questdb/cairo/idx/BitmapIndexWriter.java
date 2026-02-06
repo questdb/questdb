@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.EmptyRowCursor;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
@@ -176,6 +177,11 @@ public class BitmapIndexWriter implements IndexWriter {
             return cursor;
         }
         return EmptyRowCursor.INSTANCE;
+    }
+
+    @Override
+    public byte getIndexType() {
+        return IndexType.SYMBOL;
     }
 
     public int getKeyCount() {

@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.IndexBuilder;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -704,7 +705,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                 int columnIndex = updateColumnIndexes.get(i);
                 String columnName = metadata.getColumnName(columnIndex);
                 int columnType = metadata.getColumnType(columnIndex);
-                boolean isIndexed = ColumnType.isSymbol(columnType) && metadata.isColumnIndexed(columnIndex);
+                byte indexType = ColumnType.isSymbol(columnType) ? metadata.getColumnIndexType(columnIndex) : IndexType.NONE;
 
                 final long columnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1L);
                 long rowCount = columnTop > -1 ? partitionSize - columnTop : 0;
@@ -714,7 +715,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex, columnTop);
                     if (rowCount > 0) {
                         // columnTop == -1 means column did not exist at the partition
-                        purgingOperator.add(columnIndex, columnName, columnType, isIndexed, existingVersion, partitionTimestamp, partitionNameTxn);
+                        purgingOperator.add(columnIndex, columnName, columnType, indexType, existingVersion, partitionTimestamp, partitionNameTxn);
                     }
                 }
 

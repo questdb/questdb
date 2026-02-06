@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -68,6 +69,7 @@ public class DropIndexOperator {
         int timestampType = tableWriter.getMetadata().getTimestampType();
         int partitionBy = tableWriter.getPartitionBy();
         int partitionCount = tableWriter.getPartitionCount();
+        byte indexType = tableWriter.getMetadata().getColumnIndexType(columnIndex);
         try {
             purgingOperator.clear();
             rollbackColumnVersions.clear();
@@ -99,7 +101,7 @@ public class DropIndexOperator {
                     }
 
                     // add to cleanup tasks, the index will be removed in due time
-                    purgingOperator.add(columnIndex, columnName, ColumnType.SYMBOL, true, columnVersion, pTimestamp, pVersion);
+                    purgingOperator.add(columnIndex, columnName, ColumnType.SYMBOL, indexType, columnVersion, pTimestamp, pVersion);
                 }
             }
         } catch (Throwable th) {

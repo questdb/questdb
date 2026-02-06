@@ -156,12 +156,14 @@ public class VacuumColumnVersions implements Closeable {
                             rogueColumns.keys().get(-newReaderIndex - 1).toString();
 
                     int columnType = newReaderIndex > -1 ? metadata.getColumnType(newReaderIndex) : ColumnType.UNDEFINED;
+                    byte indexType = newReaderIndex > -1 ? metadata.getColumnIndexType(newReaderIndex) : IndexType.NONE;
                     purgeTask.of(
                             reader.getTableToken(),
                             columnName,
                             tableId,
                             truncateVersion,
                             columnType,
+                            indexType,
                             timestampType,
                             partitionBy,
                             updateTxn

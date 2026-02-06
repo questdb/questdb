@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.idx.BitmapIndexUtils;
+import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.griffin.PurgingOperator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -335,6 +336,7 @@ public class ColumnPurgeOperator implements Closeable {
 
                     // Check if it's a symbol, try to remove .k and .v files in the partition
                     if (ColumnType.isSymbol(columnType) || columnTypeRogue) {
+                        byte indexType = task.getIndexType();
                         if (isSymbolRootFiles) {
                             path.trimTo(pathTrimToPartition);
                             if (couldNotRemove(ff, TableUtils.charFileName(path, columnName, columnVersion))) {
@@ -349,16 +351,19 @@ public class ColumnPurgeOperator implements Closeable {
                             }
                         }
 
-                        path.trimTo(pathTrimToPartition);
-                        if (couldNotRemove(ff, BitmapIndexUtils.keyFileName(path, columnName, columnVersion))) {
-                            allDone = false;
-                            continue;
-                        }
+                        // Only try to remove index files if the column was indexed
+                        if (IndexType.isIndexed(indexType)) {
+                            path.trimTo(pathTrimToPartition);
+                            if (couldNotRemove(ff, IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
+                                allDone = false;
+                                continue;
+                            }
 
-                        path.trimTo(pathTrimToPartition);
-                        if (couldNotRemove(ff, BitmapIndexUtils.valueFileName(path, columnName, columnVersion))) {
-                            allDone = false;
-                            continue;
+                            path.trimTo(pathTrimToPartition);
+                            if (couldNotRemove(ff, IndexFactory.valueFileName(indexType, path, columnName, columnVersion))) {
+                                allDone = false;
+                                continue;
+                            }
                         }
                     }
                     completedRowIds.add(updateRowId);

@@ -41,8 +41,8 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 /**
- * Forward reader for delta-encoded bitmap index.
- * Uses streaming decode for memory efficiency.
+ * Forward reader for delta-encoded bitmap index with linked blocks.
+ * Uses streaming decode for memory efficiency, following block chains.
  */
 public class DeltaBitmapIndexFwdReader implements BitmapIndexReader {
     private static final String INDEX_CORRUPT = "cursor could not consistently read index header [corrupt?]";
@@ -56,6 +56,7 @@ public class DeltaBitmapIndexFwdReader implements BitmapIndexReader {
     protected long columnTop;
     protected int keyCount;
     protected long spinLockTimeoutMs;
+    private int blockCapacity;
     private long columnTxn;
     private int keyCountIncludingNulls;
     private long keyFileSequence = -1;
@@ -261,16 +262,19 @@ public class DeltaBitmapIndexFwdReader implements BitmapIndexReader {
             long seq = keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
             int keyCount;
             long valueMemSize;
+            int blockCapacity;
 
             Unsafe.getUnsafe().loadFence();
             if (keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
                 keyCount = keyMem.getInt(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
                 valueMemSize = keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
+                blockCapacity = keyMem.getInt(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_CAPACITY);
 
                 Unsafe.getUnsafe().loadFence();
                 if (keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) == seq) {
                     this.keyFileSequence = seq;
                     this.valueMemSize = valueMemSize;
+                    this.blockCapacity = blockCapacity;
                     this.keyCount = keyCount;
                     this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
                     keyMem.extend(DeltaBitmapIndexUtils.getKeyEntryOffset(keyCount));
@@ -288,44 +292,76 @@ public class DeltaBitmapIndexFwdReader implements BitmapIndexReader {
     }
 
     /**
-     * Forward cursor with streaming delta decode.
-     * Uses Unsafe for fast direct memory access.
+     * Forward cursor with streaming delta decode using linked blocks.
      */
     private class Cursor implements RowCursor {
         protected long next;
-        protected long position;
-        protected long valueCount;
-        private long baseAddress;
+        protected long totalValueCount;
+        private final long[] decodeResult = new long[2];
+        private int blockCount;          // values in current block
+        private long blockDataEnd;       // end of data area in current block
+        private long blockDataOffset;    // current read position in block data
+        private long currentBlockOffset; // offset of current block
         private long currentValue;
-        private long dataEndOffset;
         private long maxValue;
         private long minValue;
-        private long readOffset;
+        private long nextBlockOffset;    // offset of next block (-1 if none)
+        private int positionInBlock;     // position within current block
+        private long totalPosition;      // position across all blocks
 
         @Override
         public boolean hasNext() {
-            while (position < valueCount) {
-                long value;
-                if (position == 0) {
-                    // First value is stored as full 8 bytes
-                    value = Unsafe.getUnsafe().getLong(baseAddress + readOffset);
-                    readOffset += 8;
-                } else {
-                    // Subsequent values are delta-encoded
-                    if (readOffset >= dataEndOffset) {
+            final long memSize = valueMemSize;
+
+            while (totalPosition < totalValueCount) {
+                // Check if we need to move to next block
+                if (positionInBlock >= blockCount) {
+                    if (!moveToNextBlock()) {
                         return false;
                     }
-                    // Use fast Unsafe decode - returns packed (delta | bytesConsumed << 56)
-                    long packed = DeltaBitmapIndexUtils.decodeDeltaUnsafe(baseAddress + readOffset);
-                    value = currentValue + DeltaBitmapIndexUtils.getDelta(packed);
-                    readOffset += DeltaBitmapIndexUtils.getBytesConsumed(packed);
+                }
+
+                long value;
+                if (positionInBlock == 0) {
+                    // First value in block is stored in header
+                    if (currentBlockOffset < 0 || currentBlockOffset + DeltaBitmapIndexUtils.BLOCK_OFFSET_FIRST_VALUE + 8 > memSize) {
+                        return false;
+                    }
+                    value = valueMem.getLong(currentBlockOffset + DeltaBitmapIndexUtils.BLOCK_OFFSET_FIRST_VALUE);
+                } else {
+                    // Subsequent values are delta-encoded
+                    if (blockDataOffset >= blockDataEnd || blockDataOffset >= memSize) {
+                        return false;
+                    }
+
+                    // Peek at first byte to check bounds
+                    int firstByte = valueMem.getByte(blockDataOffset) & 0xFF;
+                    int bytesNeeded;
+                    if ((firstByte & 0x80) == 0) {
+                        bytesNeeded = 1;
+                    } else if ((firstByte & 0xC0) == 0x80) {
+                        bytesNeeded = 2;
+                    } else if ((firstByte & 0xE0) == 0xC0) {
+                        bytesNeeded = 4;
+                    } else {
+                        bytesNeeded = 9;
+                    }
+
+                    if (blockDataOffset + bytesNeeded > memSize) {
+                        return false;
+                    }
+
+                    DeltaBitmapIndexUtils.decodeDelta(valueMem, blockDataOffset, decodeResult);
+                    value = currentValue + decodeResult[0];
+                    blockDataOffset += decodeResult[1];
                 }
 
                 currentValue = value;
-                position++;
+                positionInBlock++;
+                totalPosition++;
 
                 if (value > maxValue) {
-                    valueCount = 0;
+                    totalValueCount = 0;
                     return false;
                 }
 
@@ -344,51 +380,82 @@ public class DeltaBitmapIndexFwdReader implements BitmapIndexReader {
 
         void of(int key, long minValue, long maxValue, long keyCount) {
             if (keyCount == 0) {
-                valueCount = 0;
-            } else {
-                assert key >= 0 : "key must be non-negative: " + key;
-                long offset = DeltaBitmapIndexUtils.getKeyEntryOffset(key);
-                keyMem.extend(offset + DeltaBitmapIndexUtils.KEY_ENTRY_SIZE);
+                totalValueCount = 0;
+                return;
+            }
 
-                long valueCount;
-                long dataOffset;
-                int dataLen;
-                final long deadline = clock.getTicks() + spinLockTimeoutMs;
+            assert key >= 0 : "key must be non-negative: " + key;
+            long offset = DeltaBitmapIndexUtils.getKeyEntryOffset(key);
+            keyMem.extend(offset + DeltaBitmapIndexUtils.KEY_ENTRY_SIZE);
 
-                while (true) {
-                    valueCount = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
+            long valueCount;
+            long firstBlockOffset;
+            final long deadline = clock.getTicks() + spinLockTimeoutMs;
+
+            while (true) {
+                valueCount = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
+
+                Unsafe.getUnsafe().loadFence();
+                int countCheck = keyMem.getInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK);
+                if (countCheck == (int) valueCount) {
+                    firstBlockOffset = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_FIRST_BLOCK);
 
                     Unsafe.getUnsafe().loadFence();
-                    int countCheck = keyMem.getInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK);
-                    if (countCheck == (int) valueCount) {
-                        dataOffset = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET);
-                        dataLen = keyMem.getInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN);
-
-                        Unsafe.getUnsafe().loadFence();
-                        if (keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT) == valueCount) {
-                            break;
-                        }
-                    }
-
-                    if (clock.getTicks() > deadline) {
-                        LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms, key=").$(key).$(", offset=").$(offset).$(']').$();
-                        throw CairoException.critical(0).put(INDEX_CORRUPT);
+                    if (keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT) == valueCount) {
+                        break;
                     }
                 }
 
-                if (valueCount > 0) {
-                    valueMem.extend(dataOffset + dataLen);
+                if (clock.getTicks() > deadline) {
+                    LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms, key=").$(key).$(", offset=").$(offset).$(']').$();
+                    throw CairoException.critical(0).put(INDEX_CORRUPT);
                 }
-
-                this.valueCount = valueCount;
-                this.baseAddress = valueMem.addressOf(0);
-                this.readOffset = dataOffset;
-                this.dataEndOffset = dataOffset + dataLen;
-                this.currentValue = 0;
-                this.position = 0;
-                this.minValue = minValue;
-                this.maxValue = maxValue;
             }
+
+            this.totalValueCount = valueCount;
+            this.minValue = minValue;
+            this.maxValue = maxValue;
+            this.totalPosition = 0;
+
+            if (valueCount > 0 && firstBlockOffset >= 0) {
+                valueMem.extend(valueMemSize);
+                initBlock(firstBlockOffset);
+            } else {
+                this.currentBlockOffset = -1;
+                this.blockCount = 0;
+                this.positionInBlock = 0;
+            }
+        }
+
+        private void initBlock(long blockOffset) {
+            // Bounds check
+            if (blockOffset < 0 || blockOffset + DeltaBitmapIndexUtils.BLOCK_HEADER_SIZE > valueMemSize) {
+                this.currentBlockOffset = -1;
+                this.blockCount = 0;
+                this.positionInBlock = 0;
+                this.nextBlockOffset = -1;
+                return;
+            }
+
+            this.currentBlockOffset = blockOffset;
+            this.blockCount = valueMem.getInt(blockOffset + DeltaBitmapIndexUtils.BLOCK_OFFSET_COUNT);
+            int dataLen = valueMem.getInt(blockOffset + DeltaBitmapIndexUtils.BLOCK_OFFSET_DATA_LEN);
+            this.blockDataOffset = blockOffset + DeltaBitmapIndexUtils.BLOCK_HEADER_SIZE;
+            this.blockDataEnd = this.blockDataOffset + dataLen;
+            // Ensure dataEnd doesn't exceed valueMemSize
+            if (this.blockDataEnd > valueMemSize) {
+                this.blockDataEnd = valueMemSize;
+            }
+            this.nextBlockOffset = valueMem.getLong(blockOffset + DeltaBitmapIndexUtils.BLOCK_OFFSET_NEXT);
+            this.positionInBlock = 0;
+        }
+
+        private boolean moveToNextBlock() {
+            if (nextBlockOffset < 0 || nextBlockOffset >= valueMemSize) {
+                return false;
+            }
+            initBlock(nextBlockOffset);
+            return blockCount > 0;
         }
     }
 

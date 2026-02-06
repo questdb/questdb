@@ -25,6 +25,7 @@
 package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.IndexType;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.Path;
 
@@ -37,6 +38,13 @@ import java.io.Closeable;
  * that all conform to this interface.
  */
 public interface IndexWriter extends Closeable, Mutable {
+
+    /**
+     * Returns the index type for this writer.
+     *
+     * @return the index type constant from {@link IndexType}
+     */
+    byte getIndexType();
 
     /**
      * Adds a key-value pair to the index.
@@ -84,9 +92,7 @@ public interface IndexWriter extends Closeable, Mutable {
      * @param init          true to initialize a new index, false to open existing
      * @param blockCapacity the value block capacity (for new index initialization)
      */
-    default void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int blockCapacity) {
-        throw new UnsupportedOperationException();
-    }
+    void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int blockCapacity);
 
     /**
      * Opens the index writer for the given column using file paths.
@@ -134,9 +140,7 @@ public interface IndexWriter extends Closeable, Mutable {
      *
      * @param row the maximum row to keep (exclusive)
      */
-    default void rollbackConditionally(long row) {
-        throw new UnsupportedOperationException();
-    }
+    void rollbackConditionally(long row);
 
     /**
      * Rolls back values to keep only values less than or equal to maxValue.
@@ -146,9 +150,7 @@ public interface IndexWriter extends Closeable, Mutable {
      *
      * @param maxValue maximum value allowed in index (inclusive)
      */
-    default void rollbackValues(long maxValue) {
-        throw new UnsupportedOperationException();
-    }
+    void rollbackValues(long maxValue);
 
     /**
      * Sets the maximum value stored in the index header.
@@ -173,11 +175,5 @@ public interface IndexWriter extends Closeable, Mutable {
      * Closes the index without truncating files.
      * Default implementation just calls close().
      */
-    default void closeNoTruncate() {
-        try {
-            close();
-        } catch (Exception e) {
-            // Swallow exception in default implementation
-        }
-    }
+    void closeNoTruncate();
 }

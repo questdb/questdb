@@ -33,8 +33,10 @@ import io.questdb.std.str.Sinkable;
 
 public interface CreateTableOperationBuilder extends ExecutionModel, Sinkable {
     int COLUMN_FLAG_CACHED = 1;
-    int COLUMN_FLAG_INDEXED = COLUMN_FLAG_CACHED << 1;
-    int COLUMN_FLAG_DEDUP_KEY = COLUMN_FLAG_INDEXED << 1;
+    // Bits 1-3 store the index type (0-7), shifted left by 1
+    int COLUMN_FLAG_INDEX_TYPE_SHIFT = 1;
+    int COLUMN_FLAG_INDEX_TYPE_MASK = 0x0E; // bits 1-3
+    int COLUMN_FLAG_DEDUP_KEY = 1 << 4;
 
     CreateTableOperation build(
             SqlCompiler sqlCompiler,

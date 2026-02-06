@@ -283,8 +283,13 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                             continue;
                         }
                         int timestampType;
+                        byte indexType = IndexType.SYMBOL; // default to SYMBOL for backward compatibility
                         try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
                             timestampType = metadata.getTimestampType();
+                            int columnIndex = metadata.getColumnIndexQuiet(columnName);
+                            if (columnIndex > -1) {
+                                indexType = metadata.getColumnIndexType(columnIndex);
+                            }
                         }
 
                         taskInitialized = true;
@@ -294,6 +299,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                                 tableId,
                                 truncateVersion,
                                 columnType,
+                                indexType,
                                 timestampType,
                                 partitionBy,
                                 updateTxn,
@@ -437,13 +443,14 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                 int tableId,
                 long truncateVersion,
                 int columnType,
+                byte indexType,
                 int timestampType,
                 int partitionBy,
                 long updateTxn,
                 long retryDelay,
                 long microTime
         ) {
-            super.of(tableName, columnName, tableId, truncateVersion, columnType, timestampType, partitionBy, updateTxn);
+            super.of(tableName, columnName, tableId, truncateVersion, columnType, indexType, timestampType, partitionBy, updateTxn);
             this.retryDelay = retryDelay;
             nextRunTimestamp = microTime;
         }

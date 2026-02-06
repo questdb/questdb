@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTaskJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeConverter;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ColumnVersionWriter;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReaderImpl;
@@ -121,13 +122,13 @@ public class ConvertOperatorImpl implements Closeable {
             @NotNull String columnName,
             int existingColIndex,
             int existingType,
-            boolean existingIndexed,
+            byte existingIndexType,
             int columnIndex,
             int newType
     ) {
         clear();
         partitionUpdated = 0;
-        convertColumn0(columnName, existingColIndex, existingType, existingIndexed, columnIndex, newType);
+        convertColumn0(columnName, existingColIndex, existingType, existingIndexType, columnIndex, newType);
     }
 
     public void finishColumnConversion() {
@@ -188,7 +189,7 @@ public class ConvertOperatorImpl implements Closeable {
             @NotNull String columnName,
             int existingColIndex,
             int existingType,
-            boolean existingIndexed,
+            byte existingIndexType,
             int columnIndex,
             int newType
     ) {
@@ -273,7 +274,7 @@ public class ConvertOperatorImpl implements Closeable {
                                     existingColIndex,
                                     columnName,
                                     existingType,
-                                    existingIndexed,
+                                    existingIndexType,
                                     existingColTxnVer,
                                     partitionTimestamp,
                                     partitionNameTxn);

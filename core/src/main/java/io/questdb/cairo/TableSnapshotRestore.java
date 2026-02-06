@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
@@ -560,7 +559,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             LOG.info().$("rebuilding bitmap index [path=").$(path).$(", column=").$(columnName).I$();
 
             // Remove existing index files if they exist
-            removeIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn);
+            removeIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn, indexType);
 
             // Create new index files
             createIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn, indexBlockCapacity, indexType);
@@ -806,7 +805,7 @@ public class TableSnapshotRestore implements QuietCloseable {
     static void createIndexFiles(FilesFacade ff, Path path, int partitionPathLen, CharSequence columnName, long columnNameTxn, int indexBlockCapacity, byte indexType) {
         // Create .k file with proper header
         try (MemoryCMARW mem = Vm.getCMARWInstance()) {
-            LPSZ keyFileName = BitmapIndexUtils.keyFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn);
+            LPSZ keyFileName = IndexFactory.keyFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn);
             mem.smallFile(ff, keyFileName, MemoryTag.MMAP_INDEX_WRITER);
             IndexFactory.initKeyMemory(indexType, mem, indexBlockCapacity);
         } catch (CairoException e) {
@@ -815,7 +814,7 @@ public class TableSnapshotRestore implements QuietCloseable {
         }
 
         // Create empty .v file
-        LPSZ valueFileName = BitmapIndexUtils.valueFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn);
+        LPSZ valueFileName = IndexFactory.valueFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn);
         if (!ff.touch(valueFileName)) {
             int errno = ff.errno();
             LOG.error().$("could not create index value file [path=").$(path).$(", column=").$(columnName).$(", errno=").$(errno).I$();
@@ -885,7 +884,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             final byte indexType = metadata.getColumnIndexType(columnIndex);
 
             // Remove existing index files
-            removeIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn);
+            removeIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn, indexType);
 
             // Create new index files
             createIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn, indexBlockCapacity, indexType);
@@ -1007,11 +1006,11 @@ public class TableSnapshotRestore implements QuietCloseable {
         }
     }
 
-    static void removeIndexFiles(FilesFacade ff, Path path, int partitionPathLen, CharSequence columnName, long columnNameTxn) {
+    static void removeIndexFiles(FilesFacade ff, Path path, int partitionPathLen, CharSequence columnName, long columnNameTxn, byte indexType) {
         // Remove .k file
-        removeFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn));
+        removeFile(ff, IndexFactory.keyFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn));
 
         // Remove .v file
-        removeFile(ff, BitmapIndexUtils.valueFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn));
+        removeFile(ff, IndexFactory.valueFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn));
     }
 }

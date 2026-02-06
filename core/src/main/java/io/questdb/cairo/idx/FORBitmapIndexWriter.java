@@ -27,6 +27,7 @@ package io.questdb.cairo.idx;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -181,6 +182,11 @@ public class FORBitmapIndexWriter implements IndexWriter {
         }
     }
 
+    @Override
+    public byte getIndexType() {
+        return IndexType.FOR;
+    }
+
     public int getKeyCount() {
         return keyCount;
     }
@@ -196,6 +202,90 @@ public class FORBitmapIndexWriter implements IndexWriter {
 
     public boolean isOpen() {
         return keyMem.isOpen();
+    }
+
+    @Override
+    public void closeNoTruncate() {
+        // Flush pending before closing
+        if (currentKey >= 0 && pendingValues.size() > 0) {
+            flushPendingBlock();
+        }
+        keyMem.close(false);
+        valueMem.close(false);
+        clearCaches();
+    }
+
+    @Override
+    public void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int blockCapacity) {
+        close();
+        final FilesFacade ff = configuration.getFilesFacade();
+        boolean kFdUnassigned = true;
+        boolean vFdUnassigned = true;
+        final long keyAppendPageSize = configuration.getDataIndexKeyAppendPageSize();
+        final long valueAppendPageSize = configuration.getDataIndexValueAppendPageSize();
+        try {
+            if (init) {
+                if (ff.truncate(keyFd, 0)) {
+                    kFdUnassigned = false;
+                    keyMem.of(ff, keyFd, false, null, keyAppendPageSize, keyAppendPageSize, MemoryTag.MMAP_INDEX_WRITER);
+                    initKeyMemory(keyMem);
+                } else {
+                    throw CairoException.critical(ff.errno()).put("Could not truncate [fd=").put(keyFd).put(']');
+                }
+            } else {
+                final long keyFileSize = ff.length(keyFd);
+                kFdUnassigned = false;
+                keyMem.of(ff, keyFd, null, keyFileSize, MemoryTag.MMAP_INDEX_WRITER);
+            }
+            long keyMemSize = keyMem.getAppendOffset();
+            if (keyMemSize < FORBitmapIndexUtils.KEY_FILE_RESERVED) {
+                keyMem.close(false);
+                LOG.error().$("file too short [corrupt] [fd=").$(keyFd).I$();
+                throw CairoException.critical(0).put("Index file too short (w): [fd=").put(keyFd).put(']');
+            }
+
+            if (keyMem.getByte(FORBitmapIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) != FORBitmapIndexUtils.SIGNATURE) {
+                LOG.error().$("unknown format [corrupt] [fd=").$(keyFd).I$();
+                throw CairoException.critical(0).put("Unknown format: [fd=").put(keyFd).put(']');
+            }
+
+            this.keyCount = keyMem.getInt(FORBitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
+            if (keyMemSize < keyMemSize()) {
+                LOG.error().$("key count does not match file length [corrupt] [fd=").$(keyFd).$(", keyCount=").$(keyCount).I$();
+                throw CairoException.critical(0).put("Key count does not match file length [fd=").put(keyFd).put(']');
+            }
+
+            if (keyMem.getLong(FORBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) != keyMem.getLong(FORBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {
+                LOG.error().$("sequence mismatch [corrupt] at [fd=").$(keyFd).I$();
+                throw CairoException.critical(0).put("Sequence mismatch [fd=").put(keyFd).put(']');
+            }
+
+            this.valueMemSize = keyMem.getLong(FORBitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
+
+            if (init) {
+                if (ff.truncate(valueFd, 0)) {
+                    vFdUnassigned = false;
+                    valueMem.of(ff, valueFd, false, null, valueAppendPageSize, valueAppendPageSize, MemoryTag.MMAP_INDEX_WRITER);
+                    valueMem.jumpTo(0);
+                } else {
+                    throw CairoException.critical(ff.errno()).put("Could not truncate [fd=").put(valueFd).put(']');
+                }
+            } else {
+                vFdUnassigned = false;
+                valueMem.of(ff, valueFd, false, null, valueAppendPageSize, valueMemSize, MemoryTag.MMAP_INDEX_WRITER);
+            }
+
+            rebuildCaches();
+        } catch (Throwable e) {
+            close();
+            if (kFdUnassigned) {
+                ff.close(keyFd);
+            }
+            if (vFdUnassigned) {
+                ff.close(valueFd);
+            }
+            throw e;
+        }
     }
 
     public final void of(Path path, CharSequence name, long columnNameTxn) {
@@ -272,6 +362,137 @@ public class FORBitmapIndexWriter implements IndexWriter {
 
     public void setMaxValue(long maxValue) {
         keyMem.putLong(FORBitmapIndexUtils.KEY_RESERVED_OFFSET_MAX_VALUE, maxValue);
+    }
+
+    @Override
+    public void rollbackConditionally(long row) {
+        final long currentMaxRow;
+        if (row >= 0 && ((currentMaxRow = getMaxValue()) < 1 || currentMaxRow >= row)) {
+            if (row == 0) {
+                truncate();
+            } else {
+                rollbackValues(row - 1);
+            }
+        }
+    }
+
+    @Override
+    public void rollbackValues(long maxValue) {
+        // Flush any pending values first
+        if (currentKey >= 0 && pendingValues.size() > 0) {
+            flushPendingBlock();
+        }
+
+        // FOR index stores fixed-size blocks without next-block pointers.
+        // Each key has: valueCount, firstBlockOffset, lastValue, blockCount
+        // Blocks are stored contiguously: minValue(8), bitWidth(1), valueCount(2), padding(1), packed data
+        // We need to read all values, filter, and rewrite.
+
+        long newValueMemSize = 0;
+
+        for (int k = 0; k < keyCount; k++) {
+            long offset = FORBitmapIndexUtils.getKeyEntryOffset(k);
+            int blockCount = keyMem.getInt(offset + FORBitmapIndexUtils.KEY_ENTRY_OFFSET_BLOCK_COUNT);
+
+            if (blockCount > 0) {
+                // Read all values for this key and filter
+                LongList values = new LongList();
+                long dataOffset = keyMem.getLong(offset + FORBitmapIndexUtils.KEY_ENTRY_OFFSET_FIRST_BLOCK);
+
+                // Iterate through blocks (contiguous, not linked)
+                for (int b = 0; b < blockCount; b++) {
+                    // Read block header
+                    long minVal = valueMem.getLong(dataOffset + FORBitmapIndexUtils.BLOCK_OFFSET_MIN_VALUE);
+                    int bitWidth = valueMem.getByte(dataOffset + FORBitmapIndexUtils.BLOCK_OFFSET_BIT_WIDTH) & 0xFF;
+                    int valueCount = valueMem.getShort(dataOffset + FORBitmapIndexUtils.BLOCK_OFFSET_VALUE_COUNT) & 0xFFFF;
+
+                    // Unpack values from this block
+                    long[] blockValues = new long[valueCount];
+                    FORBitmapIndexUtils.unpackAllValues(
+                            valueMem.addressOf(dataOffset + FORBitmapIndexUtils.BLOCK_OFFSET_DATA),
+                            valueCount, bitWidth, minVal, blockValues
+                    );
+
+                    for (int i = 0; i < valueCount; i++) {
+                        if (blockValues[i] <= maxValue) {
+                            values.add(blockValues[i]);
+                        }
+                    }
+
+                    // Move to next block
+                    int blockSize = FORBitmapIndexUtils.blockSize(valueCount, bitWidth);
+                    dataOffset += blockSize;
+                }
+
+                // Rewrite this key's blocks with filtered values
+                if (values.size() > 0) {
+                    long firstBlockOffset = newValueMemSize;
+                    int newBlockCount = 0;
+                    long lastVal = 0;
+
+                    for (int i = 0; i < values.size(); i += FORBitmapIndexUtils.BLOCK_CAPACITY) {
+                        int count = Math.min(FORBitmapIndexUtils.BLOCK_CAPACITY, values.size() - i);
+
+                        // Find min/max in this block
+                        long minVal = values.getQuick(i);
+                        long maxVal = values.getQuick(i);
+                        for (int j = 1; j < count; j++) {
+                            long val = values.getQuick(i + j);
+                            minVal = Math.min(minVal, val);
+                            maxVal = Math.max(maxVal, val);
+                        }
+
+                        // Calculate bit width
+                        long maxOffset = maxVal - minVal;
+                        int bitWidth = FORBitmapIndexUtils.bitsNeeded(maxOffset);
+                        int packedSize = FORBitmapIndexUtils.packedDataSize(count, bitWidth);
+                        int blockSize = FORBitmapIndexUtils.BLOCK_HEADER_SIZE + packedSize;
+
+                        // Write block at newValueMemSize
+                        valueMem.jumpTo(newValueMemSize);
+                        valueMem.putLong(minVal);
+                        valueMem.putByte((byte) bitWidth);
+                        valueMem.putShort((short) count);
+                        valueMem.putByte((byte) 0); // padding
+
+                        // Pack and write values
+                        long[] blockVals = new long[count];
+                        for (int j = 0; j < count; j++) {
+                            blockVals[j] = values.getQuick(i + j);
+                            lastVal = blockVals[j];
+                        }
+
+                        valueMem.skip(packedSize);
+                        FORBitmapIndexUtils.packValues(blockVals, count, minVal, bitWidth,
+                                valueMem.addressOf(newValueMemSize + FORBitmapIndexUtils.BLOCK_OFFSET_DATA));
+
+                        newValueMemSize += blockSize;
+                        newBlockCount++;
+                    }
+
+                    // Update key entry
+                    Unsafe.getUnsafe().storeFence();
+                    keyMem.putLong(offset + FORBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, values.size());
+                    keyMem.putLong(offset + FORBitmapIndexUtils.KEY_ENTRY_OFFSET_FIRST_BLOCK, firstBlockOffset);
+                    keyMem.putLong(offset + FORBitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE, lastVal);
+                    keyMem.putInt(offset + FORBitmapIndexUtils.KEY_ENTRY_OFFSET_BLOCK_COUNT, newBlockCount);
+                    Unsafe.getUnsafe().storeFence();
+                    keyMem.putInt(offset + FORBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, values.size());
+                } else {
+                    // Clear this key
+                    keyMem.putLong(offset + FORBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, 0);
+                    keyMem.putLong(offset + FORBitmapIndexUtils.KEY_ENTRY_OFFSET_FIRST_BLOCK, 0);
+                    keyMem.putLong(offset + FORBitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE, Long.MIN_VALUE);
+                    keyMem.putInt(offset + FORBitmapIndexUtils.KEY_ENTRY_OFFSET_BLOCK_COUNT, 0);
+                    keyMem.putInt(offset + FORBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, 0);
+                }
+            }
+        }
+
+        valueMemSize = newValueMemSize;
+        updateValueMemSize();
+        setMaxValue(maxValue);
+        rebuildCaches();
     }
 
     public void sync(boolean async) {

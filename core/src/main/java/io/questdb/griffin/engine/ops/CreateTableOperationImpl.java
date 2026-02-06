@@ -185,7 +185,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     model.getColumnType(),
                     model.getSymbolCacheFlag(),
                     model.getSymbolCapacity(),
-                    model.isIndexed(),
+                    model.getIndexType(),
                     model.getIndexValueBlockSize(),
                     model.isDedupKey()
             );
@@ -455,7 +455,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
 
     @Override
     public byte getIndexType(int index) {
-        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_INDEXED) != 0 ? IndexType.SYMBOL : IndexType.NONE;
+        return (byte) ((getLowAt(index * 2 + 1) & COLUMN_FLAG_INDEX_TYPE_MASK) >> COLUMN_FLAG_INDEX_TYPE_SHIFT);
     }
 
     public void initColumnMetadata(@Transient LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap) {
@@ -557,7 +557,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     colMeta.getColumnType(),
                     colMeta.isSymbolCacheFlag(),
                     colMeta.getSymbolCapacity(),
-                    colMeta.isIndexed(),
+                    colMeta.getIndexType(),
                     colMeta.getIndexValueBlockCapacity(),
                     colMeta.isDedupKeyFlag()
             );
@@ -707,7 +707,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     columnType,
                     symbolCacheFlag,
                     symbolCapacity,
-                    IndexType.isIndexed(indexType),
+                    indexType,
                     indexBlockCapacity,
                     isDedupKey
             );
@@ -730,12 +730,12 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int columnType,
             boolean symbolCacheFlag,
             int symbolCapacity,
-            boolean indexFlag,
+            byte indexType,
             int indexBlockCapacity,
             boolean dedupFlag
     ) {
         int flags = (symbolCacheFlag ? COLUMN_FLAG_CACHED : 0)
-                | (indexFlag ? COLUMN_FLAG_INDEXED : 0)
+                | ((indexType & 0x07) << COLUMN_FLAG_INDEX_TYPE_SHIFT)
                 | (dedupFlag ? COLUMN_FLAG_DEDUP_KEY : 0);
         columnBits.add(
                 Numbers.encodeLowHighInts(columnType, symbolCapacity),

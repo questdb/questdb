@@ -42,7 +42,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 /**
- * Backward reader for delta-encoded bitmap index.
+ * Backward reader for delta-encoded bitmap index with linked blocks.
  * Uses buffered decode (decodes all values into LongList for reverse iteration).
  */
 public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
@@ -57,6 +57,7 @@ public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
     protected long columnTop;
     protected int keyCount;
     protected long spinLockTimeoutMs;
+    private int blockCapacity;
     private long columnTxn;
     private int keyCountIncludingNulls;
     private long keyFileSequence = -1;
@@ -266,16 +267,19 @@ public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
             long seq = keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
             int keyCount;
             long valueMemSize;
+            int blockCapacity;
 
             Unsafe.getUnsafe().loadFence();
             if (keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
                 keyCount = keyMem.getInt(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
                 valueMemSize = keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
+                blockCapacity = keyMem.getInt(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_CAPACITY);
 
                 Unsafe.getUnsafe().loadFence();
                 if (keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) == seq) {
                     this.keyFileSequence = seq;
                     this.valueMemSize = valueMemSize;
+                    this.blockCapacity = blockCapacity;
                     this.keyCount = keyCount;
                     this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
                     keyMem.extend(DeltaBitmapIndexUtils.getKeyEntryOffset(keyCount));
@@ -293,7 +297,7 @@ public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
     }
 
     /**
-     * Backward cursor with buffered decode.
+     * Backward cursor with buffered decode using linked blocks.
      * Decodes all values into a LongList and iterates in reverse.
      * Uses Unsafe for fast direct memory access.
      */
@@ -322,29 +326,83 @@ public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
             return next - minValue;
         }
 
-        private void decodeValues(long baseAddress, long dataOffset, int dataLen, long valueCount, long maxValue) {
-            // Read first value using Unsafe
-            long value = Unsafe.getUnsafe().getLong(baseAddress + dataOffset);
-            long readOffset = dataOffset + 8;
-            long endOffset = dataOffset + dataLen;
-            long count = 1;
+        /**
+         * Decode all values from a block chain into the values list.
+         */
+        private void decodeAllBlocks(long firstBlockOffset, long maxValue, long memSize) {
+            long blockOffset = firstBlockOffset;
 
-            // Add first value if within range
-            if (value <= maxValue) {
-                values.add(value);
-            }
+            while (blockOffset >= 0) {
+                // Ensure block header is within mapped memory
+                if (blockOffset < 0 || blockOffset + DeltaBitmapIndexUtils.BLOCK_HEADER_SIZE > memSize) {
+                    break;
+                }
 
-            // Decode and add remaining values using Unsafe
-            while (readOffset < endOffset && count < valueCount) {
-                long packed = DeltaBitmapIndexUtils.decodeDeltaUnsafe(baseAddress + readOffset);
-                value += DeltaBitmapIndexUtils.getDelta(packed);
-                readOffset += DeltaBitmapIndexUtils.getBytesConsumed(packed);
-                count++;
+                int blockCount = valueMem.getInt(blockOffset + DeltaBitmapIndexUtils.BLOCK_OFFSET_COUNT);
+                int dataLen = valueMem.getInt(blockOffset + DeltaBitmapIndexUtils.BLOCK_OFFSET_DATA_LEN);
+                long firstValue = valueMem.getLong(blockOffset + DeltaBitmapIndexUtils.BLOCK_OFFSET_FIRST_VALUE);
+                long nextBlock = valueMem.getLong(blockOffset + DeltaBitmapIndexUtils.BLOCK_OFFSET_NEXT);
 
+                // Sanity checks
+                if (blockCount <= 0 || dataLen < 0) {
+                    break;
+                }
+
+                // First value in block is stored in header
+                long value = firstValue;
                 if (value > maxValue) {
                     break;
                 }
                 values.add(value);
+
+                // Decode remaining values from delta data
+                long dataOffset = blockOffset + DeltaBitmapIndexUtils.BLOCK_HEADER_SIZE;
+                long dataEnd = dataOffset + dataLen;
+                int count = 1;
+
+                // Bounds check for data area - use actual memory size
+                if (dataEnd > memSize) {
+                    dataEnd = memSize;
+                }
+
+                while (dataOffset < dataEnd && count < blockCount) {
+                    // Ensure we have at least 1 byte to read
+                    if (dataOffset >= memSize) {
+                        break;
+                    }
+
+                    // Peek at first byte to determine how many bytes we need
+                    int firstByte = valueMem.getByte(dataOffset) & 0xFF;
+                    int bytesNeeded;
+                    if ((firstByte & 0x80) == 0) {
+                        bytesNeeded = 1;
+                    } else if ((firstByte & 0xC0) == 0x80) {
+                        bytesNeeded = 2;
+                    } else if ((firstByte & 0xE0) == 0xC0) {
+                        bytesNeeded = 4;
+                    } else {
+                        bytesNeeded = 9;
+                    }
+
+                    // Ensure we have enough bytes
+                    if (dataOffset + bytesNeeded > memSize) {
+                        break;
+                    }
+
+                    long[] result = new long[2];
+                    DeltaBitmapIndexUtils.decodeDelta(valueMem, dataOffset, result);
+                    value += result[0];
+                    dataOffset += result[1];
+                    count++;
+
+                    if (value > maxValue) {
+                        return; // Stop decoding, we've passed maxValue
+                    }
+                    values.add(value);
+                }
+
+                // Move to next block
+                blockOffset = nextBlock;
             }
         }
 
@@ -361,8 +419,7 @@ public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
             keyMem.extend(offset + DeltaBitmapIndexUtils.KEY_ENTRY_SIZE);
 
             long valueCount;
-            long dataOffset;
-            int dataLen;
+            long firstBlockOffset;
             final long deadline = clock.getTicks() + spinLockTimeoutMs;
 
             while (true) {
@@ -371,8 +428,7 @@ public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
                 Unsafe.getUnsafe().loadFence();
                 int countCheck = keyMem.getInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK);
                 if (countCheck == (int) valueCount) {
-                    dataOffset = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET);
-                    dataLen = keyMem.getInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN);
+                    firstBlockOffset = keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_FIRST_BLOCK);
 
                     Unsafe.getUnsafe().loadFence();
                     if (keyMem.getLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT) == valueCount) {
@@ -386,9 +442,9 @@ public class DeltaBitmapIndexBwdReader implements BitmapIndexReader {
                 }
             }
 
-            if (valueCount > 0) {
-                valueMem.extend(dataOffset + dataLen);
-                decodeValues(valueMem.addressOf(0), dataOffset, dataLen, valueCount, maxValue);
+            if (valueCount > 0 && firstBlockOffset >= 0) {
+                valueMem.extend(valueMemSize);
+                decodeAllBlocks(firstBlockOffset, maxValue, valueMemSize);
             }
 
             this.minValue = minValue;

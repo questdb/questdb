@@ -27,7 +27,9 @@ package io.questdb.cairo.idx;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.RoaringBitmapIndexUtils;
 import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 /**
@@ -40,6 +42,46 @@ public final class IndexFactory {
 
     private IndexFactory() {
         // Utility class, no instances
+    }
+
+    /**
+     * Returns the key file name for the given index type.
+     *
+     * @param indexType     the type of index (SYMBOL, DELTA, FOR, etc.)
+     * @param path          the path to append the file name to
+     * @param columnName    the column name
+     * @param columnNameTxn the column name transaction number
+     * @return the path with the key file name appended
+     */
+    public static LPSZ keyFileName(byte indexType, Path path, CharSequence columnName, long columnNameTxn) {
+        return switch (indexType) {
+            case IndexType.SYMBOL -> BitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
+            case IndexType.DELTA -> DeltaBitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
+            case IndexType.FOR -> FORBitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
+            case IndexType.ROARING -> RoaringBitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
+            default -> throw CairoException.critical(0)
+                    .put("unsupported index type for key file: ").put(IndexType.nameOf(indexType));
+        };
+    }
+
+    /**
+     * Returns the value file name for the given index type.
+     *
+     * @param indexType     the type of index (SYMBOL, DELTA, FOR, etc.)
+     * @param path          the path to append the file name to
+     * @param columnName    the column name
+     * @param columnNameTxn the column name transaction number
+     * @return the path with the value file name appended
+     */
+    public static LPSZ valueFileName(byte indexType, Path path, CharSequence columnName, long columnNameTxn) {
+        return switch (indexType) {
+            case IndexType.SYMBOL -> BitmapIndexUtils.valueFileName(path, columnName, columnNameTxn);
+            case IndexType.DELTA -> DeltaBitmapIndexUtils.valueFileName(path, columnName, columnNameTxn);
+            case IndexType.FOR -> FORBitmapIndexUtils.valueFileName(path, columnName, columnNameTxn);
+            case IndexType.ROARING -> RoaringBitmapIndexUtils.valueFileName(path, columnName, columnNameTxn);
+            default -> throw CairoException.critical(0)
+                    .put("unsupported index type for value file: ").put(IndexType.nameOf(indexType));
+        };
     }
 
     /**

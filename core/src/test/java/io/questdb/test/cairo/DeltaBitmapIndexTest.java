@@ -1983,18 +1983,19 @@ public class DeltaBitmapIndexTest extends AbstractCairoTest {
                 writer.add(0, 30);
             }
 
-            // Corrupt the dataLen to be larger than actual data
+            // Corrupt the block's dataLen to be larger than actual data
             try (io.questdb.cairo.vm.api.MemoryMARW mem = Vm.getCMARWInstance()) {
-                try (Path keyPath = new Path()) {
-                    keyPath.of(configuration.getDbRoot()).concat("x").put(".dk");
+                try (Path valuePath = new Path()) {
+                    valuePath.of(configuration.getDbRoot()).concat("x").put(".dv");
                     FilesFacade ff = configuration.getFilesFacade();
-                    mem.of(ff, keyPath.$(), ff.getMapPageSize(), ff.length(keyPath.$()), MemoryTag.MMAP_DEFAULT, io.questdb.cairo.CairoConfiguration.O_NONE, -1);
+                    mem.of(ff, valuePath.$(), ff.getMapPageSize(), ff.length(valuePath.$()), MemoryTag.MMAP_DEFAULT, io.questdb.cairo.CairoConfiguration.O_NONE, -1);
                 }
 
-                long offset = DeltaBitmapIndexUtils.getKeyEntryOffset(0);
-                int originalDataLen = mem.getInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN);
+                // First block is at offset 0 in value file, dataLen is at offset 20 within block header
+                long blockOffset = 0;
+                int originalDataLen = mem.getInt(blockOffset + DeltaBitmapIndexUtils.BLOCK_OFFSET_DATA_LEN);
                 // Set dataLen to be much larger than actual (add 100 bytes)
-                mem.putInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN, originalDataLen + 100);
+                mem.putInt(blockOffset + DeltaBitmapIndexUtils.BLOCK_OFFSET_DATA_LEN, originalDataLen + 100);
             }
 
             // Open writer and trigger rollbackValues which uses decodeAllValues
@@ -2024,18 +2025,19 @@ public class DeltaBitmapIndexTest extends AbstractCairoTest {
                 writer.add(0, 30);
             }
 
-            // Corrupt the dataLen to be smaller than actual data (just 8 bytes = only first value)
+            // Corrupt the block's dataLen to be smaller (0 = no deltas, only first value from header)
             try (io.questdb.cairo.vm.api.MemoryMARW mem = Vm.getCMARWInstance()) {
-                try (Path keyPath = new Path()) {
-                    keyPath.of(configuration.getDbRoot()).concat("x").put(".dk");
+                try (Path valuePath = new Path()) {
+                    valuePath.of(configuration.getDbRoot()).concat("x").put(".dv");
                     FilesFacade ff = configuration.getFilesFacade();
-                    mem.of(ff, keyPath.$(), ff.getMapPageSize(), ff.length(keyPath.$()), MemoryTag.MMAP_DEFAULT, io.questdb.cairo.CairoConfiguration.O_NONE, -1);
+                    mem.of(ff, valuePath.$(), ff.getMapPageSize(), ff.length(valuePath.$()), MemoryTag.MMAP_DEFAULT, io.questdb.cairo.CairoConfiguration.O_NONE, -1);
                 }
 
-                long offset = DeltaBitmapIndexUtils.getKeyEntryOffset(0);
-                // Set dataLen to 8 (only enough for first value, not the deltas)
+                // First block is at offset 0 in value file, dataLen is at offset 20 within block header
+                // Set dataLen to 0 (no deltas, only first value from header is available)
                 // valueCount is still 3, but data is truncated
-                mem.putInt(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_LEN, 8);
+                long blockOffset = 0;
+                mem.putInt(blockOffset + DeltaBitmapIndexUtils.BLOCK_OFFSET_DATA_LEN, 0);
             }
 
             // Open forward reader and try to read - should hit early exit at L316
@@ -2197,7 +2199,7 @@ public class DeltaBitmapIndexTest extends AbstractCairoTest {
                 writer.add(0, 200);
             }
 
-            // Corrupt the dataOffset for key 0 to be negative
+            // Corrupt the firstBlock for key 0 to be negative (but not -1 which means "no block")
             try (io.questdb.cairo.vm.api.MemoryMARW mem = Vm.getCMARWInstance()) {
                 try (Path keyPath = new Path()) {
                     keyPath.of(configuration.getDbRoot()).concat("x").put(".dk");
@@ -2206,8 +2208,8 @@ public class DeltaBitmapIndexTest extends AbstractCairoTest {
                 }
 
                 long offset = DeltaBitmapIndexUtils.getKeyEntryOffset(0);
-                // Set dataOffset to negative value
-                mem.putLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET, -100);
+                // Set firstBlock to negative value (corrupted)
+                mem.putLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_FIRST_BLOCK, -100);
             }
 
             // Reopen writer - rebuildCaches() should treat key 0 as invalid (empty)
@@ -2313,13 +2315,13 @@ public class DeltaBitmapIndexTest extends AbstractCairoTest {
                 }
 
                 long offset = DeltaBitmapIndexUtils.getKeyEntryOffset(0);
-                // Set dataOffset to an invalid large value
-                mem.putLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_DATA_OFFSET, 999999999L);
+                // Set firstBlock to an invalid large value (beyond valueMemSize)
+                mem.putLong(offset + DeltaBitmapIndexUtils.KEY_ENTRY_OFFSET_FIRST_BLOCK, 999999999L);
             }
 
-            // Writer should detect invalid state on reopen (cache rebuild fails validation)
+            // Writer should handle the invalid block offset gracefully
             try (DeltaBitmapIndexWriter writer = new DeltaBitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
-                // The cache rebuild should skip this key due to invalid dataOffset >= valueMemSize
+                // The cursor should handle invalid firstBlock offset gracefully
                 LongList list = new LongList();
                 assertThat("[]", writer.getCursor(0), list);  // No values due to invalid offset
             }
