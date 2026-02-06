@@ -2886,37 +2886,14 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void emitColumnLiteralsTopDown(ObjList<QueryColumn> columns, QueryModel target, QueryModel sourceModel) {
-        // Cache named window lookups to avoid repeated model hierarchy traversals
-        // when multiple columns reference the same named window
-        LowerCaseCharSequenceObjHashMap<WindowExpression> resolvedWindows = null;
+    private void emitColumnLiteralsTopDown(ObjList<QueryColumn> columns, QueryModel target) {
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
             emitLiteralsTopDown(qc.getAst(), target);
             if (qc.isWindowExpression()) {
                 final WindowExpression ac = (WindowExpression) qc;
-                ObjList<ExpressionNode> partitionBy = ac.getPartitionBy();
-                ObjList<ExpressionNode> orderBy = ac.getOrderBy();
-                if (ac.isNamedWindowReference() && sourceModel != null) {
-                    if (resolvedWindows == null) {
-                        resolvedWindows = new LowerCaseCharSequenceObjHashMap<>();
-                    }
-                    CharSequence windowName = ac.getWindowName();
-                    int idx = resolvedWindows.keyIndex(windowName);
-                    WindowExpression namedWindow;
-                    if (idx < 0) {
-                        namedWindow = resolvedWindows.valueAt(idx);
-                    } else {
-                        namedWindow = lookupNamedWindow(sourceModel, windowName);
-                        resolvedWindows.putAt(idx, windowName, namedWindow);
-                    }
-                    if (namedWindow != null) {
-                        partitionBy = namedWindow.getPartitionBy();
-                        orderBy = namedWindow.getOrderBy();
-                    }
-                }
-                emitLiteralsTopDown(partitionBy, target);
-                emitLiteralsTopDown(orderBy, target);
+                emitLiteralsTopDown(ac.getPartitionBy(), target);
+                emitLiteralsTopDown(ac.getOrderBy(), target);
             }
         }
     }
@@ -3105,27 +3082,6 @@ public class SqlOptimiser implements Mutable {
         for (int i = 0, m = list.size(); i < m; i++) {
             emitLiteralsTopDown(list.getQuick(i), nested);
         }
-    }
-
-    /**
-     * Looks up a named window definition by walking the model hierarchy.
-     * Named windows may be defined on a nested model (e.g., when a window
-     * wrapper model has been created during optimization).
-     *
-     * @param model      the starting model to search from
-     * @param windowName the name of the window to find
-     * @return the WindowExpression for the named window, or null if not found
-     */
-    private WindowExpression lookupNamedWindow(QueryModel model, CharSequence windowName) {
-        QueryModel current = model;
-        while (current != null) {
-            WindowExpression namedWindow = current.getNamedWindows().get(windowName);
-            if (namedWindow != null) {
-                return namedWindow;
-            }
-            current = current.getNestedModel();
-        }
-        return null;
     }
 
     private void emitWindowFunctions(
@@ -4175,6 +4131,27 @@ public class SqlOptimiser implements Mutable {
         return model.getTimestamp() == null
                 && model.getTimestampColumnIndex() < 0
                 && model.getTimestampOffsetAlias() == null;
+    }
+
+    /**
+     * Looks up a named window definition by walking the model hierarchy.
+     * Named windows may be defined on a nested model (e.g., when a window
+     * wrapper model has been created during optimization).
+     *
+     * @param model      the starting model to search from
+     * @param windowName the name of the window to find
+     * @return the WindowExpression for the named window, or null if not found
+     */
+    private WindowExpression lookupNamedWindow(QueryModel model, CharSequence windowName) {
+        QueryModel current = model;
+        while (current != null) {
+            WindowExpression namedWindow = current.getNamedWindows().get(windowName);
+            if (namedWindow != null) {
+                return namedWindow;
+            }
+            current = current.getNestedModel();
+        }
+        return null;
     }
 
     private ExpressionNode makeJoinAlias() {
@@ -5354,7 +5331,7 @@ public class SqlOptimiser implements Mutable {
 
         final QueryModel union = skipNoneTypeModels(model.getUnionModel());
         if (!topLevel && modelIsFlex(union)) {
-            emitColumnLiteralsTopDown(model.getColumns(), union, model);
+            emitColumnLiteralsTopDown(model.getColumns(), union);
         }
 
         // process join models and their join conditions
@@ -5452,7 +5429,7 @@ public class SqlOptimiser implements Mutable {
         }
 
         if (nestedIsFlex && nestedAllowsColumnChange) {
-            emitColumnLiteralsTopDown(model.getColumns(), nested, model);
+            emitColumnLiteralsTopDown(model.getColumns(), nested);
 
             final IntList unionColumnIndexes = tempIntList;
             unionColumnIndexes.clear();
@@ -6178,6 +6155,46 @@ public class SqlOptimiser implements Mutable {
         // and union models too
         if (model.getUnionModel() != null) {
             resolveJoinColumns(model.getUnionModel());
+        }
+    }
+
+    /**
+     * Resolves all named window references in the model tree by copying the spec
+     * from the named window definition into each referencing WindowExpression.
+     * Called between validateNoWindowFunctionsInWhereClauses and rewriteSelectClause
+     * so the optimizer sees fully populated partition-by / order-by lists before
+     * dedup, ORDER BY propagation, or literal emission.
+     */
+    private void resolveNamedWindows(QueryModel model) throws SqlException {
+        // Window expressions only exist in bottomUpColumns (topDownColumns only contain LITERALs)
+        ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            if (qc.isWindowExpression()) {
+                WindowExpression ac = (WindowExpression) qc;
+                if (ac.isNamedWindowReference()) {
+                    CharSequence windowName = ac.getWindowName();
+                    WindowExpression namedWindow = lookupNamedWindow(model, windowName);
+                    if (namedWindow == null) {
+                        throw SqlException.$(ac.getWindowNamePosition(), "window '").put(windowName).put("' is not defined");
+                    }
+                    ac.copySpecFrom(namedWindow);
+                }
+            }
+        }
+
+        // recurse into nested, join, and union models
+        QueryModel nested = model.getNestedModel();
+        if (nested != null) {
+            resolveNamedWindows(nested);
+        }
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            resolveNamedWindows(joinModels.getQuick(i));
+        }
+        QueryModel union = model.getUnionModel();
+        if (union != null) {
+            resolveNamedWindows(union);
         }
     }
 
@@ -8504,52 +8521,17 @@ public class SqlOptimiser implements Mutable {
             // We need one more pass for window model to emit potentially missing columns.
             // For example, 'SELECT row_number() over (partition by col_c order by col_c), col_a, col_b FROM tab'
             // needs col_c to be emitted.
-            // Cache named window lookups to avoid repeated model hierarchy traversals
-            LowerCaseCharSequenceObjHashMap<WindowExpression> resolvedWindows = null;
             for (int i = 0, k = columns.size(); i < k; i++) {
                 QueryColumn qc = columns.getQuick(i);
                 final boolean window = qc.isWindowExpression();
 
                 if (window & qc.getAst().type == FUNCTION) {
-                    // Window model can be after either translation model directly
-                    // or after inner virtual model, which can be sandwiched between
-                    // translation model and window model.
-                    // To make sure columns, referenced by the window model
-                    // are rendered correctly we will emit them into a dedicated
-                    // translation model for the window model.
-                    // When we're able to determine which combination of models precedes the
-                    // window model, we can copy columns from window_translation model to
-                    // either only to translation model or both translation model and the
-                    // inner virtual models.
                     final WindowExpression ac = (WindowExpression) qc;
                     int innerColumnsPre = innerVirtualModel.getBottomUpColumns().size();
 
-                    ObjList<ExpressionNode> partitionBy = ac.getPartitionBy();
-                    ObjList<ExpressionNode> orderBy = ac.getOrderBy();
-                    if (ac.isNamedWindowReference()) {
-                        if (resolvedWindows == null) {
-                            resolvedWindows = new LowerCaseCharSequenceObjHashMap<>();
-                        }
-                        CharSequence windowName = ac.getWindowName();
-                        int idx = resolvedWindows.keyIndex(windowName);
-                        WindowExpression namedWindow;
-                        if (idx < 0) {
-                            namedWindow = resolvedWindows.valueAt(idx);
-                        } else {
-                            namedWindow = lookupNamedWindow(model, windowName);
-                            resolvedWindows.putAt(idx, windowName, namedWindow);
-                        }
-                        if (namedWindow != null) {
-                            partitionBy = namedWindow.getPartitionBy();
-                            orderBy = namedWindow.getOrderBy();
-                        }
-                    }
-
-                    replaceLiteralList(innerVirtualModel, translatingModel, baseModel, partitionBy);
-                    replaceLiteralList(innerVirtualModel, translatingModel, baseModel, orderBy);
+                    replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getPartitionBy());
+                    replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getOrderBy());
                     int innerColumnsPost = innerVirtualModel.getBottomUpColumns().size();
-                    // window model might require columns it doesn't explicitly contain (e.g. used for order by or partition by  in over() clause  )
-                    // skipping translating model will trigger 'invalid column' exceptions
                     forceTranslatingModel |= innerColumnsPre != innerColumnsPost;
                 }
             }
@@ -8790,8 +8772,7 @@ public class SqlOptimiser implements Mutable {
                 QueryModel innerWm = innerWindowModels.getQuick(i);
                 innerWm.setNestedModel(root);
                 innerWm.copyHints(model.getHints());
-                // Copy named windows so codegen can resolve OVER window_name references.
-                // Shared references are safe: named windows are read-only after parsing.
+                // Copy named window definitions for validateWindowFunctions (unreferenced definitions).
                 innerWm.getNamedWindows().putAll(model.getNamedWindows());
                 root = innerWm;
             }
@@ -8802,8 +8783,7 @@ public class SqlOptimiser implements Mutable {
             windowModel.moveLimitFrom(limitSource);
             windowModel.moveJoinAliasFrom(limitSource);
             windowModel.copyHints(model.getHints());
-            // Copy named windows so codegen can resolve OVER window_name references.
-            // Shared references are safe: named windows are read-only after parsing.
+            // Copy named window definitions for validateWindowFunctions (unreferenced definitions).
             windowModel.getNamedWindows().putAll(model.getNamedWindows());
             root = windowModel;
             limitSource = windowModel;
@@ -9648,7 +9628,6 @@ public class SqlOptimiser implements Mutable {
                             rowsHi = rowsHi != Long.MAX_VALUE ? -rowsHi : Long.MIN_VALUE;
                             break;
                         case WindowExpression.FOLLOWING:
-                            //rowsHi = rowsHi;
                             break;
                         default:
                             // CURRENT ROW
@@ -9662,7 +9641,8 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
-        // Also validate named window definitions (WINDOW clause)
+        // Validate named window definitions (WINDOW clause). Referenced definitions were already
+        // validated above via resolved copies, but unreferenced definitions need validation too.
         LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows = model.getNamedWindows();
         if (namedWindows.size() > 0) {
             ObjList<CharSequence> keys = namedWindows.keys();
@@ -9689,7 +9669,6 @@ public class SqlOptimiser implements Mutable {
                             rowsHi = rowsHi != Long.MAX_VALUE ? -rowsHi : Long.MIN_VALUE;
                             break;
                         case WindowExpression.FOLLOWING:
-                            //rowsHi = rowsHi;
                             break;
                         default:
                             // CURRENT ROW
@@ -10105,6 +10084,7 @@ public class SqlOptimiser implements Mutable {
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
             validateNoWindowFunctionsInWhereClauses(rewrittenModel);
+            resolveNamedWindows(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
             detectTimestampOffsetsRecursive(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);

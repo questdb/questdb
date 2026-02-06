@@ -6326,11 +6326,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final WindowExpression ac = (WindowExpression) qc;
                     final ExpressionNode ast = qc.getAst();
 
-                    // Resolve named window reference if present
-                    if (ac.isNamedWindowReference()) {
-                        resolveNamedWindowReference(ac, model);
-                    }
-
                     partitionByFunctions = null;
                     int psz = ac.getPartitionBy().size();
                     if (psz > 0) {
@@ -6569,11 +6564,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final WindowExpression ac = (WindowExpression) qc;
                     final ExpressionNode ast = qc.getAst();
 
-                    // Resolve named window reference if present
-                    if (ac.isNamedWindowReference()) {
-                        resolveNamedWindowReference(ac, model);
-                    }
-
                     partitionByFunctions = null;
                     int psz = ac.getPartitionBy().size();
                     if (psz > 0) {
@@ -6767,40 +6757,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.freeObjList(partitionByFunctions);
             throw th;
         }
-    }
-
-    /**
-     * Resolves a named window reference by looking up the window name in the model's
-     * named windows map and copying the specification to the WindowExpression.
-     *
-     * @param windowExpr the WindowExpression with a named window reference
-     * @param model      the QueryModel containing named window definitions
-     * @throws SqlException if the named window is not found
-     *
-     * TODO: consider resolving named windows earlier (e.g., at the start of optimization) so the
-     *  optimizer sees the full window spec. Currently, the optimizer works on unresolved references,
-     *  which requires ad-hoc lookupNamedWindow() calls in SqlOptimiser and conservative behavior in
-     *  stopOrderByPropagate(). Early resolution would simplify the pipeline at the cost of coupling
-     *  parsing to semantic analysis.
-     */
-    private void resolveNamedWindowReference(WindowExpression windowExpr, QueryModel model) throws SqlException {
-        CharSequence windowName = windowExpr.getWindowName();
-        int windowNamePos = windowExpr.getWindowNamePosition();
-
-        // Look up the named window in the model and its nested models
-        WindowExpression namedWindow = null;
-        QueryModel current = model;
-        while (current != null && namedWindow == null) {
-            namedWindow = current.getNamedWindows().get(windowName);
-            current = current.getNestedModel();
-        }
-
-        if (namedWindow == null) {
-            throw SqlException.$(windowNamePos, "window '").put(windowName).put("' is not defined");
-        }
-
-        // Copy the specification from the named window
-        windowExpr.copySpecFrom(namedWindow);
     }
 
     private RecordCursorFactory generateSelectWindowJoin(QueryModel model, SqlExecutionContext executionContext) throws SqlException {

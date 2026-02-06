@@ -10412,10 +10412,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
         );
     }
 
-    // =====================================================
-    // WINDOW clause tests (named window definitions)
-    // =====================================================
-
     @Test
     public void testNamedWindowBasic() throws Exception {
         assertMemoryLeak(() -> {
@@ -11162,16 +11158,108 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNamedWindowMissingNameInOverClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+
+            // End of input after OVER - no name or '('
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) OVER",
+                    14,
+                    "'(' or window name expected after OVER"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowMissingNameInWindowClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+
+            // WINDOW AS (...) - 'as' is a keyword so the lookahead doesn't detect
+            // the WINDOW clause pattern (needs name AS). Falls through to WINDOW JOIN
+            // path which expects 'join' keyword next.
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) OVER w FROM t WINDOW AS (ORDER BY ts)",
+                    28,
+                    "'join' expected"
+            );
+
+            // WINDOW w (...) without AS - lookahead sees w then (, not AS,
+            // so it falls through to WINDOW JOIN path
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) OVER w FROM t WINDOW w (ORDER BY ts)",
+                    28,
+                    "'join' expected"
+            );
+        });
+    }
+
+    @Test
     public void testNamedWindowNumberAsName() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
 
-            // Number as window name should fail
+            // Number as window name should fail in OVER clause
             assertExceptionNoLeakCheck(
                     "SELECT sum(x) OVER 42 FROM t",
                     19,
                     "identifier should start with a letter or '_'"
+            );
+
+            // Number as window name should fail in WINDOW clause
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) OVER w FROM t WINDOW 42 AS (ORDER BY ts)",
+                    35,
+                    "identifier should start with a letter or '_'"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowSpecialCharactersAsName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+
+            // Special character as window name in OVER clause
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) OVER @w FROM t",
+                    19,
+                    "identifier should start with a letter or '_'"
+            );
+
+            // Special character as window name in WINDOW clause
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) OVER w FROM t WINDOW @w AS (ORDER BY ts)",
+                    35,
+                    "identifier should start with a letter or '_'"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWindowKeywordAsName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+
+            // "window" is a context-sensitive keyword (not in KEYWORDS set),
+            // so it's valid as a window name without quoting
+            assertSql(
+                    "sum\n" +
+                            "1.0\n" +
+                            "3.0\n",
+                    "SELECT sum(x) OVER window FROM t WINDOW window AS (ORDER BY ts)"
+            );
+
+            // Quoted also works
+            assertSql(
+                    "sum\n" +
+                            "1.0\n" +
+                            "3.0\n",
+                    "SELECT sum(x) OVER \"window\" FROM t WINDOW \"window\" AS (ORDER BY ts)"
             );
         });
     }
@@ -11368,6 +11456,313 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     null,
                     false,
                     true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowDeduplicatesWithInlineWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+            execute("insert into t values (3, 2000000)");
+
+            // sum(x) OVER w and sum(x) OVER (ORDER BY ts) should deduplicate
+            // when w AS (ORDER BY ts), producing only one window computation
+            assertQueryNoLeakCheck(
+                    "x\tsum1\tsum2\n" +
+                            "1\t1.0\t1.0\n" +
+                            "2\t3.0\t3.0\n" +
+                            "3\t6.0\t6.0\n",
+                    "SELECT x, sum(x) OVER w as sum1, sum(x) OVER (ORDER BY ts) as sum2 " +
+                            "FROM t WINDOW w AS (ORDER BY ts)",
+                    null,
+                    false,
+                    true
+            );
+
+            // Verify via plan that dedup happened: only one window function in the plan
+            assertPlanNoLeakCheck(
+                    "SELECT x, sum(x) OVER w as sum1, sum(x) OVER (ORDER BY ts) as sum2 " +
+                            "FROM t WINDOW w AS (ORDER BY ts)",
+                    "SelectedRecord\n" +
+                            "    Window\n" +
+                            "      functions: [sum(x) over (rows between unbounded preceding and current row)]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t\n"
+            );
+        });
+    }
+
+    @Test
+    public void testInlineOverWithTableAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades (symbol symbol, price double, side symbol, ts timestamp) timestamp(ts)");
+            execute("insert into trades values ('BTC', 100, 'buy', 0)");
+            execute("insert into trades values ('BTC', 101, 'buy', 1000000)");
+            execute("insert into trades values ('ETH', 200, 'sell', 2000000)");
+
+            // Inline OVER with table-qualified column references
+            assertSql(
+                    "symbol\tts\tlag\n" +
+                            "BTC\t1970-01-01T00:00:00.000000Z\t\n" +
+                            "BTC\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000Z\n" +
+                            "ETH\t1970-01-01T00:00:02.000000Z\t\n",
+                    "SELECT t.symbol, t.ts, lag(t.ts) OVER (PARTITION BY t.symbol ORDER BY t.ts) as lag FROM trades t"
+            );
+        });
+    }
+
+    @Test
+    public void testInlineOverWithTableAliasAndKeywordColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            // Use 'timestamp' designated column name matching real fx_trades schema
+            execute("create table fx_trades (symbol symbol, price double, side symbol, timestamp timestamp) timestamp(timestamp)");
+            execute("insert into fx_trades values ('BTC', 100, 'buy', 0)");
+            execute("insert into fx_trades values ('BTC', 101, 'buy', 1000000)");
+            execute("insert into fx_trades values ('ETH', 200, 'sell', 2000000)");
+
+            // Unprefixed columns inside OVER
+            assertSql(
+                    "symbol\ttimestamp\tlag\n" +
+                            "BTC\t1970-01-01T00:00:00.000000Z\t\n" +
+                            "BTC\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000Z\n" +
+                            "ETH\t1970-01-01T00:00:02.000000Z\t\n",
+                    "SELECT t.symbol, t.timestamp, lag(t.timestamp) OVER (PARTITION BY symbol ORDER BY timestamp) as lag FROM fx_trades t"
+            );
+
+            // Table-prefixed columns inside OVER
+            assertSql(
+                    "symbol\ttimestamp\tlag\n" +
+                            "BTC\t1970-01-01T00:00:00.000000Z\t\n" +
+                            "BTC\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000Z\n" +
+                            "ETH\t1970-01-01T00:00:02.000000Z\t\n",
+                    "SELECT t.symbol, t.timestamp, lag(t.timestamp) OVER (PARTITION BY t.symbol ORDER BY t.timestamp) as lag FROM fx_trades t"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithTableAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades (symbol symbol, price double, side symbol, ts timestamp) timestamp(ts)");
+            execute("insert into trades values ('BTC', 100, 'buy', 0)");
+            execute("insert into trades values ('BTC', 101, 'buy', 1000000)");
+            execute("insert into trades values ('ETH', 200, 'sell', 2000000)");
+
+            // WINDOW clause with table-qualified column references
+            assertSql(
+                    "symbol\tts\tlag\n" +
+                            "BTC\t1970-01-01T00:00:00.000000Z\t\n" +
+                            "BTC\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000Z\n" +
+                            "ETH\t1970-01-01T00:00:02.000000Z\t\n",
+                    "SELECT t.symbol, t.ts, lag(t.ts) OVER w as lag FROM trades t WINDOW w AS (PARTITION BY t.symbol ORDER BY t.ts)"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithTableAliasAndKeywordColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table fx_trades (symbol symbol, price double, side symbol, timestamp timestamp) timestamp(timestamp)");
+            execute("insert into fx_trades values ('BTC', 100, 'buy', 0)");
+            execute("insert into fx_trades values ('BTC', 101, 'buy', 1000000)");
+            execute("insert into fx_trades values ('ETH', 200, 'sell', 2000000)");
+
+            // WINDOW clause with table-prefixed columns
+            assertSql(
+                    "symbol\ttimestamp\tlag\n" +
+                            "BTC\t1970-01-01T00:00:00.000000Z\t\n" +
+                            "BTC\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000Z\n" +
+                            "ETH\t1970-01-01T00:00:02.000000Z\t\n",
+                    "SELECT t.symbol, t.timestamp, lag(t.timestamp) OVER w as lag " +
+                            "FROM fx_trades t WINDOW w AS (PARTITION BY t.symbol ORDER BY t.timestamp)"
+            );
+
+            // WINDOW clause with unprefixed columns
+            assertSql(
+                    "symbol\ttimestamp\tlag\n" +
+                            "BTC\t1970-01-01T00:00:00.000000Z\t\n" +
+                            "BTC\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000Z\n" +
+                            "ETH\t1970-01-01T00:00:02.000000Z\t\n",
+                    "SELECT t.symbol, t.timestamp, lag(t.timestamp) OVER w as lag " +
+                            "FROM fx_trades t WINDOW w AS (PARTITION BY symbol ORDER BY timestamp)"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowDoesNotDeduplicateDifferentSpecs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 'A', 0)");
+            execute("insert into t values (2, 'A', 1000000)");
+            execute("insert into t values (3, 'B', 2000000)");
+
+            // Two named windows with different specs should NOT deduplicate
+            assertPlanNoLeakCheck(
+                    "SELECT x, sum(x) OVER w1 as sum1, sum(x) OVER w2 as sum2 " +
+                            "FROM t WINDOW w1 AS (ORDER BY ts), w2 AS (PARTITION BY category ORDER BY ts)",
+                    "Window\n" +
+                            "  functions: [sum(x) over (rows between unbounded preceding and current row)," +
+                            "sum(x) over (partition by [category] rows between unbounded preceding and current row)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: t\n"
+            );
+
+            // Also verify results are different
+            assertQueryNoLeakCheck(
+                    "x\tsum1\tsum2\n" +
+                            "1\t1.0\t1.0\n" +
+                            "2\t3.0\t3.0\n" +
+                            "3\t6.0\t3.0\n",
+                    "SELECT x, sum(x) OVER w1 as sum1, sum(x) OVER w2 as sum2 " +
+                            "FROM t WINDOW w1 AS (ORDER BY ts), w2 AS (PARTITION BY category ORDER BY ts)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithWindowJoinDisallowed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, ts timestamp) timestamp(ts)");
+            execute("create table quotes (bid double, ts timestamp) timestamp(ts)");
+
+            // WINDOW functions (named or inline) are not allowed in WINDOW JOIN queries
+            assertException(
+                    "SELECT price, bid, avg(price) OVER w as avg_price " +
+                            "FROM trades " +
+                            "WINDOW JOIN quotes ON ts " +
+                            "RANGE BETWEEN 10 SECOND PRECEDING AND 10 SECOND FOLLOWING " +
+                            "WINDOW w AS (ORDER BY ts)",
+                    19,
+                    "WINDOW functions are not allowed in WINDOW JOIN queries"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowSpecErrorUnboundedWithoutDirection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertException(
+                    "SELECT sum(x) OVER (ROWS BETWEEN UNBOUNDED xyz AND CURRENT ROW) FROM t",
+                    43,
+                    "'preceding' or 'following' expected after 'unbounded'"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowSpecErrorCurrentWithoutRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertException(
+                    "SELECT sum(x) OVER (ROWS BETWEEN CURRENT xyz AND 1 FOLLOWING) FROM t",
+                    41,
+                    "'row' expected after 'current'"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowSpecErrorExcludeCurrentWithoutRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertException(
+                    "SELECT sum(x) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT xyz) FROM t",
+                    85,
+                    "'row' expected after 'current'"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowSpecErrorExcludeNoWithoutOthers() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertException(
+                    "SELECT sum(x) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE NO xyz) FROM t",
+                    80,
+                    "'others' expected after 'no'"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowSpecErrorEmptySpec() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertException(
+                    "SELECT sum(x) OVER (",
+                    19,
+                    "')' or window specification expected"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowSpecErrorPartitionWithoutBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertException(
+                    "SELECT sum(x) OVER (PARTITION xyz) FROM t",
+                    30,
+                    "'by' expected after 'partition'"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowSpecErrorPartitionByEndOfInput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertException(
+                    "SELECT sum(x) OVER (PARTITION BY x",
+                    33,
+                    "'order', ',' or ')' expected"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowSpecErrorOrderWithoutBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertException(
+                    "SELECT sum(x) OVER (ORDER xyz) FROM t",
+                    26,
+                    "'by' expected after 'order'"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowSpecErrorOrderByEndOfInput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertException(
+                    "SELECT sum(x) OVER (ORDER BY ts",
+                    29,
+                    "')' expected to close window specification"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowSpecErrorUnclosedAfterFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertException(
+                    "SELECT sum(x) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW xyz) FROM t",
+                    81,
+                    "')' expected to close window specification"
             );
         });
     }

@@ -91,19 +91,6 @@ public class ExpressionNode implements Mutable, Sinkable {
         if (a == null || b == null) {
             return false;
         }
-        // Compare named window reference (OVER w1 vs OVER w2)
-        // This must be checked before comparing frame specs because named windows
-        // haven't been resolved yet at deduplication time.
-        // Case-insensitive to match lowerCaseHashCode in hashWindowExpression()
-        // and the LowerCaseCharSequenceObjHashMap used for named window storage.
-        CharSequence aName = a.getWindowName();
-        CharSequence bName = b.getWindowName();
-        if ((aName == null) != (bName == null)) {
-            return false;
-        }
-        if (aName != null && !Chars.equalsIgnoreCase(aName, bName)) {
-            return false;
-        }
         // Compare frame specification
         if (a.getFramingMode() != b.getFramingMode()
                 || a.getRowsLo() != b.getRowsLo()
@@ -188,10 +175,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         if (w == null) {
             return 0;
         }
-        // Hash named window reference (must match compareWindowExpressions)
-        CharSequence windowName = w.getWindowName();
-        int hash = windowName != null ? Chars.lowerCaseHashCode(windowName) : 0;
-        hash = 31 * hash + w.getFramingMode();
+        int hash = w.getFramingMode();
         hash = 31 * hash + Long.hashCode(w.getRowsLo());
         hash = 31 * hash + Long.hashCode(w.getRowsHi());
         hash = 31 * hash + w.getRowsLoKind();

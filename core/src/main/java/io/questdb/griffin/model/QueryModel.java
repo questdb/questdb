@@ -131,6 +131,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<QueryModel> joinModels = new ObjList<>();
     private final ObjList<ExpressionNode> latestBy = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap modelAliasIndexes = new LowerCaseCharSequenceIntHashMap();
+    // Named window definitions from WINDOW clause (e.g., WINDOW w AS (PARTITION BY ...))
+    private final LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<ExpressionNode> orderBy = new ObjList<>();
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntList orderByDirection = new IntList();
@@ -158,8 +160,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final IntList updateTableColumnTypes = new IntList();
     private final ObjList<CharSequence> wildcardColumnNames = new ObjList<>();
     private final WindowJoinContext windowJoinContext = new WindowJoinContext();
-    // Named window definitions from WINDOW clause (e.g., WINDOW w AS (PARTITION BY ...))
-    private final LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauseModel = new LowerCaseCharSequenceObjHashMap<>();
     // used for the parallel sample by rewrite. In the future, if we deprecate original SAMPLE BY, then these will
     // be the only fields for these values.
@@ -864,6 +864,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return null;
     }
 
+    public LowerCaseCharSequenceObjHashMap<WindowExpression> getNamedWindows() {
+        return namedWindows;
+    }
+
     public QueryModel getNestedModel() {
         return nestedModel;
     }
@@ -1065,10 +1069,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public WindowJoinContext getWindowJoinContext() {
         return windowJoinContext;
-    }
-
-    public LowerCaseCharSequenceObjHashMap<WindowExpression> getNamedWindows() {
-        return namedWindows;
     }
 
     public LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses() {

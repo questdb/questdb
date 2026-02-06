@@ -113,6 +113,47 @@ public final class WindowExpression extends QueryColumn {
         windowNamePosition = 0;
     }
 
+    /**
+     * Copies the window specification (partition by, order by, frame) from another WindowExpression.
+     * Used when resolving named window references in the optimizer.
+     * <p>
+     * ExpressionNode references in partition-by and order-by lists are shared, not deep-copied.
+     * This is safe because the optimizer replaces list entries rather than mutating shared nodes.
+     *
+     * @param source the named window definition to copy from
+     */
+    public void copySpecFrom(WindowExpression source) {
+        this.partitionBy.clear();
+        this.partitionBy.addAll(source.partitionBy);
+
+        this.orderBy.clear();
+        this.orderBy.addAll(source.orderBy);
+        this.orderByDirection.clear();
+        this.orderByDirection.addAll(source.orderByDirection);
+
+        this.framingMode = source.framingMode;
+        this.rowsLo = source.rowsLo;
+        this.rowsLoExpr = source.rowsLoExpr;
+        this.rowsLoExprPos = source.rowsLoExprPos;
+        this.rowsLoExprTimeUnit = source.rowsLoExprTimeUnit;
+        this.rowsLoKind = source.rowsLoKind;
+        this.rowsLoKindPos = source.rowsLoKindPos;
+        this.rowsHi = source.rowsHi;
+        this.rowsHiExpr = source.rowsHiExpr;
+        this.rowsHiExprPos = source.rowsHiExprPos;
+        this.rowsHiExprTimeUnit = source.rowsHiExprTimeUnit;
+        this.rowsHiKind = source.rowsHiKind;
+        this.rowsHiKindPos = source.rowsHiKindPos;
+
+        this.exclusionKind = source.exclusionKind;
+        this.exclusionKindPos = source.exclusionKindPos;
+
+        // ignoreNulls and nullsDescPos are NOT copied - they are function-specific
+
+        this.windowName = null;
+        this.windowNamePosition = 0;
+    }
+
     public int getExclusionKind() {
         return exclusionKind;
     }
@@ -279,57 +320,7 @@ public final class WindowExpression extends QueryColumn {
         this.windowNamePosition = windowNamePosition;
     }
 
-    /**
-     * Copies the window specification (partition by, order by, frame) from another WindowExpression.
-     * Used when resolving named window references.
-     *
-     * @param source the named window definition to copy from
-     */
-    public void copySpecFrom(WindowExpression source) {
-        // Copy partition by
-        this.partitionBy.clear();
-        this.partitionBy.addAll(source.partitionBy);
-
-        // Copy order by
-        this.orderBy.clear();
-        this.orderBy.addAll(source.orderBy);
-        this.orderByDirection.clear();
-        this.orderByDirection.addAll(source.orderByDirection);
-
-        // Copy frame specification
-        this.framingMode = source.framingMode;
-        this.rowsLo = source.rowsLo;
-        this.rowsLoExpr = source.rowsLoExpr;
-        this.rowsLoExprPos = source.rowsLoExprPos;
-        this.rowsLoExprTimeUnit = source.rowsLoExprTimeUnit;
-        this.rowsLoKind = source.rowsLoKind;
-        this.rowsLoKindPos = source.rowsLoKindPos;
-        this.rowsHi = source.rowsHi;
-        this.rowsHiExpr = source.rowsHiExpr;
-        this.rowsHiExprPos = source.rowsHiExprPos;
-        this.rowsHiExprTimeUnit = source.rowsHiExprTimeUnit;
-        this.rowsHiKind = source.rowsHiKind;
-        this.rowsHiKindPos = source.rowsHiKindPos;
-
-        // Copy exclusion
-        this.exclusionKind = source.exclusionKind;
-        this.exclusionKindPos = source.exclusionKindPos;
-
-        // Note: ignoreNulls and nullsDescPos are NOT copied - they are function-specific
-        // and are set from the IGNORE NULLS / RESPECT NULLS clause on the function itself
-
-        // Clear the window name since we've now resolved it
-        this.windowName = null;
-        this.windowNamePosition = 0;
-    }
-
     public boolean stopOrderByPropagate(ObjList<ExpressionNode> modelOrder, IntList modelOrderDirection) {
-        // Named window references haven't been resolved yet during optimization.
-        // Conservatively keep the ORDER BY since the named window may depend on it.
-        if (windowName != null) {
-            return true;
-        }
-
         CharSequence token = getAst().token;
 
         // If this is an 'order' sensitive window function and there is no ORDER BY, it may depend on its child's ORDER BY clause.
