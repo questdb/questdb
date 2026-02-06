@@ -31,6 +31,8 @@ import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 
+import java.util.concurrent.TimeUnit;
+
 /**
  * Thread-safe cache for memory-mapped file regions with reference counting.
  * Reuses existing mappings for the same file when possible to reduce system calls.
@@ -469,7 +471,14 @@ public final class MmapCache {
                 LOG.info().$("async munmap queue is full").$();
             }
         }
+        long beforeNanos = System.nanoTime();
         int result = Files.munmap0(address, len);
+        long deltaMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - beforeNanos);
+
+        if (deltaMillis > 100 && len > 1_000_000_000) {
+            LOG.info().$("huge munmap took ").$(deltaMillis).$("ms for ").$(len).$(" bytes").$(new Exception("stacktrace")).I$();
+        }
+
         if (result != -1) {
             Unsafe.recordMemAlloc(-len, memoryTag);
         } else {

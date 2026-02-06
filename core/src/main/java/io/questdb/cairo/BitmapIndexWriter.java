@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.vm.MemoryPMARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -49,7 +50,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     private final Cursor cursor = new Cursor();
     private final FilesFacade ff;
     private final MemoryMARW keyMem = Vm.getCMARWInstance();
-    private final MemoryMARW valueMem = Vm.getCMARWInstance();
+    private final MemoryMARW valueMem = new MemoryPMARWImpl();
     private int blockCapacity;
     private int blockValueCountMod;
     private int keyCount = -1;
