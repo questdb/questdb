@@ -153,7 +153,7 @@ public class NamedWindowFuzzTest extends AbstractCairoTest {
         });
     }
 
-    private void assertEquivalent(String namedQuery, String inlineQuery, int iteration) throws Exception {
+    private void assertEquivalent(String namedQuery, String inlineQuery, int iteration) {
         try {
             StringSink namedResult = new StringSink();
             printSql(namedQuery, namedResult);
