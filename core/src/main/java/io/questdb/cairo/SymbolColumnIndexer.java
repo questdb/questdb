@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -35,8 +36,13 @@ import io.questdb.std.str.Path;
 public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
 
     private static final long SEQUENCE_OFFSET;
+    // 32 MB budget for bulk build tracking structures (~56 bytes per key)
+    private static final long MAX_BULK_BUILD_MEMORY = 32 * 1024 * 1024;
+    private static final int BYTES_PER_KEY = 56;  // histogram + blockOffset + cellIndex
+
     private final int bufferSize;
     private final BitmapIndexWriter writer;
+    private IntIntHashMap histogram;
     private long buffer;
     private long columnTop;
     private volatile boolean distressed = false;
@@ -141,6 +147,125 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
             }
         }
         writer.setMaxValue(hiRow - 1);
+    }
+
+    /**
+     * Rebuilds the entire index from scratch using an optimized two-pass histogram approach.
+     * This method should only be used for full rebuilds when the index is empty/new.
+     * For incremental appends during normal table writes, use {@link #index(FilesFacade, long, long, long)}.
+     *
+     * @param ff           files facade
+     * @param dataColumnFd file descriptor of the symbol column data file
+     * @param loRow        starting row (typically columnTop for full rebuilds)
+     * @param hiRow        ending row (exclusive)
+     */
+    public void rebuildNewIndex(FilesFacade ff, long dataColumnFd, long loRow, long hiRow) {
+        // For full rebuilds, we start fresh - no rollback needed
+        writer.truncate();
+
+        long lo = Math.max(loRow, columnTop);
+        long totalRows = hiRow - lo;
+        if (totalRows <= 0) {
+            return;
+        }
+
+        // Initialize or reuse histogram
+        if (histogram == null) {
+            histogram = new IntIntHashMap();
+        } else {
+            histogram.clear();
+        }
+
+        // Pass 1: Build histogram
+        long cutoffRow = hiRow;  // where we stopped counting (for escape hatch)
+        long currentRow = lo;
+        int maxKey = -1;
+
+        pass1:
+        for (long filePos = (lo - columnTop) * 4L, remaining = totalRows * 4L; remaining > 0; ) {
+            long bytesToRead = Math.min(bufferSize, remaining);
+            long read = ff.read(dataColumnFd, buffer, bytesToRead, filePos);
+            if (read == -1) {
+                throw CairoException.critical(ff.errno()).put("could not read symbol column during indexing [fd=").put(dataColumnFd)
+                        .put(", fileOffset=").put(filePos)
+                        .put(", bytesToRead=").put(bytesToRead)
+                        .put(']');
+            }
+
+            for (long p = buffer, pHi = buffer + read; p < pHi; p += 4, currentRow++) {
+                int key = TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(p));
+                int idx = histogram.keyIndex(key);
+                if (idx >= 0) {
+                    // New key
+                    if ((long) histogram.size() * BYTES_PER_KEY >= MAX_BULK_BUILD_MEMORY) {
+                        // Escape hatch: too many keys, stop histogram building
+                        cutoffRow = currentRow;
+                        break pass1;
+                    }
+                    histogram.putAt(idx, key, 1);
+                } else {
+                    // Existing key, increment
+                    histogram.putAt(idx, key, histogram.valueAt(idx) + 1);
+                }
+                if (key > maxKey) {
+                    maxKey = key;
+                }
+            }
+
+            filePos += read;
+            remaining -= read;
+        }
+
+        // Initialize bulk build with histogram
+        writer.initBulkBuild(histogram, maxKey);
+        histogram = null;  // Ownership transferred to writer
+
+        // Pass 2: Write values using bulk build
+        currentRow = lo;
+        for (long filePos = (lo - columnTop) * 4L, remaining = (cutoffRow - lo) * 4L; remaining > 0; ) {
+            long bytesToRead = Math.min(bufferSize, remaining);
+            long read = ff.read(dataColumnFd, buffer, bytesToRead, filePos);
+            if (read == -1) {
+                throw CairoException.critical(ff.errno()).put("could not read symbol column during indexing [fd=").put(dataColumnFd)
+                        .put(", fileOffset=").put(filePos)
+                        .put(", bytesToRead=").put(bytesToRead)
+                        .put(']');
+            }
+
+            for (long p = buffer, pHi = buffer + read; p < pHi; p += 4, currentRow++) {
+                int key = TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(p));
+                writer.addBulk(key, currentRow);
+            }
+
+            filePos += read;
+            remaining -= read;
+        }
+
+        // Finalize bulk build
+        writer.finalizeBulkBuild(cutoffRow - 1);
+
+        // Pass 3 (if needed): Fall back to regular add() for remaining rows
+        if (cutoffRow < hiRow) {
+            for (long filePos = (cutoffRow - columnTop) * 4L, remaining = (hiRow - cutoffRow) * 4L; remaining > 0; ) {
+                long bytesToRead = Math.min(bufferSize, remaining);
+                long read = ff.read(dataColumnFd, buffer, bytesToRead, filePos);
+                if (read == -1) {
+                    throw CairoException.critical(ff.errno()).put("could not read symbol column during indexing [fd=").put(dataColumnFd)
+                            .put(", fileOffset=").put(filePos)
+                            .put(", bytesToRead=").put(bytesToRead)
+                            .put(']');
+                }
+
+                for (long p = buffer, pHi = buffer + read; p < pHi; p += 4, currentRow++) {
+                    int key = TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(p));
+                    writer.add(key, currentRow);
+                }
+
+                filePos += read;
+                remaining -= read;
+            }
+            writer.setMaxValue(hiRow - 1);
+        }
     }
 
     @Override
