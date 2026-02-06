@@ -59,7 +59,7 @@ public class IOUringAccessor {
 
     static native void close(long ptr);
 
-    static native long create(int capacity);
+    static native long create(int capacity, int flags);
 
     static native short getCqCqesOffset();
 
@@ -119,11 +119,17 @@ public class IOUringAccessor {
 
     static native int registerBuffers(long ptr, long iovecs, int count);
 
+    static native int registerFilesSparse(long ptr, int count);
+
     static native int submit(long ptr);
 
     static native int submitAndWait(long ptr, int waitNr);
 
     static native int unregisterBuffers(long ptr);
+
+    static native int unregisterFiles(long ptr);
+
+    static native int updateRegisteredFiles(long ptr, int offset, long fdsAddr, int count);
 
     static {
         RING_FD_OFFSET = getRingFdOffset();

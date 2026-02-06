@@ -94,7 +94,7 @@ public class IOURingImplTest extends AbstractTest {
     public void testFailsToInit() {
         final IOURingFacade rf = new IOURingFacadeImpl() {
             @Override
-            public long create(int capacity) {
+            public long create(int capacity, int flags) {
                 return -42;
             }
         };

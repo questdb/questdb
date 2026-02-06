@@ -125,6 +125,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private final Metrics metrics;
     private final ObjList<Runnable> nullSetters;
     private final RecentWriteTracker recentWriteTracker;
+    private final WalWriterRingManager ringManager;
     private final RowImpl row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final BoolList symbolMapNullFlags = new BoolList();
@@ -136,6 +137,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private final ObjList<Utf8StringIntHashMap> utf8SymbolMaps = new ObjList<>();
     private final Uuid uuid = new Uuid();
     private long avgRecordSize;
+    private WalWriterBufferPool bufferPool;
     private SegmentColumnRollSink columnConversionSink;
     private int columnCount;
     private ColumnVersionReader columnVersionReader;
@@ -151,8 +153,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private long lastReplaceRangeLowTs = 0;
     private long lastTxnMaxTimestamp = -1;
     private byte lastTxnType = WalTxnType.DATA;
-    private WalWriterBufferPool bufferPool;
-    private WalWriterRingManager ringManager;
     private long segmentRowCount = -1;
     private long totalSegmentsRowCount;
     private long totalSegmentsSize;
@@ -198,6 +198,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 bufferPool.setRingManager(ringManager);
                 ringManager.setPool(bufferPool);
                 bufferPool.registerWithKernel();
+                ringManager.registerFilesSparse(columnCount * 2 + 16);
             }
 
             columns = new ObjList<>(columnCount * 2);
@@ -1164,6 +1165,81 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         return columnConversionSink;
     }
 
+    private void debugVarColumnState(
+            CharSequence columnName,
+            int columnType,
+            MemoryMA dataMem,
+            MemoryMA auxMem,
+            long rowLo,
+            long rowHi,
+            CharSequence stage
+    ) {
+        if (!ColumnType.isVarSize(columnType)) {
+            return;
+        }
+        final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+        final long dataFd = dataMem != null ? dataMem.getFd() : -1;
+        final long auxFd = auxMem != null ? auxMem.getFd() : -1;
+        final long dataLen = dataFd > -1 ? ff.length(dataFd) : -1;
+        final long auxLen = auxFd > -1 ? ff.length(auxFd) : -1;
+        final long aux0 = readAuxValue(auxFd, 0, auxLen);
+        final long auxLo = rowLo > -1 ? readAuxValue(auxFd, driver.getAuxVectorOffset(rowLo), auxLen) : Long.MIN_VALUE;
+        final long auxHi = rowHi > -1 ? readAuxValue(auxFd, driver.getAuxVectorOffset(rowHi), auxLen) : Long.MIN_VALUE;
+        final long auxHi1 = rowHi > -1 ? readAuxValue(auxFd, driver.getAuxVectorOffset(rowHi + 1), auxLen) : Long.MIN_VALUE;
+        long fdSizeLo = Long.MIN_VALUE;
+        long fdSizeHi = Long.MIN_VALUE;
+        int fdHeaderLo = Integer.MIN_VALUE;
+        int fdOffsetLo = Integer.MIN_VALUE;
+        int fdOffsetHi = Integer.MIN_VALUE;
+        long fdDataOffset = Long.MIN_VALUE;
+        if (columnType == ColumnType.VARCHAR && auxFd > -1) {
+            try {
+                if (rowLo > -1) {
+                    fdSizeLo = driver.getDataVectorSizeAtFromFd(ff, auxFd, rowLo);
+                    long loOff = driver.getAuxVectorOffset(rowLo);
+                    fdHeaderLo = readAuxInt(auxFd, loOff, auxLen);
+                    fdOffsetLo = readAuxInt(auxFd, loOff + 8L, auxLen);
+                    fdOffsetHi = readAuxInt(auxFd, loOff + 12L, auxLen);
+                    if (fdOffsetLo != Integer.MIN_VALUE && fdOffsetHi != Integer.MIN_VALUE) {
+                        fdDataOffset = Numbers.encodeLowHighInts(fdOffsetLo, fdOffsetHi) >>> 16;
+                    }
+                }
+                if (rowHi > -1) {
+                    fdSizeHi = driver.getDataVectorSizeAtFromFd(ff, auxFd, rowHi);
+                }
+            } catch (Throwable ignored) {
+                // Logging only, avoid disturbing WAL writer flow.
+            }
+        }
+
+        LOG.debug().$("wal var column state [wal=").$substr(pathRootSize, path)
+                .$(", segment=").$(segmentId)
+                .$(", column=").$safe(columnName)
+                .$(", type=").$(ColumnType.nameOf(columnType))
+                .$(", stage=").$safe(stage)
+                .$(", rowLo=").$(rowLo)
+                .$(", rowHi=").$(rowHi)
+                .$(", dataFd=").$(dataFd)
+                .$(", dataAppend=").$(dataMem != null ? dataMem.getAppendOffset() : -1)
+                .$(", dataLen=").$(dataLen)
+                .$(", auxFd=").$(auxFd)
+                .$(", auxAppend=").$(auxMem != null ? auxMem.getAppendOffset() : -1)
+                .$(", auxLen=").$(auxLen)
+                .$(", aux0=").$(aux0)
+                .$(", auxLo=").$(auxLo)
+                .$(", auxHi=").$(auxHi)
+                .$(", auxHi1=").$(auxHi1)
+                .$(", fdHdrLo=").$(fdHeaderLo)
+                .$(", fdOffLo=").$(fdOffsetLo)
+                .$(", fdOffHi=").$(fdOffsetHi)
+                .$(", fdOff=").$(fdDataOffset)
+                .$(", fdSizeLo=").$(fdSizeLo)
+                .$(", fdSizeHi=").$(fdSizeHi)
+                .$(", ioUringData=").$(dataMem instanceof MemoryPURImpl)
+                .$(", ioUringAux=").$(auxMem instanceof MemoryPURImpl)
+                .I$();
+    }
+
     private void doClose(boolean truncate) {
         if (open) {
             open = false;
@@ -1240,99 +1316,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             ringManager.waitForAll();
             ((MemoryPURImpl) mem).resumeWriteAfterSync();
         }
-    }
-
-    private long readAuxValue(long fd, long offset, long fileSize) {
-        if (fd < 0 || fileSize < 0 || offset < 0 || offset + Long.BYTES > fileSize) {
-            return Long.MIN_VALUE;
-        }
-        return ff.readNonNegativeLong(fd, offset);
-    }
-
-    private int readAuxInt(long fd, long offset, long fileSize) {
-        if (fd < 0 || fileSize < 0 || offset < 0 || offset + Integer.BYTES > fileSize) {
-            return Integer.MIN_VALUE;
-        }
-        long res = ff.readIntAsUnsignedLong(fd, offset);
-        if (res < 0) {
-            return Integer.MIN_VALUE;
-        }
-        return Numbers.decodeLowInt(res);
-    }
-
-    private void debugVarColumnState(
-            CharSequence columnName,
-            int columnType,
-            MemoryMA dataMem,
-            MemoryMA auxMem,
-            long rowLo,
-            long rowHi,
-            CharSequence stage
-    ) {
-        if (!ColumnType.isVarSize(columnType)) {
-            return;
-        }
-        final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
-        final long dataFd = dataMem != null ? dataMem.getFd() : -1;
-        final long auxFd = auxMem != null ? auxMem.getFd() : -1;
-        final long dataLen = dataFd > -1 ? ff.length(dataFd) : -1;
-        final long auxLen = auxFd > -1 ? ff.length(auxFd) : -1;
-        final long aux0 = readAuxValue(auxFd, 0, auxLen);
-        final long auxLo = rowLo > -1 ? readAuxValue(auxFd, driver.getAuxVectorOffset(rowLo), auxLen) : Long.MIN_VALUE;
-        final long auxHi = rowHi > -1 ? readAuxValue(auxFd, driver.getAuxVectorOffset(rowHi), auxLen) : Long.MIN_VALUE;
-        final long auxHi1 = rowHi > -1 ? readAuxValue(auxFd, driver.getAuxVectorOffset(rowHi + 1), auxLen) : Long.MIN_VALUE;
-        long fdSizeLo = Long.MIN_VALUE;
-        long fdSizeHi = Long.MIN_VALUE;
-        int fdHeaderLo = Integer.MIN_VALUE;
-        int fdOffsetLo = Integer.MIN_VALUE;
-        int fdOffsetHi = Integer.MIN_VALUE;
-        long fdDataOffset = Long.MIN_VALUE;
-        if (columnType == ColumnType.VARCHAR && auxFd > -1) {
-            try {
-                if (rowLo > -1) {
-                    fdSizeLo = driver.getDataVectorSizeAtFromFd(ff, auxFd, rowLo);
-                    long loOff = driver.getAuxVectorOffset(rowLo);
-                    fdHeaderLo = readAuxInt(auxFd, loOff, auxLen);
-                    fdOffsetLo = readAuxInt(auxFd, loOff + 8L, auxLen);
-                    fdOffsetHi = readAuxInt(auxFd, loOff + 12L, auxLen);
-                    if (fdOffsetLo != Integer.MIN_VALUE && fdOffsetHi != Integer.MIN_VALUE) {
-                        fdDataOffset = Numbers.encodeLowHighInts(fdOffsetLo, fdOffsetHi) >>> 16;
-                    }
-                }
-                if (rowHi > -1) {
-                    fdSizeHi = driver.getDataVectorSizeAtFromFd(ff, auxFd, rowHi);
-                }
-            } catch (Throwable ignored) {
-                // Logging only, avoid disturbing WAL writer flow.
-            }
-        }
-
-        LOG.debug().$("wal var column state [wal=").$substr(pathRootSize, path)
-                .$(", segment=").$(segmentId)
-                .$(", column=").$safe(columnName)
-                .$(", type=").$(ColumnType.nameOf(columnType))
-                .$(", stage=").$safe(stage)
-                .$(", rowLo=").$(rowLo)
-                .$(", rowHi=").$(rowHi)
-                .$(", dataFd=").$(dataFd)
-                .$(", dataAppend=").$(dataMem != null ? dataMem.getAppendOffset() : -1)
-                .$(", dataLen=").$(dataLen)
-                .$(", auxFd=").$(auxFd)
-                .$(", auxAppend=").$(auxMem != null ? auxMem.getAppendOffset() : -1)
-                .$(", auxLen=").$(auxLen)
-                .$(", aux0=").$(aux0)
-                .$(", auxLo=").$(auxLo)
-                .$(", auxHi=").$(auxHi)
-                .$(", auxHi1=").$(auxHi1)
-                .$(", fdHdrLo=").$(fdHeaderLo)
-                .$(", fdOffLo=").$(fdOffsetLo)
-                .$(", fdOffHi=").$(fdOffsetHi)
-                .$(", fdOff=").$(fdDataOffset)
-                .$(", fdSizeLo=").$(fdSizeLo)
-                .$(", fdSizeHi=").$(fdSizeHi)
-                .$(", ioUringData=").$(dataMem instanceof MemoryPURImpl)
-                .$(", ioUringAux=").$(auxMem instanceof MemoryPURImpl)
-                .I$();
     }
 
     private void freeAndRemoveColumnPair(ObjList<MemoryMA> columns, int pi, int si) {
@@ -1541,6 +1524,24 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             }
             path.trimTo(pathSize);
         }
+    }
+
+    private int readAuxInt(long fd, long offset, long fileSize) {
+        if (fd < 0 || fileSize < 0 || offset < 0 || offset + Integer.BYTES > fileSize) {
+            return Integer.MIN_VALUE;
+        }
+        long res = ff.readIntAsUnsignedLong(fd, offset);
+        if (res < 0) {
+            return Integer.MIN_VALUE;
+        }
+        return Numbers.decodeLowInt(res);
+    }
+
+    private long readAuxValue(long fd, long offset, long fileSize) {
+        if (fd < 0 || fileSize < 0 || offset < 0 || offset + Long.BYTES > fileSize) {
+            return Long.MIN_VALUE;
+        }
+        return ff.readNonNegativeLong(fd, offset);
     }
 
     private void removeSymbolFiles(Path path, int rootLen, CharSequence columnName) {
@@ -1981,13 +1982,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
             final boolean async = commitMode == CommitMode.ASYNC;
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                MemoryMA column = columns.getQuick(i);
-                if (column != null) {
-                    if (async && ringManager != null && column instanceof MemoryPURImpl) {
-                        ((MemoryPURImpl) column).syncSwap();
-                    } else {
-                        column.sync(async);
+            if (!async && ringManager != null) {
+                syncSyncBatched();
+            } else {
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    MemoryMA column = columns.getQuick(i);
+                    if (column != null) {
+                        if (async && ringManager != null && column instanceof MemoryPURImpl) {
+                            ((MemoryPURImpl) column).syncSwap();
+                        } else {
+                            column.sync(async);
+                        }
                     }
                 }
             }
@@ -2000,17 +2005,23 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             // io_uring pwrite columns need an explicit flush even in NOSYNC mode.
             // Unlike mmap, data written to malloc'd pages is not visible to other
             // readers (WAL apply uses mmap) until actually pwrite'd to the kernel.
+            boolean hasIoUringColumns = false;
             for (int i = 0, n = columns.size(); i < n; i++) {
                 MemoryMA column = columns.getQuick(i);
                 if (column != null) {
                     if (column instanceof MemoryPURImpl) {
                         ((MemoryPURImpl) column).syncSubmitInPlace();
+                        hasIoUringColumns = true;
                     } else {
                         column.sync(true);
                     }
                 }
             }
-            if (ringManager.getInFlightCount() > 0) {
+            if (hasIoUringColumns) {
+                // Always run the barrier+resume for in-place sync. Proactive CQ draining may
+                // complete all in-flight writes before we reach this point, leaving inFlight=0.
+                // Skipping resume would leave current pages in CONFIRMED state and subsequent
+                // syncSubmitInPlace() calls on the same page would no-op.
                 ringManager.waitForAll();
                 for (int i = 0, n = columns.size(); i < n; i++) {
                     MemoryMA column = columns.getQuick(i);
@@ -2018,6 +2029,38 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         ((MemoryPURImpl) column).resumeWriteAfterSync();
                     }
                 }
+            }
+        }
+    }
+
+    private void syncSyncBatched() {
+        // Phase 1: submit all dirty data across all columns (pwrite).
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            MemoryMA column = columns.getQuick(i);
+            if (column != null) {
+                if (column instanceof MemoryPURImpl) {
+                    ((MemoryPURImpl) column).submitDirtyForSync();
+                } else {
+                    column.sync(false);
+                }
+            }
+        }
+        ringManager.waitForAll();
+
+        // Phase 2: enqueue fsync for all columns.
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            MemoryMA column = columns.getQuick(i);
+            if (column instanceof MemoryPURImpl) {
+                ((MemoryPURImpl) column).enqueueFsyncForSync();
+            }
+        }
+        ringManager.waitForAll();
+
+        // Phase 3: finalize — evict confirmed pages, reset active page.
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            MemoryMA column = columns.getQuick(i);
+            if (column instanceof MemoryPURImpl) {
+                ((MemoryPURImpl) column).finalizeSyncAfterBarrier();
             }
         }
     }

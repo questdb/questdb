@@ -32,6 +32,7 @@ import static io.questdb.std.IOUringAccessor.*;
 
 public class IOURingImpl implements IOURing {
 
+    private static final byte IOSQE_FIXED_FILE = 0x01;
     // Holds <id, res> tuples for recently consumed cqes.
     private final long[] cachedCqes;
     private final long cqKheadAddr;
@@ -53,9 +54,13 @@ public class IOURingImpl implements IOURing {
     private long idSeq;
 
     public IOURingImpl(IOURingFacade facade, int capacity) {
+        this(facade, capacity, 0);
+    }
+
+    public IOURingImpl(IOURingFacade facade, int capacity, int flags) {
         assert Numbers.isPow2(capacity);
         this.facade = facade;
-        final long res = facade.create(capacity);
+        final long res = createWithFallback(facade, capacity, flags);
         if (res < 0) {
             throw CairoException.critical((int) -res).put("Cannot create io_uring instance");
         }
@@ -103,6 +108,15 @@ public class IOURingImpl implements IOURing {
     }
 
     @Override
+    public void enqueueFsyncFixedFile(int fileSlot, long userData) {
+        final long sqeAddr = nextSqe();
+        if (sqeAddr == 0) {
+            throw CairoException.critical(0).put("io_uring SQ full");
+        }
+        fillSqeFixedFile(sqeAddr, IORING_OP_FSYNC, fileSlot, 0, 0, 0, userData);
+    }
+
+    @Override
     @TestOnly
     public long enqueueNop() {
         return enqueueSqe(IORING_OP_NOP, -1, 0, 0, 0);
@@ -134,6 +148,25 @@ public class IOURingImpl implements IOURing {
     }
 
     @Override
+    public void enqueueWriteFixedFile(int fileSlot, long offset, long bufAddr, int len, long userData) {
+        final long sqeAddr = nextSqe();
+        if (sqeAddr == 0) {
+            throw CairoException.critical(0).put("io_uring SQ full");
+        }
+        fillSqeFixedFile(sqeAddr, IORING_OP_WRITE, fileSlot, offset, bufAddr, len, userData);
+    }
+
+    @Override
+    public void enqueueWriteFixedFileBuf(int fileSlot, long offset, long bufAddr, int len, int bufIndex, long userData) {
+        final long sqeAddr = nextSqe();
+        if (sqeAddr == 0) {
+            throw CairoException.critical(0).put("io_uring SQ full");
+        }
+        fillSqeFixedFile(sqeAddr, IORING_OP_WRITE_FIXED, fileSlot, offset, bufAddr, len, userData);
+        Unsafe.getUnsafe().putShort(sqeAddr + SQE_BUF_INDEX_OFFSET, (short) bufIndex);
+    }
+
+    @Override
     public long getCqeId() {
         if (cachedIndex < cachedSize) {
             return cachedCqes[2 * cachedIndex];
@@ -155,6 +188,11 @@ public class IOURingImpl implements IOURing {
     }
 
     @Override
+    public int registerFilesSparse(int count) {
+        return facade.registerFilesSparse(ringAddr, count);
+    }
+
+    @Override
     public boolean nextCqe() {
         if (++cachedIndex < cachedSize) {
             return true;
@@ -166,14 +204,17 @@ public class IOURingImpl implements IOURing {
         if (tail == head) {
             return false;
         }
-        for (int i = head; i < tail; i++) {
-            final long cqeAddr = cqesAddr + (long) (i & cqKringMask) * SIZEOF_CQE;
-            cachedCqes[2 * (i - head)] = Unsafe.getUnsafe().getLong(cqeAddr + CQE_USER_DATA_OFFSET);
-            cachedCqes[2 * (i - head) + 1] = Unsafe.getUnsafe().getInt(cqeAddr + CQE_RES_OFFSET);
+        // Cap at cache capacity to handle potential CQ overflow.
+        final int maxCount = cachedCqes.length / 2;
+        final int count = Math.min(tail - head, maxCount);
+        for (int i = 0; i < count; i++) {
+            final long cqeAddr = cqesAddr + (long) ((head + i) & cqKringMask) * SIZEOF_CQE;
+            cachedCqes[2 * i] = Unsafe.getUnsafe().getLong(cqeAddr + CQE_USER_DATA_OFFSET);
+            cachedCqes[2 * i + 1] = Unsafe.getUnsafe().getInt(cqeAddr + CQE_RES_OFFSET);
         }
-        cachedSize = tail - head;
+        cachedSize = count;
         cachedIndex = 0;
-        Unsafe.getUnsafe().putInt(cqKheadAddr, tail);
+        Unsafe.getUnsafe().putInt(cqKheadAddr, head + count);
         Unsafe.getUnsafe().storeFence();
         return true;
     }
@@ -196,6 +237,34 @@ public class IOURingImpl implements IOURing {
     @Override
     public int unregisterBuffers() {
         return facade.unregisterBuffers(ringAddr);
+    }
+
+    @Override
+    public int unregisterFiles() {
+        return facade.unregisterFiles(ringAddr);
+    }
+
+    @Override
+    public int updateRegisteredFile(int slot, int osFd) {
+        long scratchAddr = Unsafe.malloc(4, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+        try {
+            Unsafe.getUnsafe().putInt(scratchAddr, osFd);
+            return facade.updateRegisteredFiles(ringAddr, slot, scratchAddr, 1);
+        } finally {
+            Unsafe.free(scratchAddr, 4, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+        }
+    }
+
+    private static long createWithFallback(IOURingFacade facade, int capacity, int flags) {
+        if (flags != 0) {
+            long res = facade.create(capacity, flags);
+            if (res > 0) {
+                return res;
+            }
+            // Fall back to no flags.
+            return facade.create(capacity, 0);
+        }
+        return facade.create(capacity, 0);
     }
 
     private long enqueueSqe(byte op, long fd, long offset, long bufAddr, int len) {
@@ -222,6 +291,17 @@ public class IOURingImpl implements IOURing {
         Unsafe.getUnsafe().setMemory(sqeAddr, SIZEOF_SQE, (byte) 0);
         Unsafe.getUnsafe().putByte(sqeAddr + SQE_OPCODE_OFFSET, op);
         Unsafe.getUnsafe().putInt(sqeAddr + SQE_FD_OFFSET, toOsFd(fd));
+        Unsafe.getUnsafe().putLong(sqeAddr + SQE_OFF_OFFSET, offset);
+        Unsafe.getUnsafe().putLong(sqeAddr + SQE_ADDR_OFFSET, bufAddr);
+        Unsafe.getUnsafe().putInt(sqeAddr + SQE_LEN_OFFSET, len);
+        Unsafe.getUnsafe().putLong(sqeAddr + SQE_USER_DATA_OFFSET, userData);
+    }
+
+    private static void fillSqeFixedFile(long sqeAddr, byte op, int fileSlot, long offset, long bufAddr, int len, long userData) {
+        Unsafe.getUnsafe().setMemory(sqeAddr, SIZEOF_SQE, (byte) 0);
+        Unsafe.getUnsafe().putByte(sqeAddr + SQE_OPCODE_OFFSET, op);
+        Unsafe.getUnsafe().putByte(sqeAddr + SQE_FLAGS_OFFSET, IOSQE_FIXED_FILE);
+        Unsafe.getUnsafe().putInt(sqeAddr + SQE_FD_OFFSET, fileSlot);
         Unsafe.getUnsafe().putLong(sqeAddr + SQE_OFF_OFFSET, offset);
         Unsafe.getUnsafe().putLong(sqeAddr + SQE_ADDR_OFFSET, bufAddr);
         Unsafe.getUnsafe().putInt(sqeAddr + SQE_LEN_OFFSET, len);

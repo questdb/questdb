@@ -216,6 +216,7 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         if (columnSlot == -1) {
             columnSlot = ringManager.registerColumn(this);
         }
+        ringManager.updateRegisteredFile(columnSlot, fd);
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", extendSegmentSize=").$(extendSegmentSize).$(']').$();
     }
 
@@ -335,6 +336,28 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         }
     }
 
+    public void enqueueFsyncForSync() {
+        checkDistressed();
+        if (fd != -1) {
+            ringManager.enqueueFsync(columnSlot, fd);
+        }
+    }
+
+    public void finalizeSyncAfterBarrier() {
+        int activePage = getAppendOffset() > 0 ? pageIndex(getAppendOffset() - 1) : -1;
+        evictConfirmedPages(activePage);
+        if (activePage > -1) {
+            setPageState(activePage, WRITING);
+            setPageDirtyStart(activePage, pageOffset(activePage));
+        }
+    }
+
+    public void submitDirtyForSync() {
+        checkDistressed();
+        submitCurrentPageDirtyRange();
+        lastSyncedAppendOffset = getAppendOffset();
+    }
+
     @Override
     public void switchTo(FilesFacade ff, long fd, long extendSegmentSize, long offset, boolean truncate, byte truncateMode) {
         close(truncate, truncateMode);
@@ -346,6 +369,7 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         if (columnSlot == -1) {
             columnSlot = ringManager.registerColumn(this);
         }
+        ringManager.updateRegisteredFile(columnSlot, fd);
         setExtendSegmentSize(extendSegmentSize);
         jumpTo(offset);
     }

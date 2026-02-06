@@ -28,7 +28,11 @@ public interface IOURingFacade {
 
     void close(long ptr);
 
-    long create(int capacity);
+    default long create(int capacity) {
+        return create(capacity, 0);
+    }
+
+    long create(int capacity, int flags);
 
     int errno();
 
@@ -38,9 +42,15 @@ public interface IOURingFacade {
 
     int registerBuffers(long ptr, long iovecs, int count);
 
+    int registerFilesSparse(long ptr, int count);
+
     int submit(long ptr);
 
     int submitAndWait(long ptr, int waitNr);
 
     int unregisterBuffers(long ptr);
+
+    int unregisterFiles(long ptr);
+
+    int updateRegisteredFiles(long ptr, int offset, long fdsAddr, int count);
 }

@@ -40,9 +40,9 @@ JNIEXPORT jstring JNICALL Java_io_questdb_std_IOUringAccessor_kernelVersion
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_IOUringAccessor_create
-        (JNIEnv *e, jclass cl, jint capacity) {
+        (JNIEnv *e, jclass cl, jint capacity, jint flags) {
     struct io_uring *ring = malloc(sizeof(struct io_uring));
-    int ret = io_uring_queue_init(capacity, ring, 0);
+    int ret = io_uring_queue_init(capacity, ring, (unsigned) flags);
     if (ret < 0) {
         free(ring);
         return (jlong) ret;
@@ -219,6 +219,26 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_IOUringAccessor_unregisterBuffers
         (JNIEnv *e, jclass cl, jlong ptr) {
     struct io_uring *ring = (struct io_uring *) ptr;
     return (jint) io_uring_unregister_buffers(ring);
+}
+
+// io_uring_register_files / io_uring_unregister_files
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_IOUringAccessor_registerFilesSparse
+        (JNIEnv *e, jclass cl, jlong ptr, jint count) {
+    struct io_uring *ring = (struct io_uring *) ptr;
+    return (jint) io_uring_register_files_sparse(ring, (unsigned) count);
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_IOUringAccessor_updateRegisteredFiles
+        (JNIEnv *e, jclass cl, jlong ptr, jint offset, jlong fdsAddr, jint count) {
+    struct io_uring *ring = (struct io_uring *) ptr;
+    return (jint) io_uring_register_files_update(ring, (unsigned) offset, (int *) fdsAddr, (unsigned) count);
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_IOUringAccessor_unregisterFiles
+        (JNIEnv *e, jclass cl, jlong ptr) {
+    struct io_uring *ring = (struct io_uring *) ptr;
+    return (jint) io_uring_unregister_files(ring);
 }
 
 // io_uring_sqe buf_index offset

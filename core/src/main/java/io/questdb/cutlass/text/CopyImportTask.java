@@ -59,6 +59,7 @@ import io.questdb.std.IOURingFacade;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -998,7 +999,17 @@ public class CopyImportTask {
                 lexer.setSkipLinesWithExtraValues(false);
 
                 long prevErrors;
+                final IOURingFacade rf = configuration.getIOURingFacade();
+                final boolean ioURingEnabled = configuration.isIOURingEnabled();
+                IOURing sharedRing = null;
                 try {
+                    if (ioURingEnabled && rf.isAvailable()) {
+                        try {
+                            sharedRing = rf.newInstance(32);
+                        } catch (Exception ignore) {
+                            // fall back to vanilla path
+                        }
+                    }
                     for (int i = lo; i < hi; i++) {
                         throwIfCancelled();
 
@@ -1009,8 +1020,7 @@ public class CopyImportTask {
                         path.of(importRoot).concat(name);
                         mergePartitionIndexAndImportData(
                                 ff,
-                                configuration.getIOURingFacade(),
-                                configuration.isIOURingEnabled(),
+                                sharedRing,
                                 path,
                                 lexer,
                                 fileBufAddr,
@@ -1035,6 +1045,7 @@ public class CopyImportTask {
                                 .I$();
                     }
                 } finally {
+                    Misc.free(sharedRing);
                     writer.commit();
                 }
             }
@@ -1058,8 +1069,16 @@ public class CopyImportTask {
             // consume submitted tasks
             for (int i = 0; i < submitted; i++) {
 
-                while (!ring.nextCqe()) {
-                    Os.pause();
+                if (!ring.nextCqe()) {
+                    for (int s = 0; s < 64; s++) {
+                        Os.pause();
+                        if (ring.nextCqe()) {
+                            break;
+                        }
+                    }
+                    while (!ring.nextCqe()) {
+                        ring.submitAndWait(1);
+                    }
                 }
 
                 if (ring.getCqeRes() < 0) {
@@ -1100,8 +1119,7 @@ public class CopyImportTask {
         }
 
         private void importPartitionData(
-                final IOURingFacade rf,
-                final boolean ioURingEnabled,
+                final IOURing ring,
                 final AbstractTextLexer lexer,
                 long address,
                 long size,
@@ -1110,9 +1128,9 @@ public class CopyImportTask {
                 DirectUtf16Sink utf8Sink,
                 Path tmpPath
         ) throws TextException {
-            if (ioURingEnabled && rf.isAvailable()) {
+            if (ring != null) {
                 importPartitionDataURing(
-                        rf,
+                        ring,
                         lexer,
                         address,
                         size,
@@ -1135,7 +1153,7 @@ public class CopyImportTask {
         }
 
         private void importPartitionDataURing(
-                final IOURingFacade rf,
+                final IOURing ring,
                 AbstractTextLexer lexer,
                 long address,
                 long size,
@@ -1171,77 +1189,75 @@ public class CopyImportTask {
                 int ringCapacity = 32;
                 long sqeMin = 0;
                 long sqeMax = -1;
-                try (IOURing ring = rf.newInstance(ringCapacity)) {
-                    long addr = fileBufAddr;
-                    long lim = fileBufAddr + fileBufSize;
-                    int cc = 0;
-                    int bytesToRead;
-                    int additionalLines;
-                    for (long i = 0; i < count; i++) {
-                        throwIfCancelled();
+                long addr = fileBufAddr;
+                long lim = fileBufAddr + fileBufSize;
+                int cc = 0;
+                int bytesToRead;
+                int additionalLines;
+                for (long i = 0; i < count; i++) {
+                    throwIfCancelled();
 
-                        final long lengthAndOffset = Unsafe.getUnsafe().getLong(address + i * 2L * Long.BYTES + Long.BYTES);
-                        final int lineLength = (int) (lengthAndOffset >>> 48);
-                        // the offset is used by the callback to report errors
-                        offset = lengthAndOffset & MASK;
-                        bytesToRead = lineLength;
+                    final long lengthAndOffset = Unsafe.getUnsafe().getLong(address + i * 2L * Long.BYTES + Long.BYTES);
+                    final int lineLength = (int) (lengthAndOffset >>> 48);
+                    // the offset is used by the callback to report errors
+                    offset = lengthAndOffset & MASK;
+                    bytesToRead = lineLength;
 
-                        // schedule reads until we either run out of ring capacity or
-                        // our read buffer size
+                    // schedule reads until we either run out of ring capacity or
+                    // our read buffer size
 
-                        if (cc == ringCapacity || (cc > 0 && addr + lineLength > lim)) {
-                            // we are out of ring capacity or our buffer is exhausted
-                            consumeIOURing(ff, sqeMin, lexer, fileBufAddr, offsets, ring, cc, tmpPath);
-
-                            cc = 0;
-                            addr = fileBufAddr;
-                            offsets.clear();
-                            sqeMin = sqeMax + 1;
-                        }
-                        if (addr + lineLength > lim) {
-                            throw TextException.$("buffer overflow [path='").put(tmpPath)
-                                    .put("', lineLength=").put(lineLength)
-                                    .put(", fileBufSize=").put(fileBufSize)
-                                    .put("]");
-                        }
-
-                        // try to coalesce ahead lines into the same read, if they're sequential
-                        additionalLines = 0;
-                        for (long j = i + 1; j < count; j++) {
-                            long nextLengthAndOffset = Unsafe.getUnsafe().getLong(address + j * 2L * Long.BYTES + Long.BYTES);
-                            int nextLineLength = (int) (nextLengthAndOffset >>> 48);
-                            long nextOffset = nextLengthAndOffset & MASK;
-
-                            // line indexing stops on first EOL char, e.g. \r, but it could be followed by \n
-                            long diff = nextOffset - offset - bytesToRead;
-                            int nextBytesToRead = ((int) diff) + nextLineLength;
-
-                            if (diff > -1 && diff < 2 && addr + bytesToRead + nextBytesToRead <= lim) {
-                                bytesToRead += nextBytesToRead;
-                                additionalLines++;
-                            } else {
-                                break;
-                            }
-                        }
-                        i += additionalLines;
-
-                        sqeMax = ring.enqueueRead(fd, offset, addr, bytesToRead);
-                        if (sqeMax == -1) {
-                            throw TextException.$("io_uring error [path='").put(tmpPath)
-                                    .put("', cqeRes=").put(-ring.getCqeRes())
-                                    .put("]");
-                        }
-
-                        offsets.add(addr - fileBufAddr, bytesToRead);
-
-                        cc++;
-                        addr += bytesToRead;
-                    } // for
-
-                    // check if something is enqueued
-                    if (cc > 0) {
+                    if (cc == ringCapacity || (cc > 0 && addr + lineLength > lim)) {
+                        // we are out of ring capacity or our buffer is exhausted
                         consumeIOURing(ff, sqeMin, lexer, fileBufAddr, offsets, ring, cc, tmpPath);
+
+                        cc = 0;
+                        addr = fileBufAddr;
+                        offsets.clear();
+                        sqeMin = sqeMax + 1;
                     }
+                    if (addr + lineLength > lim) {
+                        throw TextException.$("buffer overflow [path='").put(tmpPath)
+                                .put("', lineLength=").put(lineLength)
+                                .put(", fileBufSize=").put(fileBufSize)
+                                .put("]");
+                    }
+
+                    // try to coalesce ahead lines into the same read, if they're sequential
+                    additionalLines = 0;
+                    for (long j = i + 1; j < count; j++) {
+                        long nextLengthAndOffset = Unsafe.getUnsafe().getLong(address + j * 2L * Long.BYTES + Long.BYTES);
+                        int nextLineLength = (int) (nextLengthAndOffset >>> 48);
+                        long nextOffset = nextLengthAndOffset & MASK;
+
+                        // line indexing stops on first EOL char, e.g. \r, but it could be followed by \n
+                        long diff = nextOffset - offset - bytesToRead;
+                        int nextBytesToRead = ((int) diff) + nextLineLength;
+
+                        if (diff > -1 && diff < 2 && addr + bytesToRead + nextBytesToRead <= lim) {
+                            bytesToRead += nextBytesToRead;
+                            additionalLines++;
+                        } else {
+                            break;
+                        }
+                    }
+                    i += additionalLines;
+
+                    sqeMax = ring.enqueueRead(fd, offset, addr, bytesToRead);
+                    if (sqeMax == -1) {
+                        throw TextException.$("io_uring error [path='").put(tmpPath)
+                                .put("', cqeRes=").put(-ring.getCqeRes())
+                                .put("]");
+                    }
+
+                    offsets.add(addr - fileBufAddr, bytesToRead);
+
+                    cc++;
+                    addr += bytesToRead;
+                } // for
+
+                // check if something is enqueued
+                if (cc > 0) {
+                    consumeIOURing(ff, sqeMin, lexer, fileBufAddr, offsets, ring, cc, tmpPath);
                 }
 
             } finally {
@@ -1346,8 +1362,7 @@ public class CopyImportTask {
 
         private void mergePartitionIndexAndImportData(
                 final FilesFacade ff,
-                final IOURingFacade rf,
-                boolean ioURingEnabled,
+                final IOURing ring,
                 Path partitionPath,
                 final AbstractTextLexer lexer,
                 long fileBufAddr,
@@ -1378,8 +1393,7 @@ public class CopyImportTask {
                     unmap(ff, unmergedIndexes);
 
                     importPartitionData(
-                            rf,
-                            ioURingEnabled,
+                            ring,
                             lexer,
                             mergeIndexAddr,
                             mergedIndexSize,
@@ -1390,8 +1404,7 @@ public class CopyImportTask {
                     );
                 } else { // we can use the single chunk as is
                     importPartitionData(
-                            rf,
-                            ioURingEnabled,
+                            ring,
                             lexer,
                             unmergedIndexes.get(0),
                             mergedIndexSize,

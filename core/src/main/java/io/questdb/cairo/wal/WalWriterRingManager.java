@@ -25,8 +25,10 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.std.Files;
 import io.questdb.std.IOURing;
 import io.questdb.std.IOURingFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
@@ -46,14 +48,21 @@ public class WalWriterRingManager implements Closeable {
     private static final int PAGE_ID_BITS = 44;
     private static final long PAGE_ID_MASK = (1L << PAGE_ID_BITS) - 1;
     private final ObjList<WalWriterRingColumn> columns = new ObjList<>();
+    private final IntList registeredOsFds = new IntList();
     private final IOURing ring;
+    private final int sqHighWatermark;
     private boolean closed;
+    private boolean filesRegistered;
     private int inFlightCount;
+    private int maxFileSlots;
     private int nextColumnSlot;
+    private int pendingSubmitCount;
     private WalWriterBufferPool pool;
 
     public WalWriterRingManager(IOURingFacade facade, int ringCapacity) {
-        this.ring = facade.newInstance(Numbers.ceilPow2(ringCapacity));
+        int capacity = Numbers.ceilPow2(ringCapacity);
+        this.ring = facade.newInstance(capacity);
+        this.sqHighWatermark = capacity * 3 / 4;
     }
 
     public static long packFsyncId(int columnSlot) {
@@ -96,6 +105,11 @@ public class WalWriterRingManager implements Closeable {
             return;
         }
         closed = true;
+        if (filesRegistered) {
+            ring.unregisterFiles();
+            filesRegistered = false;
+            registeredOsFds.clear();
+        }
         ring.close();
     }
 
@@ -107,27 +121,17 @@ public class WalWriterRingManager implements Closeable {
 
     public void enqueueFsync(int columnSlot, long fd) {
         long userData = packFsyncId(columnSlot);
-        if (!tryEnqueueFsync(fd, userData)) {
-            submitAndDrainAll();
-            if (!tryEnqueueFsync(fd, userData)) {
-                throw CairoException.critical(0).put("io_uring SQ full after drain");
-            }
-        }
-    }
-
-    public void enqueueSwapWrite(int columnSlot, int bufferIndex, long fd, long fileOffset, long bufAddr, int len) {
-        long userData = packSwapWriteId(columnSlot, bufferIndex);
-        if (pool != null && pool.isRegistered()) {
-            if (!tryEnqueueWriteFixed(fd, fileOffset, bufAddr, len, bufferIndex, userData)) {
+        if (canUseFixedFile(columnSlot)) {
+            if (!tryEnqueueFsyncFixedFile(columnSlot, userData)) {
                 submitAndDrainAll();
-                if (!tryEnqueueWriteFixed(fd, fileOffset, bufAddr, len, bufferIndex, userData)) {
+                if (!tryEnqueueFsyncFixedFile(columnSlot, userData)) {
                     throw CairoException.critical(0).put("io_uring SQ full after drain");
                 }
             }
         } else {
-            if (!tryEnqueueWrite(fd, fileOffset, bufAddr, len, userData)) {
+            if (!tryEnqueueFsync(fd, userData)) {
                 submitAndDrainAll();
-                if (!tryEnqueueWrite(fd, fileOffset, bufAddr, len, userData)) {
+                if (!tryEnqueueFsync(fd, userData)) {
                     throw CairoException.critical(0).put("io_uring SQ full after drain");
                 }
             }
@@ -144,19 +148,79 @@ public class WalWriterRingManager implements Closeable {
         }
     }
 
+    public void enqueueSwapWrite(int columnSlot, int bufferIndex, long fd, long fileOffset, long bufAddr, int len) {
+        long userData = packSwapWriteId(columnSlot, bufferIndex);
+        boolean fixedBuf = pool != null && pool.isRegistered();
+        boolean fixedFile = canUseFixedFile(columnSlot);
+        if (fixedFile && fixedBuf) {
+            if (!tryEnqueueWriteFixedFileBuf(columnSlot, fileOffset, bufAddr, len, bufferIndex, userData)) {
+                submitAndDrainAll();
+                if (!tryEnqueueWriteFixedFileBuf(columnSlot, fileOffset, bufAddr, len, bufferIndex, userData)) {
+                    throw CairoException.critical(0).put("io_uring SQ full after drain");
+                }
+            }
+        } else if (fixedFile) {
+            if (!tryEnqueueWriteFixedFile(columnSlot, fileOffset, bufAddr, len, userData)) {
+                submitAndDrainAll();
+                if (!tryEnqueueWriteFixedFile(columnSlot, fileOffset, bufAddr, len, userData)) {
+                    throw CairoException.critical(0).put("io_uring SQ full after drain");
+                }
+            }
+        } else if (fixedBuf) {
+            if (!tryEnqueueWriteFixed(fd, fileOffset, bufAddr, len, bufferIndex, userData)) {
+                submitAndDrainAll();
+                if (!tryEnqueueWriteFixed(fd, fileOffset, bufAddr, len, bufferIndex, userData)) {
+                    throw CairoException.critical(0).put("io_uring SQ full after drain");
+                }
+            }
+        } else {
+            if (!tryEnqueueWrite(fd, fileOffset, bufAddr, len, userData)) {
+                submitAndDrainAll();
+                if (!tryEnqueueWrite(fd, fileOffset, bufAddr, len, userData)) {
+                    throw CairoException.critical(0).put("io_uring SQ full after drain");
+                }
+            }
+        }
+    }
+
     public void enqueueWrite(int columnSlot, long pageId, long fd, long fileOffset, long bufAddr, int len) {
         long userData = packWriteId(columnSlot, pageId);
-        if (!tryEnqueueWrite(fd, fileOffset, bufAddr, len, userData)) {
-            submitAndDrainAll();
+        if (canUseFixedFile(columnSlot)) {
+            if (!tryEnqueueWriteFixedFile(columnSlot, fileOffset, bufAddr, len, userData)) {
+                submitAndDrainAll();
+                if (!tryEnqueueWriteFixedFile(columnSlot, fileOffset, bufAddr, len, userData)) {
+                    throw CairoException.critical(0).put("io_uring SQ full after drain");
+                }
+            }
+        } else {
             if (!tryEnqueueWrite(fd, fileOffset, bufAddr, len, userData)) {
-                throw CairoException.critical(0).put("io_uring SQ full after drain");
+                submitAndDrainAll();
+                if (!tryEnqueueWrite(fd, fileOffset, bufAddr, len, userData)) {
+                    throw CairoException.critical(0).put("io_uring SQ full after drain");
+                }
             }
         }
     }
 
     public void enqueueWrite(int columnSlot, long pageId, int bufferIndex, long fd, long fileOffset, long bufAddr, int len) {
         long userData = packWriteId(columnSlot, pageId);
-        if (pool != null && pool.isRegistered()) {
+        boolean fixedBuf = pool != null && pool.isRegistered();
+        boolean fixedFile = canUseFixedFile(columnSlot);
+        if (fixedFile && fixedBuf) {
+            if (!tryEnqueueWriteFixedFileBuf(columnSlot, fileOffset, bufAddr, len, bufferIndex, userData)) {
+                submitAndDrainAll();
+                if (!tryEnqueueWriteFixedFileBuf(columnSlot, fileOffset, bufAddr, len, bufferIndex, userData)) {
+                    throw CairoException.critical(0).put("io_uring SQ full after drain");
+                }
+            }
+        } else if (fixedFile) {
+            if (!tryEnqueueWriteFixedFile(columnSlot, fileOffset, bufAddr, len, userData)) {
+                submitAndDrainAll();
+                if (!tryEnqueueWriteFixedFile(columnSlot, fileOffset, bufAddr, len, userData)) {
+                    throw CairoException.critical(0).put("io_uring SQ full after drain");
+                }
+            }
+        } else if (fixedBuf) {
             if (!tryEnqueueWriteFixed(fd, fileOffset, bufAddr, len, bufferIndex, userData)) {
                 submitAndDrainAll();
                 if (!tryEnqueueWriteFixed(fd, fileOffset, bufAddr, len, bufferIndex, userData)) {
@@ -190,18 +254,29 @@ public class WalWriterRingManager implements Closeable {
         return slot;
     }
 
-    public void submitAndDrainAll() {
-        if (inFlightCount > 0) {
-            ring.submitAndWait();
-            drainCqes();
-        } else {
-            ring.submit();
-            drainCqes();
+    public boolean registerFilesSparse(int maxSlots) {
+        int ret = ring.registerFilesSparse(maxSlots);
+        filesRegistered = ret >= 0;
+        if (filesRegistered) {
+            this.maxFileSlots = maxSlots;
+            registeredOsFds.clear();
         }
+        return filesRegistered;
     }
 
     public void setPool(WalWriterBufferPool pool) {
         this.pool = pool;
+    }
+
+    public void submitAndDrainAll() {
+        pendingSubmitCount = 0;
+        if (inFlightCount > 0) {
+            submitAndWaitOrThrow(1);
+            drainCqes();
+        } else {
+            submitOrThrow();
+            drainCqes();
+        }
     }
 
     public int unregisterBuffers() {
@@ -212,25 +287,43 @@ public class WalWriterRingManager implements Closeable {
         columns.setQuick(columnSlot, null);
     }
 
+    public void updateRegisteredFile(int columnSlot, long fd) {
+        if (!filesRegistered) {
+            return;
+        }
+        if (columnSlot >= maxFileSlots) {
+            growFileTable(Math.max(columnSlot + 16, maxFileSlots * 2));
+        }
+        if (!filesRegistered) {
+            // growFileTable failed and disabled file registration
+            return;
+        }
+        int osFd = Files.toOsFd(fd);
+        ring.updateRegisteredFile(columnSlot, osFd);
+        while (registeredOsFds.size() <= columnSlot) {
+            registeredOsFds.add(-1);
+        }
+        registeredOsFds.setQuick(columnSlot, osFd);
+    }
+
     public void waitForAll() {
         if (inFlightCount == 0) {
             return;
         }
-        // Submit any pending SQEs first.
-        ring.submit();
+        pendingSubmitCount = 0;
+        // Submit any pending SQEs first, then drain what's already available.
+        submitOrThrow();
+        drainCqes();
         while (inFlightCount > 0) {
-            // Drain already-available CQEs before blocking.
+            checkDistressed();
+            submitAndWaitOrThrow(1);
             drainCqes();
-            if (inFlightCount > 0) {
-                checkDistressed();
-                ring.submitAndWait(1);
-                drainCqes();
-            }
         }
     }
 
     public void waitForPage(int columnSlot, long pageId) {
-        ring.submit();
+        pendingSubmitCount = 0;
+        submitOrThrow();
         while (inFlightCount > 0) {
             drainCqes();
             WalWriterRingColumn column = columns.getQuick(columnSlot);
@@ -239,9 +332,13 @@ public class WalWriterRingManager implements Closeable {
             }
             if (inFlightCount > 0) {
                 checkDistressed();
-                ring.submitAndWait(1);
+                submitAndWaitOrThrow(1);
             }
         }
+    }
+
+    private boolean canUseFixedFile(int columnSlot) {
+        return filesRegistered && columnSlot < maxFileSlots;
     }
 
     private void checkDistressed() {
@@ -299,10 +396,68 @@ public class WalWriterRingManager implements Closeable {
         }
     }
 
+    private void growFileTable(int newSize) {
+        // Drain all in-flight ops — they may reference fixed-file slot indices
+        // that become invalid after unregister.
+        waitForAll();
+        ring.unregisterFiles();
+        int ret = ring.registerFilesSparse(newSize);
+        if (ret < 0) {
+            // Kernel rejected the new size; disable file registration entirely.
+            filesRegistered = false;
+            registeredOsFds.clear();
+            return;
+        }
+        maxFileSlots = newSize;
+        // Re-register all previously tracked fds.
+        for (int i = 0, n = registeredOsFds.size(); i < n; i++) {
+            int osFd = registeredOsFds.getQuick(i);
+            if (osFd >= 0) {
+                ring.updateRegisteredFile(i, osFd);
+            }
+        }
+    }
+
+    private void proactiveSubmitIfNeeded() {
+        if (pendingSubmitCount >= sqHighWatermark) {
+            submitOrThrow();
+            drainCqes();
+            pendingSubmitCount = 0;
+        }
+    }
+
+    private void submitAndWaitOrThrow(int waitNr) {
+        final int rc = ring.submitAndWait(waitNr);
+        if (rc < 0) {
+            throw CairoException.critical(-rc).put("io_uring submitAndWait failed [rc=").put(rc).put(']');
+        }
+    }
+
+    private void submitOrThrow() {
+        final int rc = ring.submit();
+        if (rc < 0) {
+            throw CairoException.critical(-rc).put("io_uring submit failed [rc=").put(rc).put(']');
+        }
+    }
+
     private boolean tryEnqueueFsync(long fd, long userData) {
         try {
             ring.enqueueFsync(fd, userData);
             inFlightCount++;
+            pendingSubmitCount++;
+            proactiveSubmitIfNeeded();
+            return true;
+        } catch (CairoException e) {
+            return false;
+        }
+    }
+
+    private boolean tryEnqueueFsyncFixedFile(int fileSlot, long userData) {
+        try {
+            ring.enqueueFsyncFixedFile(fileSlot, userData);
+            inFlightCount++;
+            pendingSubmitCount++;
+            proactiveSubmitIfNeeded();
             return true;
         } catch (CairoException e) {
             return false;
@@ -313,6 +468,8 @@ public class WalWriterRingManager implements Closeable {
         try {
             ring.enqueueWrite(fd, fileOffset, bufAddr, len, userData);
             inFlightCount++;
+            pendingSubmitCount++;
+            proactiveSubmitIfNeeded();
             return true;
         } catch (CairoException e) {
             return false;
@@ -323,6 +480,32 @@ public class WalWriterRingManager implements Closeable {
         try {
             ring.enqueueWriteFixed(fd, fileOffset, bufAddr, len, bufIndex, userData);
             inFlightCount++;
+            pendingSubmitCount++;
+            proactiveSubmitIfNeeded();
+            return true;
+        } catch (CairoException e) {
+            return false;
+        }
+    }
+
+    private boolean tryEnqueueWriteFixedFile(int fileSlot, long fileOffset, long bufAddr, int len, long userData) {
+        try {
+            ring.enqueueWriteFixedFile(fileSlot, fileOffset, bufAddr, len, userData);
+            inFlightCount++;
+            pendingSubmitCount++;
+            proactiveSubmitIfNeeded();
+            return true;
+        } catch (CairoException e) {
+            return false;
+        }
+    }
+
+    private boolean tryEnqueueWriteFixedFileBuf(int fileSlot, long fileOffset, long bufAddr, int len, int bufIndex, long userData) {
+        try {
+            ring.enqueueWriteFixedFileBuf(fileSlot, fileOffset, bufAddr, len, bufIndex, userData);
+            inFlightCount++;
+            pendingSubmitCount++;
+            proactiveSubmitIfNeeded();
             return true;
         } catch (CairoException e) {
             return false;
