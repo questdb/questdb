@@ -349,10 +349,22 @@ public class ColumnPurgeOperator implements Closeable {
                                 allDone = false;
                                 continue;
                             }
-                        }
 
-                        // Only try to remove index files if the column was indexed
-                        if (IndexType.isIndexed(indexType)) {
+                            // Symbol map files (.k/.v) always exist in the table root directory
+                            // regardless of whether the column is indexed
+                            path.trimTo(pathTrimToPartition);
+                            if (couldNotRemove(ff, BitmapIndexUtils.keyFileName(path, columnName, columnVersion))) {
+                                allDone = false;
+                                continue;
+                            }
+
+                            path.trimTo(pathTrimToPartition);
+                            if (couldNotRemove(ff, BitmapIndexUtils.valueFileName(path, columnName, columnVersion))) {
+                                allDone = false;
+                                continue;
+                            }
+                        } else if (IndexType.isIndexed(indexType)) {
+                            // Only try to remove index files in partitions if the column was indexed
                             path.trimTo(pathTrimToPartition);
                             if (couldNotRemove(ff, IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
                                 allDone = false;
