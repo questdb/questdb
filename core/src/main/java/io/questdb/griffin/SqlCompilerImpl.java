@@ -935,12 +935,28 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             int columnType = SqlUtil.toPersistedType(tok, typePosition);
                             int dim = SqlUtil.parseArrayDimensionality(lexer, columnType, typePosition);
                             if (dim > 0) {
+                                if (!ColumnType.isSupportedArrayElementType(columnType)) {
+                                    throw SqlException.position(typePosition)
+                                            .put("unsupported array element type [type=")
+                                            .put(ColumnType.nameOf(columnType))
+                                            .put(']');
+                                }
                                 columnType = ColumnType.encodeArrayType(ColumnType.tagOf(columnType), dim);
                             }
                             if (columnType == ColumnType.DECIMAL) {
                                 columnType = SqlParser.parseDecimalColumnType(lexer);
                             } else if (columnType == ColumnType.GEOHASH) {
                                 columnType = SqlParser.parseGeoHashColumnType(lexer);
+                            }
+
+                            // check for an unmatched bracket
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok != null && Chars.equals(tok, ']')) {
+                                throw SqlException.position(lexer.lastTokenPosition())
+                                        .put(tableMetadata.getColumnName(columnIndex))
+                                        .put(" has an unmatched `]` - were you trying to define an array?");
+                            } else {
+                                lexer.unparseLast();
                             }
                             final int existingType = tableMetadata.getColumnType(columnIndex);
                             if (existingType != columnType) {

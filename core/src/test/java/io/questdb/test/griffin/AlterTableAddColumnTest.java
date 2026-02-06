@@ -540,6 +540,18 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddDuplicateColumnIfNotExistsArrayUnsupportedElement() throws Exception {
+        createX();
+        execute("alter table x add column int_col int");
+        // INT[] is not a supported array type — should fail with the same error as normal ADD COLUMN
+        assertException(
+                "alter table x add column if not exists int_col int[]",
+                47,
+                "unsupported array element type [type=INT]"
+        );
+    }
+
+    @Test
     public void testAddDuplicateColumnIfNotExistsDecimal() throws Exception {
         createX();
         execute("alter table x add column dec_col decimal(48, 18)");
@@ -574,6 +586,17 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                 "alter table x add column if not exists geo_col geohash(3c)",
                 47,
                 "column already exists with a different column type"
+        );
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsUnmatchedBracket() throws Exception {
+        createX();
+        execute("alter table x add column d_col double");
+        assertException(
+                "alter table x add column if not exists d_col double]",
+                51,
+                "has an unmatched `]` - were you trying to define an array?"
         );
     }
 
