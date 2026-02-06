@@ -9,6 +9,7 @@ mod fixed_len_bytes;
 mod jni;
 mod primitive;
 pub mod schema;
+pub mod simd;
 mod string;
 mod symbol;
 mod update;

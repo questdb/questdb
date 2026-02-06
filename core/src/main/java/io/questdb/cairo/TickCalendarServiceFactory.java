@@ -22,39 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.cairo;
 
-import io.questdb.FactoryProvider;
-import io.questdb.griffin.QueryFutureUpdateListener;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.datetime.NanosecondClock;
-import io.questdb.std.datetime.millitime.MillisecondClock;
+import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.cairo.SecurityContext.AUTH_TYPE_CREDENTIALS;
+/**
+ * Factory for obtaining {@link TickCalendarService} instances.
+ */
+public interface TickCalendarServiceFactory {
 
-public interface JsonQueryProcessorConfiguration {
-
-    int getConnectionCheckFrequency();
-
-    long getExportTimeout();
-
-    FactoryProvider getFactoryProvider();
-
-    FilesFacade getFilesFacade();
-
-    CharSequence getKeepAliveHeader();
-
-    long getMaxQueryResponseRowLimit();
-
-    MillisecondClock getMillisecondClock();
-
-    NanosecondClock getNanosecondClock();
-
-    default QueryFutureUpdateListener getQueryFutureUpdateListener() {
-        return QueryFutureUpdateListener.EMPTY;
-    }
-
-    default byte getRequiredAuthType() {
-        return AUTH_TYPE_CREDENTIALS;
-    }
+    @NotNull
+    TickCalendarService getInstance();
 }

@@ -1015,8 +1015,9 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::Int => {
             let data: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::int_slice_to_page_nullable::<i32, i32>(
-                &data[lower_bound..upper_bound],
+            let slice = &data[lower_bound..upper_bound];
+            primitive::slice_to_page_simd(
+                slice,
                 adjusted_column_top,
                 options,
                 primitive_type,
@@ -1035,8 +1036,9 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::Long | ColumnTypeTag::Date => {
             let data: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::int_slice_to_page_nullable::<i64, i64>(
-                &data[lower_bound..upper_bound],
+            let slice = &data[lower_bound..upper_bound];
+            primitive::slice_to_page_simd(
+                slice,
                 adjusted_column_top,
                 options,
                 primitive_type,
@@ -1046,6 +1048,7 @@ fn chunk_to_primitive_page(
         ColumnTypeTag::Timestamp => {
             let data: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
             if column.designated_timestamp {
+                // Designated timestamp column is NOT NULL, no need for SIMD def level encoding
                 primitive::int_slice_to_page_notnull::<i64, i64>(
                     &data[lower_bound..upper_bound],
                     adjusted_column_top,
@@ -1054,8 +1057,9 @@ fn chunk_to_primitive_page(
                     encoding,
                 )
             } else {
-                primitive::int_slice_to_page_nullable::<i64, i64>(
-                    &data[lower_bound..upper_bound],
+                let slice = &data[lower_bound..upper_bound];
+                primitive::slice_to_page_simd(
+                    slice,
                     adjusted_column_top,
                     options,
                     primitive_type,
@@ -1105,20 +1109,24 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::Float => {
             let data: &[f32] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::float_slice_to_page_plain::<f32, f32>(
-                &data[lower_bound..upper_bound],
+            let slice = &data[lower_bound..upper_bound];
+            primitive::slice_to_page_simd(
+                slice,
                 adjusted_column_top,
                 options,
                 primitive_type,
+                Encoding::Plain,
             )
         }
         ColumnTypeTag::Double => {
             let data: &[f64] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::float_slice_to_page_plain::<f64, f64>(
-                &data[lower_bound..upper_bound],
+            let slice = &data[lower_bound..upper_bound];
+            primitive::slice_to_page_simd(
+                slice,
                 adjusted_column_top,
                 options,
                 primitive_type,
+                Encoding::Plain,
             )
         }
         ColumnTypeTag::Binary => {
