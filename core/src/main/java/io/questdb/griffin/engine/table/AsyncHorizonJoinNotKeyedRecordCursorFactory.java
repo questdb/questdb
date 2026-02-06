@@ -65,6 +65,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
@@ -103,8 +104,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             int valueCount,
             @Nullable ColumnTypes asOfJoinKeyTypes,
-            @Nullable RecordSink masterKeyCopier,
-            @Nullable RecordSink slaveKeyCopier,
+            @Nullable RecordSink masterAsOfJoinMapSink,
+            @Nullable RecordSink slaveAsOfJoinMapSink,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -146,8 +147,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     offsets,
                     valueCount,
                     asOfJoinKeyTypes,
-                    masterKeyCopier,
-                    slaveKeyCopier,
+                    masterAsOfJoinMapSink,
+                    slaveAsOfJoinMapSink,
                     masterColumnCount,
                     masterSymbolKeyColumnIndices,
                     slaveSymbolKeyColumnIndices,
@@ -230,16 +231,16 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
     }
 
     private static void aggregateRecord(
-            MarkoutRecord markoutRecord,
+            HorizonJoinRecord horizonJoinRecord,
             long masterRowId,
             SimpleMapValue value,
             GroupByFunctionsUpdater functionUpdater
     ) {
         if (value.isNew()) {
-            functionUpdater.updateNew(value, markoutRecord, masterRowId);
+            functionUpdater.updateNew(value, horizonJoinRecord, masterRowId);
             value.setNew(false);
         } else {
-            functionUpdater.updateExisting(value, markoutRecord, masterRowId);
+            functionUpdater.updateExisting(value, horizonJoinRecord, masterRowId);
         }
     }
 
@@ -280,7 +281,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
             final SimpleMapValue value = atom.getMapValue(slotId);
             final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
-            final MarkoutRecord markoutRecord = atom.getCombinedRecord(slotId);
+            final HorizonJoinRecord horizonJoinRecord = atom.getHorizonJoinRecord(slotId);
             final CompiledFilter compiledFilter = atom.getCompiledFilter();
             final Function filter = atom.getFilter(slotId);
 
@@ -301,8 +302,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             // Get ASOF join resources
             final MarkoutTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
             final Map asOfJoinMap = atom.getAsOfJoinMap(slotId);  // Cache: joinKey -> rowId
-            final RecordSink masterKeyCopier = atom.getMasterKeyCopier();
-            final RecordSink slaveKeyCopier = atom.getSlaveKeyCopier();
+            final RecordSink masterAsOfJoinMapSink = atom.getMasterKeyCopier();
+            final RecordSink slaveAsOfJoinMapSink = atom.getSlaveKeyCopier();
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
             final Record masterKeyRecord = atom.getMasterKeyRecord(slotId, record);
 
@@ -321,10 +322,10 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     atom,
                     slaveTimeFrameHelper,
                     asOfJoinMap,
-                    masterKeyCopier,
-                    slaveKeyCopier,
+                    masterAsOfJoinMapSink,
+                    slaveAsOfJoinMapSink,
                     slaveRecord,
-                    markoutRecord,
+                    horizonJoinRecord,
                     value,
                     functionUpdater,
                     circuitBreaker
@@ -343,7 +344,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
      * <p>
      * 1. First tuple: Find ASOF position, backward scan until key match, set watermarks
      * 2. Subsequent tuples: Forward scan to new ASOF position (caching keys),
-     *    then lookup in cache. On cache miss, continue backward scan.
+     * then lookup in cache. On cache miss, continue backward scan.
      * <p>
      * Each slave row is scanned at most once per frame (either forward or backward).
      * Watermarks are tracked internally by the helper and reset via toTop().
@@ -356,15 +357,15 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             AsyncHorizonJoinNotKeyedAtom atom,
             MarkoutTimeFrameHelper slaveTimeFrameHelper,
             Map asOfJoinMap,
-            RecordSink masterKeyCopier,
-            RecordSink slaveKeyCopier,
+            RecordSink masterAsOfJoinMapSink,
+            RecordSink slaveAsOfJoinMapSink,
             Record slaveRecord,
-            MarkoutRecord markoutRecord,
+            HorizonJoinRecord horizonJoinRecord,
             SimpleMapValue value,
             GroupByFunctionsUpdater functionUpdater,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
-        final boolean keyedAsOfJoin = asOfJoinMap != null && masterKeyCopier != null && slaveKeyCopier != null;
+        final boolean keyedAsOfJoin = asOfJoinMap != null && masterAsOfJoinMapSink != null && slaveAsOfJoinMapSink != null;
 
         // Reset helper state and clear the ASOF join map for this frame
         slaveTimeFrameHelper.toTop();
@@ -372,9 +373,12 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             asOfJoinMap.clear();
         }
 
+        final long masterTsScale = atom.getMasterTimestampScale();
+
         while (horizonIterator.next()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
 
+            // horizonTs is in master's resolution (master_ts + offset)
             final long horizonTs = horizonIterator.getHorizonTimestamp();
             final long masterRowIdx = horizonIterator.getMasterRowIndex();
             final int offsetIdx = horizonIterator.getOffsetIndex();
@@ -384,8 +388,11 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             masterRecord.setRowIndex(masterRowIdx);
             final long masterRowId = baseRowId + masterRowIdx;
 
+            // Scale horizon timestamp for ASOF lookup (when master/slave have different timestamp types)
+            final long scaledHorizonTs = scaleTimestamp(horizonTs, masterTsScale);
+
             // Find ASOF row for this horizon timestamp (sequential due to sorted iteration)
-            long asOfRowId = slaveTimeFrameHelper.findAsOfRow(horizonTs);
+            long asOfRowId = slaveTimeFrameHelper.findAsOfRow(scaledHorizonTs);
 
             long matchRowId = Long.MIN_VALUE;
             if (keyedAsOfJoin) {
@@ -396,8 +403,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                         matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
                                 asOfRowId,
                                 masterKeyRecord,
-                                masterKeyCopier,
-                                slaveKeyCopier,
+                                masterAsOfJoinMapSink,
+                                slaveAsOfJoinMapSink,
                                 asOfJoinMap
                         );
                         // Initialize forward watermark to ASOF position for subsequent forward scans
@@ -406,13 +413,13 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                         // Subsequent tuples: forward scan first (updates internal watermark)
                         slaveTimeFrameHelper.forwardScanToPosition(
                                 asOfRowId,
-                                slaveKeyCopier,
+                                slaveAsOfJoinMapSink,
                                 asOfJoinMap
                         );
 
                         // Look up the key in the cache
                         MapKey cacheKey = asOfJoinMap.withKey();
-                        cacheKey.put(masterKeyRecord, masterKeyCopier);
+                        cacheKey.put(masterKeyRecord, masterAsOfJoinMapSink);
                         MapValue cacheValue = cacheKey.findValue();
 
                         if (cacheValue != null) {
@@ -422,8 +429,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                             matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
                                     asOfRowId,
                                     masterKeyRecord,
-                                    masterKeyCopier,
-                                    slaveKeyCopier,
+                                    masterAsOfJoinMapSink,
+                                    slaveAsOfJoinMapSink,
                                     asOfJoinMap
                             );
                         }
@@ -440,8 +447,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                 slaveTimeFrameHelper.recordAt(matchRowId);
                 matchedSlaveRecord = slaveRecord;
             }
-            markoutRecord.of(masterRecord, offset, matchedSlaveRecord);
-            aggregateRecord(markoutRecord, masterRowId, value, functionUpdater);
+            horizonJoinRecord.of(masterRecord, offset, horizonTs, matchedSlaveRecord);
+            aggregateRecord(horizonJoinRecord, masterRowId, value, functionUpdater);
         }
     }
 
@@ -483,13 +490,13 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
             final SimpleMapValue value = atom.getMapValue(slotId);
             final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
-            final MarkoutRecord markoutRecord = atom.getCombinedRecord(slotId);
+            final HorizonJoinRecord horizonJoinRecord = atom.getHorizonJoinRecord(slotId);
 
             // Get ASOF join resources
             final MarkoutTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
             final Map asOfJoinMap = atom.getAsOfJoinMap(slotId);  // Cache: joinKey -> rowId
-            final RecordSink masterKeyCopier = atom.getMasterKeyCopier();
-            final RecordSink slaveKeyCopier = atom.getSlaveKeyCopier();
+            final RecordSink masterAsOfJoinMapSink = atom.getMasterKeyCopier();
+            final RecordSink slaveAsOfJoinMapSink = atom.getSlaveKeyCopier();
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
             final Record masterKeyRecord = atom.getMasterKeyRecord(slotId, record);
 
@@ -508,10 +515,10 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     atom,
                     slaveTimeFrameHelper,
                     asOfJoinMap,
-                    masterKeyCopier,
-                    slaveKeyCopier,
+                    masterAsOfJoinMapSink,
+                    slaveAsOfJoinMapSink,
                     slaveRecord,
-                    markoutRecord,
+                    horizonJoinRecord,
                     value,
                     functionUpdater,
                     circuitBreaker

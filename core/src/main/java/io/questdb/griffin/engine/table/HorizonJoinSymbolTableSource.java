@@ -28,19 +28,19 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 
 /**
- * Symbol table source for markout GROUP BY queries that routes symbol table lookups
+ * Symbol table source for HORIZON JOIN queries that routes symbol table lookups
  * to the correct source (master, sequence, or slave) based on column mappings.
  * <p>
  * Column indices in the combined metadata (baseMetadata) are mapped to their
  * source factories using the columnSources and columnIndices arrays.
  */
-class MarkoutSymbolTableSource implements SymbolTableSource {
+class HorizonJoinSymbolTableSource implements SymbolTableSource {
     private final int[] columnIndices;
     private final int[] columnSources;
     private SymbolTableSource masterSource;
     private SymbolTableSource slaveSource;
 
-    MarkoutSymbolTableSource(int[] columnSources, int[] columnIndices) {
+    HorizonJoinSymbolTableSource(int[] columnSources, int[] columnIndices) {
         this.columnSources = columnSources;
         this.columnIndices = columnIndices;
     }
@@ -50,8 +50,8 @@ class MarkoutSymbolTableSource implements SymbolTableSource {
         int source = columnSources[columnIndex];
         int sourceColumnIndex = columnIndices[columnIndex];
         return switch (source) {
-            case MarkoutRecord.SOURCE_MASTER -> masterSource.getSymbolTable(sourceColumnIndex);
-            case MarkoutRecord.SOURCE_SLAVE -> slaveSource.getSymbolTable(sourceColumnIndex);
+            case HorizonJoinRecord.SOURCE_MASTER -> masterSource.getSymbolTable(sourceColumnIndex);
+            case HorizonJoinRecord.SOURCE_SLAVE -> slaveSource.getSymbolTable(sourceColumnIndex);
             // Sequence source (long_sequence) doesn't have symbols
             default -> null;
         };
@@ -62,8 +62,8 @@ class MarkoutSymbolTableSource implements SymbolTableSource {
         int source = columnSources[columnIndex];
         int sourceColumnIndex = columnIndices[columnIndex];
         return switch (source) {
-            case MarkoutRecord.SOURCE_MASTER -> masterSource.newSymbolTable(sourceColumnIndex);
-            case MarkoutRecord.SOURCE_SLAVE -> slaveSource.newSymbolTable(sourceColumnIndex);
+            case HorizonJoinRecord.SOURCE_MASTER -> masterSource.newSymbolTable(sourceColumnIndex);
+            case HorizonJoinRecord.SOURCE_SLAVE -> slaveSource.newSymbolTable(sourceColumnIndex);
             // Sequence source (long_sequence) doesn't have symbols
             default -> null;
         };

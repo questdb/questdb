@@ -28,20 +28,20 @@ import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.LongList;
 
-import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
-
 /**
  * Multi-offset horizon timestamp iterator using K-way merge.
  * <p>
  * Each offset defines a sorted stream of horizon timestamps over the master rows.
  * A min-heap of size K (number of offsets) merges these streams into globally
  * sorted order without materializing or sorting all tuples.
+ * <p>
+ * Returns horizon timestamps in master's resolution (master_ts + offset).
+ * Callers must scale externally for ASOF lookup when master/slave timestamp types differ.
  */
 public class MultiOffsetHorizonTimestampIterator implements HorizonTimestampIterator {
     private final int[] heapOffsetIdx;
     private final long[] heapPos;
     private final long[] heapTs;
-    private final long masterTsScale;
     private final LongList offsets;
     private long currentHorizonTs;
     private long currentIndex;
@@ -56,9 +56,8 @@ public class MultiOffsetHorizonTimestampIterator implements HorizonTimestampIter
     private int timestampColumnIndex;
     private long tupleCount;
 
-    public MultiOffsetHorizonTimestampIterator(LongList offsets, long masterTsScale) {
+    public MultiOffsetHorizonTimestampIterator(LongList offsets) {
         this.offsets = offsets;
-        this.masterTsScale = masterTsScale;
         int k = offsets.size();
         this.heapTs = new long[k];
         this.heapPos = new long[k];
@@ -101,8 +100,7 @@ public class MultiOffsetHorizonTimestampIterator implements HorizonTimestampIter
         if (nextPos < masterRowCount) {
             long nextRowIdx = isFiltered ? filteredRows.get(nextPos) : (frameRowLo + nextPos);
             record.setRowIndex(nextRowIdx);
-            long nextMasterTs = record.getTimestamp(timestampColumnIndex);
-            long nextHorizonTs = scaleTimestamp(nextMasterTs + offsets.getQuick(offsetIdx), masterTsScale);
+            long nextHorizonTs = record.getTimestamp(timestampColumnIndex) + offsets.getQuick(offsetIdx);
             // Replace root and restore heap property
             heapTs[0] = nextHorizonTs;
             heapPos[0] = nextPos;
@@ -160,7 +158,7 @@ public class MultiOffsetHorizonTimestampIterator implements HorizonTimestampIter
             record.setRowIndex(firstRowIdx);
             long firstMasterTs = record.getTimestamp(timestampColumnIndex);
             for (int k = 0, n = offsets.size(); k < n; k++) {
-                long horizonTs = scaleTimestamp(firstMasterTs + offsets.getQuick(k), masterTsScale);
+                long horizonTs = firstMasterTs + offsets.getQuick(k);
                 heapInsert(horizonTs, k);
             }
         }

@@ -371,6 +371,105 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinNotKeyedWithSingleListOffset() throws Exception {
+        // Test single offset via LIST syntax in non-keyed variant
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:00.000000Z', 'BX', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 20),
+                                ('1970-01-01T00:00:01.000000Z', 'BX', 200)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:01.000000Z', 'BX', 20)
+                            """
+            );
+
+            // LIST (0) - single offset, non-keyed query
+            // AX at 1s -> 20, BX at 1s -> 200, avg: 110, sum qty: 30
+            String sql = """
+                    SELECT avg(p.price), sum(t.qty)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                    LIST (0) AS h
+                    """;
+
+            assertQueryNoLeakCheck(
+                    """
+                            avg\tsum
+                            110.0\t30.0
+                            """,
+                    sql,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinNotKeyedWithSymbolMasterStringSlaveKey() throws Exception {
+        // Non-keyed (no GROUP BY keys) variant with SYMBOL master + STRING slave key.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE orders (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym STRING, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.500000Z', 'AAPL', 100.0),
+                                ('1970-01-01T00:00:00.500000Z', 'GOOG', 150.0),
+                                ('1970-01-01T00:00:01.500000Z', 'AAPL', 110.0),
+                                ('1970-01-01T00:00:01.500000Z', 'GOOG', 160.0)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AAPL', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'GOOG', 200)
+                            """
+            );
+
+            // Non-keyed: no GROUP BY keys, only aggregates
+            // At offset 0: AAPL->100, GOOG->150, avg=125, sum=300
+            String sql = """
+                    SELECT avg(p.price), sum(t.qty)
+                    FROM orders AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    """;
+
+            assertQueryNoLeakCheck(
+                    """
+                            avg\tsum
+                            125.0\t300
+                            """,
+                    sql,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinNotKeyedWithoutOnClause() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
@@ -526,9 +625,9 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
                             "RANGE FROM 0s TO 1s STEP 1s AS h",
                     "VirtualRecord\n" +
-                            "  functions: [offset/" + getSecondsDivisor() + ",avg,avg1]\n" +
+                            "  functions: [sec_off,avg,avg1]\n" +
                             "    Async Horizon Join workers: 1 offsets: 2\n" +
-                            "      keys: [offset]\n" +
+                            "      keys: [sec_off]\n" +
                             "      values: [avg(p.bid),avg(p.ask)]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
@@ -609,6 +708,396 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             """,
                     sql,
                     null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithExplicitGroupBy() throws Exception {
+        // Explicit GROUP BY is allowed with HORIZON JOIN as validation-only (no-op)
+        // since HORIZON JOIN always assumes aggregation
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:00.000000Z', 'BX', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 20),
+                                ('1970-01-01T00:00:01.000000Z', 'BX', 200),
+                                ('1970-01-01T00:00:02.000000Z', 'AX', 30),
+                                ('1970-01-01T00:00:02.000000Z', 'BX', 300)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:01.000000Z', 'BX', 20)
+                            """
+            );
+
+            // Query with explicit GROUP BY (validation-only, same result as without GROUP BY)
+            // At offset 0: AX -> 20, BX -> 200
+            // At offset 1s: AX -> 30, BX -> 300
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, t.sym, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "GROUP BY h.offset, t.sym " +
+                    "ORDER BY sec_offs, t.sym";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tsym\tavg
+                            0\tAX\t20.0
+                            0\tBX\t200.0
+                            1\tAX\t30.0
+                            1\tBX\t300.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithExplicitGroupByUsingIndexes() throws Exception {
+        // Test GROUP BY with column indexes (e.g., GROUP BY 1, 2)
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 20)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 10)
+                            """
+            );
+
+            // GROUP BY using column indexes (1 = sec_offs, 2 = sym)
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, t.sym, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "GROUP BY 1, 2 " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tsym\tavg
+                            0\tAX\t20.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithExpressionKeyAndGroupBy() throws Exception {
+        // Test with a single expression key involving LHS (t), RHS (p), and offsets virtual table (h)
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:00.000000Z', 'BXX', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 20),
+                                ('1970-01-01T00:00:01.000000Z', 'BXX', 200)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 5),
+                                ('1970-01-01T00:00:01.000000Z', 'BXX', 3)
+                            """
+            );
+
+            // Single expression key combining all three tables:
+            // t.qty + h.offset / divisor + length(p.sym)
+            //   - t.qty: from LHS
+            //   - h.offset / divisor: from offsets virtual table
+            //   - length(p.sym): from RHS (p.sym is join key)
+            //
+            // For trade AX (qty=5, sym length=2) at 1s:
+            //   Offset 0: key = 5 + 0 + 2 = 7, avg(price) = 20
+            //   Offset 1s: key = 5 + 1 + 2 = 8, avg(price) = 20
+            // For trade BXX (qty=3, sym length=3) at 1s:
+            //   Offset 0: key = 3 + 0 + 3 = 6, avg(price) = 200
+            //   Offset 1s: key = 3 + 1 + 3 = 7, avg(price) = 200
+            String sql = "SELECT t.qty + h.offset / " + getSecondsDivisor() + " + length(p.sym) AS combined_key, " +
+                    "avg(p.price) AS avg_price " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "GROUP BY t.qty + h.offset / " + getSecondsDivisor() + " + length(p.sym) " +
+                    "ORDER BY combined_key";
+
+            assertQueryNoLeakCheck(
+                    """
+                            combined_key\tavg_price
+                            6\t200.0
+                            7\t110.0
+                            8\t20.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithGroupByColumnNotInSelect() throws Exception {
+        // GROUP BY with a column not referenced in any SELECT column should fail
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            // GROUP BY has h.offset, p.sym but SELECT has h.offset, t.sym - p.sym doesn't match t.sym
+            assertExceptionNoLeakCheck(
+                    "SELECT h.offset, t.sym, avg(p.price) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                            "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                            "GROUP BY h.offset, p.sym",
+                    150,
+                    "HORIZON JOIN GROUP BY column must match a non-aggregate SELECT column"
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithGroupByExtraColumn() throws Exception {
+        // GROUP BY with extra column not in SELECT should fail
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            // GROUP BY has h.offset, t.sym, t.qty but SELECT only has h.offset, t.sym as non-aggregates
+            assertExceptionNoLeakCheck(
+                    "SELECT h.offset, t.sym, avg(p.price) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                            "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                            "GROUP BY h.offset, t.sym, t.qty",
+                    140,
+                    "HORIZON JOIN GROUP BY column count (3) must match non-aggregate SELECT column count (2)"
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithGroupByIndexOnAggregate() throws Exception {
+        // GROUP BY with index pointing to aggregate column should fail
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            // GROUP BY 1, 3 where column 3 is avg(p.price) - an aggregate
+            assertExceptionNoLeakCheck(
+                    "SELECT h.offset, t.sym, avg(p.price) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                            "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                            "GROUP BY 1, 3",
+                    143,
+                    "HORIZON JOIN GROUP BY cannot reference aggregate column at position 3"
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithGroupByMissingColumn() throws Exception {
+        // GROUP BY missing a non-aggregate SELECT column should fail
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            // GROUP BY only has h.offset but SELECT has h.offset, t.sym as non-aggregates
+            assertExceptionNoLeakCheck(
+                    "SELECT h.offset, t.sym, avg(p.price) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                            "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                            "GROUP BY h.offset",
+                    140,
+                    "HORIZON JOIN GROUP BY column count (1) must match non-aggregate SELECT column count (2)"
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithHorizonOffsetExpressionKey() throws Exception {
+        // Test with an expression involving only h.offset (h.offset / divisor + constant)
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:00.000000Z', 'BX', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 20),
+                                ('1970-01-01T00:00:01.000000Z', 'BX', 200)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 5),
+                                ('1970-01-01T00:00:01.000000Z', 'BX', 3)
+                            """
+            );
+
+            // Using h.offset / divisor + 100 as the key
+            // At offset 0s (key=100): avg=(20+200)/2=110
+            // At offset 1s (key=101): avg=110
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " + 100 AS offset_key, " +
+                    "avg(p.price) AS avg_price " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "GROUP BY h.offset / " + getSecondsDivisor() + " + 100 " +
+                    "ORDER BY offset_key";
+
+            assertQueryNoLeakCheck(
+                    """
+                            offset_key\tavg_price
+                            100\t110.0
+                            101\t110.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithHorizonOffsetKey() throws Exception {
+        // Test with h.offset as the only GROUP BY key (tests the preserveQualifiedNames flag)
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:00.000000Z', 'BX', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 20),
+                                ('1970-01-01T00:00:01.000000Z', 'BX', 200)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 5),
+                                ('1970-01-01T00:00:01.000000Z', 'BX', 3)
+                            """
+            );
+
+            // Using h.offset / divisor as the key
+            // At offset 0s (key=0): AX avg=20, BX avg=200 -> combined avg=(20+200)/2=110
+            // At offset 1s (key=1): AX avg=20, BX avg=200 -> combined avg=110
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, " +
+                    "avg(p.price) AS avg_price " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "GROUP BY h.offset / " + getSecondsDivisor() + " " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg_price
+                            0\t110.0
+                            1\t110.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithHorizonTimestampKey() throws Exception {
+        // Test with h.timestamp as the GROUP BY key
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:00.000000Z', 'BX', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 20),
+                                ('1970-01-01T00:00:01.000000Z', 'BX', 200)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 5),
+                                ('1970-01-01T00:00:01.000000Z', 'BX', 3)
+                            """
+            );
+
+            // Using h.timestamp as the key (horizon timestamp = trade timestamp + offset)
+            // Trade at 1s:
+            //   Offset 0s -> h.timestamp = 1s, avg(price) = 110
+            //   Offset 1s -> h.timestamp = 2s, avg(price) = 110
+            String sql = "SELECT h.timestamp AS hts, " +
+                    "avg(p.price) AS avg_price " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "GROUP BY h.timestamp " +
+                    "ORDER BY hts";
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedMasterTimestamp(
+                            """
+                                    hts\tavg_price
+                                    1970-01-01T00:00:01.000000Z\t110.0
+                                    1970-01-01T00:00:02.000000Z\t110.0
+                                    """
+                    ),
+                    sql,
+                    "hts",
                     true,
                     true
             );
@@ -811,6 +1300,55 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinWithMultiColumnMixedSymbolAndStringKey() throws Exception {
+        // Test multi-column key where one column pair is SYMBOL+SYMBOL (uses integer optimization)
+        // and another column pair is SYMBOL+STRING (falls back to string comparison).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE orders (ts #TIMESTAMP, sym SYMBOL, region SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            // Note: region is STRING on slave side, sym is SYMBOL on both sides
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, region STRING, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.500000Z', 'AAPL', 'US', 100.0),
+                                ('1970-01-01T00:00:00.500000Z', 'AAPL', 'EU', 105.0),
+                                ('1970-01-01T00:00:01.500000Z', 'AAPL', 'US', 110.0),
+                                ('1970-01-01T00:00:01.500000Z', 'AAPL', 'EU', 115.0)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AAPL', 'US', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'AAPL', 'EU', 200)
+                            """
+            );
+
+            // At offset 0: AAPL/US->100, AAPL/EU->105, avg=102.5
+            // At offset 1s: AAPL/US->110, AAPL/EU->115, avg=112.5
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
+                    "FROM orders AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym AND t.region = p.region) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tsum
+                            0\t102.5\t300
+                            1\t112.5\t300
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinWithMultiColumnMixedTypeKey() throws Exception {
         // Test HORIZON JOIN with mixed-type multi-column key (SYMBOL + LONG)
         assertMemoryLeak(() -> {
@@ -848,6 +1386,63 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             sec_offs\tavg\tsum
                             0\t102.5\t300
                             1\t112.5\t300
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithMultiColumnSymbolAndNullKey() throws Exception {
+        // Test multi-column SYMBOL+SYMBOL key where some rows have null symbol values.
+        // Verifies that null symbol IDs are handled correctly in the translation cache.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE orders (ts #TIMESTAMP, sym SYMBOL, exchange SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, exchange SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.500000Z', 'AAPL', 'NYSE', 100.0),
+                                ('1970-01-01T00:00:00.500000Z', 'AAPL', null, 105.0),
+                                ('1970-01-01T00:00:01.500000Z', 'AAPL', 'NYSE', 110.0),
+                                ('1970-01-01T00:00:01.500000Z', null, 'NASDAQ', 200.0)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AAPL', 'NYSE', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'AAPL', null, 200),
+                                ('1970-01-01T00:00:02.000000Z', null, 'NASDAQ', 300)
+                            """
+            );
+
+            // At offset 0:
+            //   AAPL/NYSE at 1s -> ASOF to 0.5s -> 100
+            //   AAPL/null at 1s -> ASOF to 0.5s -> 105
+            //   null/NASDAQ at 2s -> ASOF to 1.5s -> 200
+            // avg: (100+105+200)/3 = 135, sum qty: 600
+            // At offset 1s:
+            //   AAPL/NYSE at 1s -> ASOF to 2s -> latest AAPL/NYSE 1.5s -> 110
+            //   AAPL/null at 1s -> ASOF to 2s -> latest AAPL/null 0.5s -> 105
+            //   null/NASDAQ at 2s -> ASOF to 3s -> latest null/NASDAQ 1.5s -> 200
+            // avg: (110+105+200)/3 = 138.33..., sum qty: 600
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
+                    "FROM orders AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym AND t.exchange = p.exchange) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tsum
+                            0\t135.0\t600
+                            1\t138.33333333333334\t600
                             """,
                     sql,
                     null,
@@ -918,25 +1513,6 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testHorizonJoinWithRangeAndGroupByNotSupported() throws Exception {
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-
-            // Explicit GROUP BY is not supported with HORIZON JOIN
-            assertExceptionNoLeakCheck(
-                    "SELECT h.offset, t.sym, avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM -600s TO 600s STEP 1s AS h " +
-                            "GROUP BY h.offset, t.sym",
-                    145,
-                    "GROUP BY cannot be used with HORIZON JOIN"
-            );
-        });
-    }
-
-    @Test
     public void testHorizonJoinWithRangeBasic() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -985,9 +1561,9 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "Radix sort light\n" +
                             "  keys: [sec_offs]\n" +
                             "    VirtualRecord\n" +
-                            "      functions: [offset/" + getSecondsDivisor() + ",avg]\n" +
+                            "      functions: [sec_offs,avg]\n" +
                             "        Async Horizon Join workers: 1 offsets: 3\n" +
-                            "          keys: [offset]\n" +
+                            "          keys: [sec_offs]\n" +
                             "          values: [avg(p.price)]\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
@@ -1067,6 +1643,250 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinWithSingleListNonZeroOffset() throws Exception {
+        // Test single non-zero offset via LIST syntax
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 20),
+                                ('1970-01-01T00:00:02.000000Z', 'AX', 30),
+                                ('1970-01-01T00:00:03.000000Z', 'AX', 40)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 100),
+                                ('1970-01-01T00:00:02.000000Z', 'AX', 200)
+                            """
+            );
+
+            // LIST (1000000) - single offset of 1 second
+            // For trade at 1s: offset=1s -> ASOF to 2s -> 30
+            // For trade at 2s: offset=1s -> ASOF to 3s -> 40
+            // avg: (30+40)/2 = 35
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "LIST (1000000) AS h " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg
+                            1\t35.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithSingleListOffset() throws Exception {
+        // Test single offset via LIST syntax - exercises SingleOffsetHorizonTimestampIterator
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 20),
+                                ('1970-01-01T00:00:02.000000Z', 'AX', 30)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 100)
+                            """
+            );
+
+            // LIST (0) - single zero offset
+            // For trade at 1s: offset=0 -> ASOF to 1s -> 20
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "LIST (0) AS h " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg
+                            0\t20.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithSingleNegativeListOffset() throws Exception {
+        // Test single negative offset via LIST syntax
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 10),
+                                ('1970-01-01T00:00:01.000000Z', 20),
+                                ('1970-01-01T00:00:02.000000Z', 30),
+                                ('1970-01-01T00:00:03.000000Z', 40)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:02.000000Z', 100),
+                                ('1970-01-01T00:00:03.000000Z', 200)
+                            """
+            );
+
+            // LIST (-1000000) - single negative offset of -1 second
+            // For trade at 2s: offset=-1s -> ASOF to 1s -> 20
+            // For trade at 3s: offset=-1s -> ASOF to 2s -> 30
+            // avg: 25, sum qty: 300
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p " +
+                    "LIST (-1000000) AS h " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tsum
+                            -1\t25.0\t300.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithSingleOffsetAndFilter() throws Exception {
+        // Test single offset with master table filter (exercises filtered path in SingleOffsetHorizonTimestampIterator)
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 20),
+                                ('1970-01-01T00:00:02.000000Z', 'BX', 100),
+                                ('1970-01-01T00:00:03.000000Z', 'BX', 200)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:02.000000Z', 'AX', 20),
+                                ('1970-01-01T00:00:03.000000Z', 'BX', 30)
+                            """
+            );
+
+            // Single offset via LIST (0) with filter on AX
+            // AX at 1s -> 20, AX at 2s -> 20 (still 20, no AX price at 2s)
+            // avg: 20, sum qty: 30
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "LIST (0) AS h " +
+                    "WHERE t.sym = 'AX' " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tsum
+                            0\t20.0\t30.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithSingleOffsetWithoutOnClause() throws Exception {
+        // Test single offset without ON clause
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 10),
+                                ('1970-01-01T00:00:01.000000Z', 20),
+                                ('1970-01-01T00:00:02.000000Z', 30)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 100),
+                                ('1970-01-01T00:00:02.000000Z', 200)
+                            """
+            );
+
+            // Single offset via LIST (0), no ON clause
+            // For trade at 1s: offset=0 -> ASOF to 1s -> 20
+            // For trade at 2s: offset=0 -> ASOF to 2s -> 30
+            // avg: 25, sum qty: 300
+            String sql = """
+                    SELECT avg(p.price), sum(t.qty)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p
+                    LIST (0) AS h
+                    """;
+
+            assertQueryNoLeakCheck(
+                    """
+                            avg\tsum
+                            25.0\t300.0
+                            """,
+                    sql,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinWithSlaveSymbolAsKey() throws Exception {
         // Test using a slave symbol as a grouping key
         assertMemoryLeak(() -> {
@@ -1122,6 +1942,117 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinWithStringMasterSymbolSlaveKey() throws Exception {
+        // Test HORIZON JOIN where master key column is STRING and slave key column is SYMBOL.
+        // This should fall back to string-based comparison (no integer optimization).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE orders (ts #TIMESTAMP, sym STRING, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.500000Z', 'AAPL', 100.0),
+                                ('1970-01-01T00:00:00.500000Z', 'GOOG', 150.0),
+                                ('1970-01-01T00:00:01.500000Z', 'AAPL', 110.0),
+                                ('1970-01-01T00:00:01.500000Z', 'GOOG', 160.0)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AAPL', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'GOOG', 200)
+                            """
+            );
+
+            // At offset 0: AAPL->100, GOOG->150, avg=125
+            // At offset 1s: AAPL->110, GOOG->160, avg=135
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
+                    "FROM orders AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tsum
+                            0\t125.0\t300
+                            1\t135.0\t300
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithSymbolExpressionKey() throws Exception {
+        // Test with an expression key that uses symbols from both LHS and RHS tables
+        // This verifies that symbol table sources are properly initialized for key functions
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, category SYMBOL) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, region SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 'A', 'US', 10),
+                                ('1970-01-01T00:00:00.000000Z', 'B', 'EU', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'A', 'US', 20),
+                                ('1970-01-01T00:00:01.000000Z', 'B', 'EU', 200)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'A', 'X'),
+                                ('1970-01-01T00:00:01.000000Z', 'B', 'Y')
+                            """
+            );
+
+            // Expression key combining symbols from LHS (t.category) and RHS (p.region):
+            // concat(t.category, '-', p.region)
+            //
+            // For trade A (category='X') matching price (region='US') at offset 0s:
+            //   key = 'X-US', avg(price) = 20
+            // For trade A (category='X') matching price (region='US') at offset 1s:
+            //   key = 'X-US', avg(price) = 20
+            // For trade B (category='Y') matching price (region='EU') at offset 0s:
+            //   key = 'Y-EU', avg(price) = 200
+            // For trade B (category='Y') matching price (region='EU') at offset 1s:
+            //   key = 'Y-EU', avg(price) = 200
+            //
+            // After aggregation:
+            //   'X-US' -> avg(20, 20) = 20.0
+            //   'Y-EU' -> avg(200, 200) = 200.0
+            String sql = "SELECT concat(t.category, '-', p.region) AS combined_key, " +
+                    "avg(p.price) AS avg_price " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "GROUP BY concat(t.category, '-', p.region) " +
+                    "ORDER BY combined_key";
+
+            assertQueryNoLeakCheck(
+                    """
+                            combined_key\tavg_price
+                            X-US\t20.0
+                            Y-EU\t200.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinWithSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE trades (sym SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;", leftTableTimestampType.getTypeName());
@@ -1154,6 +2085,102 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
                             "RANGE FROM 0s TO 1s STEP 1s AS h " +
                             "ORDER BY sec_off",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithSymbolMasterStringSlaveKey() throws Exception {
+        // Test HORIZON JOIN where master key column is SYMBOL and slave key column is STRING.
+        // This should fall back to string-based comparison (no integer optimization).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE orders (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym STRING, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.500000Z', 'AAPL', 100.0),
+                                ('1970-01-01T00:00:00.500000Z', 'GOOG', 150.0),
+                                ('1970-01-01T00:00:01.500000Z', 'AAPL', 110.0),
+                                ('1970-01-01T00:00:01.500000Z', 'GOOG', 160.0)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AAPL', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'GOOG', 200)
+                            """
+            );
+
+            // At offset 0: AAPL->100, GOOG->150, avg=125
+            // At offset 1s: AAPL->110, GOOG->160, avg=135
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
+                    "FROM orders AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tsum
+                            0\t125.0\t300
+                            1\t135.0\t300
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithSymbolMasterVarcharSlaveKey() throws Exception {
+        // Test HORIZON JOIN where master key column is SYMBOL and slave key column is VARCHAR.
+        // This should fall back to varchar-based comparison (no integer optimization).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE orders (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym VARCHAR, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.500000Z', 'AAPL', 100.0),
+                                ('1970-01-01T00:00:00.500000Z', 'GOOG', 150.0),
+                                ('1970-01-01T00:00:01.500000Z', 'AAPL', 110.0),
+                                ('1970-01-01T00:00:01.500000Z', 'GOOG', 160.0)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AAPL', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'GOOG', 200)
+                            """
+            );
+
+            // At offset 0: AAPL->100, GOOG->150, avg=125
+            // At offset 1s: AAPL->110, GOOG->160, avg=135
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
+                    "FROM orders AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tsum
+                            0\t125.0\t300
+                            1\t135.0\t300
+                            """,
+                    sql,
                     null,
                     true,
                     true
@@ -1533,604 +2560,15 @@ public class HorizonJoinTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testHorizonJoinWithSymbolMasterStringSlaveKey() throws Exception {
-        // Test HORIZON JOIN where master key column is SYMBOL and slave key column is STRING.
-        // This should fall back to string-based comparison (no integer optimization).
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("CREATE TABLE orders (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym STRING, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-
-            execute(
-                    """
-                            INSERT INTO prices VALUES
-                                ('1970-01-01T00:00:00.500000Z', 'AAPL', 100.0),
-                                ('1970-01-01T00:00:00.500000Z', 'GOOG', 150.0),
-                                ('1970-01-01T00:00:01.500000Z', 'AAPL', 110.0),
-                                ('1970-01-01T00:00:01.500000Z', 'GOOG', 160.0)
-                            """
-            );
-
-            execute(
-                    """
-                            INSERT INTO orders VALUES
-                                ('1970-01-01T00:00:01.000000Z', 'AAPL', 100),
-                                ('1970-01-01T00:00:01.000000Z', 'GOOG', 200)
-                            """
-            );
-
-            // At offset 0: AAPL->100, GOOG->150, avg=125
-            // At offset 1s: AAPL->110, GOOG->160, avg=135
-            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
-                    "FROM orders AS t " +
-                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
-                    "ORDER BY sec_offs";
-
-            assertQueryNoLeakCheck(
-                    """
-                            sec_offs\tavg\tsum
-                            0\t125.0\t300
-                            1\t135.0\t300
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testHorizonJoinWithStringMasterSymbolSlaveKey() throws Exception {
-        // Test HORIZON JOIN where master key column is STRING and slave key column is SYMBOL.
-        // This should fall back to string-based comparison (no integer optimization).
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("CREATE TABLE orders (ts #TIMESTAMP, sym STRING, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-
-            execute(
-                    """
-                            INSERT INTO prices VALUES
-                                ('1970-01-01T00:00:00.500000Z', 'AAPL', 100.0),
-                                ('1970-01-01T00:00:00.500000Z', 'GOOG', 150.0),
-                                ('1970-01-01T00:00:01.500000Z', 'AAPL', 110.0),
-                                ('1970-01-01T00:00:01.500000Z', 'GOOG', 160.0)
-                            """
-            );
-
-            execute(
-                    """
-                            INSERT INTO orders VALUES
-                                ('1970-01-01T00:00:01.000000Z', 'AAPL', 100),
-                                ('1970-01-01T00:00:01.000000Z', 'GOOG', 200)
-                            """
-            );
-
-            // At offset 0: AAPL->100, GOOG->150, avg=125
-            // At offset 1s: AAPL->110, GOOG->160, avg=135
-            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
-                    "FROM orders AS t " +
-                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
-                    "ORDER BY sec_offs";
-
-            assertQueryNoLeakCheck(
-                    """
-                            sec_offs\tavg\tsum
-                            0\t125.0\t300
-                            1\t135.0\t300
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testHorizonJoinWithSymbolMasterVarcharSlaveKey() throws Exception {
-        // Test HORIZON JOIN where master key column is SYMBOL and slave key column is VARCHAR.
-        // This should fall back to varchar-based comparison (no integer optimization).
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("CREATE TABLE orders (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym VARCHAR, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-
-            execute(
-                    """
-                            INSERT INTO prices VALUES
-                                ('1970-01-01T00:00:00.500000Z', 'AAPL', 100.0),
-                                ('1970-01-01T00:00:00.500000Z', 'GOOG', 150.0),
-                                ('1970-01-01T00:00:01.500000Z', 'AAPL', 110.0),
-                                ('1970-01-01T00:00:01.500000Z', 'GOOG', 160.0)
-                            """
-            );
-
-            execute(
-                    """
-                            INSERT INTO orders VALUES
-                                ('1970-01-01T00:00:01.000000Z', 'AAPL', 100),
-                                ('1970-01-01T00:00:01.000000Z', 'GOOG', 200)
-                            """
-            );
-
-            // At offset 0: AAPL->100, GOOG->150, avg=125
-            // At offset 1s: AAPL->110, GOOG->160, avg=135
-            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
-                    "FROM orders AS t " +
-                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
-                    "ORDER BY sec_offs";
-
-            assertQueryNoLeakCheck(
-                    """
-                            sec_offs\tavg\tsum
-                            0\t125.0\t300
-                            1\t135.0\t300
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testHorizonJoinWithMultiColumnMixedSymbolAndStringKey() throws Exception {
-        // Test multi-column key where one column pair is SYMBOL+SYMBOL (uses integer optimization)
-        // and another column pair is SYMBOL+STRING (falls back to string comparison).
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("CREATE TABLE orders (ts #TIMESTAMP, sym SYMBOL, region SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
-            // Note: region is STRING on slave side, sym is SYMBOL on both sides
-            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, region STRING, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-
-            execute(
-                    """
-                            INSERT INTO prices VALUES
-                                ('1970-01-01T00:00:00.500000Z', 'AAPL', 'US', 100.0),
-                                ('1970-01-01T00:00:00.500000Z', 'AAPL', 'EU', 105.0),
-                                ('1970-01-01T00:00:01.500000Z', 'AAPL', 'US', 110.0),
-                                ('1970-01-01T00:00:01.500000Z', 'AAPL', 'EU', 115.0)
-                            """
-            );
-
-            execute(
-                    """
-                            INSERT INTO orders VALUES
-                                ('1970-01-01T00:00:01.000000Z', 'AAPL', 'US', 100),
-                                ('1970-01-01T00:00:01.000000Z', 'AAPL', 'EU', 200)
-                            """
-            );
-
-            // At offset 0: AAPL/US->100, AAPL/EU->105, avg=102.5
-            // At offset 1s: AAPL/US->110, AAPL/EU->115, avg=112.5
-            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
-                    "FROM orders AS t " +
-                    "HORIZON JOIN prices AS p ON (t.sym = p.sym AND t.region = p.region) " +
-                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
-                    "ORDER BY sec_offs";
-
-            assertQueryNoLeakCheck(
-                    """
-                            sec_offs\tavg\tsum
-                            0\t102.5\t300
-                            1\t112.5\t300
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testHorizonJoinNotKeyedWithSymbolMasterStringSlaveKey() throws Exception {
-        // Non-keyed (no GROUP BY keys) variant with SYMBOL master + STRING slave key.
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("CREATE TABLE orders (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym STRING, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-
-            execute(
-                    """
-                            INSERT INTO prices VALUES
-                                ('1970-01-01T00:00:00.500000Z', 'AAPL', 100.0),
-                                ('1970-01-01T00:00:00.500000Z', 'GOOG', 150.0),
-                                ('1970-01-01T00:00:01.500000Z', 'AAPL', 110.0),
-                                ('1970-01-01T00:00:01.500000Z', 'GOOG', 160.0)
-                            """
-            );
-
-            execute(
-                    """
-                            INSERT INTO orders VALUES
-                                ('1970-01-01T00:00:01.000000Z', 'AAPL', 100),
-                                ('1970-01-01T00:00:01.000000Z', 'GOOG', 200)
-                            """
-            );
-
-            // Non-keyed: no GROUP BY keys, only aggregates
-            // At offset 0: AAPL->100, GOOG->150, avg=125, sum=300
-            String sql = """
-                    SELECT avg(p.price), sum(t.qty)
-                    FROM orders AS t
-                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
-                    RANGE FROM 0s TO 0s STEP 1s AS h
-                    """;
-
-            assertQueryNoLeakCheck(
-                    """
-                            avg\tsum
-                            125.0\t300
-                            """,
-                    sql,
-                    null,
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testHorizonJoinWithMultiColumnSymbolAndNullKey() throws Exception {
-        // Test multi-column SYMBOL+SYMBOL key where some rows have null symbol values.
-        // Verifies that null symbol IDs are handled correctly in the translation cache.
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("CREATE TABLE orders (ts #TIMESTAMP, sym SYMBOL, exchange SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, exchange SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-
-            execute(
-                    """
-                            INSERT INTO prices VALUES
-                                ('1970-01-01T00:00:00.500000Z', 'AAPL', 'NYSE', 100.0),
-                                ('1970-01-01T00:00:00.500000Z', 'AAPL', null, 105.0),
-                                ('1970-01-01T00:00:01.500000Z', 'AAPL', 'NYSE', 110.0),
-                                ('1970-01-01T00:00:01.500000Z', null, 'NASDAQ', 200.0)
-                            """
-            );
-
-            execute(
-                    """
-                            INSERT INTO orders VALUES
-                                ('1970-01-01T00:00:01.000000Z', 'AAPL', 'NYSE', 100),
-                                ('1970-01-01T00:00:01.000000Z', 'AAPL', null, 200),
-                                ('1970-01-01T00:00:02.000000Z', null, 'NASDAQ', 300)
-                            """
-            );
-
-            // At offset 0:
-            //   AAPL/NYSE at 1s -> ASOF to 0.5s -> 100
-            //   AAPL/null at 1s -> ASOF to 0.5s -> 105
-            //   null/NASDAQ at 2s -> ASOF to 1.5s -> 200
-            // avg: (100+105+200)/3 = 135, sum qty: 600
-            // At offset 1s:
-            //   AAPL/NYSE at 1s -> ASOF to 2s -> latest AAPL/NYSE 1.5s -> 110
-            //   AAPL/null at 1s -> ASOF to 2s -> latest AAPL/null 0.5s -> 105
-            //   null/NASDAQ at 2s -> ASOF to 3s -> latest null/NASDAQ 1.5s -> 200
-            // avg: (110+105+200)/3 = 138.33..., sum qty: 600
-            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
-                    "FROM orders AS t " +
-                    "HORIZON JOIN prices AS p ON (t.sym = p.sym AND t.exchange = p.exchange) " +
-                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
-                    "ORDER BY sec_offs";
-
-            assertQueryNoLeakCheck(
-                    """
-                            sec_offs\tavg\tsum
-                            0\t135.0\t600
-                            1\t138.33333333333334\t600
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testHorizonJoinWithSingleListOffset() throws Exception {
-        // Test single offset via LIST syntax - exercises SingleOffsetHorizonTimestampIterator
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)",
-                    leftTableTimestampType.getTypeName()
-            );
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)",
-                    rightTableTimestampType.getTypeName()
-            );
-
-            execute(
-                    """
-                            INSERT INTO prices VALUES
-                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
-                                ('1970-01-01T00:00:01.000000Z', 'AX', 20),
-                                ('1970-01-01T00:00:02.000000Z', 'AX', 30)
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO trades VALUES
-                                ('1970-01-01T00:00:01.000000Z', 'AX', 100)
-                            """
-            );
-
-            // LIST (0) - single zero offset
-            // For trade at 1s: offset=0 -> ASOF to 1s -> 20
-            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price) " +
-                    "FROM trades AS t " +
-                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                    "LIST (0) AS h " +
-                    "ORDER BY sec_offs";
-
-            assertQueryNoLeakCheck(
-                    """
-                            sec_offs\tavg
-                            0\t20.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testHorizonJoinWithSingleListNonZeroOffset() throws Exception {
-        // Test single non-zero offset via LIST syntax
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)",
-                    leftTableTimestampType.getTypeName()
-            );
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)",
-                    rightTableTimestampType.getTypeName()
-            );
-
-            execute(
-                    """
-                            INSERT INTO prices VALUES
-                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
-                                ('1970-01-01T00:00:01.000000Z', 'AX', 20),
-                                ('1970-01-01T00:00:02.000000Z', 'AX', 30),
-                                ('1970-01-01T00:00:03.000000Z', 'AX', 40)
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO trades VALUES
-                                ('1970-01-01T00:00:01.000000Z', 'AX', 100),
-                                ('1970-01-01T00:00:02.000000Z', 'AX', 200)
-                            """
-            );
-
-            // LIST (1000000) - single offset of 1 second
-            // For trade at 1s: offset=1s -> ASOF to 2s -> 30
-            // For trade at 2s: offset=1s -> ASOF to 3s -> 40
-            // avg: (30+40)/2 = 35
-            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price) " +
-                    "FROM trades AS t " +
-                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                    "LIST (1000000) AS h " +
-                    "ORDER BY sec_offs";
-
-            assertQueryNoLeakCheck(
-                    """
-                            sec_offs\tavg
-                            1\t35.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testHorizonJoinNotKeyedWithSingleListOffset() throws Exception {
-        // Test single offset via LIST syntax in non-keyed variant
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)",
-                    leftTableTimestampType.getTypeName()
-            );
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)",
-                    rightTableTimestampType.getTypeName()
-            );
-
-            execute(
-                    """
-                            INSERT INTO prices VALUES
-                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
-                                ('1970-01-01T00:00:00.000000Z', 'BX', 100),
-                                ('1970-01-01T00:00:01.000000Z', 'AX', 20),
-                                ('1970-01-01T00:00:01.000000Z', 'BX', 200)
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO trades VALUES
-                                ('1970-01-01T00:00:01.000000Z', 'AX', 10),
-                                ('1970-01-01T00:00:01.000000Z', 'BX', 20)
-                            """
-            );
-
-            // LIST (0) - single offset, non-keyed query
-            // AX at 1s -> 20, BX at 1s -> 200, avg: 110, sum qty: 30
-            String sql = """
-                    SELECT avg(p.price), sum(t.qty)
-                    FROM trades AS t
-                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
-                    LIST (0) AS h
-                    """;
-
-            assertQueryNoLeakCheck(
-                    """
-                            avg\tsum
-                            110.0\t30.0
-                            """,
-                    sql,
-                    null,
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testHorizonJoinWithSingleOffsetWithoutOnClause() throws Exception {
-        // Test single offset without ON clause
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-
-            execute(
-                    """
-                            INSERT INTO prices VALUES
-                                ('1970-01-01T00:00:00.000000Z', 10),
-                                ('1970-01-01T00:00:01.000000Z', 20),
-                                ('1970-01-01T00:00:02.000000Z', 30)
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO trades VALUES
-                                ('1970-01-01T00:00:01.000000Z', 100),
-                                ('1970-01-01T00:00:02.000000Z', 200)
-                            """
-            );
-
-            // Single offset via LIST (0), no ON clause
-            // For trade at 1s: offset=0 -> ASOF to 1s -> 20
-            // For trade at 2s: offset=0 -> ASOF to 2s -> 30
-            // avg: 25, sum qty: 300
-            String sql = """
-                    SELECT avg(p.price), sum(t.qty)
-                    FROM trades AS t
-                    HORIZON JOIN prices AS p
-                    LIST (0) AS h
-                    """;
-
-            assertQueryNoLeakCheck(
-                    """
-                            avg\tsum
-                            25.0\t300.0
-                            """,
-                    sql,
-                    null,
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testHorizonJoinWithSingleNegativeListOffset() throws Exception {
-        // Test single negative offset via LIST syntax
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-
-            execute(
-                    """
-                            INSERT INTO prices VALUES
-                                ('1970-01-01T00:00:00.000000Z', 10),
-                                ('1970-01-01T00:00:01.000000Z', 20),
-                                ('1970-01-01T00:00:02.000000Z', 30),
-                                ('1970-01-01T00:00:03.000000Z', 40)
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO trades VALUES
-                                ('1970-01-01T00:00:02.000000Z', 100),
-                                ('1970-01-01T00:00:03.000000Z', 200)
-                            """
-            );
-
-            // LIST (-1000000) - single negative offset of -1 second
-            // For trade at 2s: offset=-1s -> ASOF to 1s -> 20
-            // For trade at 3s: offset=-1s -> ASOF to 2s -> 30
-            // avg: 25, sum qty: 300
-            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
-                    "FROM trades AS t " +
-                    "HORIZON JOIN prices AS p " +
-                    "LIST (-1000000) AS h " +
-                    "ORDER BY sec_offs";
-
-            assertQueryNoLeakCheck(
-                    """
-                            sec_offs\tavg\tsum
-                            -1\t25.0\t300.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testHorizonJoinWithSingleOffsetAndFilter() throws Exception {
-        // Test single offset with master table filter (exercises filtered path in SingleOffsetHorizonTimestampIterator)
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-
-            execute(
-                    """
-                            INSERT INTO prices VALUES
-                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
-                                ('1970-01-01T00:00:01.000000Z', 'AX', 20),
-                                ('1970-01-01T00:00:02.000000Z', 'BX', 100),
-                                ('1970-01-01T00:00:03.000000Z', 'BX', 200)
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO trades VALUES
-                                ('1970-01-01T00:00:01.000000Z', 'AX', 10),
-                                ('1970-01-01T00:00:02.000000Z', 'AX', 20),
-                                ('1970-01-01T00:00:03.000000Z', 'BX', 30)
-                            """
-            );
-
-            // Single offset via LIST (0) with filter on AX
-            // AX at 1s -> 20, AX at 2s -> 20 (still 20, no AX price at 2s)
-            // avg: 20, sum qty: 30
-            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
-                    "FROM trades AS t " +
-                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                    "LIST (0) AS h " +
-                    "WHERE t.sym = 'AX' " +
-                    "ORDER BY sec_offs";
-
-            assertQueryNoLeakCheck(
-                    """
-                            sec_offs\tavg\tsum
-                            0\t20.0\t30.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
     private long getMinutesDivisor() {
         return leftTableTimestampType == TestTimestampType.MICRO ? 60_000_000L : 60_000_000_000L;
     }
 
     private long getSecondsDivisor() {
         return leftTableTimestampType == TestTimestampType.MICRO ? 1_000_000L : 1_000_000_000L;
+    }
+
+    private String replaceExpectedMasterTimestamp(String expected) {
+        return leftTableTimestampType == TestTimestampType.MICRO ? expected : expected.replace(".000000Z", ".000000000Z");
     }
 }

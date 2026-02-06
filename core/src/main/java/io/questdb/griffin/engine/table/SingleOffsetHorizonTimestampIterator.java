@@ -27,15 +27,15 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.std.DirectLongList;
 
-import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
-
 /**
  * Single-offset horizon timestamp iterator. When there is only one offset,
  * master rows are already in sorted horizon timestamp order, so no sorting
  * or merging is needed.
+ * <p>
+ * Returns horizon timestamps in master's resolution (master_ts + offset).
+ * Callers must scale externally for ASOF lookup when master/slave timestamp types differ.
  */
 public class SingleOffsetHorizonTimestampIterator implements HorizonTimestampIterator {
-    private final long masterTsScale;
     private final long offset;
     private long currentHorizonTs;
     private long currentIndex;
@@ -47,9 +47,8 @@ public class SingleOffsetHorizonTimestampIterator implements HorizonTimestampIte
     private int timestampColumnIndex;
     private long tupleCount;
 
-    public SingleOffsetHorizonTimestampIterator(long offset, long masterTsScale) {
+    public SingleOffsetHorizonTimestampIterator(long offset) {
         this.offset = offset;
-        this.masterTsScale = masterTsScale;
     }
 
     @Override
@@ -85,8 +84,7 @@ public class SingleOffsetHorizonTimestampIterator implements HorizonTimestampIte
             currentMasterRowIdx = currentIndex;
         }
         record.setRowIndex(rowIdx);
-        long masterTs = record.getTimestamp(timestampColumnIndex);
-        currentHorizonTs = scaleTimestamp(masterTs + offset, masterTsScale);
+        currentHorizonTs = record.getTimestamp(timestampColumnIndex) + offset;
         currentIndex++;
         return true;
     }

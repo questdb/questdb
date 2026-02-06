@@ -27,16 +27,24 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -49,28 +57,34 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * This class extends {@link BaseAsyncHorizonJoinAtom} and adds:
  * - Per-worker aggregation Maps (key -> value)
- * - GROUP BY key copier for populating map keys
+ * - Per-worker map sinks for populating map keys (supports expression keys)
  */
 public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
-    private final RecordSink groupByKeyCopier;
+    private final ObjList<Function> ownerKeyFunctions;
     private final Map ownerMap;
+    private final RecordSink ownerMapSink;
+    private final ObjList<ObjList<Function>> perWorkerKeyFunctions;
+    private final ObjList<RecordSink> perWorkerMapSinks;
     private final ObjList<Map> perWorkerMaps;
 
     public AsyncHorizonJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata markoutMetadata,
             @NotNull RecordCursorFactory slaveFactory,
             int masterTimestampColumnIndex,
             @NotNull LongList offsets,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Nullable ColumnTypes asOfJoinKeyTypes,
-            @Nullable RecordSink masterKeyCopier,
-            @Nullable RecordSink slaveKeyCopier,
+            @Nullable RecordSink masterAsOfJoinMapSink,
+            @Nullable RecordSink slaveAsOfJoinMapSink,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
-            @NotNull RecordSink groupByKeyCopier,
+            @Transient @NotNull ListColumnFilter groupByColumnFilter,
+            @NotNull ObjList<Function> keyFunctions,
+            @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
@@ -91,8 +105,8 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
                 masterTimestampColumnIndex,
                 offsets,
                 asOfJoinKeyTypes,
-                masterKeyCopier,
-                slaveKeyCopier,
+                masterAsOfJoinMapSink,
+                slaveAsOfJoinMapSink,
                 masterColumnCount,
                 masterSymbolKeyColumnIndices,
                 slaveSymbolKeyColumnIndices,
@@ -111,8 +125,51 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
         );
 
         try {
-            // GROUP BY key copier for MarkoutRecord
-            this.groupByKeyCopier = groupByKeyCopier;
+            // Store key functions for init() and close()
+            this.ownerKeyFunctions = keyFunctions;
+            this.perWorkerKeyFunctions = perWorkerKeyFunctions;
+
+            // Create per-worker map sinks to support expression keys
+            // Each worker needs its own sink with its own key functions
+            final Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(
+                    configuration,
+                    asm,
+                    markoutMetadata,
+                    groupByColumnFilter,
+                    keyFunctions,
+                    null,
+                    null,
+                    null,
+                    null
+            );
+            ownerMapSink = RecordSinkFactory.getInstance(
+                    sinkClass,
+                    markoutMetadata,
+                    groupByColumnFilter,
+                    keyFunctions,
+                    null,
+                    null,
+                    null,
+                    null
+            );
+
+            if (perWorkerKeyFunctions != null) {
+                perWorkerMapSinks = new ObjList<>(slotCount);
+                for (int i = 0; i < slotCount; i++) {
+                    perWorkerMapSinks.extendAndSet(i, RecordSinkFactory.getInstance(
+                            sinkClass,
+                            markoutMetadata,
+                            groupByColumnFilter,
+                            perWorkerKeyFunctions.getQuick(i),
+                            null,
+                            null,
+                            null,
+                            null
+                    ));
+                }
+            } else {
+                perWorkerMapSinks = null;
+            }
 
             // Per-worker aggregation maps
             this.perWorkerMaps = new ObjList<>(slotCount);
@@ -126,10 +183,6 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
         }
     }
 
-    public RecordSink getGroupByKeyCopier() {
-        return groupByKeyCopier;
-    }
-
     public Map getMap(int slotId) {
         Map map;
         if (slotId == -1) {
@@ -141,6 +194,56 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
             map.reopen();
         }
         return map;
+    }
+
+    public RecordSink getMapSink(int slotId) {
+        if (slotId == -1 || perWorkerMapSinks == null) {
+            return ownerMapSink;
+        }
+        return perWorkerMapSinks.getQuick(slotId);
+    }
+
+    @Override
+    public void initTimeFrameCursors(
+            SqlExecutionContext executionContext,
+            SymbolTableSource masterSymbolTableSource,
+            TablePageFrameCursor slavePageFrameCursor,
+            PageFrameAddressCache slaveFrameAddressCache,
+            IntList slaveFramePartitionIndexes,
+            LongList slaveFrameRowCounts,
+            LongList slavePartitionTimestamps,
+            LongList slavePartitionCeilings,
+            int frameCount
+    ) throws SqlException {
+        super.initTimeFrameCursors(
+                executionContext,
+                masterSymbolTableSource,
+                slavePageFrameCursor,
+                slaveFrameAddressCache,
+                slaveFramePartitionIndexes,
+                slaveFrameRowCounts,
+                slavePartitionTimestamps,
+                slavePartitionCeilings,
+                frameCount
+        );
+
+        // Initialize key functions (for expression keys) with combined symbol table source
+        final HorizonJoinSymbolTableSource horizonJoinSymbolTableSource = getSymbolTableSource();
+        if (ownerKeyFunctions != null) {
+            Function.init(ownerKeyFunctions, horizonJoinSymbolTableSource, executionContext, null);
+        }
+
+        if (perWorkerKeyFunctions != null) {
+            final boolean current = executionContext.getCloneSymbolTables();
+            executionContext.setCloneSymbolTables(true);
+            try {
+                for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
+                    Function.init(perWorkerKeyFunctions.getQuick(i), horizonJoinSymbolTableSource, executionContext, null);
+                }
+            } finally {
+                executionContext.setCloneSymbolTables(current);
+            }
+        }
     }
 
     /**
@@ -177,5 +280,11 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
     protected void closeAggregationState() {
         Misc.free(ownerMap);
         Misc.freeObjList(perWorkerMaps);
+        Misc.freeObjList(ownerKeyFunctions);
+        if (perWorkerKeyFunctions != null) {
+            for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
+                Misc.freeObjList(perWorkerKeyFunctions.getQuick(i));
+            }
+        }
     }
 }

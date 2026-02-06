@@ -39,15 +39,16 @@ import org.jetbrains.annotations.Nullable;
  * - Sequence offset value (from long_sequence)
  * - Slave record (from ASOF JOIN)
  */
-public class MarkoutRecord implements Record {
+public class HorizonJoinRecord implements Record {
     public static final int SOURCE_MASTER = 0;
     public static final int SOURCE_SEQUENCE = 1;
     public static final int SOURCE_SLAVE = 2;
 
     private int[] columnIndices;
     private int[] columnSources;
+    private long horizonTimestamp;
     private Record masterRecord;
-    private long sequenceOffsetValue;
+    private long offsetValue;
     private Record slaveRecord;
 
     @Override
@@ -138,7 +139,7 @@ public class MarkoutRecord implements Record {
     public long getLong(int col) {
         // Special handling for sequence offset - it's a direct value, not from a record
         if (columnSources[col] == SOURCE_SEQUENCE) {
-            return sequenceOffsetValue;
+            return offsetValue;
         }
         Record src = getSourceRecord(col);
         return src != null ? src.getLong(columnIndices[col]) : Numbers.LONG_NULL;
@@ -207,6 +208,11 @@ public class MarkoutRecord implements Record {
 
     @Override
     public long getTimestamp(int col) {
+        // Special handling for horizon timestamp - it's stored directly, not from a record
+        if (columnSources[col] == SOURCE_SEQUENCE) {
+            // columnIndices[col] == 1 for timestamp column (0 for offset)
+            return horizonTimestamp;
+        }
         Record src = getSourceRecord(col);
         return src != null ? src.getTimestamp(columnIndices[col]) : Numbers.LONG_NULL;
     }
@@ -245,13 +251,15 @@ public class MarkoutRecord implements Record {
     /**
      * Sets the source records for this row.
      *
-     * @param masterRecord        the master record from the page frame
-     * @param sequenceOffsetValue the sequence offset value (from long_sequence)
-     * @param slaveRecord         the matched slave record from ASOF JOIN (may be null)
+     * @param masterRecord     the master record from the page frame
+     * @param offsetValue      the offset value (horizon pseudo-table)
+     * @param horizonTimestamp the computed horizon timestamp (master timestamp + offset; horizon pseudo-table)
+     * @param slaveRecord      the matched slave record from ASOF JOIN (may be null)
      */
-    public void of(Record masterRecord, long sequenceOffsetValue, Record slaveRecord) {
+    public void of(Record masterRecord, long offsetValue, long horizonTimestamp, Record slaveRecord) {
         this.masterRecord = masterRecord;
-        this.sequenceOffsetValue = sequenceOffsetValue;
+        this.offsetValue = offsetValue;
+        this.horizonTimestamp = horizonTimestamp;
         this.slaveRecord = slaveRecord;
     }
 

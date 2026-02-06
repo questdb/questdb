@@ -312,7 +312,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
 
         // Initialize record functions with a symbol table source that routes lookups
         // to the correct source (master or slave) based on column mappings
-        final MarkoutSymbolTableSource symbolTableSource = atom.getMarkoutSymbolTableSource();
+        final HorizonJoinSymbolTableSource symbolTableSource = atom.getSymbolTableSource();
         symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveFrameCursor);
         Function.init(recordFunctions, symbolTableSource, executionContext, null);
 

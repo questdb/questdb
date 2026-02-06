@@ -77,14 +77,14 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     protected final ObjList<Function> bindVarFunctions;
     protected final MemoryCARW bindVarMemory;
     protected final CompiledFilter compiledFilter;
-    protected final MarkoutSymbolTableSource markoutSymbolTableSource;
-    protected final RecordSink masterKeyCopier;
+    protected final HorizonJoinSymbolTableSource horizonJoinSymbolTableSource;
+    protected final RecordSink masterAsOfJoinMapSink;
     protected final int masterTimestampColumnIndex;
-    protected final long masterTsScale;
+    protected final long masterTimestampScale;
     protected final LongList offsets;
     protected final GroupByAllocator ownerAllocator;
     protected final Map ownerAsOfJoinMap;
-    protected final MarkoutRecord ownerCombinedRecord;
+    protected final HorizonJoinRecord ownerCombinedRecord;
     protected final Function ownerFilter;
     protected final GroupByFunctionsUpdater ownerFunctionUpdater;
     protected final ObjList<GroupByFunction> ownerGroupByFunctions;
@@ -95,7 +95,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     protected final SymbolTranslatingRecord ownerSymbolTranslatingRecord;
     protected final ObjList<GroupByAllocator> perWorkerAllocators;
     protected final ObjList<Map> perWorkerAsOfJoinMaps;
-    protected final ObjList<MarkoutRecord> perWorkerCombinedRecords;
+    protected final ObjList<HorizonJoinRecord> perWorkerCombinedRecords;
     protected final ObjList<Function> perWorkerFilters;
     protected final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     protected final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
@@ -107,7 +107,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     // Null when there are no symbol columns in the ASOF join key.
     protected final ObjList<SymbolTranslatingRecord> perWorkerSymbolTranslatingRecords;
     protected final long sequenceRowCount;
-    protected final RecordSink slaveKeyCopier;
+    protected final RecordSink slaveAsOfJoinMapSink;
     protected final int slotCount;
 
     protected BaseAsyncHorizonJoinAtom(
@@ -117,8 +117,8 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             int masterTimestampColumnIndex,
             @NotNull LongList offsets,
             @Nullable ColumnTypes asOfJoinKeyTypes,
-            @Nullable RecordSink masterKeyCopier,
-            @Nullable RecordSink slaveKeyCopier,
+            @Nullable RecordSink masterAsOfJoinMapSink,
+            @Nullable RecordSink slaveAsOfJoinMapSink,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -131,7 +131,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function ownerFilter,
             @Nullable ObjList<Function> perWorkerFilters,
-            long masterTsScale,
+            long masterTimestampScale,
             long slaveTsScale,
             int workerCount
     ) {
@@ -143,7 +143,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         this.masterTimestampColumnIndex = masterTimestampColumnIndex;
         this.offsets = offsets;
         this.sequenceRowCount = offsets.size();
-        this.markoutSymbolTableSource = new MarkoutSymbolTableSource(columnSources, columnIndexes);
+        this.horizonJoinSymbolTableSource = new HorizonJoinSymbolTableSource(columnSources, columnIndexes);
 
         // Filter resources
         this.compiledFilter = compiledFilter;
@@ -153,11 +153,11 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         this.perWorkerFilters = perWorkerFilters;
 
         // ASOF join lookup resources
-        this.masterKeyCopier = masterKeyCopier;
-        this.slaveKeyCopier = slaveKeyCopier;
+        this.masterAsOfJoinMapSink = masterAsOfJoinMapSink;
+        this.slaveAsOfJoinMapSink = slaveAsOfJoinMapSink;
 
         // Timestamp scale factor for cross-resolution support (1 if same type, otherwise scale to nanos)
-        this.masterTsScale = masterTsScale;
+        this.masterTimestampScale = masterTimestampScale;
 
         // Per-worker locks
         this.perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
@@ -230,20 +230,20 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         }
 
         // Per-worker combined records
-        this.ownerCombinedRecord = new MarkoutRecord();
+        this.ownerCombinedRecord = new HorizonJoinRecord();
         ownerCombinedRecord.init(columnSources, columnIndexes);
         this.perWorkerCombinedRecords = new ObjList<>(slotCount);
         for (int i = 0; i < slotCount; i++) {
-            MarkoutRecord record = new MarkoutRecord();
+            HorizonJoinRecord record = new HorizonJoinRecord();
             record.init(columnSources, columnIndexes);
             perWorkerCombinedRecords.add(record);
         }
 
         // Per-worker horizon timestamp iterators for sorted processing
-        this.ownerHorizonIterator = createHorizonIterator(offsets, masterTsScale);
+        this.ownerHorizonIterator = createHorizonIterator(offsets);
         this.perWorkerHorizonIterators = new ObjList<>(slotCount);
         for (int i = 0; i < slotCount; i++) {
-            perWorkerHorizonIterators.add(createHorizonIterator(offsets, masterTsScale));
+            perWorkerHorizonIterators.add(createHorizonIterator(offsets));
         }
     }
 
@@ -321,13 +321,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         return bindVarMemory;
     }
 
-    public MarkoutRecord getCombinedRecord(int slotId) {
-        if (slotId == -1) {
-            return ownerCombinedRecord;
-        }
-        return perWorkerCombinedRecords.getQuick(slotId);
-    }
-
     public CompiledFilter getCompiledFilter() {
         return compiledFilter;
     }
@@ -357,8 +350,15 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         return perWorkerHorizonIterators.getQuick(slotId);
     }
 
+    public HorizonJoinRecord getHorizonJoinRecord(int slotId) {
+        if (slotId == -1) {
+            return ownerCombinedRecord;
+        }
+        return perWorkerCombinedRecords.getQuick(slotId);
+    }
+
     public RecordSink getMasterKeyCopier() {
-        return masterKeyCopier;
+        return masterAsOfJoinMapSink;
     }
 
     public Record getMasterKeyRecord(int slotId, Record masterRecord) {
@@ -374,6 +374,10 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
 
     public int getMasterTimestampColumnIndex() {
         return masterTimestampColumnIndex;
+    }
+
+    public long getMasterTimestampScale() {
+        return masterTimestampScale;
     }
 
     /**
@@ -392,7 +396,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     }
 
     public RecordSink getSlaveKeyCopier() {
-        return slaveKeyCopier;
+        return slaveAsOfJoinMapSink;
     }
 
     /**
@@ -475,9 +479,9 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         }
 
         // Initialize group by functions with combined symbol table source
-        markoutSymbolTableSource.of(masterSymbolTableSource, slavePageFrameCursor);
+        horizonJoinSymbolTableSource.of(masterSymbolTableSource, slavePageFrameCursor);
         for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {
-            ownerGroupByFunctions.getQuick(i).init(markoutSymbolTableSource, executionContext);
+            ownerGroupByFunctions.getQuick(i).init(horizonJoinSymbolTableSource, executionContext);
         }
         if (perWorkerGroupByFunctions != null) {
             final boolean current = executionContext.getCloneSymbolTables();
@@ -486,7 +490,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
                 for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                     ObjList<GroupByFunction> functions = perWorkerGroupByFunctions.getQuick(i);
                     for (int j = 0, m = functions.size(); j < m; j++) {
-                        functions.getQuick(j).init(markoutSymbolTableSource, executionContext);
+                        functions.getQuick(j).init(horizonJoinSymbolTableSource, executionContext);
                     }
                 }
             } finally {
@@ -547,6 +551,13 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         }
     }
 
+    private static HorizonTimestampIterator createHorizonIterator(LongList offsets) {
+        if (offsets.size() == 1) {
+            return new SingleOffsetHorizonTimestampIterator(offsets.getQuick(0));
+        }
+        return new MultiOffsetHorizonTimestampIterator(offsets);
+    }
+
     /**
      * Clear aggregation-specific state. Called by {@link #clear()}.
      */
@@ -558,14 +569,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     protected abstract void closeAggregationState();
 
     // package-private to make linter happy
-    MarkoutSymbolTableSource getMarkoutSymbolTableSource() {
-        return markoutSymbolTableSource;
-    }
-
-    private static HorizonTimestampIterator createHorizonIterator(LongList offsets, long masterTsScale) {
-        if (offsets.size() == 1) {
-            return new SingleOffsetHorizonTimestampIterator(offsets.getQuick(0), masterTsScale);
-        }
-        return new MultiOffsetHorizonTimestampIterator(offsets, masterTsScale);
+    HorizonJoinSymbolTableSource getSymbolTableSource() {
+        return horizonJoinSymbolTableSource;
     }
 }

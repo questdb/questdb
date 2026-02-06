@@ -81,16 +81,16 @@ public class MarkoutTimeFrameHelper {
      *
      * @param startRowId      starting position for backward scan (inclusive), typically the ASOF position
      * @param masterRecord    master record containing the target key
-     * @param masterKeyCopier copier for master's join key columns
-     * @param slaveKeyCopier  copier for slave's join key columns
+     * @param masterAsOfJoinMapSink copier for master's join key columns
+     * @param slaveAsOfJoinMapSink  copier for slave's join key columns
      * @param keyToRowIdMap   map to update with (key -> rowId) entries
      * @return the rowId where target key was found, or Long.MIN_VALUE if not found
      */
     public long backwardScanForKeyMatch(
             long startRowId,
             Record masterRecord,
-            RecordSink masterKeyCopier,
-            RecordSink slaveKeyCopier,
+            RecordSink masterAsOfJoinMapSink,
+            RecordSink slaveAsOfJoinMapSink,
             Map keyToRowIdMap
     ) {
         if (startRowId == Long.MIN_VALUE) {
@@ -107,7 +107,7 @@ public class MarkoutTimeFrameHelper {
         if (backwardWatermark != Long.MAX_VALUE && effectiveStart < backwardWatermark) {
             // Already scanned this region, just look up in map
             MapKey targetKey = keyToRowIdMap.withKey();
-            targetKey.put(masterRecord, masterKeyCopier);
+            targetKey.put(masterRecord, masterAsOfJoinMapSink);
             MapValue targetValue = targetKey.findValue();
             return targetValue != null ? targetValue.getLong(0) : Long.MIN_VALUE;
         }
@@ -123,7 +123,7 @@ public class MarkoutTimeFrameHelper {
 
         // Pre-compute master key hash once (avoids re-hashing on every iteration)
         final MapKey masterKey = keyToRowIdMap.withKey();
-        masterKey.put(masterRecord, masterKeyCopier);
+        masterKey.put(masterRecord, masterAsOfJoinMapSink);
         masterKey.commit();
         final long masterHash = masterKey.hash();
 
@@ -140,7 +140,7 @@ public class MarkoutTimeFrameHelper {
 
             // Add key to map only if not already present (we want latest/highest rowId)
             final MapKey slaveKey = keyToRowIdMap.withKey();
-            slaveKey.put(record, slaveKeyCopier);
+            slaveKey.put(record, slaveAsOfJoinMapSink);
             slaveKey.commit();
             final long slaveHash = slaveKey.hash();
             final MapValue value = slaveKey.createValue(slaveHash);
@@ -153,7 +153,7 @@ public class MarkoutTimeFrameHelper {
             if (slaveHash == masterHash) {
                 // Hashes match - verify with actual map lookup (handles rare hash collisions)
                 final MapKey targetKey = keyToRowIdMap.withKey();
-                targetKey.put(masterRecord, masterKeyCopier);
+                targetKey.put(masterRecord, masterAsOfJoinMapSink);
                 final MapValue targetValue = targetKey.findValue();
                 if (targetValue != null) {
                     // Found the target key in the map
@@ -331,12 +331,12 @@ public class MarkoutTimeFrameHelper {
      * Updates the internal forward watermark to targetRowId after successful scan.
      *
      * @param targetRowId    the ASOF position to scan up to (inclusive)
-     * @param slaveKeyCopier copier for slave's join key columns
+     * @param slaveAsOfJoinMapSink copier for slave's join key columns
      * @param keyToRowIdMap  map to update with (key -> rowId) entries
      */
     public void forwardScanToPosition(
             long targetRowId,
-            RecordSink slaveKeyCopier,
+            RecordSink slaveAsOfJoinMapSink,
             Map keyToRowIdMap
     ) {
         if (targetRowId == Long.MIN_VALUE) {
@@ -407,7 +407,7 @@ public class MarkoutTimeFrameHelper {
             // Position record and cache the key
             timeFrameCursor.recordAtRowIndex(record, rowIndex);
             MapKey key = keyToRowIdMap.withKey();
-            key.put(record, slaveKeyCopier);
+            key.put(record, slaveAsOfJoinMapSink);
             MapValue value = key.createValue();
             // Always update (overwrite) - we want the LATEST position for each key
             value.putLong(0, currentRowId);

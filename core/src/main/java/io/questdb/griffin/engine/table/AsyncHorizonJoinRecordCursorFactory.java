@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
@@ -66,6 +67,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
@@ -103,12 +105,14 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Nullable ColumnTypes asOfJoinKeyTypes,
-            @Nullable RecordSink masterKeyCopier,
-            @Nullable RecordSink slaveKeyCopier,
+            @Nullable RecordSink masterAsOfJoinMapSink,
+            @Nullable RecordSink slaveAsOfJoinMapSink,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
-            @NotNull RecordSink groupByKeyCopier,
+            @Transient @NotNull ListColumnFilter groupByColumnFilter,
+            @NotNull ObjList<Function> keyFunctions,
+            @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
             @Nullable CompiledFilter compiledFilter,
@@ -142,18 +146,21 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             final AsyncHorizonJoinAtom atom = new AsyncHorizonJoinAtom(
                     asm,
                     configuration,
+                    markoutMetadata,
                     slaveFactory,
                     masterTimestampColumnIndex,
                     offsets,
                     keyTypes,
                     valueTypes,
                     asOfJoinKeyTypes,
-                    masterKeyCopier,
-                    slaveKeyCopier,
+                    masterAsOfJoinMapSink,
+                    slaveAsOfJoinMapSink,
                     masterColumnCount,
                     masterSymbolKeyColumnIndices,
                     slaveSymbolKeyColumnIndices,
-                    groupByKeyCopier,
+                    groupByColumnFilter,
+                    keyFunctions,
+                    perWorkerKeyFunctions,
                     columnSources,
                     columnIndexes,
                     groupByFunctions,
@@ -234,19 +241,19 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     private static void aggregateRecord(
-            MarkoutRecord markoutRecord,
+            HorizonJoinRecord horizonJoinRecord,
             long masterRowId,
             Map partialMap,
             RecordSink groupByKeyCopier,
             GroupByFunctionsUpdater functionUpdater
     ) {
         MapKey key = partialMap.withKey();
-        key.put(markoutRecord, groupByKeyCopier);
+        key.put(horizonJoinRecord, groupByKeyCopier);
         MapValue value = key.createValue();
         if (value.isNew()) {
-            functionUpdater.updateNew(value, markoutRecord, masterRowId);
+            functionUpdater.updateNew(value, horizonJoinRecord, masterRowId);
         } else {
-            functionUpdater.updateExisting(value, markoutRecord, masterRowId);
+            functionUpdater.updateExisting(value, horizonJoinRecord, masterRowId);
         }
     }
 
@@ -286,9 +293,9 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         try {
             final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
             final Map partialMap = atom.getMap(slotId);
-            final RecordSink groupByKeyCopier = atom.getGroupByKeyCopier();
+            final RecordSink groupByKeyCopier = atom.getMapSink(slotId);
             final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
-            final MarkoutRecord markoutRecord = atom.getCombinedRecord(slotId);
+            final HorizonJoinRecord horizonJoinRecord = atom.getHorizonJoinRecord(slotId);
             final CompiledFilter compiledFilter = atom.getCompiledFilter();
             final Function filter = atom.getFilter(slotId);
 
@@ -309,8 +316,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             // Get ASOF join resources
             final MarkoutTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
             final Map asOfJoinMap = atom.getAsOfJoinMap(slotId);  // Cache: joinKey -> rowId
-            final RecordSink masterKeyCopier = atom.getMasterKeyCopier();
-            final RecordSink slaveKeyCopier = atom.getSlaveKeyCopier();
+            final RecordSink masterAsOfJoinMapSink = atom.getMasterKeyCopier();
+            final RecordSink slaveAsOfJoinMapSink = atom.getSlaveKeyCopier();
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
             final Record masterKeyRecord = atom.getMasterKeyRecord(slotId, record);
 
@@ -329,10 +336,10 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     atom,
                     slaveTimeFrameHelper,
                     asOfJoinMap,
-                    masterKeyCopier,
-                    slaveKeyCopier,
+                    masterAsOfJoinMapSink,
+                    slaveAsOfJoinMapSink,
                     slaveRecord,
-                    markoutRecord,
+                    horizonJoinRecord,
                     partialMap,
                     groupByKeyCopier,
                     functionUpdater,
@@ -365,16 +372,16 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             AsyncHorizonJoinAtom atom,
             MarkoutTimeFrameHelper slaveTimeFrameHelper,
             Map asOfJoinMap,
-            RecordSink masterKeyCopier,
-            RecordSink slaveKeyCopier,
+            RecordSink masterAsOfJoinMapSink,
+            RecordSink slaveAsOfJoinMapSink,
             Record slaveRecord,
-            MarkoutRecord markoutRecord,
+            HorizonJoinRecord horizonJoinRecord,
             Map partialMap,
             RecordSink groupByKeyCopier,
             GroupByFunctionsUpdater functionUpdater,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
-        final boolean keyedAsOfJoin = asOfJoinMap != null && masterKeyCopier != null && slaveKeyCopier != null;
+        final boolean keyedAsOfJoin = asOfJoinMap != null && masterAsOfJoinMapSink != null && slaveAsOfJoinMapSink != null;
 
         // Reset helper state and clear the ASOF join map for this frame
         slaveTimeFrameHelper.toTop();
@@ -382,9 +389,12 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             asOfJoinMap.clear();
         }
 
+        final long masterTsScale = atom.getMasterTimestampScale();
+
         while (horizonIterator.next()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
 
+            // horizonTs is in master's resolution (master_ts + offset)
             final long horizonTs = horizonIterator.getHorizonTimestamp();
             final long masterRowIdx = horizonIterator.getMasterRowIndex();
             final int offsetIdx = horizonIterator.getOffsetIndex();
@@ -394,8 +404,11 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             masterRecord.setRowIndex(masterRowIdx);
             final long masterRowId = baseRowId + masterRowIdx;
 
+            // Scale horizon timestamp for ASOF lookup (when master/slave have different timestamp types)
+            final long scaledHorizonTs = scaleTimestamp(horizonTs, masterTsScale);
+
             // Find ASOF row for this horizon timestamp (sequential due to sorted iteration)
-            long asOfRowId = slaveTimeFrameHelper.findAsOfRow(horizonTs);
+            long asOfRowId = slaveTimeFrameHelper.findAsOfRow(scaledHorizonTs);
 
             long matchRowId = Long.MIN_VALUE;
             if (keyedAsOfJoin) {
@@ -406,8 +419,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                         matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
                                 asOfRowId,
                                 masterKeyRecord,
-                                masterKeyCopier,
-                                slaveKeyCopier,
+                                masterAsOfJoinMapSink,
+                                slaveAsOfJoinMapSink,
                                 asOfJoinMap
                         );
                         // Initialize forward watermark to ASOF position for subsequent forward scans
@@ -416,13 +429,13 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                         // Subsequent tuples: forward scan first (updates internal watermark)
                         slaveTimeFrameHelper.forwardScanToPosition(
                                 asOfRowId,
-                                slaveKeyCopier,
+                                slaveAsOfJoinMapSink,
                                 asOfJoinMap
                         );
 
                         // Look up the key in the cache
                         MapKey cacheKey = asOfJoinMap.withKey();
-                        cacheKey.put(masterKeyRecord, masterKeyCopier);
+                        cacheKey.put(masterKeyRecord, masterAsOfJoinMapSink);
                         MapValue cacheValue = cacheKey.findValue();
 
                         if (cacheValue != null) {
@@ -432,8 +445,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                             matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
                                     asOfRowId,
                                     masterKeyRecord,
-                                    masterKeyCopier,
-                                    slaveKeyCopier,
+                                    masterAsOfJoinMapSink,
+                                    slaveAsOfJoinMapSink,
                                     asOfJoinMap
                             );
                         }
@@ -450,8 +463,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                 slaveTimeFrameHelper.recordAt(matchRowId);
                 matchedSlaveRecord = slaveRecord;
             }
-            markoutRecord.of(masterRecord, offset, matchedSlaveRecord);
-            aggregateRecord(markoutRecord, masterRowId, partialMap, groupByKeyCopier, functionUpdater);
+            horizonJoinRecord.of(masterRecord, offset, horizonTs, matchedSlaveRecord);
+            aggregateRecord(horizonJoinRecord, masterRowId, partialMap, groupByKeyCopier, functionUpdater);
         }
     }
 
@@ -492,15 +505,15 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         try {
             final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
             final Map partialMap = atom.getMap(slotId);
-            final RecordSink groupByKeyCopier = atom.getGroupByKeyCopier();
+            final RecordSink groupByKeyCopier = atom.getMapSink(slotId);
             final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
-            final MarkoutRecord markoutRecord = atom.getCombinedRecord(slotId);
+            final HorizonJoinRecord horizonJoinRecord = atom.getHorizonJoinRecord(slotId);
 
             // Get ASOF join resources
             final MarkoutTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
             final Map asOfJoinMap = atom.getAsOfJoinMap(slotId);  // Cache: joinKey -> rowId
-            final RecordSink masterKeyCopier = atom.getMasterKeyCopier();
-            final RecordSink slaveKeyCopier = atom.getSlaveKeyCopier();
+            final RecordSink masterAsOfJoinMapSink = atom.getMasterKeyCopier();
+            final RecordSink slaveAsOfJoinMapSink = atom.getSlaveKeyCopier();
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
             final Record masterKeyRecord = atom.getMasterKeyRecord(slotId, record);
 
@@ -519,10 +532,10 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     atom,
                     slaveTimeFrameHelper,
                     asOfJoinMap,
-                    masterKeyCopier,
-                    slaveKeyCopier,
+                    masterAsOfJoinMapSink,
+                    slaveAsOfJoinMapSink,
                     slaveRecord,
-                    markoutRecord,
+                    horizonJoinRecord,
                     partialMap,
                     groupByKeyCopier,
                     functionUpdater,
