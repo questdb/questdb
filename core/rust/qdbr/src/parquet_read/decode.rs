@@ -1173,6 +1173,57 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                     )?;
                     Ok(())
                 }
+                (Encoding::Plain, _, _, ColumnTypeTag::Decimal8) => {
+                    decode_page0_filtered::<_, FILL_NULLS>(
+                        page,
+                        page_row_start,
+                        page_row_count,
+                        row_group_lo,
+                        row_lo,
+                        row_hi,
+                        rows_filter,
+                        &mut FixedColumnSink::<1, 4, _>::new(
+                            &mut DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
+                            bufs,
+                            &DECIMAL8_NULL,
+                        ),
+                    )?;
+                    Ok(())
+                }
+                (Encoding::Plain, _, _, ColumnTypeTag::Decimal16) => {
+                    decode_page0_filtered::<_, FILL_NULLS>(
+                        page,
+                        page_row_start,
+                        page_row_count,
+                        row_group_lo,
+                        row_lo,
+                        row_hi,
+                        rows_filter,
+                        &mut FixedColumnSink::<2, 4, _>::new(
+                            &mut DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
+                            bufs,
+                            &DECIMAL16_NULL,
+                        ),
+                    )?;
+                    Ok(())
+                }
+                (Encoding::Plain, _, _, ColumnTypeTag::Decimal32) => {
+                    decode_page0_filtered::<_, FILL_NULLS>(
+                        page,
+                        page_row_start,
+                        page_row_count,
+                        row_group_lo,
+                        row_lo,
+                        row_hi,
+                        rows_filter,
+                        &mut FixedColumnSink::<4, 4, _>::new(
+                            &mut DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
+                            bufs,
+                            &DECIMAL32_NULL,
+                        ),
+                    )?;
+                    Ok(())
+                }
                 _ => Err(encoding_error),
             }
         }
@@ -1185,7 +1236,8 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                     ColumnTypeTag::Long
                     | ColumnTypeTag::Date
                     | ColumnTypeTag::GeoLong
-                    | ColumnTypeTag::Timestamp,
+                    | ColumnTypeTag::Timestamp
+                    | ColumnTypeTag::Decimal64,
                 ) => {
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
@@ -1210,7 +1262,8 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                     ColumnTypeTag::Long
                     | ColumnTypeTag::Timestamp
                     | ColumnTypeTag::Date
-                    | ColumnTypeTag::GeoLong,
+                    | ColumnTypeTag::GeoLong
+                    | ColumnTypeTag::Decimal64,
                 ) => {
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
@@ -1238,7 +1291,8 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                     ColumnTypeTag::Long
                     | ColumnTypeTag::Timestamp
                     | ColumnTypeTag::Date
-                    | ColumnTypeTag::GeoLong,
+                    | ColumnTypeTag::GeoLong
+                    | ColumnTypeTag::Decimal64,
                 ) => {
                     let dict_decoder = FixedDictDecoder::<8>::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
@@ -1285,44 +1339,97 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                 _ => Err(encoding_error),
             }
         }
-        (PhysicalType::FixedLenByteArray(16), _logical_type, _) => {
-            match (page.encoding(), column_type.tag()) {
-                (Encoding::Plain, ColumnTypeTag::Long128) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut FixedLong128ColumnSink::new(
-                            &mut DataPageFixedSlicer::<16>::new(values_buffer, page_row_count),
-                            bufs,
-                            &UUID_NULL,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                _ => Err(encoding_error),
+        (
+            PhysicalType::FixedLenByteArray(src_len),
+            Some(PrimitiveLogicalType::Decimal(_, _)),
+            _,
+        ) => {
+            if page.encoding() != Encoding::Plain {
+                return Err(fmt_err!(
+                    Unsupported,
+                    "only Plain encoding supported for FixedLenByteArray decimals, got {:?}",
+                    page.encoding()
+                ));
             }
+            decode_fixed_decimal_filtered::<FILL_NULLS>(
+                page,
+                bufs,
+                values_buffer,
+                page_row_start,
+                page_row_count,
+                row_group_lo,
+                row_lo,
+                row_hi,
+                rows_filter,
+                src_len,
+                column_type.tag(),
+            )?;
+            Ok(())
         }
-        (PhysicalType::FixedLenByteArray(32), _logical_type, _) => {
-            match (page.encoding(), column_type.tag()) {
-                (Encoding::Plain, ColumnTypeTag::Long256) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
+        (PhysicalType::FixedLenByteArray(16), _, _) => match (page.encoding(), column_type.tag()) {
+            (Encoding::Plain, ColumnTypeTag::Long128) => {
+                decode_page0_filtered::<_, FILL_NULLS>(
+                    page,
+                    page_row_start,
+                    page_row_count,
+                    row_group_lo,
+                    row_lo,
+                    row_hi,
+                    rows_filter,
+                    &mut FixedLong128ColumnSink::new(
+                        &mut DataPageFixedSlicer::<16>::new(values_buffer, page_row_count),
+                        bufs,
+                        &UUID_NULL,
+                    ),
+                )?;
+                Ok(())
+            }
+            _ => Err(encoding_error),
+        },
+        (PhysicalType::FixedLenByteArray(32), _, _) => match (page.encoding(), column_type.tag()) {
+            (Encoding::Plain, ColumnTypeTag::Long256) => {
+                decode_page0_filtered::<_, FILL_NULLS>(
+                    page,
+                    page_row_start,
+                    page_row_count,
+                    row_group_lo,
+                    row_lo,
+                    row_hi,
+                    rows_filter,
+                    &mut FixedLong256ColumnSink::new(
+                        &mut DataPageFixedSlicer::<32>::new(values_buffer, page_row_count),
+                        bufs,
+                        &LONG256_NULL,
+                    ),
+                )?;
+                Ok(())
+            }
+            _ => Err(encoding_error),
+        },
+        (PhysicalType::FixedLenByteArray(len), _, _) => {
+            match (page.encoding(), len, column_type.tag()) {
+                (
+                    Encoding::Plain,
+                    _len,
+                    ColumnTypeTag::Decimal8
+                    | ColumnTypeTag::Decimal16
+                    | ColumnTypeTag::Decimal32
+                    | ColumnTypeTag::Decimal64
+                    | ColumnTypeTag::Decimal128
+                    | ColumnTypeTag::Decimal256,
+                ) => {
+                    decode_fixed_decimal_filtered::<FILL_NULLS>(
                         page,
+                        bufs,
+                        values_buffer,
                         page_row_start,
                         page_row_count,
                         row_group_lo,
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedLong256ColumnSink::new(
-                            &mut DataPageFixedSlicer::<32>::new(values_buffer, page_row_count),
-                            bufs,
-                            &LONG256_NULL,
-                        ),
+                        len,
+                        column_type.tag(),
                     )?;
                     Ok(())
                 }
@@ -4064,9 +4171,10 @@ fn decode_fixed_decimal(
 
 /// Macro to generate decode functions for each target decimal size.
 /// This handles all valid source sizes for each target.
+/// Uses `unfiltered` or `filtered` variants to generate the appropriate function signature.
 macro_rules! decode_fixed_decimal_impl {
-    // For simple decimals (target <= 8 bytes)
-    (simple $fn_name:ident, $target_size:expr, $null_value:expr, $target_name:expr, [$($src_size:expr),+]) => {
+    // Unfiltered simple decimals (target <= 8 bytes)
+    (unfiltered simple $fn_name:ident, $target_size:expr, $null_value:expr, $target_name:expr, [$($src_size:expr),+]) => {
         fn $fn_name(
             page: &DataPage,
             bufs: &mut ColumnChunkBuffers,
@@ -4080,7 +4188,6 @@ macro_rules! decode_fixed_decimal_impl {
                 $(
                     $src_size => {
                         if $src_size == $target_size {
-                            // Same size: simple reversal
                             decode_page0(
                                 page,
                                 row_lo,
@@ -4092,7 +4199,6 @@ macro_rules! decode_fixed_decimal_impl {
                                 ),
                             )?;
                         } else {
-                            // Sign extend from smaller source
                             decode_page0(
                                 page,
                                 row_lo,
@@ -4117,8 +4223,8 @@ macro_rules! decode_fixed_decimal_impl {
             }
         }
     };
-    // For multi-word decimals (128/256 bits)
-    (multiword $fn_name:ident, $target_size:expr, $words:expr, $null_value:expr, $target_name:expr, [$($src_size:expr),+]) => {
+    // Unfiltered multi-word decimals (128/256 bits)
+    (unfiltered multiword $fn_name:ident, $target_size:expr, $words:expr, $null_value:expr, $target_name:expr, [$($src_size:expr),+]) => {
         fn $fn_name(
             page: &DataPage,
             bufs: &mut ColumnChunkBuffers,
@@ -4132,7 +4238,6 @@ macro_rules! decode_fixed_decimal_impl {
                 $(
                     $src_size => {
                         if $src_size == $target_size {
-                            // Same size: word swap only
                             decode_page0(
                                 page,
                                 row_lo,
@@ -4144,13 +4249,136 @@ macro_rules! decode_fixed_decimal_impl {
                                 ),
                             )?;
                         } else {
-                            // Sign extend from smaller source
                             decode_page0(
                                 page,
                                 row_lo,
                                 row_hi,
                                 &mut SignExtendDecimalColumnSink::<$target_size, $src_size, _>::new(
                                     &mut DataPageFixedSlicer::<$src_size>::new(values_buffer, row_count),
+                                    bufs,
+                                    $null_value,
+                                ),
+                            )?;
+                        }
+                        Ok(())
+                    }
+                )+
+                _ => Err(fmt_err!(
+                    Unsupported,
+                    "unsupported FixedLenByteArray({}) source size for {}, valid sizes are 1-{}",
+                    src_len,
+                    $target_name,
+                    $target_size
+                )),
+            }
+        }
+    };
+    // Filtered simple decimals (target <= 8 bytes)
+    (filtered simple $fn_name:ident, $target_size:expr, $null_value:expr, $target_name:expr, [$($src_size:expr),+]) => {
+        #[allow(clippy::too_many_arguments)]
+        fn $fn_name<const FILL_NULLS: bool>(
+            page: &DataPage,
+            bufs: &mut ColumnChunkBuffers,
+            values_buffer: &[u8],
+            page_row_start: usize,
+            page_row_count: usize,
+            row_group_lo: usize,
+            row_lo: usize,
+            row_hi: usize,
+            rows_filter: &[i64],
+            src_len: usize,
+        ) -> ParquetResult<()> {
+            match src_len {
+                $(
+                    $src_size => {
+                        if $src_size == $target_size {
+                            decode_page0_filtered::<_, FILL_NULLS>(
+                                page,
+                                page_row_start,
+                                page_row_count,
+                                row_group_lo,
+                                row_lo,
+                                row_hi,
+                                rows_filter,
+                                &mut ReverseFixedColumnSink::<$target_size, _>::new(
+                                    &mut DataPageFixedSlicer::<$src_size>::new(values_buffer, page_row_count),
+                                    bufs,
+                                    $null_value,
+                                ),
+                            )?;
+                        } else {
+                            decode_page0_filtered::<_, FILL_NULLS>(
+                                page,
+                                page_row_start,
+                                page_row_count,
+                                row_group_lo,
+                                row_lo,
+                                row_hi,
+                                rows_filter,
+                                &mut SignExtendDecimalColumnSink::<$target_size, $src_size, _>::new(
+                                    &mut DataPageFixedSlicer::<$src_size>::new(values_buffer, page_row_count),
+                                    bufs,
+                                    $null_value,
+                                ),
+                            )?;
+                        }
+                        Ok(())
+                    }
+                )+
+                _ => Err(fmt_err!(
+                    Unsupported,
+                    "unsupported FixedLenByteArray({}) source size for {}, valid sizes are 1-{}",
+                    src_len,
+                    $target_name,
+                    $target_size
+                )),
+            }
+        }
+    };
+    // Filtered multi-word decimals (128/256 bits)
+    (filtered multiword $fn_name:ident, $target_size:expr, $words:expr, $null_value:expr, $target_name:expr, [$($src_size:expr),+]) => {
+        #[allow(clippy::too_many_arguments)]
+        fn $fn_name<const FILL_NULLS: bool>(
+            page: &DataPage,
+            bufs: &mut ColumnChunkBuffers,
+            values_buffer: &[u8],
+            page_row_start: usize,
+            page_row_count: usize,
+            row_group_lo: usize,
+            row_lo: usize,
+            row_hi: usize,
+            rows_filter: &[i64],
+            src_len: usize,
+        ) -> ParquetResult<()> {
+            match src_len {
+                $(
+                    $src_size => {
+                        if $src_size == $target_size {
+                            decode_page0_filtered::<_, FILL_NULLS>(
+                                page,
+                                page_row_start,
+                                page_row_count,
+                                row_group_lo,
+                                row_lo,
+                                row_hi,
+                                rows_filter,
+                                &mut WordSwapDecimalColumnSink::<$target_size, $words, _>::new(
+                                    &mut DataPageFixedSlicer::<$src_size>::new(values_buffer, page_row_count),
+                                    bufs,
+                                    $null_value,
+                                ),
+                            )?;
+                        } else {
+                            decode_page0_filtered::<_, FILL_NULLS>(
+                                page,
+                                page_row_start,
+                                page_row_count,
+                                row_group_lo,
+                                row_lo,
+                                row_hi,
+                                rows_filter,
+                                &mut SignExtendDecimalColumnSink::<$target_size, $src_size, _>::new(
+                                    &mut DataPageFixedSlicer::<$src_size>::new(values_buffer, page_row_count),
                                     bufs,
                                     $null_value,
                                 ),
@@ -4171,23 +4399,146 @@ macro_rules! decode_fixed_decimal_impl {
     };
 }
 
-// Decimal8: target size 1, only source size 1 is valid
-decode_fixed_decimal_impl!(simple decode_fixed_decimal_1, 1, DECIMAL8_NULL, "Decimal8", [1]);
+// Unfiltered decimal decode functions
+decode_fixed_decimal_impl!(unfiltered simple decode_fixed_decimal_1, 1, DECIMAL8_NULL, "Decimal8", [1]);
+decode_fixed_decimal_impl!(unfiltered simple decode_fixed_decimal_2, 2, DECIMAL16_NULL, "Decimal16", [1, 2]);
+decode_fixed_decimal_impl!(unfiltered simple decode_fixed_decimal_4, 4, DECIMAL32_NULL, "Decimal32", [1, 2, 3, 4]);
+decode_fixed_decimal_impl!(unfiltered simple decode_fixed_decimal_8, 8, DECIMAL64_NULL, "Decimal64", [1, 2, 3, 4, 5, 6, 7, 8]);
+decode_fixed_decimal_impl!(unfiltered multiword decode_fixed_decimal_16, 16, 2, DECIMAL128_NULL, "Decimal128", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+decode_fixed_decimal_impl!(unfiltered multiword decode_fixed_decimal_32, 32, 4, DECIMAL256_NULL, "Decimal256", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]);
 
-// Decimal16: target size 2, source sizes 1-2 are valid
-decode_fixed_decimal_impl!(simple decode_fixed_decimal_2, 2, DECIMAL16_NULL, "Decimal16", [1, 2]);
+// Filtered decimal decode functions
+decode_fixed_decimal_impl!(filtered simple decode_fixed_decimal_filtered_1, 1, DECIMAL8_NULL, "Decimal8", [1]);
+decode_fixed_decimal_impl!(filtered simple decode_fixed_decimal_filtered_2, 2, DECIMAL16_NULL, "Decimal16", [1, 2]);
+decode_fixed_decimal_impl!(filtered simple decode_fixed_decimal_filtered_4, 4, DECIMAL32_NULL, "Decimal32", [1, 2, 3, 4]);
+decode_fixed_decimal_impl!(filtered simple decode_fixed_decimal_filtered_8, 8, DECIMAL64_NULL, "Decimal64", [1, 2, 3, 4, 5, 6, 7, 8]);
+decode_fixed_decimal_impl!(filtered multiword decode_fixed_decimal_filtered_16, 16, 2, DECIMAL128_NULL, "Decimal128", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+decode_fixed_decimal_impl!(filtered multiword decode_fixed_decimal_filtered_32, 32, 4, DECIMAL256_NULL, "Decimal256", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]);
 
-// Decimal32: target size 4, source sizes 1-4 are valid
-decode_fixed_decimal_impl!(simple decode_fixed_decimal_4, 4, DECIMAL32_NULL, "Decimal32", [1, 2, 3, 4]);
+#[allow(clippy::too_many_arguments)]
+fn decode_fixed_decimal_filtered<const FILL_NULLS: bool>(
+    page: &DataPage,
+    bufs: &mut ColumnChunkBuffers,
+    values_buffer: &[u8],
+    page_row_start: usize,
+    page_row_count: usize,
+    row_group_lo: usize,
+    row_lo: usize,
+    row_hi: usize,
+    rows_filter: &[i64],
+    src_len: usize,
+    target_tag: ColumnTypeTag,
+) -> ParquetResult<()> {
+    // Get target size based on column type tag
+    let target_size = match target_tag {
+        ColumnTypeTag::Decimal8 => 1,
+        ColumnTypeTag::Decimal16 => 2,
+        ColumnTypeTag::Decimal32 => 4,
+        ColumnTypeTag::Decimal64 => 8,
+        ColumnTypeTag::Decimal128 => 16,
+        ColumnTypeTag::Decimal256 => 32,
+        _ => {
+            return Err(fmt_err!(
+                Unsupported,
+                "unsupported target column type {:?} for FixedLenByteArray decimal",
+                target_tag
+            ))
+        }
+    };
 
-// Decimal64: target size 8, source sizes 1-8 are valid
-decode_fixed_decimal_impl!(simple decode_fixed_decimal_8, 8, DECIMAL64_NULL, "Decimal64", [1, 2, 3, 4, 5, 6, 7, 8]);
+    // Validate: source cannot be larger than target (would truncate significant digits)
+    if src_len > target_size {
+        return Err(fmt_err!(
+            Unsupported,
+            "FixedLenByteArray({}) decimal cannot be decoded to {:?} (target size {} bytes): \
+             source is larger than target, would truncate significant digits",
+            src_len,
+            target_tag,
+            target_size
+        ));
+    }
 
-// Decimal128: target size 16 (2 words), source sizes 1-16 are valid
-decode_fixed_decimal_impl!(multiword decode_fixed_decimal_16, 16, 2, DECIMAL128_NULL, "Decimal128", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
-
-// Decimal256: target size 32 (4 words), source sizes 1-32 are valid
-decode_fixed_decimal_impl!(multiword decode_fixed_decimal_32, 32, 4, DECIMAL256_NULL, "Decimal256", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]);
+    // Dispatch based on target type and source size
+    match target_tag {
+        ColumnTypeTag::Decimal8 => decode_fixed_decimal_filtered_1::<FILL_NULLS>(
+            page,
+            bufs,
+            values_buffer,
+            page_row_start,
+            page_row_count,
+            row_group_lo,
+            row_lo,
+            row_hi,
+            rows_filter,
+            src_len,
+        ),
+        ColumnTypeTag::Decimal16 => decode_fixed_decimal_filtered_2::<FILL_NULLS>(
+            page,
+            bufs,
+            values_buffer,
+            page_row_start,
+            page_row_count,
+            row_group_lo,
+            row_lo,
+            row_hi,
+            rows_filter,
+            src_len,
+        ),
+        ColumnTypeTag::Decimal32 => decode_fixed_decimal_filtered_4::<FILL_NULLS>(
+            page,
+            bufs,
+            values_buffer,
+            page_row_start,
+            page_row_count,
+            row_group_lo,
+            row_lo,
+            row_hi,
+            rows_filter,
+            src_len,
+        ),
+        ColumnTypeTag::Decimal64 => decode_fixed_decimal_filtered_8::<FILL_NULLS>(
+            page,
+            bufs,
+            values_buffer,
+            page_row_start,
+            page_row_count,
+            row_group_lo,
+            row_lo,
+            row_hi,
+            rows_filter,
+            src_len,
+        ),
+        ColumnTypeTag::Decimal128 => decode_fixed_decimal_filtered_16::<FILL_NULLS>(
+            page,
+            bufs,
+            values_buffer,
+            page_row_start,
+            page_row_count,
+            row_group_lo,
+            row_lo,
+            row_hi,
+            rows_filter,
+            src_len,
+        ),
+        ColumnTypeTag::Decimal256 => decode_fixed_decimal_filtered_32::<FILL_NULLS>(
+            page,
+            bufs,
+            values_buffer,
+            page_row_start,
+            page_row_count,
+            row_group_lo,
+            row_lo,
+            row_hi,
+            rows_filter,
+            src_len,
+        ),
+        _ => Err(fmt_err!(
+            Unsupported,
+            "unsupported target column type {:?} for FixedLenByteArray decimal",
+            target_tag
+        )),
+    }
+}
 
 #[cfg(test)]
 mod tests {
