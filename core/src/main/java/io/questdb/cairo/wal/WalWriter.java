@@ -908,20 +908,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         replaceRangeHiTs,
                         dedupMode
                 );
-                if (ringManager != null && segmentRowCount > 0) {
-                    for (int i = 0; i < columnCount; i++) {
-                        int type = metadata.getColumnType(i);
-                        if (type == ColumnType.SYMBOL) {
-                            debugSymbolColumnState(
-                                    metadata.getColumnName(i),
-                                    type,
-                                    getDataColumn(i),
-                                    segmentRowCount,
-                                    "pre-commit"
-                            );
-                        }
-                    }
-                }
                 // flush disk before getting next txn
                 syncIfRequired();
                 final long seqTxn = getSequencerTxn();
@@ -1346,53 +1332,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 .$(", fdSizeHi=").$(fdSizeHi)
                 .$(", ioUringData=").$(dataMem instanceof MemoryPURImpl)
                 .$(", ioUringAux=").$(auxMem instanceof MemoryPURImpl)
-                .I$();
-    }
-
-    private void debugSymbolColumnState(
-            CharSequence columnName,
-            int columnType,
-            MemoryMA dataMem,
-            long rowCount,
-            CharSequence stage
-    ) {
-        if (ringManager == null || columnType != ColumnType.SYMBOL) {
-            return;
-        }
-        final long dataFd = dataMem != null ? dataMem.getFd() : -1;
-        final long dataLen = dataFd > -1 ? ff.length(dataFd) : -1;
-        final long expectedSize = rowCount > 0 ? rowCount << 2 : 0;
-        final long appendOffset = dataMem != null ? dataMem.getAppendOffset() : -1;
-        int firstVal = Integer.MIN_VALUE;
-        int lastVal = Integer.MIN_VALUE;
-        if (dataMem != null && rowCount > 0 && appendOffset >= 4) {
-            try {
-                long firstAddr = dataMem.addressOf(0);
-                if (firstAddr != 0) {
-                    firstVal = Unsafe.getUnsafe().getInt(firstAddr);
-                }
-                if (appendOffset >= expectedSize && expectedSize >= 4) {
-                    long lastAddr = dataMem.addressOf((rowCount - 1) << 2);
-                    if (lastAddr != 0) {
-                        lastVal = Unsafe.getUnsafe().getInt(lastAddr);
-                    }
-                }
-            } catch (Throwable ignored) {
-                // Logging only, avoid disturbing WAL writer flow.
-            }
-        }
-        LOG.debug().$("wal symbol column state [wal=").$substr(pathRootSize, path)
-                .$(", segment=").$(segmentId)
-                .$(", column=").$safe(columnName)
-                .$(", stage=").$safe(stage)
-                .$(", rowCount=").$(rowCount)
-                .$(", dataFd=").$(dataFd)
-                .$(", dataAppend=").$(appendOffset)
-                .$(", dataLen=").$(dataLen)
-                .$(", expected=").$(expectedSize)
-                .$(", first=").$(firstVal)
-                .$(", last=").$(lastVal)
-                .$(", ioUring=").$(dataMem instanceof MemoryPURImpl)
                 .I$();
     }
 
@@ -2053,7 +1992,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 }
             }
             events.sync();
-            if (async && ringManager != null) {
+            if (async && ringManager != null && ringManager.getInFlightCount() > 0) {
                 ringManager.waitForAll();
                 // No resumeWriteAfterSync needed — swap provides a fresh buffer.
             }
@@ -2071,11 +2010,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     }
                 }
             }
-            ringManager.waitForAll();
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                MemoryMA column = columns.getQuick(i);
-                if (column instanceof MemoryPURImpl) {
-                    ((MemoryPURImpl) column).resumeWriteAfterSync();
+            if (ringManager.getInFlightCount() > 0) {
+                ringManager.waitForAll();
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    MemoryMA column = columns.getQuick(i);
+                    if (column instanceof MemoryPURImpl) {
+                        ((MemoryPURImpl) column).resumeWriteAfterSync();
+                    }
                 }
             }
         }

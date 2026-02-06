@@ -318,6 +318,7 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
             int state = pageStates.getQuick(currentPage);
             if (state == CONFIRMED) {
                 setPageState(currentPage, WRITING);
+                setPageDirtyStart(currentPage, appendOffset);
             } else if (state == SUBMITTED) {
                 LOG.info().$("page still submitted after wait [fd=").$(fd)
                         .$(", columnSlot=").$(columnSlot)

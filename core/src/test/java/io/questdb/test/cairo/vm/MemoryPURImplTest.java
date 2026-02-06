@@ -929,6 +929,71 @@ public class MemoryPURImplTest extends AbstractTest {
     }
 
     @Test
+    public void testSyncSubmitInPlaceNoDuplicateWrites() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            final long pageSize = 4096;
+
+            File file = temp.newFile();
+            try (
+                    Path path = new Path();
+                    WalWriterRingManager mgr = new WalWriterRingManager(rf, 64);
+                    WalWriterBufferPool pool = new WalWriterBufferPool(pageSize, 16, MemoryTag.NATIVE_TABLE_WAL_WRITER)
+            ) {
+                pool.setRingManager(mgr);
+                mgr.setPool(pool);
+                pool.registerWithKernel();
+                try (MemoryPURImpl mem = new MemoryPURImpl(ff, path.of(file.getAbsolutePath()).$(),
+                        pageSize, MemoryTag.NATIVE_TABLE_WAL_WRITER, 0, mgr, pool)) {
+                    // Write 50 longs (400 bytes), sync, wait, resume.
+                    for (int i = 0; i < 50; i++) {
+                        mem.putLong(i);
+                    }
+                    mem.syncSubmitInPlace();
+                    mgr.waitForAll();
+                    mem.resumeWriteAfterSync();
+
+                    // Write 50 more longs (400 bytes), sync again.
+                    for (int i = 50; i < 100; i++) {
+                        mem.putLong(i);
+                    }
+                    // After the fix, resumeWriteAfterSync() advances pageDirtyStart
+                    // so only the new 400 bytes are submitted, not all 800 from page start.
+                    mem.syncSubmitInPlace();
+                    Assert.assertTrue("dirty column should submit", mgr.getInFlightCount() > 0);
+                    mgr.waitForAll();
+                    mem.resumeWriteAfterSync();
+
+                    // Third sync with no new writes should be a no-op.
+                    mem.syncSubmitInPlace();
+                    Assert.assertEquals("clean column should skip submission", 0, mgr.getInFlightCount());
+                }
+
+                // Read file back and verify all 100 values.
+                long fd = Files.openRO(path.of(file.getAbsolutePath()).$());
+                Assert.assertTrue(fd > -1);
+                try {
+                    long bufLen = 100 * Long.BYTES;
+                    long buf = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        long bytesRead = Files.read(fd, buf, bufLen, 0);
+                        Assert.assertEquals(bufLen, bytesRead);
+                        for (int i = 0; i < 100; i++) {
+                            Assert.assertEquals("mismatch at " + i, i,
+                                    Unsafe.getUnsafe().getLong(buf + (long) i * Long.BYTES));
+                        }
+                    } finally {
+                        Unsafe.free(buf, bufLen, MemoryTag.NATIVE_DEFAULT);
+                    }
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSyncSubmitInPlaceAfterMoreWrites() throws Exception {
         Assume.assumeTrue(rf.isAvailable());
 

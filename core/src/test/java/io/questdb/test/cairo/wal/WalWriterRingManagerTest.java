@@ -100,6 +100,23 @@ public class WalWriterRingManagerTest extends AbstractTest {
     }
 
     @Test
+    public void testWaitForAllNoOpsWhenEmpty() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (WalWriterRingManager mgr = new WalWriterRingManager(rf, 32)) {
+                TestColumn col = new TestColumn();
+                mgr.registerColumn(col);
+
+                Assert.assertEquals(0, mgr.getInFlightCount());
+                // Should return immediately without syscall or crash.
+                mgr.waitForAll();
+                Assert.assertEquals(0, mgr.getInFlightCount());
+            }
+        });
+    }
+
+    @Test
     public void testRegisterUnregister() throws Exception {
         Assume.assumeTrue(rf.isAvailable());
 

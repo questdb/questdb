@@ -213,6 +213,9 @@ public class WalWriterRingManager implements Closeable {
     }
 
     public void waitForAll() {
+        if (inFlightCount == 0) {
+            return;
+        }
         // Submit any pending SQEs first.
         ring.submit();
         while (inFlightCount > 0) {
