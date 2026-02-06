@@ -525,6 +525,44 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddDuplicateColumnIfNotExistsDecimal() throws Exception {
+        createX();
+        execute("alter table x add column dec_col decimal(48, 18)");
+        // same type — should be a no-op
+        execute("alter table x add column if not exists dec_col decimal(48, 18)");
+
+        // different precision/scale — should fail
+        assertException(
+                "alter table x add column if not exists dec_col decimal(18, 3)",
+                47,
+                "column already exists with a different column type"
+        );
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsDecimalDefault() throws Exception {
+        createX();
+        // bare DECIMAL defaults to (18,3)
+        execute("alter table x add column dec_col decimal");
+        execute("alter table x add column if not exists dec_col decimal");
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsGeohash() throws Exception {
+        createX();
+        execute("alter table x add column geo_col geohash(5c)");
+        // same type — should be a no-op
+        execute("alter table x add column if not exists geo_col geohash(5c)");
+
+        // different precision — should fail
+        assertException(
+                "alter table x add column if not exists geo_col geohash(3c)",
+                47,
+                "column already exists with a different column type"
+        );
+    }
+
+    @Test
     public void testAddExpectColumnKeyword() throws Exception {
         assertFailure("alter table x add", 17, "'column' or column name");
     }
