@@ -56,7 +56,6 @@ public class DeltaBitmapIndexFwdReader implements BitmapIndexReader {
     protected long columnTop;
     protected int keyCount;
     protected long spinLockTimeoutMs;
-    private int blockCapacity;
     private long columnTxn;
     private int keyCountIncludingNulls;
     private long keyFileSequence = -1;
@@ -262,19 +261,18 @@ public class DeltaBitmapIndexFwdReader implements BitmapIndexReader {
             long seq = keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
             int keyCount;
             long valueMemSize;
-            int blockCapacity;
+//            int blockCapacity;
 
             Unsafe.getUnsafe().loadFence();
             if (keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
                 keyCount = keyMem.getInt(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
                 valueMemSize = keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
-                blockCapacity = keyMem.getInt(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_CAPACITY);
+//                blockCapacity = keyMem.getInt(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_CAPACITY);
 
                 Unsafe.getUnsafe().loadFence();
                 if (keyMem.getLong(DeltaBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) == seq) {
                     this.keyFileSequence = seq;
                     this.valueMemSize = valueMemSize;
-                    this.blockCapacity = blockCapacity;
                     this.keyCount = keyCount;
                     this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
                     keyMem.extend(DeltaBitmapIndexUtils.getKeyEntryOffset(keyCount));

@@ -30,7 +30,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTaskJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeConverter;
-import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ColumnVersionWriter;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReaderImpl;

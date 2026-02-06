@@ -25,7 +25,6 @@
 package io.questdb.tasks;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.LongList;

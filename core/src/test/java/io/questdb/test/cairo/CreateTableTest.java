@@ -467,10 +467,12 @@ public class CreateTableTest extends AbstractCairoTest {
         );
         execute("create table foo_clone ( like foo)");
         assertSql(
-                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\n" +
-                        "a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\n" +
-                        "b\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
+                """
+                        column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
+                        ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue
+                        a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue
+                        b\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                        """,
                 "SHOW COLUMNS FROM foo_clone"
         );
     }
@@ -714,16 +716,20 @@ public class CreateTableTest extends AbstractCairoTest {
                 assertEquals(0, reader.getMetadata().getTimestampIndex());
             }
 
-            assertSql("ddl\n" +
-                            "CREATE TABLE 'y' ( \n" +
-                            "\tns TIMESTAMP_NS,\n" +
-                            "\ts SYMBOL\n" +
-                            ") timestamp(ns) PARTITION BY DAY;\n",
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'y' (\s
+                            \tns TIMESTAMP_NS,
+                            \ts SYMBOL
+                            ) timestamp(ns) PARTITION BY DAY;
+                            """,
                     "show create table y;");
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ns\tTIMESTAMP_NS\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n" +
-                            "s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\n"
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
+                            ns\tTIMESTAMP_NS\tfalse\t0\tfalse\t0\t0\ttrue\tfalse
+                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse
+                            """
                     ,
                     "SHOW COLUMNS FROM y"
             );
@@ -737,13 +743,15 @@ public class CreateTableTest extends AbstractCairoTest {
                             "TIMESTAMP(ns) PARTITION BY DAY WAL " +
                             "DEDUP UPSERT KEYS(ns, a)"
             );
-            assertSql("ddl\n" +
-                            "CREATE TABLE 'z' ( \n" +
-                            "\tns TIMESTAMP_NS,\n" +
-                            "\ta INT,\n" +
-                            "\tb STRING\n" +
-                            ") timestamp(ns) PARTITION BY DAY\n" +
-                            "DEDUP UPSERT KEYS(ns,a);\n",
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'z' (\s
+                            \tns TIMESTAMP_NS,
+                            \ta INT,
+                            \tb STRING
+                            ) timestamp(ns) PARTITION BY DAY
+                            DEDUP UPSERT KEYS(ns,a);
+                            """,
                     "show create table z;");
         });
     }
@@ -942,17 +950,7 @@ public class CreateTableTest extends AbstractCairoTest {
         assertSymbolParameters(parameters);
     }
 
-    private static class SymbolParameters {
-        private final Integer indexBlockCapacity;
-        private final boolean isCached;
-        private final boolean isIndexed;
-        private final Integer symbolCapacity;
-
-        SymbolParameters(Integer symbolCapacity, boolean isCached, boolean isIndexed, Integer indexBlockCapacity) {
-            this.symbolCapacity = symbolCapacity;
-            this.isCached = isCached;
-            this.isIndexed = isIndexed;
-            this.indexBlockCapacity = indexBlockCapacity;
-        }
+    private record SymbolParameters(Integer symbolCapacity, boolean isCached, boolean isIndexed,
+                                    Integer indexBlockCapacity) {
     }
 }
