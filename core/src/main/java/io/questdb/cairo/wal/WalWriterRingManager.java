@@ -277,6 +277,9 @@ public class WalWriterRingManager implements Closeable {
             }
             case (int) OP_SWAP_WRITE -> {
                 int bufIdx = (int) unpackPageId(userData);
+                // NB: unlike OP_WRITE, we don't validate cqeRes against the submitted length.
+                // Short positive writes don't occur on Linux local filesystems; if that changes,
+                // the expected length would need to be tracked per swap buffer.
                 if (cqeRes < 0) {
                     WalWriterRingColumn col = columns.getQuick(columnSlot);
                     if (col != null) {
