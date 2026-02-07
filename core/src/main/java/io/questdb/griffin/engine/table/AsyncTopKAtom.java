@@ -45,7 +45,9 @@ import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.orderby.LimitedSizeLongTreeChain;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.jit.CompiledFilter;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -60,15 +62,21 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
     private final CompiledFilter compiledFilter;
     private final IntHashSet filterUsedColumnIndexes;
     private final LimitedSizeLongTreeChain ownerChain;
+    private final DirectLongList ownerAuxAddresses;
     private final RecordComparator ownerComparator;
+    private final DirectLongList ownerDataAddresses;
     private final Function ownerFilter;
+    private final DirectLongList ownerFilteredRows;
     private final PageFrameMemoryPool ownerMemoryPool;
     private final PageFrameMemoryRecord ownerRecordA;
     private final PageFrameMemoryRecord ownerRecordB;
     private final SelectivityStats ownerSelectivityStats = new SelectivityStats();
+    private final ObjList<DirectLongList> perWorkerAuxAddresses;
     private final ObjList<LimitedSizeLongTreeChain> perWorkerChains;
     private final ObjList<RecordComparator> perWorkerComparators;
+    private final ObjList<DirectLongList> perWorkerDataAddresses;
     private final ObjList<Function> perWorkerFilters;
+    private final ObjList<DirectLongList> perWorkerFilteredRows;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<PageFrameMemoryPool> perWorkerMemoryPools;
     private final ObjList<PageFrameMemoryRecord> perWorkerRecordsB;
@@ -120,6 +128,18 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
             this.perWorkerRecordsB = new ObjList<>(workerCount);
             perWorkerSelectivityStats = new ObjList<>(workerCount);
 
+            ownerFilteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD);
+            if (compiledFilter != null) {
+                ownerDataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
+                ownerAuxAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
+            } else {
+                ownerDataAddresses = null;
+                ownerAuxAddresses = null;
+            }
+            perWorkerFilteredRows = new ObjList<>(workerCount);
+            perWorkerDataAddresses = new ObjList<>(workerCount);
+            perWorkerAuxAddresses = new ObjList<>(workerCount);
+
             for (int i = 0; i < workerCount; i++) {
                 perWorkerComparators.extendAndSet(i, recordComparatorCompiler.newInstance(clazz));
 
@@ -136,6 +156,11 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
                 perWorkerMemoryPools.extendAndSet(i, new PageFrameMemoryPool(2));
                 perWorkerRecordsB.extendAndSet(i, new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER));
                 perWorkerSelectivityStats.extendAndSet(i, new SelectivityStats());
+                perWorkerFilteredRows.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD));
+                if (compiledFilter != null) {
+                    perWorkerDataAddresses.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD));
+                    perWorkerAuxAddresses.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD));
+                }
             }
         } catch (Throwable th) {
             close();
@@ -161,12 +186,25 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
         Misc.free(compiledFilter);
         Misc.free(bindVarMemory);
         Misc.freeObjList(bindVarFunctions);
+        Misc.free(ownerFilteredRows);
+        Misc.freeObjList(perWorkerFilteredRows);
+        Misc.free(ownerDataAddresses);
+        Misc.freeObjList(perWorkerDataAddresses);
+        Misc.free(ownerAuxAddresses);
+        Misc.freeObjList(perWorkerAuxAddresses);
     }
 
     public void freePerWorkerChainsAndPools() {
         Misc.freeObjListAndKeepObjects(perWorkerChains);
         Misc.freeObjListAndKeepObjects(perWorkerMemoryPools);
         Misc.freeObjListAndKeepObjects(perWorkerRecordsB);
+    }
+
+    public DirectLongList getAuxAddresses(int slotId) {
+        if (slotId == -1) {
+            return ownerAuxAddresses;
+        }
+        return perWorkerAuxAddresses.getQuick(slotId);
     }
 
     public ObjList<Function> getBindVarFunctions() {
@@ -184,6 +222,13 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
         return perWorkerComparators.getQuick(slotId);
     }
 
+    public DirectLongList getDataAddresses(int slotId) {
+        if (slotId == -1) {
+            return ownerDataAddresses;
+        }
+        return perWorkerDataAddresses.getQuick(slotId);
+    }
+
     public CompiledFilter getCompiledFilter() {
         return compiledFilter;
     }
@@ -193,6 +238,13 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
             return ownerFilter;
         }
         return perWorkerFilters.getQuick(slotId);
+    }
+
+    public DirectLongList getFilteredRows(int slotId) {
+        if (slotId == -1) {
+            return ownerFilteredRows;
+        }
+        return perWorkerFilteredRows.getQuick(slotId);
     }
 
     public @Nullable IntHashSet getFilterUsedColumnIndexes() {

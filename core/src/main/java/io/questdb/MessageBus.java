@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cairo.sql.async.UnorderedPageFrameReduceTask;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.text.CopyImportRequestTask;
 import io.questdb.cutlass.text.CopyImportTask;
@@ -146,6 +147,12 @@ public interface MessageBus extends Closeable {
     int getPageFrameReduceShardCount();
 
     MCSequence getPageFrameReduceSubSeq(int shard);
+
+    MPSequence getUnorderedPageFrameReducePubSeq();
+
+    RingQueue<UnorderedPageFrameReduceTask> getUnorderedPageFrameReduceQueue();
+
+    MCSequence getUnorderedPageFrameReduceSubSeq();
 
     MPSequence getQueryCacheEventPubSeq();
 

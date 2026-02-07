@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cairo.sql.async.UnorderedPageFrameReduceTask;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.text.CopyImportRequestTask;
 import io.questdb.cutlass.text.CopyImportTask;
@@ -104,6 +105,9 @@ public class MessageBusImpl implements MessageBus {
     private final MCSequence[] pageFrameReduceSubSeq;
     private final MPSequence queryCacheEventPubSeq;
     private final MCSequence queryCacheEventSubSeq;
+    private final MPSequence unorderedPageFrameReducePubSeq;
+    private final RingQueue<UnorderedPageFrameReduceTask> unorderedPageFrameReduceQueue;
+    private final MCSequence unorderedPageFrameReduceSubSeq;
     private final ConcurrentQueue<QueryTrace> queryTraceQueue;
     private final MPSequence tableWriterEventPubSeq;
     private final RingQueue<TableWriterTask> tableWriterEventQueue;
@@ -196,6 +200,12 @@ public class MessageBusImpl implements MessageBus {
                 reducePubSeq.then(reduceSubSeq).then(collectFanOut).then(reducePubSeq);
             }
 
+            int unorderedReduceQueueCapacity = configuration.getUnorderedPageFrameReduceQueueCapacity();
+            this.unorderedPageFrameReduceQueue = new RingQueue<>(UnorderedPageFrameReduceTask::new, unorderedReduceQueueCapacity);
+            this.unorderedPageFrameReducePubSeq = new MPSequence(unorderedReduceQueueCapacity);
+            this.unorderedPageFrameReduceSubSeq = new MCSequence(unorderedReduceQueueCapacity);
+            unorderedPageFrameReducePubSeq.then(unorderedPageFrameReduceSubSeq).then(unorderedPageFrameReducePubSeq);
+
             this.copyImportQueue = new RingQueue<>(CopyImportTask::new, configuration.getSqlCopyQueueCapacity());
             this.copyImportPubSeq = new SPSequence(copyImportQueue.getCycle());
             this.copyImportSubSeq = new MCSequence(copyImportQueue.getCycle());
@@ -257,6 +267,7 @@ public class MessageBusImpl implements MessageBus {
         vectorAggregateSubSeq.clear();
         walTxnNotificationSubSequence.clear();
         walTxnNotificationSubSequence.clear();
+        unorderedPageFrameReduceSubSeq.clear();
         for (int i = 0, n = pageFrameReduceSubSeq.length; i < n; i++) {
             pageFrameReduceSubSeq[i].clear();
         }
@@ -508,6 +519,21 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MCSequence getPageFrameReduceSubSeq(int shard) {
         return pageFrameReduceSubSeq[shard];
+    }
+
+    @Override
+    public MPSequence getUnorderedPageFrameReducePubSeq() {
+        return unorderedPageFrameReducePubSeq;
+    }
+
+    @Override
+    public RingQueue<UnorderedPageFrameReduceTask> getUnorderedPageFrameReduceQueue() {
+        return unorderedPageFrameReduceQueue;
+    }
+
+    @Override
+    public MCSequence getUnorderedPageFrameReduceSubSeq() {
+        return unorderedPageFrameReduceSubSeq;
     }
 
     @Override

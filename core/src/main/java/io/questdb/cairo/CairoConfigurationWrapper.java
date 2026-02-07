@@ -662,6 +662,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getUnorderedPageFrameReduceQueueCapacity() {
+        return getDelegate().getUnorderedPageFrameReduceQueueCapacity();
+    }
+
+    @Override
     public int getParallelIndexThreshold() {
         return getDelegate().getParallelIndexThreshold();
     }

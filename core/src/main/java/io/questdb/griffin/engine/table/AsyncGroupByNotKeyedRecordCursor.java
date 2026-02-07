@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -32,27 +31,22 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.cairo.sql.async.PageFrameReduceTask;
-import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Os;
+
+import io.questdb.griffin.engine.functions.GroupByFunction;
 
 class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
-    private static final Log LOG = LogFactory.getLog(AsyncGroupByNotKeyedRecordCursor.class);
     private final ObjList<GroupByFunction> groupByFunctions;
     private final VirtualRecord recordA;
-    private int frameLimit;
-    private PageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
+    private UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
     private boolean isOpen;
     private boolean isValueBuilt;
     private int recordsRemaining = 1;
@@ -76,14 +70,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         if (isOpen) {
             try {
                 if (frameSequence != null) {
-                    LOG.debug()
-                            .$("closing [shard=").$(frameSequence.getShard())
-                            .$(", frameCount=").$(frameLimit)
-                            .I$();
-
-                    if (frameLimit > -1) {
-                        frameSequence.await();
-                    }
+                    frameSequence.await();
                     frameSequence.reset();
                 }
             } finally {
@@ -136,60 +123,9 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private void buildValue() {
-        if (frameLimit == -1) {
-            frameSequence.prepareForDispatch();
-            frameLimit = frameSequence.getFrameCount() - 1;
-        }
-
-        int frameIndex = -1;
-        boolean allFramesActive = true;
-        try {
-            do {
-                final long cursor = frameSequence.next();
-                if (cursor > -1) {
-                    PageFrameReduceTask task = frameSequence.getTask(cursor);
-                    LOG.debug()
-                            .$("collected [shard=").$(frameSequence.getShard())
-                            .$(", frameIndex=").$(task.getFrameIndex())
-                            .$(", frameCount=").$(frameSequence.getFrameCount())
-                            .$(", active=").$(frameSequence.isActive())
-                            .$(", cursor=").$(cursor)
-                            .I$();
-                    if (task.hasError()) {
-                        throw CairoException.nonCritical()
-                                .position(task.getErrorMessagePosition())
-                                .put(task.getErrorMsg())
-                                .setCancellation(task.isCancelled())
-                                .setInterruption(task.isCancelled())
-                                .setOutOfMemory(task.isOutOfMemory());
-                    }
-
-                    allFramesActive &= frameSequence.isActive();
-                    frameIndex = task.getFrameIndex();
-
-                    frameSequence.collect(cursor, false);
-                } else if (cursor == -2) {
-                    break; // No frames to filter.
-                } else {
-                    Os.pause();
-                }
-            } while (frameIndex < frameLimit);
-        } catch (Throwable e) {
-            LOG.error().$("group by error [ex=").$(e).I$();
-            if (e instanceof CairoException) {
-                CairoException ce = (CairoException) e;
-                if (ce.isInterruption()) {
-                    throwTimeoutException();
-                } else {
-                    throw ce;
-                }
-            }
-            throw CairoException.nonCritical().put(e.getMessage());
-        }
-
-        if (!allFramesActive) {
-            throwTimeoutException();
-        }
+        frameSequence.prepareForDispatch();
+        frameSequence.getAtom().initMemoryPools(frameSequence.getPageFrameAddressCache());
+        frameSequence.dispatchAndAwait();
 
         // Merge the values.
         final AsyncGroupByNotKeyedAtom atom = frameSequence.getAtom();
@@ -212,15 +148,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         isValueBuilt = true;
     }
 
-    private void throwTimeoutException() {
-        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
-            throw CairoException.queryCancelled();
-        } else {
-            throw CairoException.queryTimedOut();
-        }
-    }
-
-    void of(PageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
+    void of(UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         final AsyncGroupByNotKeyedAtom atom = frameSequence.getAtom();
         if (!isOpen) {
             isOpen = true;
@@ -230,7 +158,6 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         recordA.of(atom.getOwnerMapValue());
         Function.init(groupByFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
         isValueBuilt = false;
-        frameLimit = -1;
         toTop();
     }
 }

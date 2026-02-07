@@ -24,29 +24,22 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.async.PageFrameReduceTask;
-import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.orderby.LimitedSizeLongTreeChain;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.std.Os;
 import io.questdb.std.Rows;
 
 class AsyncTopKRecordCursor implements RecordCursor {
-    private static final Log LOG = LogFactory.getLog(AsyncTopKRecordCursor.class);
     private LimitedSizeLongTreeChain.TreeCursor chainCursor;
     private long consumedCount;
-    private int frameLimit;
     private PageFrameMemoryPool frameMemoryPool;
-    private PageFrameSequence<AsyncTopKAtom> frameSequence;
+    private UnorderedPageFrameSequence<AsyncTopKAtom> frameSequence;
     private boolean isChainBuilt;
     private boolean isOpen = true;
     private PageFrameMemoryRecord recordA;
@@ -65,14 +58,7 @@ class AsyncTopKRecordCursor implements RecordCursor {
         if (isOpen) {
             try {
                 if (frameSequence != null) {
-                    LOG.debug()
-                            .$("closing [shard=").$(frameSequence.getShard())
-                            .$(", frameCount=").$(frameLimit)
-                            .I$();
-
-                    if (frameLimit > -1) {
-                        frameSequence.await();
-                    }
+                    frameSequence.await();
                     frameSequence.reset();
                 }
             } finally {
@@ -145,52 +131,9 @@ class AsyncTopKRecordCursor implements RecordCursor {
     }
 
     private void buildChain() {
-        if (frameLimit == -1) {
-            frameSequence.prepareForDispatch();
-            frameLimit = frameSequence.getFrameCount() - 1;
-        }
-
-        int frameIndex = -1;
-        boolean allFramesActive = true;
-        try {
-            do {
-                final long cursor = frameSequence.next();
-                if (cursor > -1) {
-                    PageFrameReduceTask task = frameSequence.getTask(cursor);
-                    LOG.debug()
-                            .$("collected [shard=").$(frameSequence.getShard())
-                            .$(", frameIndex=").$(task.getFrameIndex())
-                            .$(", frameCount=").$(frameSequence.getFrameCount())
-                            .$(", active=").$(frameSequence.isActive())
-                            .$(", cursor=").$(cursor)
-                            .I$();
-                    if (task.hasError()) {
-                        throw CairoException.nonCritical()
-                                .position(task.getErrorMessagePosition())
-                                .put(task.getErrorMsg());
-                    }
-
-                    allFramesActive &= frameSequence.isActive();
-                    frameIndex = task.getFrameIndex();
-
-                    frameSequence.collect(cursor, false);
-                } else if (cursor == -2) {
-                    break; // No frames to filter.
-                } else {
-                    Os.pause();
-                }
-            } while (frameIndex < frameLimit);
-        } catch (CairoException e) {
-            if (e.isInterruption()) {
-                throwTimeoutException();
-            } else {
-                throw e;
-            }
-        }
-
-        if (!allFramesActive) {
-            throwTimeoutException();
-        }
+        frameSequence.prepareForDispatch();
+        frameSequence.getAtom().initMemoryPools(frameSequence.getPageFrameAddressCache());
+        frameSequence.dispatchAndAwait();
 
         // merge everything into owner chain
         mergeChains();
@@ -227,15 +170,7 @@ class AsyncTopKRecordCursor implements RecordCursor {
         chainCursor = ownerChain.getCursor();
     }
 
-    private void throwTimeoutException() {
-        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
-            throw CairoException.queryCancelled();
-        } else {
-            throw CairoException.queryTimedOut();
-        }
-    }
-
-    void of(PageFrameSequence<AsyncTopKAtom> frameSequence) {
+    void of(UnorderedPageFrameSequence<AsyncTopKAtom> frameSequence) {
         final AsyncTopKAtom atom = frameSequence.getAtom();
         if (!isOpen) {
             isOpen = true;
@@ -246,7 +181,6 @@ class AsyncTopKRecordCursor implements RecordCursor {
         this.recordA = atom.getOwnerRecordA();
         this.recordB = atom.getOwnerRecordB();
         atom.initMemoryPools(frameSequence.getPageFrameAddressCache());
-        frameLimit = -1;
         isChainBuilt = false;
         consumedCount = 0;
     }

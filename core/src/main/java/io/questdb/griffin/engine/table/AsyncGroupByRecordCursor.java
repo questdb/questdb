@@ -38,8 +38,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.cairo.sql.async.PageFrameReduceTask;
-import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -75,8 +74,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     private final ObjList<Function> recordFunctions;
     private final ShardedMapCursor shardedCursor = new ShardedMapCursor();
     private SqlExecutionCircuitBreaker circuitBreaker;
-    private int frameLimit;
-    private PageFrameSequence<AsyncGroupByAtom> frameSequence;
+    private UnorderedPageFrameSequence<AsyncGroupByAtom> frameSequence;
     private boolean isDataMapBuilt;
     private boolean isOpen;
     private MapRecordCursor mapCursor;
@@ -106,14 +104,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         if (isOpen) {
             try {
                 if (frameSequence != null) {
-                    LOG.debug()
-                            .$("closing [shard=").$(frameSequence.getShard())
-                            .$(", frameCount=").$(frameLimit)
-                            .I$();
-
-                    if (frameLimit > -1) {
-                        frameSequence.await();
-                    }
+                    frameSequence.await();
                     frameSequence.reset();
                 }
             } finally {
@@ -197,55 +188,9 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     }
 
     private void buildMap() {
-        if (frameLimit == -1) {
-            frameSequence.prepareForDispatch();
-            frameLimit = frameSequence.getFrameCount() - 1;
-        }
-
-        int frameIndex = -1;
-        boolean allFramesActive = true;
-        try {
-            do {
-                final long cursor = frameSequence.next();
-                if (cursor > -1) {
-                    PageFrameReduceTask task = frameSequence.getTask(cursor);
-                    LOG.debug()
-                            .$("collected [shard=").$(frameSequence.getShard())
-                            .$(", frameIndex=").$(task.getFrameIndex())
-                            .$(", frameCount=").$(frameSequence.getFrameCount())
-                            .$(", active=").$(frameSequence.isActive())
-                            .$(", cursor=").$(cursor)
-                            .I$();
-                    if (task.hasError()) {
-                        throw CairoException.nonCritical()
-                                .position(task.getErrorMessagePosition())
-                                .put(task.getErrorMsg())
-                                .setCancellation(task.isCancelled())
-                                .setInterruption(task.isCancelled())
-                                .setOutOfMemory(task.isOutOfMemory());
-                    }
-
-                    allFramesActive &= frameSequence.isActive();
-                    frameIndex = task.getFrameIndex();
-
-                    frameSequence.collect(cursor, false);
-                } else if (cursor == -2) {
-                    break; // No frames to filter.
-                } else {
-                    Os.pause();
-                }
-            } while (frameIndex < frameLimit);
-        } catch (CairoException e) {
-            if (e.isInterruption()) {
-                throwTimeoutException();
-            } else {
-                throw e;
-            }
-        }
-
-        if (!allFramesActive) {
-            throwTimeoutException();
-        }
+        frameSequence.prepareForDispatch();
+        frameSequence.getAtom().initMemoryPools(frameSequence.getPageFrameAddressCache());
+        frameSequence.dispatchAndAwait();
 
         final AsyncGroupByAtom atom = frameSequence.getAtom();
 
@@ -479,7 +424,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         }
     }
 
-    void of(PageFrameSequence<AsyncGroupByAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
+    void of(UnorderedPageFrameSequence<AsyncGroupByAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         final AsyncGroupByAtom atom = frameSequence.getAtom();
         if (!isOpen) {
             isOpen = true;
@@ -489,6 +434,5 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         this.circuitBreaker = executionContext.getCircuitBreaker();
         Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
         isDataMapBuilt = false;
-        frameLimit = -1;
     }
 }

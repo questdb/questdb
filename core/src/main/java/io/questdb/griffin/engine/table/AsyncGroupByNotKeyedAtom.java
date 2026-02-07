@@ -27,7 +27,9 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameFilteredNoRandomAccessMemoryRecord;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -46,7 +48,9 @@ import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -64,17 +68,25 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
     private final IntHashSet filterUsedColumnIndexes;
     private final ObjList<PageFrameFilteredNoRandomAccessMemoryRecord> frameFilteredMemoryRecords = new ObjList<>();
     private final GroupByAllocator ownerAllocator;
+    private final DirectLongList ownerAuxAddresses;
+    private final DirectLongList ownerDataAddresses;
     private final Function ownerFilter;
+    private final DirectLongList ownerFilteredRows;
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final SimpleMapValue ownerMapValue;
+    private final PageFrameMemoryPool ownerMemoryPool;
     private final PageFrameFilteredNoRandomAccessMemoryRecord ownerPageFrameFilteredNoRandomAccessMemoryRecord = new PageFrameFilteredNoRandomAccessMemoryRecord();
     private final SelectivityStats ownerSelectivityStats = new SelectivityStats();
     private final ObjList<GroupByAllocator> perWorkerAllocators;
+    private final ObjList<DirectLongList> perWorkerAuxAddresses;
+    private final ObjList<DirectLongList> perWorkerDataAddresses;
     private final ObjList<Function> perWorkerFilters;
+    private final ObjList<DirectLongList> perWorkerFilteredRows;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<SimpleMapValue> perWorkerMapValues;
+    private final ObjList<PageFrameMemoryPool> perWorkerMemoryPools;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
 
     public AsyncGroupByNotKeyedAtom(
@@ -142,6 +154,28 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
                 perWorkerSelectivityStats.extendAndSet(i, new SelectivityStats());
             }
 
+            ownerMemoryPool = new PageFrameMemoryPool(1);
+            ownerFilteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD);
+            if (compiledFilter != null) {
+                ownerDataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
+                ownerAuxAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
+            } else {
+                ownerDataAddresses = null;
+                ownerAuxAddresses = null;
+            }
+            perWorkerMemoryPools = new ObjList<>(slotCount);
+            perWorkerFilteredRows = new ObjList<>(slotCount);
+            perWorkerDataAddresses = new ObjList<>(slotCount);
+            perWorkerAuxAddresses = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
+                perWorkerMemoryPools.extendAndSet(i, new PageFrameMemoryPool(1));
+                perWorkerFilteredRows.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD));
+                if (compiledFilter != null) {
+                    perWorkerDataAddresses.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD));
+                    perWorkerAuxAddresses.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD));
+                }
+            }
+
             clear();
         } catch (Throwable th) {
             close();
@@ -165,6 +199,8 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         }
         Misc.clear(ownerAllocator);
         Misc.clearObjList(perWorkerAllocators);
+        Misc.free(ownerMemoryPool);
+        Misc.freeObjListAndKeepObjects(perWorkerMemoryPools);
         ownerSelectivityStats.clear();
         Misc.clearObjList(perWorkerSelectivityStats);
     }
@@ -180,11 +216,26 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         Misc.freeObjList(perWorkerAllocators);
         Misc.free(ownerMapValue);
         Misc.freeObjList(perWorkerMapValues);
+        Misc.free(ownerMemoryPool);
+        Misc.freeObjList(perWorkerMemoryPools);
+        Misc.free(ownerFilteredRows);
+        Misc.freeObjList(perWorkerFilteredRows);
+        Misc.free(ownerDataAddresses);
+        Misc.freeObjList(perWorkerDataAddresses);
+        Misc.free(ownerAuxAddresses);
+        Misc.freeObjList(perWorkerAuxAddresses);
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                 Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
             }
         }
+    }
+
+    public DirectLongList getAuxAddresses(int slotId) {
+        if (slotId == -1) {
+            return ownerAuxAddresses;
+        }
+        return perWorkerAuxAddresses.getQuick(slotId);
     }
 
     public ObjList<Function> getBindVarFunctions() {
@@ -193,6 +244,13 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
 
     public MemoryCARW getBindVarMemory() {
         return bindVarMemory;
+    }
+
+    public DirectLongList getDataAddresses(int slotId) {
+        if (slotId == -1) {
+            return ownerDataAddresses;
+        }
+        return perWorkerDataAddresses.getQuick(slotId);
     }
 
     public CompiledFilter getCompiledFilter() {
@@ -206,6 +264,13 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         return perWorkerFilters.getQuick(slotId);
     }
 
+    public DirectLongList getFilteredRows(int slotId) {
+        if (slotId == -1) {
+            return ownerFilteredRows;
+        }
+        return perWorkerFilteredRows.getQuick(slotId);
+    }
+
     public @Nullable IntHashSet getFilterUsedColumnIndexes() {
         return filterUsedColumnIndexes;
     }
@@ -215,6 +280,13 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
             return ownerFunctionUpdater;
         }
         return perWorkerFunctionUpdaters.getQuick(slotId);
+    }
+
+    public PageFrameMemoryPool getMemoryPool(int slotId) {
+        if (slotId == -1) {
+            return ownerMemoryPool;
+        }
+        return perWorkerMemoryPools.getQuick(slotId);
     }
 
     public SimpleMapValue getMapValue(int slotId) {
@@ -246,6 +318,13 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
             return ownerSelectivityStats;
         }
         return perWorkerSelectivityStats.getQuick(slotId);
+    }
+
+    public void initMemoryPools(PageFrameAddressCache pageFrameAddressCache) {
+        ownerMemoryPool.of(pageFrameAddressCache);
+        for (int i = 0, n = perWorkerMemoryPools.size(); i < n; i++) {
+            perWorkerMemoryPools.getQuick(i).of(pageFrameAddressCache);
+        }
     }
 
     @Override
