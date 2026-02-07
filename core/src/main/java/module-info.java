@@ -130,4 +130,5 @@ open module io.questdb {
     exports io.questdb.griffin.engine.functions.decimal;
     exports io.questdb.cutlass.parquet;
     exports io.questdb.cairo.view;
+    exports io.questdb.recovery;
 }
