@@ -258,9 +258,9 @@ private:
         return false;
     }
 
-    bool findFloat(double value, asmjit::x86::Vec &out_reg) const {
+    bool findFloat(double value, data_type_t type, asmjit::x86::Vec &out_reg) const {
         for (size_t i = 0; i < count; ++i) {
-            if (is_float[i] && float_values[i] == value) {
+            if (is_float[i] && float_values[i] == value && float_types[i] == type) {
                 out_reg = xmm_regs[i];
                 return true;
             }
@@ -277,10 +277,11 @@ private:
         }
     }
 
-    void addFloat(double value, asmjit::x86::Vec reg) {
+    void addFloat(double value, data_type_t type, asmjit::x86::Vec reg) {
         if (count < MAX_CONSTANTS) {
             is_float[count] = true;
             float_values[count] = value;
+            float_types[count] = type;
             xmm_regs[count] = reg;
             count++;
         }
@@ -291,6 +292,7 @@ private:
     bool is_float[MAX_CONSTANTS];
     int64_t int_values[MAX_CONSTANTS];
     double float_values[MAX_CONSTANTS];
+    data_type_t float_types[MAX_CONSTANTS];
     asmjit::x86::Gp gp_regs[MAX_CONSTANTS];
     asmjit::x86::Vec xmm_regs[MAX_CONSTANTS];
 #endif
@@ -428,9 +430,9 @@ struct ConstantCacheYmm {
     }
 
     // Find a float constant and return its YMM register
-    bool findFloat(double value, asmjit::x86::Vec &out_reg) const {
+    bool findFloat(double value, data_type_t type, asmjit::x86::Vec &out_reg) const {
         for (size_t i = 0; i < count; ++i) {
-            if (is_float[i] && float_values[i] == value) {
+            if (is_float[i] && float_values[i] == value && float_types[i] == type) {
                 out_reg = ymm_regs[i];
                 return true;
             }
@@ -449,10 +451,11 @@ struct ConstantCacheYmm {
     }
 
     // Add a float constant
-    void addFloat(double value, asmjit::x86::Vec reg) {
+    void addFloat(double value, data_type_t type, asmjit::x86::Vec reg) {
         if (count < MAX_CONSTANTS) {
             is_float[count] = true;
             float_values[count] = value;
+            float_types[count] = type;
             ymm_regs[count] = reg;
             count++;
         }
@@ -463,6 +466,7 @@ private:
     bool is_float[MAX_CONSTANTS];
     int64_t int_values[MAX_CONSTANTS];
     double float_values[MAX_CONSTANTS];
+    data_type_t float_types[MAX_CONSTANTS];
     asmjit::x86::Vec ymm_regs[MAX_CONSTANTS];
 };
 #endif // !__aarch64__
