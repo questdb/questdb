@@ -479,7 +479,7 @@ fn test_sign_extend<const N: usize, const R: usize>(
 
     let mut slicer = DataPageFixedSlicer::<R>::new(input, 1);
     let mut sink =
-        SignExtendDecimalColumnSink::<N, R, _>::new(&mut slicer, &mut buffers, null_value);
+        SignExtendDecimalColumnSink::<N, _>::new(&mut slicer, &mut buffers, null_value, R);
 
     sink.reserve(1).unwrap();
     sink.push_slice(1).unwrap();
@@ -749,7 +749,7 @@ fn test_sign_extend_nulls() {
     let data: Vec<u8> = vec![0x42];
     let mut slicer = DataPageFixedSlicer::<1>::new(&data, 10);
     let mut sink =
-        SignExtendDecimalColumnSink::<4, 1, _>::new(&mut slicer, &mut buffers, DECIMAL32_NULL);
+        SignExtendDecimalColumnSink::<4, _>::new(&mut slicer, &mut buffers, DECIMAL32_NULL, 1);
 
     sink.reserve(5).unwrap();
     sink.push_nulls(5).unwrap();
@@ -769,7 +769,7 @@ fn test_sign_extend_mixed_push_and_nulls() {
     let data: Vec<u8> = vec![0x7F, 0x80, 0x00, 0xFF];
     let mut slicer = DataPageFixedSlicer::<1>::new(&data, 10);
     let mut sink =
-        SignExtendDecimalColumnSink::<2, 1, _>::new(&mut slicer, &mut buffers, DECIMAL16_NULL);
+        SignExtendDecimalColumnSink::<2, _>::new(&mut slicer, &mut buffers, DECIMAL16_NULL, 1);
 
     sink.reserve(5).unwrap();
     sink.push_slice(2).unwrap();
@@ -794,7 +794,7 @@ fn test_sign_extend_push_slice_multiple() {
     let data: Vec<u8> = vec![0x01, 0x80, 0xFF];
     let mut slicer = DataPageFixedSlicer::<1>::new(&data, 3);
     let mut sink =
-        SignExtendDecimalColumnSink::<2, 1, _>::new(&mut slicer, &mut buffers, DECIMAL16_NULL);
+        SignExtendDecimalColumnSink::<2, _>::new(&mut slicer, &mut buffers, DECIMAL16_NULL, 1);
 
     sink.reserve(3).unwrap();
     sink.push_slice(3).unwrap();
@@ -859,7 +859,7 @@ fn test_sign_extend_fuzzy_1_to_2() {
         let data = vec![src_byte];
         let mut slicer = DataPageFixedSlicer::<1>::new(&data, 1);
         let mut sink =
-            SignExtendDecimalColumnSink::<2, 1, _>::new(&mut slicer, &mut buffers, DECIMAL16_NULL);
+            SignExtendDecimalColumnSink::<2, _>::new(&mut slicer, &mut buffers, DECIMAL16_NULL, 1);
 
         sink.reserve(1).unwrap();
         sink.push_slice(1).unwrap();
@@ -886,7 +886,7 @@ fn test_sign_extend_fuzzy_1_to_4() {
         let data = vec![src_byte];
         let mut slicer = DataPageFixedSlicer::<1>::new(&data, 1);
         let mut sink =
-            SignExtendDecimalColumnSink::<4, 1, _>::new(&mut slicer, &mut buffers, DECIMAL32_NULL);
+            SignExtendDecimalColumnSink::<4, _>::new(&mut slicer, &mut buffers, DECIMAL32_NULL, 1);
 
         sink.reserve(1).unwrap();
         sink.push_slice(1).unwrap();
@@ -912,7 +912,7 @@ fn test_sign_extend_fuzzy_2_to_4() {
         let data: Vec<u8> = (0..2).map(|_| rng.random()).collect();
         let mut slicer = DataPageFixedSlicer::<2>::new(&data, 1);
         let mut sink =
-            SignExtendDecimalColumnSink::<4, 2, _>::new(&mut slicer, &mut buffers, DECIMAL32_NULL);
+            SignExtendDecimalColumnSink::<4, _>::new(&mut slicer, &mut buffers, DECIMAL32_NULL, 2);
 
         sink.reserve(1).unwrap();
         sink.push_slice(1).unwrap();
@@ -938,7 +938,7 @@ fn test_sign_extend_fuzzy_3_to_8() {
         let data: Vec<u8> = (0..3).map(|_| rng.random()).collect();
         let mut slicer = DataPageFixedSlicer::<3>::new(&data, 1);
         let mut sink =
-            SignExtendDecimalColumnSink::<8, 3, _>::new(&mut slicer, &mut buffers, DECIMAL64_NULL);
+            SignExtendDecimalColumnSink::<8, _>::new(&mut slicer, &mut buffers, DECIMAL64_NULL, 3);
 
         sink.reserve(1).unwrap();
         sink.push_slice(1).unwrap();
@@ -964,7 +964,7 @@ fn test_sign_extend_fuzzy_5_to_8() {
         let data: Vec<u8> = (0..5).map(|_| rng.random()).collect();
         let mut slicer = DataPageFixedSlicer::<5>::new(&data, 1);
         let mut sink =
-            SignExtendDecimalColumnSink::<8, 5, _>::new(&mut slicer, &mut buffers, DECIMAL64_NULL);
+            SignExtendDecimalColumnSink::<8, _>::new(&mut slicer, &mut buffers, DECIMAL64_NULL, 5);
 
         sink.reserve(1).unwrap();
         sink.push_slice(1).unwrap();
@@ -990,10 +990,11 @@ fn test_sign_extend_fuzzy_1_to_16_multiword() {
         let src_byte: u8 = rng.random();
         let data = vec![src_byte];
         let mut slicer = DataPageFixedSlicer::<1>::new(&data, 1);
-        let mut sink = SignExtendDecimalColumnSink::<16, 1, _>::new(
+        let mut sink = SignExtendDecimalColumnSink::<16, _>::new(
             &mut slicer,
             &mut buffers,
             DECIMAL128_NULL,
+            1,
         );
 
         sink.reserve(1).unwrap();
@@ -1019,10 +1020,11 @@ fn test_sign_extend_fuzzy_8_to_16_multiword() {
         let mut buffers = create_buffers(&allocator);
         let data: Vec<u8> = (0..8).map(|_| rng.random()).collect();
         let mut slicer = DataPageFixedSlicer::<8>::new(&data, 1);
-        let mut sink = SignExtendDecimalColumnSink::<16, 8, _>::new(
+        let mut sink = SignExtendDecimalColumnSink::<16, _>::new(
             &mut slicer,
             &mut buffers,
             DECIMAL128_NULL,
+            8,
         );
 
         sink.reserve(1).unwrap();
@@ -1048,10 +1050,11 @@ fn test_sign_extend_fuzzy_12_to_16_multiword() {
         let mut buffers = create_buffers(&allocator);
         let data: Vec<u8> = (0..12).map(|_| rng.random()).collect();
         let mut slicer = DataPageFixedSlicer::<12>::new(&data, 1);
-        let mut sink = SignExtendDecimalColumnSink::<16, 12, _>::new(
+        let mut sink = SignExtendDecimalColumnSink::<16, _>::new(
             &mut slicer,
             &mut buffers,
             DECIMAL128_NULL,
+            12,
         );
 
         sink.reserve(1).unwrap();
@@ -1078,10 +1081,11 @@ fn test_sign_extend_fuzzy_1_to_32_multiword() {
         let src_byte: u8 = rng.random();
         let data = vec![src_byte];
         let mut slicer = DataPageFixedSlicer::<1>::new(&data, 1);
-        let mut sink = SignExtendDecimalColumnSink::<32, 1, _>::new(
+        let mut sink = SignExtendDecimalColumnSink::<32, _>::new(
             &mut slicer,
             &mut buffers,
             DECIMAL256_NULL,
+            1,
         );
 
         sink.reserve(1).unwrap();
@@ -1107,10 +1111,11 @@ fn test_sign_extend_fuzzy_16_to_32_multiword() {
         let mut buffers = create_buffers(&allocator);
         let data: Vec<u8> = (0..16).map(|_| rng.random()).collect();
         let mut slicer = DataPageFixedSlicer::<16>::new(&data, 1);
-        let mut sink = SignExtendDecimalColumnSink::<32, 16, _>::new(
+        let mut sink = SignExtendDecimalColumnSink::<32, _>::new(
             &mut slicer,
             &mut buffers,
             DECIMAL256_NULL,
+            16,
         );
 
         sink.reserve(1).unwrap();
@@ -1136,10 +1141,11 @@ fn test_sign_extend_fuzzy_24_to_32_multiword() {
         let mut buffers = create_buffers(&allocator);
         let data: Vec<u8> = (0..24).map(|_| rng.random()).collect();
         let mut slicer = DataPageFixedSlicer::<24>::new(&data, 1);
-        let mut sink = SignExtendDecimalColumnSink::<32, 24, _>::new(
+        let mut sink = SignExtendDecimalColumnSink::<32, _>::new(
             &mut slicer,
             &mut buffers,
             DECIMAL256_NULL,
+            24,
         );
 
         sink.reserve(1).unwrap();
@@ -1167,7 +1173,7 @@ fn test_sign_extend_fuzzy_batch() {
         let data: Vec<u8> = (0..batch_size * 2).map(|_| rng.random()).collect();
         let mut slicer = DataPageFixedSlicer::<2>::new(&data, batch_size);
         let mut sink =
-            SignExtendDecimalColumnSink::<4, 2, _>::new(&mut slicer, &mut buffers, DECIMAL32_NULL);
+            SignExtendDecimalColumnSink::<4, _>::new(&mut slicer, &mut buffers, DECIMAL32_NULL, 2);
 
         sink.reserve(batch_size).unwrap();
         sink.push_slice(batch_size).unwrap();
@@ -1205,7 +1211,7 @@ fn test_sign_extend_fuzzy_interleaved_push_and_nulls() {
         let data: Vec<u8> = (0..20).map(|_| rng.random()).collect();
         let mut slicer = DataPageFixedSlicer::<1>::new(&data, 100);
         let mut sink =
-            SignExtendDecimalColumnSink::<2, 1, _>::new(&mut slicer, &mut buffers, DECIMAL16_NULL);
+            SignExtendDecimalColumnSink::<2, _>::new(&mut slicer, &mut buffers, DECIMAL16_NULL, 1);
 
         // Track expected output
         let mut expected_output: Vec<u8> = Vec::new();

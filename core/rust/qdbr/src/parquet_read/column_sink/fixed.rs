@@ -1,5 +1,5 @@
 use crate::allocator::AcVec;
-use crate::parquet::error::ParquetResult;
+use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::DataPageSlicer;
 use crate::parquet_read::ColumnChunkBuffers;
@@ -669,19 +669,19 @@ impl<'a, const N: usize, const WORDS: usize, T: DataPageSlicer>
 /// Parquet stores decimals as big-endian byte arrays, and QuestDB stores them as little-endian.
 ///
 /// N is the target size in bytes (1, 2, 4, 8, 16, or 32).
-/// R is the source size in bytes from the Parquet file (must be <= N).
+/// `src_len` is the source size in bytes from the Parquet file.
+/// If `src_len` > N, the value must be sign-extended (only leading sign bytes may be truncated).
 ///
 /// For simple decimals (N <= 8): sign-extend and reverse all bytes.
 /// For multi-word decimals (N = 16 or 32): sign-extend and swap bytes within each 8-byte word.
-pub struct SignExtendDecimalColumnSink<'a, const N: usize, const R: usize, T: DataPageSlicer> {
+pub struct SignExtendDecimalColumnSink<'a, const N: usize, T: DataPageSlicer> {
     slicer: &'a mut T,
     buffers: &'a mut ColumnChunkBuffers,
     null_value: [u8; N],
+    src_len: usize,
 }
 
-impl<const N: usize, const R: usize, T: DataPageSlicer> Pushable
-    for SignExtendDecimalColumnSink<'_, N, R, T>
-{
+impl<const N: usize, T: DataPageSlicer> Pushable for SignExtendDecimalColumnSink<'_, N, T> {
     fn reserve(&mut self, count: usize) -> ParquetResult<()> {
         self.buffers.data_vec.reserve(count * N)?;
         Ok(())
@@ -695,7 +695,7 @@ impl<const N: usize, const R: usize, T: DataPageSlicer> Pushable
 
         unsafe {
             let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
-            Self::sign_extend_and_convert(slice, ptr);
+            Self::sign_extend_and_convert(slice, ptr, self.src_len)?;
             self.buffers.data_vec.set_len(base + N);
         }
         Ok(())
@@ -703,42 +703,20 @@ impl<const N: usize, const R: usize, T: DataPageSlicer> Pushable
 
     #[inline]
     fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
-        match count {
-            0 => Ok(()),
-            1 => self.push(),
-            2 => {
-                self.push()?;
-                self.push()
-            }
-            3 => {
-                self.push()?;
-                self.push()?;
-                self.push()
-            }
-            4 => {
-                self.push()?;
-                self.push()?;
-                self.push()?;
-                self.push()
-            }
-            _ => {
-                let base = self.buffers.data_vec.len();
-                let total_bytes = count * N;
-                debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
+        let base = self.buffers.data_vec.len();
+        let total_bytes = count * N;
+        debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
 
-                unsafe {
-                    let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
-                    for c in 0..count {
-                        let slice = self.slicer.next();
-                        let dest = ptr.add(c * N);
-                        Self::sign_extend_and_convert(slice, dest);
-                    }
-                    self.buffers.data_vec.set_len(base + total_bytes);
-                    self.buffers.data_vec.set_len(base + total_bytes);
-                }
-                Ok(())
+        unsafe {
+            let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+            for c in 0..count {
+                let slice = self.slicer.next();
+                let dest = ptr.add(c * N);
+                Self::sign_extend_and_convert(slice, dest, self.src_len)?;
             }
+            self.buffers.data_vec.set_len(base + total_bytes);
         }
+        Ok(())
     }
 
     #[inline]
@@ -749,39 +727,18 @@ impl<const N: usize, const R: usize, T: DataPageSlicer> Pushable
 
     #[inline]
     fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        match count {
-            0 => Ok(()),
-            1 => self.push_null(),
-            2 => {
-                self.push_null()?;
-                self.push_null()
-            }
-            3 => {
-                self.push_null()?;
-                self.push_null()?;
-                self.push_null()
-            }
-            4 => {
-                self.push_null()?;
-                self.push_null()?;
-                self.push_null()?;
-                self.push_null()
-            }
-            _ => {
-                let base = self.buffers.data_vec.len();
-                let total_bytes = count * N;
-                debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
+        let base = self.buffers.data_vec.len();
+        let total_bytes = count * N;
+        debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
 
-                unsafe {
-                    let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
-                    for i in 0..count {
-                        ptr::copy_nonoverlapping(self.null_value.as_ptr(), ptr.add(i * N), N);
-                    }
-                    self.buffers.data_vec.set_len(base + total_bytes);
-                }
-                Ok(())
+        unsafe {
+            let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+            for i in 0..count {
+                ptr::copy_nonoverlapping(self.null_value.as_ptr(), ptr.add(i * N), N);
             }
+            self.buffers.data_vec.set_len(base + total_bytes);
         }
+        Ok(())
     }
 
     #[inline]
@@ -794,15 +751,14 @@ impl<const N: usize, const R: usize, T: DataPageSlicer> Pushable
     }
 }
 
-impl<'a, const N: usize, const R: usize, T: DataPageSlicer>
-    SignExtendDecimalColumnSink<'a, N, R, T>
-{
+impl<'a, const N: usize, T: DataPageSlicer> SignExtendDecimalColumnSink<'a, N, T> {
     pub fn new(
         slicer: &'a mut T,
         buffers: &'a mut ColumnChunkBuffers,
         null_value: [u8; N],
+        src_len: usize,
     ) -> Self {
-        Self { slicer, buffers, null_value }
+        Self { slicer, buffers, null_value, src_len }
     }
 
     /// Sign-extend the source bytes to target size and convert from BE to LE.
@@ -811,23 +767,63 @@ impl<'a, const N: usize, const R: usize, T: DataPageSlicer>
     /// For N <= 8: we simply reverse bytes while sign-extending.
     /// For N = 16 or 32 (multi-word): we swap bytes within each 8-byte word.
     #[inline]
-    unsafe fn sign_extend_and_convert(src: &[u8], dest: *mut u8) {
+    unsafe fn sign_extend_and_convert(
+        src: &[u8],
+        dest: *mut u8,
+        src_len: usize,
+    ) -> ParquetResult<()> {
+        debug_assert!(src.len() == src_len);
+        if src_len == 0 {
+            return Err(fmt_err!(
+                Unsupported,
+                "invalid decimal source length 0 for target size {}",
+                N
+            ));
+        }
+        let mut src = src;
+        let mut src_len = src_len;
+        if src_len > N {
+            let sign_byte = if src[0] & 0x80 != 0 { 0xFF } else { 0x00 };
+            let trunc = src_len - N;
+            if src[..trunc].iter().any(|b| *b != sign_byte) {
+                return Err(fmt_err!(
+                    Unsupported,
+                    "FixedLenByteArray({}) decimal cannot be decoded to target size {} bytes: \
+                     source is larger than target and not sign-extended",
+                    src_len,
+                    N
+                ));
+            }
+            let msb = src[trunc];
+            if (msb & 0x80) != (sign_byte & 0x80) {
+                return Err(fmt_err!(
+                    Unsupported,
+                    "FixedLenByteArray({}) decimal cannot be decoded to target size {} bytes: \
+                     source is larger than target and would truncate significant digits",
+                    src_len,
+                    N
+                ));
+            }
+            src = &src[trunc..];
+            src_len = N;
+        }
+
         // Determine sign byte from the most significant byte of source
         let sign_byte = if src[0] & 0x80 != 0 { 0xFF } else { 0x00 };
 
         if N <= 8 {
             // Simple case: reverse all bytes while sign-extending
             // Output is little-endian, so we write from least significant to most significant
-            // The source bytes (big-endian) are at indices 0..R where 0 is MSB
-            // After reversal, source[R-1] becomes output[0], source[R-2] becomes output[1], etc.
-            // Sign extension bytes fill the remaining positions (R..N)
+            // The source bytes (big-endian) are at indices 0..src_len where 0 is MSB
+            // After reversal, source[src_len-1] becomes output[0], source[src_len-2] becomes output[1], etc.
+            // Sign extension bytes fill the remaining positions (src_len..N)
 
             // Write source bytes in reverse order (LE output)
-            for i in 0..R {
-                *dest.add(i) = src[R - 1 - i];
+            for i in 0..src_len {
+                *dest.add(i) = src[src_len - 1 - i];
             }
             // Fill remaining bytes with sign extension
-            for i in R..N {
+            for i in src_len..N {
                 *dest.add(i) = sign_byte;
             }
         } else {
@@ -840,11 +836,12 @@ impl<'a, const N: usize, const R: usize, T: DataPageSlicer>
             // 2. Swap bytes within each 8-byte word
             //
             // The extended big-endian representation looks like:
-            // [sign_byte × (N-R)] [src[0]] [src[1]] ... [src[R-1]]
+            // [sign_byte × (N-src_len)] [src[0]] [src[1]] ... [src[src_len-1]]
             //
             // Then we swap bytes within each 8-byte word.
 
             let words = N / 8;
+            let sign_prefix = N - src_len;
 
             for w in 0..words {
                 let word_start_in_extended = w * 8;
@@ -854,16 +851,17 @@ impl<'a, const N: usize, const R: usize, T: DataPageSlicer>
                 // we need the byte at position (word_start_in_extended + 7 - i) in the extended BE array
                 for i in 0..8 {
                     let extended_pos = word_start_in_extended + 7 - i;
-                    let byte = if extended_pos < N - R {
+                    let byte = if extended_pos < sign_prefix {
                         // This position is in the sign-extension prefix
                         sign_byte
                     } else {
                         // This position maps to source byte at (extended_pos - (N - R))
-                        src[extended_pos - (N - R)]
+                        src[extended_pos - sign_prefix]
                     };
                     *word_dest.add(i) = byte;
                 }
             }
         }
+        Ok(())
     }
 }
