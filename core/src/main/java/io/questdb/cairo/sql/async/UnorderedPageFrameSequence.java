@@ -371,27 +371,6 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         }
     }
 
-    public void toTop() {
-        if (frameCount > 0) {
-            long newId = ID_SEQ.incrementAndGet();
-            LOG.debug()
-                    .$("toTop [id=").$(id)
-                    .$(", newId=").$(newId)
-                    .I$();
-
-            id = newId;
-            doneLatch.reset();
-            reduceStartedCounter.set(0);
-            workStealingStrategy.of(reduceStartedCounter);
-            isValid.set(true);
-            cancelReason.set(SqlExecutionCircuitBreaker.STATE_OK);
-            errorMsg.clear();
-            errorMessagePosition = 0;
-            isCancelled = false;
-            isOutOfMemory = false;
-        }
-    }
-
     private void buildAddressCache() {
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
@@ -414,11 +393,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
                     .$(", frameIndex=").$(frameIndex)
                     .$(", frameCount=").$(frameCount)
                     .I$();
-            int interruptReason = SqlExecutionCircuitBreaker.STATE_OK;
-            if (th instanceof CairoException e) {
-                interruptReason = e.getInterruptionReason();
-            }
-            cancel(interruptReason);
+            setError(th);
             throw th;
         }
     }

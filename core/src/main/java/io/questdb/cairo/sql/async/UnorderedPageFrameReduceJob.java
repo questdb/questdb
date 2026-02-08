@@ -109,41 +109,48 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                 task.clear();
                 subSeq.done(cursor);
 
-                try {
-                    assert taskSequenceId == frameSequence.getId()
-                            : "stale task: expected id=" + frameSequence.getId() + ", got=" + taskSequenceId;
-                    if (frameSequence.isActive()) {
-                        // Always initialize the circuit breaker before checking state.
-                        circuitBreaker.init(frameSequence.getCircuitBreaker());
-                        final int cbState = frameSequence.isUninterruptible()
-                                ? SqlExecutionCircuitBreaker.STATE_OK
-                                : circuitBreaker.getState(frameSequence.getStartTime(), frameSequence.getCircuitBreaker().getFd());
-
-                        if (cbState == SqlExecutionCircuitBreaker.STATE_OK) {
-                            record.of(frameSequence.getSymbolTableSource());
-                            frameSequence.getReduceStartedCounter().incrementAndGet();
-                            frameSequence.getReducer().reduce(
-                                    workerId,
-                                    record,
-                                    frameIndex,
-                                    circuitBreaker,
-                                    frameSequence,
-                                    stealingFrameSequence
-                            );
-                        } else {
-                            frameSequence.cancel(cbState);
-                        }
-                    }
-                } catch (Throwable th) {
-                    LOG.error()
-                            .$("reduce error [error=").$(th)
-                            .$(", id=").$(frameSequence.getId())
-                            .$(", frameIndex=").$(frameIndex)
-                            .$(", frameCount=").$(frameSequence.getFrameCount())
+                if (taskSequenceId != frameSequence.getId()) {
+                    // Stale task from a previous dispatch cycle; discard without
+                    // touching the (already reset) latch or error state.
+                    LOG.info()
+                            .$("skipping stale task [expected=").$(frameSequence.getId())
+                            .$(", got=").$(taskSequenceId)
                             .I$();
-                    frameSequence.setError(th);
-                } finally {
-                    frameSequence.getDoneLatch().countDown();
+                } else {
+                    try {
+                        if (frameSequence.isActive()) {
+                            // Always initialize the circuit breaker before checking state.
+                            circuitBreaker.init(frameSequence.getCircuitBreaker());
+                            final int cbState = frameSequence.isUninterruptible()
+                                    ? SqlExecutionCircuitBreaker.STATE_OK
+                                    : circuitBreaker.getState(frameSequence.getStartTime(), frameSequence.getCircuitBreaker().getFd());
+
+                            if (cbState == SqlExecutionCircuitBreaker.STATE_OK) {
+                                record.of(frameSequence.getSymbolTableSource());
+                                frameSequence.getReduceStartedCounter().incrementAndGet();
+                                frameSequence.getReducer().reduce(
+                                        workerId,
+                                        record,
+                                        frameIndex,
+                                        circuitBreaker,
+                                        frameSequence,
+                                        stealingFrameSequence
+                                );
+                            } else {
+                                frameSequence.cancel(cbState);
+                            }
+                        }
+                    } catch (Throwable th) {
+                        LOG.error()
+                                .$("reduce error [error=").$(th)
+                                .$(", id=").$(frameSequence.getId())
+                                .$(", frameIndex=").$(frameIndex)
+                                .$(", frameCount=").$(frameSequence.getFrameCount())
+                                .I$();
+                        frameSequence.setError(th);
+                    } finally {
+                        frameSequence.getDoneLatch().countDown();
+                    }
                 }
                 return false;
             } else if (cursor == -1) {
