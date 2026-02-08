@@ -54,7 +54,6 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMemory;
 
 public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
     private final ObjList<Function> bindVarFunctions;
@@ -332,7 +331,7 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
 
         if (bindVarFunctions != null) {
             Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
-            prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
+            AsyncFilterUtils.prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
         }
     }
 

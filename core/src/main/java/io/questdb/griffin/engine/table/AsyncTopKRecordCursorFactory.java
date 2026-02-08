@@ -62,8 +62,6 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
-import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
-import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
 /**
  * ORDER BY + LIMIT (top K) parallel execution.
@@ -220,9 +218,9 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         try {
             if (compiledFilter == null || frameMemory.hasColumnTops()) {
                 // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
-                applyFilter(filter, rows, record, frameRowCount);
+                AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
             } else {
-                applyCompiledFilter(
+                AsyncFilterUtils.applyCompiledFilter(
                         compiledFilter,
                         atom.getBindVarMemory(),
                         atom.getBindVarFunctions(),

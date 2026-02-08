@@ -59,7 +59,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMemory;
 
 public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
     private final ObjList<Function> bindVarFunctions;
@@ -359,7 +358,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
 
         if (bindVarFunctions != null) {
             Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
-            prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
+            AsyncFilterUtils.prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
         }
     }
 

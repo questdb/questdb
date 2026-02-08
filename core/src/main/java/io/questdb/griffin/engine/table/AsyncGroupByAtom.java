@@ -73,7 +73,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMemory;
 
 public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
     // We use the first bits of hash code to determine the shard.
@@ -532,7 +531,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
         if (bindVarFunctions != null) {
             Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
-            prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
+            AsyncFilterUtils.prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
         }
     }
 

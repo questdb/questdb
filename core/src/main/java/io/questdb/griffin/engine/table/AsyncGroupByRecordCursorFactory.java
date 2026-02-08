@@ -67,7 +67,6 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
-import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
 public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final UnorderedPageFrameReducer AGGREGATE = AsyncGroupByRecordCursorFactory::aggregate;
@@ -397,7 +396,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             fragment.resetLocalStats();
 
             if (compiledFilter == null || frameMemory.hasColumnTops()) {
-                applyFilter(filter, rows, record, frameRowCount);
+                AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
             } else {
                 AsyncFilterUtils.applyCompiledFilter(
                         compiledFilter,
