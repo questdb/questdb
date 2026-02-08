@@ -212,7 +212,7 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("create table balances(account_no int, currency symbol, amount double)");
             execute("create table accounts(account_no int, currency symbol)");
             execute("create table card_payments(account_from_no int, account_to_no int, currency symbol, amount double)");
-            assertSql("table_name\naccounts\nbalances\ncard_payments\ndeposits\n", "select * from all_tables()");
+            assertSql("table_name\naccounts\nbalances\ncard_payments\ndeposits\n", "SHOW TABLES");
         });
     }
 
