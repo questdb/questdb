@@ -273,7 +273,7 @@ public class ConsoleRenderer {
     }
 
     static String formatTimestamp(long micros) {
-        if (micros == TxnState.UNSET_LONG) {
+        if (micros == TxnState.UNSET_LONG || micros == Long.MAX_VALUE) {
             return "N/A";
         }
         StringSink sink = new StringSink();
