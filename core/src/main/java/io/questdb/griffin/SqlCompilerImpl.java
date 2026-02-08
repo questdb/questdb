@@ -753,15 +753,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private int addColumnWithType(
-            AlterOperationBuilder addColumn,
+            @Nullable AlterOperationBuilder addColumn,
             CharSequence columnName,
             int columnNamePosition
     ) throws SqlException {
         CharSequence tok;
         tok = expectToken(lexer, "column type");
-
-        int columnType = SqlUtil.toPersistedType(tok, lexer.lastTokenPosition());
         int typePosition = lexer.lastTokenPosition();
+
+        int columnType = SqlUtil.toPersistedType(tok, typePosition);
 
         int dim = SqlUtil.parseArrayDimensionality(lexer, columnType, typePosition);
         if (dim > 0) {
@@ -875,16 +875,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             indexed = false;
         }
 
-        addColumn.addColumnToList(
-                columnName,
-                columnNamePosition,
-                columnType,
-                Numbers.ceilPow2(symbolCapacity),
-                cache,
-                indexed,
-                Numbers.ceilPow2(indexValueBlockCapacity),
-                false
-        );
+        if (addColumn != null) {
+            addColumn.addColumnToList(
+                    columnName,
+                    columnNamePosition,
+                    columnType,
+                    Numbers.ceilPow2(symbolCapacity),
+                    cache,
+                    indexed,
+                    Numbers.ceilPow2(indexValueBlockCapacity),
+                    false
+            );
+        }
         lexer.unparseLast();
         return columnType;
     }
@@ -926,36 +928,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok != null && isExistsKeyword(tok)) {
                         tok = SqlUtil.fetchNext(lexer); // captured column name
+                        final int columnNamePosition = lexer.lastTokenPosition();
                         final int columnIndex = tableMetadata.getColumnIndexQuiet(tok);
                         if (columnIndex != -1) {
-                            tok = expectToken(lexer, "column type");
+                            // peek at the type token to capture its position for error reporting
+                            expectToken(lexer, "column type");
                             final int typePosition = lexer.lastTokenPosition();
-                            int columnType = SqlUtil.toPersistedType(tok, typePosition);
-                            int dim = SqlUtil.parseArrayDimensionality(lexer, columnType, typePosition);
-                            if (dim > 0) {
-                                if (!ColumnType.isSupportedArrayElementType(columnType)) {
-                                    throw SqlException.position(typePosition)
-                                            .put("unsupported array element type [type=")
-                                            .put(ColumnType.nameOf(columnType))
-                                            .put(']');
-                                }
-                                columnType = ColumnType.encodeArrayType(ColumnType.tagOf(columnType), dim);
-                            }
-                            if (columnType == ColumnType.DECIMAL) {
-                                columnType = SqlParser.parseDecimalColumnType(lexer);
-                            } else if (columnType == ColumnType.GEOHASH) {
-                                columnType = SqlParser.parseGeoHashColumnType(lexer);
-                            }
-
-                            // check for an unmatched bracket
-                            tok = SqlUtil.fetchNext(lexer);
-                            if (tok != null && Chars.equals(tok, ']')) {
-                                throw SqlException.position(lexer.lastTokenPosition())
-                                        .put(tableMetadata.getColumnName(columnIndex))
-                                        .put(" has an unmatched `]` - were you trying to define an array?");
-                            } else {
-                                lexer.unparseLast();
-                            }
+                            lexer.unparseLast();
+                            // parse and validate the full column definition without adding to the operation
+                            CharSequence existingColumnName = tableMetadata.getColumnName(columnIndex);
+                            int columnType = addColumnWithType(null, existingColumnName, columnNamePosition);
                             final int existingType = tableMetadata.getColumnType(columnIndex);
                             if (existingType != columnType) {
                                 throw SqlException
@@ -965,7 +947,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                         .put(ColumnType.nameOf(columnType))
                                         .put(']');
                             }
-                            break;
+                            // addColumnWithType called lexer.unparseLast(), so fetch the delimiter
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok == null || (!isSingleQueryMode && isSemicolon(tok))) {
+                                break;
+                            }
+                            semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
+                            if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+                            }
+                            continue;
                         }
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "unexpected token '").put(tok)

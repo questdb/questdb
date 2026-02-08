@@ -595,9 +595,51 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
         execute("alter table x add column d_col double");
         assertException(
                 "alter table x add column if not exists d_col double]",
-                51,
+                45,
                 "has an unmatched `]` - were you trying to define an array?"
         );
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsMultiColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            execute("alter table x add column a_col int");
+            // 'a_col' already exists — should be skipped; 'b_col' should be added
+            execute("alter table x add column if not exists a_col int, b_col long");
+            drainWalQueue();
+            assertSql(
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
+                            b_col\tLONG\tfalse\t256\tfalse\t0\t0\tfalse\tfalse
+                            """,
+                    "table_columns('x') where column = 'b_col'"
+            );
+        });
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            execute("alter table x add column sym_col symbol capacity 512 cache index");
+            // same column with trailing SYMBOL options — should succeed silently
+            execute("alter table x add column if not exists sym_col symbol capacity 512 cache index");
+        });
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsTrailingGarbage() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            execute("alter table x add column a_col int");
+            // trailing garbage after the type should be rejected, not silently consumed
+            assertExceptionNoLeakCheck(
+                    "alter table x add column if not exists a_col int FOOBAR",
+                    49,
+                    "',' expected"
+            );
+        });
     }
 
     @Test
