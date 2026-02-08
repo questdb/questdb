@@ -192,8 +192,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             @NotNull UnorderedPageFrameSequence<?> frameSequence,
             @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
     ) {
-        @SuppressWarnings("unchecked")
-        final AsyncTopKAtom atom = ((UnorderedPageFrameSequence<AsyncTopKAtom>) frameSequence).getAtom();
+        @SuppressWarnings("unchecked") final AsyncTopKAtom atom = ((UnorderedPageFrameSequence<AsyncTopKAtom>) frameSequence).getAtom();
         final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
         assert frameRowCount > 0;
 
@@ -270,8 +269,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     ) {
         final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
         assert frameRowCount > 0;
-        @SuppressWarnings("unchecked")
-        final AsyncTopKAtom atom = ((UnorderedPageFrameSequence<AsyncTopKAtom>) frameSequence).getAtom();
+        @SuppressWarnings("unchecked") final AsyncTopKAtom atom = ((UnorderedPageFrameSequence<AsyncTopKAtom>) frameSequence).getAtom();
 
         final boolean owner = stealingFrameSequence == frameSequence;
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
