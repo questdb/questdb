@@ -24,17 +24,76 @@
 
 package io.questdb.recovery;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 
 import java.io.PrintStream;
 
 public class ConsoleRenderer {
+    public void printColumns(MetaState metaState, PrintStream out) {
+        ObjList<MetaColumnState> columns = metaState.getColumns();
+        if (columns.size() == 0) {
+            out.println("No columns.");
+        } else {
+            out.printf("%-5s %-30s %-15s %-8s%n", "idx", "column_name", "type", "indexed");
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                MetaColumnState col = columns.getQuick(i);
+                out.printf(
+                        "%-5d %-30s %-15s %-8s%n",
+                        i,
+                        col.getName(),
+                        col.getTypeName(),
+                        col.isIndexed() ? "yes" : "no"
+                );
+            }
+        }
+
+        printIssues("meta issues", metaState.getIssues(), out);
+    }
+
     public void printHelp(PrintStream out) {
         out.println("commands:");
-        out.println("  tables                 list discovered tables");
-        out.println("  show <name|index>      show _txn state for one table");
+        out.println("  ls                     list tables / partitions / columns");
+        out.println("  cd <name|index>        enter a table or partition");
+        out.println("  cd ..                  go up one level");
+        out.println("  cd /                   return to root");
+        out.println("  pwd                    print current path");
+        out.println("  tables                 discover and list tables");
+        out.println("  show [<name|index>]    show _txn state (current table if inside one)");
         out.println("  help                   show help");
         out.println("  quit|exit              leave recovery mode");
+    }
+
+    public void printPartitions(TxnState txnState, MetaState metaState, PrintStream out) {
+        ObjList<TxnPartitionState> partitions = txnState.getPartitions();
+        if (partitions.size() == 0) {
+            out.println("No partitions.");
+        } else {
+            int partitionBy = metaState != null ? metaState.getPartitionBy() : TxnState.UNSET_INT;
+            int timestampType = metaState != null ? metaState.getTimestampColumnType() : ColumnType.TIMESTAMP;
+
+            out.printf("%-5s %-24s %-12s %-10s %-10s %-10s%n", "idx", "partition", "rows", "nameTxn", "format", "readOnly");
+            for (int i = 0, n = partitions.size(); i < n; i++) {
+                TxnPartitionState part = partitions.getQuick(i);
+                String partName = formatPartitionName(partitionBy, timestampType, part.getTimestampLo());
+                out.printf(
+                        "%-5d %-24s %-12d %-10d %-10s %-10s%n",
+                        i,
+                        partName,
+                        part.getRowCount(),
+                        part.getNameTxn(),
+                        part.isParquetFormat() ? "parquet" : "native",
+                        part.isReadOnly()
+                );
+            }
+        }
+
+        if (metaState != null) {
+            printIssues("meta issues", metaState.getIssues(), out);
+        }
+        printIssues("txn issues", txnState.getIssues(), out);
     }
 
     public void printShow(DiscoveredTable table, TxnState state, PrintStream out) {
@@ -104,6 +163,19 @@ public class ConsoleRenderer {
                     table.isWalEnabledKnown() ? table.isWalEnabled() : "unknown",
                     table.getIssues().size()
             );
+        }
+    }
+
+    static String formatPartitionName(int partitionBy, int timestampType, long timestampLo) {
+        if (partitionBy == TxnState.UNSET_INT || partitionBy == PartitionBy.NONE) {
+            return partitionBy == PartitionBy.NONE ? "default" : Long.toString(timestampLo);
+        }
+        try {
+            StringSink sink = new StringSink();
+            PartitionBy.setSinkForPartition(sink, timestampType, partitionBy, timestampLo);
+            return sink.toString();
+        } catch (Exception e) {
+            return Long.toString(timestampLo);
         }
     }
 
