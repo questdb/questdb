@@ -39,6 +39,7 @@ import io.questdb.recovery.BoundedMetaReader;
 import io.questdb.recovery.BoundedRegistryReader;
 import io.questdb.recovery.BoundedTxnReader;
 import io.questdb.recovery.ColumnCheckService;
+import io.questdb.recovery.ColumnValueReader;
 import io.questdb.recovery.ColumnVersionStateService;
 import io.questdb.recovery.ConsoleRenderer;
 import io.questdb.recovery.MetaStateService;
@@ -81,7 +82,8 @@ public class RecoverySessionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTableWithRows("nav_deep", 2);
             String[] result = runSession("cd nav_deep\ncd 0\ncd foo\nquit\n");
-            Assert.assertTrue(result[1].contains("already at leaf level"));
+            // "foo" is not a valid column name, so we get "column not found"
+            Assert.assertTrue(result[1].contains("column not found"));
         });
     }
 
@@ -1554,6 +1556,379 @@ public class RecoverySessionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCdDeepFromColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("nav_col_deep", 2);
+            String[] result = runSession("cd nav_col_deep\ncd 0\ncd sym\ncd foo\nquit\n");
+            Assert.assertTrue(result[1].contains("already at leaf level"));
+        });
+    }
+
+    @Test
+    public void testCdDotDotFromColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("nav_col_dotdot", 2);
+            String[] result = runSession("cd nav_col_dotdot\ncd 0\ncd sym\ncd ..\nls\nquit\n");
+            // after cd .. from column, ls should show column list
+            Assert.assertTrue(result[0].contains("column_name"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCdIntoColumnByIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("nav_col_idx", 2);
+            String[] result = runSession("cd nav_col_idx\ncd 0\ncd 0\npwd\nquit\n");
+            Assert.assertTrue(result[0].contains("/nav_col_idx/1970-01-01/sym\n"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCdIntoColumnByName() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("nav_col_name", 2);
+            String[] result = runSession("cd nav_col_name\ncd 0\ncd ts\npwd\nquit\n");
+            Assert.assertTrue(result[0].contains("/nav_col_name/1970-01-01/ts\n"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCdIntoDroppedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table nav_col_drop (val int, sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into nav_col_drop values (1, 'A', '1970-01-01T00:00:00.000000Z')");
+            waitForAppliedRows("nav_col_drop", 1);
+            execute("alter table nav_col_drop drop column val");
+            drainWalQueue(engine);
+
+            String[] result = runSession("cd nav_col_drop\ncd 0\ncd val\nquit\n");
+            Assert.assertTrue(result[1].contains("cannot enter dropped column"));
+        });
+    }
+
+    @Test
+    public void testCdIntoNonexistentColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("nav_col_nope", 2);
+            String[] result = runSession("cd nav_col_nope\ncd 0\ncd nosuchcol\nquit\n");
+            Assert.assertTrue(result[1].contains("column not found"));
+        });
+    }
+
+    @Test
+    public void testCdSlashFromColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("nav_col_slash", 2);
+            String[] result = runSession("cd nav_col_slash\ncd 0\ncd sym\ncd /\npwd\nquit\n");
+            Assert.assertTrue(result[0].contains("recover:/>"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testLsAtColumnLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("nav_col_ls", 2);
+            String[] result = runSession("cd nav_col_ls\ncd 0\ncd sym\nls\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("column: sym"));
+            Assert.assertTrue(outText.contains("type: SYMBOL"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testLsColumnsShowsNotInPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table ls_nip (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into ls_nip values (1, '1970-01-01T00:00:00.000000Z')");
+            execute("insert into ls_nip values (2, '1970-01-02T00:00:00.000000Z')");
+            waitForAppliedRows("ls_nip", 2);
+
+            execute("alter table ls_nip add column new_int int");
+            drainWalQueue(engine);
+
+            execute("insert into ls_nip values (3, '1970-01-03T00:00:00.000000Z', 42)");
+            waitForAppliedRows("ls_nip", 3);
+
+            // ls at partition 0 (1970-01-01) should mark new_int as "not in partition"
+            String[] result = runSession("cd ls_nip\ncd 0\nls\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue("note column header should appear", outText.contains("note"));
+            Assert.assertTrue(
+                    "new_int should be marked not in partition",
+                    outText.contains("not in partition")
+            );
+            // val and ts should NOT be marked
+            for (String line : outText.split("\n")) {
+                if (line.contains("val") && !line.contains("note")) {
+                    Assert.assertFalse(
+                            "val should not be marked not in partition",
+                            line.contains("not in partition")
+                    );
+                }
+            }
+            Assert.assertEquals("", result[1]);
+
+            // ls at partition 2 (1970-01-03) should NOT mark new_int
+            String[] result2 = runSession("cd ls_nip\ncd 2\nls\nquit\n");
+            String outText2 = result2[0];
+            Assert.assertFalse(
+                    "new_int should not be marked in partition where it exists",
+                    outText2.contains("not in partition")
+            );
+            Assert.assertEquals("", result2[1]);
+        });
+    }
+
+    @Test
+    public void testPrintAtWrongLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("nav_print_wrong", 2);
+            String[] result = runSession("cd nav_print_wrong\ncd 0\nprint 0\nquit\n");
+            Assert.assertTrue(result[1].contains("print is only valid at column level"));
+        });
+    }
+
+    @Test
+    public void testPrintFixedSizeInt() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table print_int (val int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into print_int values (42, '1970-01-01T00:00:00.000000Z')");
+            waitForAppliedRows("print_int", 1);
+
+            String[] result = runSession("cd print_int\ncd 0\ncd val\nprint 0\nquit\n");
+            Assert.assertTrue(result[0].contains("[0] = 42"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testPrintFixedSizeTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table print_ts (val int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into print_ts values (1, '2024-06-15T12:30:00.000000Z')");
+            waitForAppliedRows("print_ts", 1);
+
+            String[] result = runSession("cd print_ts\ncd 0\ncd ts\nprint 0\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("[0] = 2024-06-15"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testPrintInvalidRowNumber() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table print_bad (val int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into print_bad values (1, '1970-01-01T00:00:00.000000Z')");
+            waitForAppliedRows("print_bad", 1);
+
+            String[] result = runSession("cd print_bad\ncd 0\ncd val\nprint abc\nquit\n");
+            Assert.assertTrue(result[1].contains("invalid row number"));
+        });
+    }
+
+    @Test
+    public void testPrintNullValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table print_null (val int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into print_null values (null, '1970-01-01T00:00:00.000000Z')");
+            waitForAppliedRows("print_null", 1);
+
+            String[] result = runSession("cd print_null\ncd 0\ncd val\nprint 0\nquit\n");
+            Assert.assertTrue(result[0].contains("[0] = null"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testPrintWithColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table, insert into first partition, add column, insert into same partition
+            execute("create table print_top (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into print_top values (1, '1970-01-01T00:00:00.000000Z')");
+            waitForAppliedRows("print_top", 1);
+
+            execute("alter table print_top add column new_int int");
+            drainWalQueue(engine);
+
+            execute("insert into print_top values (2, '1970-01-01T12:00:00.000000Z', 42)");
+            waitForAppliedRows("print_top", 2);
+
+            // new_int has columnTop=1 in the first partition (row 0 has no data, row 1 has value 42)
+            String[] result = runSession("cd print_top\ncd 0\ncd new_int\nprint 0\nprint 1\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue("row 0 should show column top null", outText.contains("[0] = null (column top)"));
+            Assert.assertTrue("row 1 should show 42", outText.contains("[1] = 42"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testPrintRowOutOfRange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table print_oor (val int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into print_oor values (1, '1970-01-01T00:00:00.000000Z')");
+            waitForAppliedRows("print_oor", 1);
+
+            String[] result = runSession("cd print_oor\ncd 0\ncd val\nprint 999\nquit\n");
+            Assert.assertTrue(result[1].contains("row out of range"));
+        });
+    }
+
+    @Test
+    public void testPrintString() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table print_str (s string, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into print_str values ('hello', '1970-01-01T00:00:00.000000Z')");
+            waitForAppliedRows("print_str", 1);
+
+            String[] result = runSession("cd print_str\ncd 0\ncd s\nprint 0\nquit\n");
+            Assert.assertTrue(result[0].contains("[0] = hello"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testPrintVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table print_vc (v varchar, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into print_vc values ('world', '1970-01-01T00:00:00.000000Z')");
+            waitForAppliedRows("print_vc", 1);
+
+            String[] result = runSession("cd print_vc\ncd 0\ncd v\nprint 0\nquit\n");
+            Assert.assertTrue(result[0].contains("[0] = world"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testPromptAtColumnLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("nav_col_prompt", 2);
+            String[] result = runSession("cd nav_col_prompt\ncd 0\ncd sym\nquit\n");
+            Assert.assertTrue(result[0].contains("recover:/nav_col_prompt/1970-01-01/sym>"));
+        });
+    }
+
+    @Test
+    public void testPwdAtColumnLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("nav_col_pwd", 2);
+            String[] result = runSession("cd nav_col_pwd\ncd 0\ncd sym\npwd\nquit\n");
+            Assert.assertTrue(result[0].contains("/nav_col_pwd/1970-01-01/sym\n"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testShowAtColumnLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("nav_col_show", 2);
+            String[] result = runSession("cd nav_col_show\ncd 0\ncd sym\nshow\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("column: sym"));
+            Assert.assertTrue(outText.contains("type: SYMBOL"));
+            Assert.assertTrue(outText.contains("effectiveRows:"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testShowAtColumnLevelVarSize() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table nav_col_show_var (v varchar, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into nav_col_show_var values ('hello', '1970-01-01T00:00:00.000000Z')");
+            waitForAppliedRows("nav_col_show_var", 1);
+
+            String[] result = runSession("cd nav_col_show_var\ncd 0\ncd v\nshow\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("column: v"));
+            Assert.assertTrue(outText.contains("type: VARCHAR"));
+            Assert.assertTrue(outText.contains("actual aux size:"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testPrintColumnNotInPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table print_nip (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into print_nip values (1, '1970-01-01T00:00:00.000000Z')");
+            execute("insert into print_nip values (2, '1970-01-02T00:00:00.000000Z')");
+            waitForAppliedRows("print_nip", 2);
+
+            execute("alter table print_nip add column new_int int");
+            drainWalQueue(engine);
+
+            execute("insert into print_nip values (3, '1970-01-03T00:00:00.000000Z', 42)");
+            waitForAppliedRows("print_nip", 3);
+
+            // cd into 1970-01-01 partition where new_int doesn't exist
+            String[] result = runSession("cd print_nip\ncd 0\ncd new_int\nprint 0\nquit\n");
+            Assert.assertTrue(
+                    "should report column not in partition",
+                    result[1].contains("column not in this partition")
+            );
+        });
+    }
+
+    @Test
+    public void testShowColumnInPartitionWithTop() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table show_top (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into show_top values (1, '1970-01-01T00:00:00.000000Z')");
+            waitForAppliedRows("show_top", 1);
+
+            execute("alter table show_top add column new_int int");
+            drainWalQueue(engine);
+
+            execute("insert into show_top values (2, '1970-01-01T12:00:00.000000Z', 42)");
+            waitForAppliedRows("show_top", 2);
+
+            // cd into 1970-01-01 partition where new_int has columnTop=1
+            String[] result = runSession("cd show_top\ncd 0\ncd new_int\nshow\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("columnTop:"));
+            Assert.assertTrue(outText.contains("effectiveRows:"));
+            Assert.assertFalse(
+                    "should NOT say not in partition",
+                    outText.contains("not in partition")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testShowColumnNotInPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table show_nip (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into show_nip values (1, '1970-01-01T00:00:00.000000Z')");
+            execute("insert into show_nip values (2, '1970-01-02T00:00:00.000000Z')");
+            waitForAppliedRows("show_nip", 2);
+
+            execute("alter table show_nip add column new_int int");
+            drainWalQueue(engine);
+
+            execute("insert into show_nip values (3, '1970-01-03T00:00:00.000000Z', 42)");
+            waitForAppliedRows("show_nip", 3);
+
+            // cd into 1970-01-01 partition where new_int doesn't exist
+            String[] result = runSession("cd show_nip\ncd 0\ncd new_int\nshow\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(
+                    "should say not in partition",
+                    outText.contains("not in partition")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
     public void testViewWithDeletedViewFile() throws Exception {
         assertMemoryLeak(() -> {
             createViewWithBase("del_view", "del_view_base");
@@ -1715,7 +2090,9 @@ public class RecoverySessionTest extends AbstractCairoTest {
         RecoverySession session = new RecoverySession(
                 configuration.getDbRoot(),
                 new ColumnCheckService(FF),
+                new ColumnValueReader(FF),
                 new ColumnVersionStateService(new BoundedColumnVersionReader(FF)),
+                FF,
                 new MetaStateService(new BoundedMetaReader(FF)),
                 new PartitionScanService(FF),
                 new RegistryStateService(new BoundedRegistryReader(FF)),

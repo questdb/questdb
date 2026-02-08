@@ -31,6 +31,7 @@ import io.questdb.recovery.BoundedMetaReader;
 import io.questdb.recovery.BoundedRegistryReader;
 import io.questdb.recovery.BoundedTxnReader;
 import io.questdb.recovery.ColumnCheckService;
+import io.questdb.recovery.ColumnValueReader;
 import io.questdb.recovery.ColumnVersionStateService;
 import io.questdb.recovery.AnsiColor;
 import io.questdb.recovery.ConsoleRenderer;
@@ -98,7 +99,9 @@ public class RecoveryMain {
             RecoverySession session = new RecoverySession(
                     dbRoot,
                     new ColumnCheckService(ff),
+                    new ColumnValueReader(ff),
                     new ColumnVersionStateService(new BoundedColumnVersionReader(ff)),
+                    ff,
                     new MetaStateService(new BoundedMetaReader(ff)),
                     new PartitionScanService(ff),
                     new RegistryStateService(new BoundedRegistryReader(ff)),

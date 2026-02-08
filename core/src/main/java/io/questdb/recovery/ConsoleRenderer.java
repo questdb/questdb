@@ -47,6 +47,31 @@ public class ConsoleRenderer {
         return color;
     }
 
+    public void printColumnDetail(
+            MetaColumnState col, int columnIndex,
+            long columnTop, long columnNameTxn, long effectiveRows,
+            long expectedDataSize, long actualDataSize,
+            long actualAuxSize, boolean inPartition,
+            PrintStream out
+    ) {
+        out.println("column: " + col.getName());
+        out.println("index: " + columnIndex);
+        out.println("type: " + col.getTypeName());
+        out.println("indexed: " + (col.isIndexed() ? "yes" : "no"));
+        if (!inPartition) {
+            out.println("status: not in partition (column added later)");
+            return;
+        }
+        out.println("columnTop: " + columnTop);
+        out.println("columnNameTxn: " + columnNameTxn);
+        out.println("effectiveRows: " + effectiveRows);
+        out.println("expected data size: " + formatBytes(expectedDataSize));
+        out.println("actual data size: " + formatBytes(actualDataSize));
+        if (actualAuxSize >= 0) {
+            out.println("actual aux size: " + formatBytes(actualAuxSize));
+        }
+    }
+
     public void printCheckResult(ColumnCheckResult result, String tableName, long rowCount, PrintStream out) {
         out.printf("checking %s, partition %s (rows=%d):%n", tableName, result.getPartitionDirName(), rowCount);
         out.printf("  %s %s %s %s %s %s %s%n",
@@ -94,24 +119,32 @@ public class ConsoleRenderer {
                 + errorsStr + ", " + warningsStr + ", " + skipped + " skipped");
     }
 
-    public void printColumns(MetaState metaState, PrintStream out) {
+    public void printColumns(MetaState metaState, long[] columnTops, PrintStream out) {
         ObjList<MetaColumnState> columns = metaState.getColumns();
         if (columns.size() == 0) {
             out.println("No columns.");
         } else {
-            out.printf("%s %s %s %s%n",
+            out.printf("%s %s %s %s %s%n",
                     color.bold(String.format("%-5s", "idx")),
                     color.bold(String.format("%-30s", "column_name")),
                     color.bold(String.format("%-15s", "type")),
-                    color.bold(String.format("%-8s", "indexed")));
+                    color.bold(String.format("%-8s", "indexed")),
+                    color.bold("note"));
             for (int i = 0, n = columns.size(); i < n; i++) {
                 MetaColumnState col = columns.getQuick(i);
+                String note = "";
+                if (col.getType() < 0) {
+                    note = color.cyan("dropped");
+                } else if (columnTops != null && i < columnTops.length && columnTops[i] == -1) {
+                    note = color.yellow("not in partition");
+                }
                 out.printf(
-                        "%-5d %-30s %-15s %-8s%n",
+                        "%-5d %-30s %-15s %-8s %s%n",
                         i,
                         col.getName(),
                         col.getTypeName(),
-                        col.isIndexed() ? "yes" : "no"
+                        col.isIndexed() ? "yes" : "no",
+                        note
                 );
             }
         }
@@ -122,12 +155,13 @@ public class ConsoleRenderer {
     public void printHelp(PrintStream out) {
         out.println("commands:");
         out.println("  ls                     list tables / partitions / columns");
-        out.println("  cd <name|index>        enter a table or partition");
+        out.println("  cd <name|index>        enter a table, partition, or column");
         out.println("  cd ..                  go up one level");
         out.println("  cd /                   return to root");
         out.println("  pwd                    print current path");
         out.println("  tables                 discover and list tables");
         out.println("  show [<name|index>]    show _txn state (views have no _txn)");
+        out.println("  print <rowNo>          print value at row (column level only)");
         out.println("  check columns          validate column files against metadata");
         out.println("  help                   show help");
         out.println("  quit|exit              leave recovery mode");
