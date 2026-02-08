@@ -3767,11 +3767,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getUnorderedPageFrameReduceQueueCapacity() {
-            return cairoUnorderedPageFrameReduceQueueCapacity;
-        }
-
-        @Override
         public int getParallelIndexThreshold() {
             return parallelIndexThreshold;
         }
@@ -4344,6 +4339,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getTxnScoreboardEntryCount() {
             return sqlTxnScoreboardEntryCount;
+        }
+
+        @Override
+        public int getUnorderedPageFrameReduceQueueCapacity() {
+            return cairoUnorderedPageFrameReduceQueueCapacity;
         }
 
         @Override

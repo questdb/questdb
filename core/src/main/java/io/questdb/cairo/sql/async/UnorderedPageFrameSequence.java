@@ -74,12 +74,12 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private final StringSink errorMsg = new StringSink();
     private final PageFrameAddressCache frameAddressCache;
     private final LongList frameRowCounts = new LongList();
+    private final AtomicBoolean isValid = new AtomicBoolean(true);
     private final MPSequence reducePubSeq;
     private final RingQueue<UnorderedPageFrameReduceTask> reduceQueue;
     private final AtomicInteger reduceStartedCounter = new AtomicInteger(0);
     private final MCSequence reduceSubSeq;
     private final UnorderedPageFrameReducer reducer;
-    private final AtomicBoolean isValid = new AtomicBoolean(true);
     private final WorkStealingStrategy workStealingStrategy;
     private int errorMessagePosition;
     private int frameCount;
@@ -87,12 +87,12 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private long id;
     private boolean isCancelled;
     private boolean isOutOfMemory;
+    private boolean isReadyToDispatch;
+    private boolean isUninterruptible;
     private PageFrameMemoryRecord localRecord;
     private int queuedCount;
-    private boolean isReadyToDispatch;
     private SqlExecutionContext sqlExecutionContext;
     private long startTime;
-    private boolean isUninterruptible;
     private SqlExecutionCircuitBreakerWrapper workStealCircuitBreaker;
 
     public UnorderedPageFrameSequence(

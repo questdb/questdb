@@ -34,14 +34,13 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-
-import io.questdb.griffin.engine.functions.GroupByFunction;
 
 class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
     private final ObjList<GroupByFunction> groupByFunctions;

@@ -148,12 +148,6 @@ public interface MessageBus extends Closeable {
 
     MCSequence getPageFrameReduceSubSeq(int shard);
 
-    MPSequence getUnorderedPageFrameReducePubSeq();
-
-    RingQueue<UnorderedPageFrameReduceTask> getUnorderedPageFrameReduceQueue();
-
-    MCSequence getUnorderedPageFrameReduceSubSeq();
-
     MPSequence getQueryCacheEventPubSeq();
 
     MCSequence getQueryCacheEventSubSeq();
@@ -165,6 +159,12 @@ public interface MessageBus extends Closeable {
     MPSequence getTableWriterEventPubSeq();
 
     RingQueue<TableWriterTask> getTableWriterEventQueue();
+
+    MPSequence getUnorderedPageFrameReducePubSeq();
+
+    RingQueue<UnorderedPageFrameReduceTask> getUnorderedPageFrameReduceQueue();
+
+    MCSequence getUnorderedPageFrameReduceSubSeq();
 
     MPSequence getVectorAggregatePubSeq();
 

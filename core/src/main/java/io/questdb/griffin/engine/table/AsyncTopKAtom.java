@@ -223,15 +223,15 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
         return perWorkerComparators.getQuick(slotId);
     }
 
+    public CompiledFilter getCompiledFilter() {
+        return compiledFilter;
+    }
+
     public DirectLongList getDataAddresses(int slotId) {
         if (slotId == -1) {
             return ownerDataAddresses;
         }
         return perWorkerDataAddresses.getQuick(slotId);
-    }
-
-    public CompiledFilter getCompiledFilter() {
-        return compiledFilter;
     }
 
     public Function getFilter(int slotId) {

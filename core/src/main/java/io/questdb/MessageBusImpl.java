@@ -105,13 +105,13 @@ public class MessageBusImpl implements MessageBus {
     private final MCSequence[] pageFrameReduceSubSeq;
     private final MPSequence queryCacheEventPubSeq;
     private final MCSequence queryCacheEventSubSeq;
-    private final MPSequence unorderedPageFrameReducePubSeq;
-    private final RingQueue<UnorderedPageFrameReduceTask> unorderedPageFrameReduceQueue;
-    private final MCSequence unorderedPageFrameReduceSubSeq;
     private final ConcurrentQueue<QueryTrace> queryTraceQueue;
     private final MPSequence tableWriterEventPubSeq;
     private final RingQueue<TableWriterTask> tableWriterEventQueue;
     private final FanOut tableWriterEventSubSeq;
+    private final MPSequence unorderedPageFrameReducePubSeq;
+    private final RingQueue<UnorderedPageFrameReduceTask> unorderedPageFrameReduceQueue;
+    private final MCSequence unorderedPageFrameReduceSubSeq;
     private final MPSequence vectorAggregatePubSeq;
     private final RingQueue<VectorAggregateTask> vectorAggregateQueue;
     private final MCSequence vectorAggregateSubSeq;
@@ -522,21 +522,6 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public MPSequence getUnorderedPageFrameReducePubSeq() {
-        return unorderedPageFrameReducePubSeq;
-    }
-
-    @Override
-    public RingQueue<UnorderedPageFrameReduceTask> getUnorderedPageFrameReduceQueue() {
-        return unorderedPageFrameReduceQueue;
-    }
-
-    @Override
-    public MCSequence getUnorderedPageFrameReduceSubSeq() {
-        return unorderedPageFrameReduceSubSeq;
-    }
-
-    @Override
     public MPSequence getQueryCacheEventPubSeq() {
         return queryCacheEventPubSeq;
     }
@@ -564,6 +549,21 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public RingQueue<TableWriterTask> getTableWriterEventQueue() {
         return tableWriterEventQueue;
+    }
+
+    @Override
+    public MPSequence getUnorderedPageFrameReducePubSeq() {
+        return unorderedPageFrameReducePubSeq;
+    }
+
+    @Override
+    public RingQueue<UnorderedPageFrameReduceTask> getUnorderedPageFrameReduceQueue() {
+        return unorderedPageFrameReduceQueue;
+    }
+
+    @Override
+    public MCSequence getUnorderedPageFrameReduceSubSeq() {
+        return unorderedPageFrameReduceSubSeq;
     }
 
     @Override

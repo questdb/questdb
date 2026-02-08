@@ -435,8 +435,6 @@ public interface CairoConfiguration {
 
     int getPageFrameReduceShardCount();
 
-    int getUnorderedPageFrameReduceQueueCapacity();
-
     int getParallelIndexThreshold();
 
     int getParquetExportCompressionCodec();
@@ -711,6 +709,8 @@ public interface CairoConfiguration {
     TextConfiguration getTextConfiguration();
 
     int getTxnScoreboardEntryCount();
+
+    int getUnorderedPageFrameReduceQueueCapacity();
 
     int getVectorAggregateQueueCapacity();
 

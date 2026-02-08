@@ -681,11 +681,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getUnorderedPageFrameReduceQueueCapacity() {
-        return 4096;
-    }
-
-    @Override
     public int getParallelIndexThreshold() {
         return 100000;
     }
@@ -1263,6 +1258,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getTxnScoreboardEntryCount() {
         return 8192;
+    }
+
+    @Override
+    public int getUnorderedPageFrameReduceQueueCapacity() {
+        return 4096;
     }
 
     @Override

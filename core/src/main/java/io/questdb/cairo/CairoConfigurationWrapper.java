@@ -662,11 +662,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getUnorderedPageFrameReduceQueueCapacity() {
-        return getDelegate().getUnorderedPageFrameReduceQueueCapacity();
-    }
-
-    @Override
     public int getParallelIndexThreshold() {
         return getDelegate().getParallelIndexThreshold();
     }
@@ -1239,6 +1234,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getTxnScoreboardEntryCount() {
         return getDelegate().getTxnScoreboardEntryCount();
+    }
+
+    @Override
+    public int getUnorderedPageFrameReduceQueueCapacity() {
+        return getDelegate().getUnorderedPageFrameReduceQueueCapacity();
     }
 
     @Override
