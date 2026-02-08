@@ -43,11 +43,6 @@ public class LineReceiverException extends RuntimeException {
     }
 
     @SuppressWarnings("unused")
-    public LineReceiverException(CharSequence message, boolean retryable) {
-        this.message.put(message);
-    }
-
-    @SuppressWarnings("unused")
     public LineReceiverException(Throwable t) {
         super(t);
     }
