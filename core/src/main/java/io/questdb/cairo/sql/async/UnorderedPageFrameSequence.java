@@ -79,7 +79,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private final AtomicInteger reduceStartedCounter = new AtomicInteger(0);
     private final MCSequence reduceSubSeq;
     private final UnorderedPageFrameReducer reducer;
-    private final AtomicBoolean valid = new AtomicBoolean(true);
+    private final AtomicBoolean isValid = new AtomicBoolean(true);
     private final WorkStealingStrategy workStealingStrategy;
     private int errorMessagePosition;
     private int frameCount;
@@ -89,10 +89,10 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private boolean isOutOfMemory;
     private PageFrameMemoryRecord localRecord;
     private volatile int queuedCount;
-    private boolean readyToDispatch;
+    private boolean isReadyToDispatch;
     private SqlExecutionContext sqlExecutionContext;
     private long startTime;
-    private boolean uninterruptible;
+    private boolean isUninterruptible;
     private SqlExecutionCircuitBreakerWrapper workStealCircuitBreaker;
 
     public UnorderedPageFrameSequence(
@@ -132,7 +132,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     }
 
     public void cancel(int reason) {
-        valid.compareAndSet(true, false);
+        isValid.compareAndSet(true, false);
         cancelReason.set(reason);
     }
 
@@ -192,7 +192,11 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             if (!isActive()) {
                 break;
             }
+            if (!isUninterruptible) {
+                workStealCircuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            }
             stealWork();
+            Os.pause();
         }
 
         // Phase 3: Check for errors.
@@ -274,11 +278,11 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     }
 
     public boolean isActive() {
-        return valid.get();
+        return isValid.get();
     }
 
     public boolean isUninterruptible() {
-        return uninterruptible;
+        return isUninterruptible;
     }
 
     public UnorderedPageFrameSequence<T> of(
@@ -288,7 +292,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     ) throws SqlException {
         sqlExecutionContext = executionContext;
         startTime = clock.getTicks();
-        uninterruptible = executionContext.isUninterruptible();
+        isUninterruptible = executionContext.isUninterruptible();
 
         if (localRecord == null) {
             localRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
@@ -300,7 +304,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             frameAddressCache.of(base.getMetadata(), frameCursor.getColumnIndexes(), frameCursor.isExternal());
 
             id = ID_SEQ.incrementAndGet();
-            valid.set(true);
+            isValid.set(true);
             cancelReason.set(SqlExecutionCircuitBreaker.STATE_OK);
             doneLatch.reset();
             reduceStartedCounter.set(0);
@@ -323,16 +327,16 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     }
 
     public void prepareForDispatch() {
-        if (!readyToDispatch) {
+        if (!isReadyToDispatch) {
             buildAddressCache();
-            readyToDispatch = true;
+            isReadyToDispatch = true;
         }
     }
 
     public void reset() {
         frameCount = 0;
         queuedCount = 0;
-        readyToDispatch = false;
+        isReadyToDispatch = false;
         frameRowCounts.clear();
         atom.clear();
         Misc.free(frameAddressCache);
@@ -374,7 +378,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             doneLatch.reset();
             reduceStartedCounter.set(0);
             workStealingStrategy.of(reduceStartedCounter);
-            valid.set(true);
+            isValid.set(true);
             cancelReason.set(SqlExecutionCircuitBreaker.STATE_OK);
             errorMsg.clear();
             errorMessagePosition = 0;

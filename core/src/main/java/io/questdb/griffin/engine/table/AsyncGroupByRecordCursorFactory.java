@@ -206,7 +206,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         assert frameRowCount > 0;
         @SuppressWarnings("unchecked") final AsyncGroupByAtom atom = ((UnorderedPageFrameSequence<AsyncGroupByAtom>) frameSequence).getAtom();
 
-        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == frameSequence;
+        final boolean owner = stealingFrameSequence == frameSequence;
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final PageFrameMemoryPool frameMemoryPool = atom.getMemoryPool(slotId);
         final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
@@ -370,7 +370,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
         assert frameRowCount > 0;
 
-        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == frameSequence;
+        final boolean owner = stealingFrameSequence == frameSequence;
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
         final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;

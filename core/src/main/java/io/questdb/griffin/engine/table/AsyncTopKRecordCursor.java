@@ -180,7 +180,6 @@ class AsyncTopKRecordCursor implements RecordCursor {
         this.frameMemoryPool = atom.getOwnerMemoryPool();
         this.recordA = atom.getOwnerRecordA();
         this.recordB = atom.getOwnerRecordB();
-        atom.initMemoryPools(frameSequence.getPageFrameAddressCache());
         isChainBuilt = false;
         consumedCount = 0;
     }
