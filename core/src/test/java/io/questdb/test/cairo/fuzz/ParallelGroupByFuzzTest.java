@@ -3925,7 +3925,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             }
             Assert.fail();
         } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected filter error");
+            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected reduce error");
         }
     }
 
@@ -4163,7 +4163,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 }
                             }
                         } catch (Throwable th) {
-                            TestUtils.assertContains(th.getMessage(), "unexpected filter error");
+                            TestUtils.assertContains(th.getMessage(), "unexpected reduce error");
                         }
                     },
                     configuration,

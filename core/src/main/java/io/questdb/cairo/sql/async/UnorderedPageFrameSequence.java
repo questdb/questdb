@@ -368,7 +368,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             isOutOfMemory = e.isOutOfMemory();
             cancel(e.getInterruptionReason());
         } else {
-            errorMsg.put("unexpected filter error");
+            errorMsg.put("unexpected reduce error");
             if (th.getMessage() != null) {
                 errorMsg.put(": ").put(th.getMessage());
             }
