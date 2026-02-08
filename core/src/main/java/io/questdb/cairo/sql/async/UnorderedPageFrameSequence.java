@@ -127,6 +127,9 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         // Wait for all queued frames to complete.
         while (!doneLatch.done(queuedCount)) {
             stealWork();
+            // Restore the circuit breaker delegate after work-stealing, since
+            // consumeQueue may have re-initialized it for a foreign sequence.
+            workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
             Os.pause();
         }
     }
@@ -177,6 +180,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
                         // Queue full.
                         if (workStealingStrategy.shouldSteal(localCount)) {
                             stealWork();
+                            workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
                             continue;
                         }
                         // Reduce locally as fallback.
@@ -201,6 +205,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
                 workStealCircuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
             }
             stealWork();
+            workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
             Os.pause();
         }
 
