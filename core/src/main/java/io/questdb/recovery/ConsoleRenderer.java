@@ -27,6 +27,7 @@ package io.questdb.recovery;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 
 import java.io.PrintStream;
@@ -122,23 +123,23 @@ public class ConsoleRenderer {
         out.println("state: " + table.getState());
         out.println("walEnabled: " + (table.isWalEnabledKnown() ? table.isWalEnabled() : "unknown"));
         out.println("_txn path: " + state.getTxnPath());
-        out.println("_txn file size: " + state.getFileSize());
-        out.println("txn: " + state.getTxn());
-        out.println("seqTxn: " + state.getSeqTxn());
-        out.println("transientRowCount: " + state.getTransientRowCount());
-        out.println("fixedRowCount: " + state.getFixedRowCount());
-        out.println("rowCount: " + state.getRowCount());
-        out.println("minTimestamp: " + state.getMinTimestamp());
-        out.println("maxTimestamp: " + state.getMaxTimestamp());
-        out.println("dataVersion: " + state.getDataVersion());
-        out.println("structureVersion: " + state.getStructureVersion());
-        out.println("partitionTableVersion: " + state.getPartitionTableVersion());
-        out.println("columnVersion: " + state.getColumnVersion());
-        out.println("truncateVersion: " + state.getTruncateVersion());
-        out.println("lagTxnCount: " + state.getLagTxnCount());
-        out.println("lagRowCount: " + state.getLagRowCount());
-        out.println("lagMinTimestamp: " + state.getLagMinTimestamp());
-        out.println("lagMaxTimestamp: " + state.getLagMaxTimestamp());
+        out.println("_txn file size: " + formatBytes(state.getFileSize()));
+        out.println("txn: " + formatLong(state.getTxn()));
+        out.println("seqTxn: " + formatLong(state.getSeqTxn()));
+        out.println("transientRowCount: " + formatLong(state.getTransientRowCount()));
+        out.println("fixedRowCount: " + formatLong(state.getFixedRowCount()));
+        out.println("rowCount: " + formatLong(state.getRowCount()));
+        out.println("minTimestamp: " + formatTimestamp(state.getMinTimestamp()));
+        out.println("maxTimestamp: " + formatTimestamp(state.getMaxTimestamp()));
+        out.println("dataVersion: " + formatLong(state.getDataVersion()));
+        out.println("structureVersion: " + formatLong(state.getStructureVersion()));
+        out.println("partitionTableVersion: " + formatLong(state.getPartitionTableVersion()));
+        out.println("columnVersion: " + formatLong(state.getColumnVersion()));
+        out.println("truncateVersion: " + formatLong(state.getTruncateVersion()));
+        out.println("lagTxnCount: " + formatInt(state.getLagTxnCount()));
+        out.println("lagRowCount: " + formatInt(state.getLagRowCount()));
+        out.println("lagMinTimestamp: " + formatTimestamp(state.getLagMinTimestamp()));
+        out.println("lagMaxTimestamp: " + formatTimestamp(state.getLagMaxTimestamp()));
 
         out.println("symbols: " + state.getSymbols().size());
         for (int i = 0, n = state.getSymbols().size(); i < n; i++) {
@@ -149,16 +150,24 @@ public class ConsoleRenderer {
         out.println("partitions: " + state.getPartitions().size());
         for (int i = 0, n = state.getPartitions().size(); i < n; i++) {
             TxnPartitionState partition = state.getPartitions().getQuick(i);
-            out.printf(
-                    "  [%d] ts=%d size=%d nameTxn=%d parquet=%s readOnly=%s parquetFileSize=%d%n",
-                    partition.getIndex(),
-                    partition.getTimestampLo(),
-                    partition.getRowCount(),
-                    partition.getNameTxn(),
-                    partition.isParquetFormat(),
-                    partition.isReadOnly(),
-                    partition.getParquetFileSize()
-            );
+            if (partition.isParquetFormat()) {
+                out.printf(
+                        "  [%d] %s  rows=%d  parquet=true  readOnly=%s  parquetFileSize=%s%n",
+                        partition.getIndex(),
+                        formatTimestamp(partition.getTimestampLo()),
+                        partition.getRowCount(),
+                        partition.isReadOnly(),
+                        formatBytes(partition.getParquetFileSize())
+                );
+            } else {
+                out.printf(
+                        "  [%d] %s  rows=%d  parquet=false  readOnly=%s%n",
+                        partition.getIndex(),
+                        formatTimestamp(partition.getTimestampLo()),
+                        partition.getRowCount(),
+                        partition.isReadOnly()
+                );
+            }
         }
 
         printIssues("table issues", table.getIssues(), out);
@@ -237,6 +246,39 @@ public class ConsoleRenderer {
             return "MISMATCH";
         }
         return "";
+    }
+
+    static String formatBytes(long bytes) {
+        if (bytes < 0) {
+            return "N/A";
+        }
+        if (bytes < 1024) {
+            return bytes + " B";
+        }
+        if (bytes < 1024 * 1024) {
+            return String.format("%.1f KB", bytes / 1024.0);
+        }
+        if (bytes < 1024L * 1024 * 1024) {
+            return String.format("%.1f MB", bytes / (1024.0 * 1024));
+        }
+        return String.format("%.1f GB", bytes / (1024.0 * 1024 * 1024));
+    }
+
+    static String formatInt(int value) {
+        return value == TxnState.UNSET_INT ? "N/A" : Integer.toString(value);
+    }
+
+    static String formatLong(long value) {
+        return value == TxnState.UNSET_LONG ? "N/A" : Long.toString(value);
+    }
+
+    static String formatTimestamp(long micros) {
+        if (micros == TxnState.UNSET_LONG) {
+            return "N/A";
+        }
+        StringSink sink = new StringSink();
+        MicrosFormatUtils.appendDateTime(sink, micros);
+        return sink.toString();
     }
 
     static String formatTableType(int tableType) {
