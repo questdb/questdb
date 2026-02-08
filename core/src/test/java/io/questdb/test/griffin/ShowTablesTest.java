@@ -206,6 +206,28 @@ public class ShowTablesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowTablesReturnsOrderedList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table deposits(account_no int, currency symbol, amount double)");
+            execute("create table balances(account_no int, currency symbol, amount double)");
+            execute("create table accounts(account_no int, currency symbol)");
+            execute("create table card_payments(account_from_no int, account_to_no int, currency symbol, amount double)");
+            assertSql("table_name\naccounts\nbalances\ncard_payments\ndeposits\n", "select * from all_tables()");
+        });
+    }
+
+    @Test
+    public void testShowTablesWithFunctionReturnsOrderedList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table deposits(account_no int, currency symbol, amount double)");
+            execute("create table balances(account_no int, currency symbol, amount double)");
+            execute("create table accounts(account_no int, currency symbol)");
+            execute("create table card_payments(account_from_no int, account_to_no int, currency symbol, amount double)");
+            assertSql("table_name\naccounts\nbalances\ncard_payments\ndeposits\n", "select * from all_tables()");
+        });
+    }
+
+    @Test
     public void testShowTimeZone() throws Exception {
         assertMemoryLeak(() -> assertQuery(
                 "TimeZone\nUTC\n",
