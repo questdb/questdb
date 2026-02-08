@@ -34,10 +34,13 @@ import java.io.IOException;
 import java.io.PrintStream;
 
 public class RecoverySession {
+    private ColumnVersionState cachedCvState;
     private MetaState cachedMetaState;
     private ObjList<PartitionScanEntry> cachedPartitionScan;
     private RegistryState cachedRegistryState;
     private TxnState cachedTxnState;
+    private final ColumnCheckService columnCheckService;
+    private final ColumnVersionStateService columnVersionStateService;
     private int currentPartitionIndex = -1;
     private DiscoveredTable currentTable;
     private final CharSequence dbRoot;
@@ -51,6 +54,8 @@ public class RecoverySession {
 
     public RecoverySession(
             CharSequence dbRoot,
+            ColumnCheckService columnCheckService,
+            ColumnVersionStateService columnVersionStateService,
             MetaStateService metaStateService,
             PartitionScanService partitionScanService,
             RegistryStateService registryStateService,
@@ -59,6 +64,8 @@ public class RecoverySession {
             ConsoleRenderer renderer
     ) {
         this.dbRoot = dbRoot;
+        this.columnCheckService = columnCheckService;
+        this.columnVersionStateService = columnVersionStateService;
         this.metaStateService = metaStateService;
         this.partitionScanService = partitionScanService;
         this.registryStateService = registryStateService;
@@ -140,6 +147,11 @@ public class RecoverySession {
 
                 if (line.regionMatches(true, 0, "show ", 0, 5)) {
                     show(line.substring(5).trim(), out, err);
+                    continue;
+                }
+
+                if ("check columns".equalsIgnoreCase(line)) {
+                    checkColumns(out, err);
                     continue;
                 }
 
@@ -237,6 +249,7 @@ public class RecoverySession {
         currentPartitionIndex = -1;
         cachedTxnState = txnStateService.readTxnState(dbRoot, table);
         cachedMetaState = metaStateService.readMetaState(dbRoot, table);
+        cachedCvState = columnVersionStateService.readColumnVersionState(dbRoot, table);
         try (Path path = new Path()) {
             path.of(dbRoot).concat(table.getDirName()).$();
             cachedPartitionScan = partitionScanService.scan(
@@ -249,6 +262,7 @@ public class RecoverySession {
     private void cdRoot() {
         currentTable = null;
         currentPartitionIndex = -1;
+        cachedCvState = null;
         cachedMetaState = null;
         cachedPartitionScan = null;
         cachedTxnState = null;
@@ -259,6 +273,163 @@ public class RecoverySession {
             currentPartitionIndex = -1;
         } else if (currentTable != null) {
             cdRoot();
+        }
+    }
+
+    private void checkAllPartitions(
+            String tableName,
+            String tableDir,
+            ObjList<PartitionScanEntry> partitionScan,
+            MetaState metaState,
+            ColumnVersionState cvState,
+            PrintStream out
+    ) {
+        int checked = 0;
+        int errors = 0;
+        int warnings = 0;
+        int skipped = 0;
+
+        for (int i = 0, n = partitionScan.size(); i < n; i++) {
+            PartitionScanEntry entry = partitionScan.getQuick(i);
+
+            if (entry.getStatus() == PartitionScanStatus.MISSING) {
+                renderer.printCheckSkipped(entry.getPartitionName(), "MISSING", out);
+                skipped++;
+                continue;
+            }
+
+            TxnPartitionState txnPart = entry.getTxnPartition();
+            if (txnPart == null) {
+                renderer.printCheckSkipped(entry.getPartitionName(), "ORPHAN (no row count)", out);
+                skipped++;
+                continue;
+            }
+
+            if (txnPart.isParquetFormat()) {
+                renderer.printCheckSkipped(entry.getPartitionName(), "parquet", out);
+                skipped++;
+                continue;
+            }
+
+            ColumnCheckResult result = columnCheckService.checkPartition(
+                    tableDir,
+                    entry.getDirName(),
+                    txnPart.getTimestampLo(),
+                    txnPart.getRowCount(),
+                    metaState,
+                    cvState
+            );
+            renderer.printCheckResult(result, tableName, txnPart.getRowCount(), out);
+            checked++;
+
+            for (int j = 0, m = result.getEntries().size(); j < m; j++) {
+                ColumnCheckEntry checkEntry = result.getEntries().getQuick(j);
+                switch (checkEntry.getStatus()) {
+                    case ERROR -> errors++;
+                    case WARNING -> warnings++;
+                }
+            }
+        }
+
+        renderer.printCheckSummary(tableName, checked, errors, warnings, skipped, out);
+    }
+
+    private void checkColumns(PrintStream out, PrintStream err) {
+        if (currentTable == null) {
+            checkColumnsFromRoot(out, err);
+        } else if (currentPartitionIndex < 0) {
+            checkColumnsForTable(currentTable, out, err);
+        } else {
+            checkColumnsForPartition(out, err);
+        }
+    }
+
+    private void checkColumnsForPartition(PrintStream out, PrintStream err) {
+        if (cachedMetaState == null || cachedMetaState.getColumns().size() == 0) {
+            err.println("no meta state available for current table");
+            return;
+        }
+        if (cachedPartitionScan == null || currentPartitionIndex >= cachedPartitionScan.size()) {
+            err.println("no partition scan available");
+            return;
+        }
+
+        PartitionScanEntry entry = cachedPartitionScan.getQuick(currentPartitionIndex);
+        TxnPartitionState txnPart = entry.getTxnPartition();
+        if (txnPart == null) {
+            err.println("cannot check: partition has no row count (ORPHAN)");
+            return;
+        }
+        if (txnPart.isParquetFormat()) {
+            renderer.printCheckSkipped(entry.getPartitionName(), "parquet", out);
+            return;
+        }
+
+        try (Path path = new Path()) {
+            path.of(dbRoot).concat(currentTable.getDirName()).$();
+            ColumnVersionState cvState = hasCvIssues(cachedCvState) ? null : cachedCvState;
+            ColumnCheckResult result = columnCheckService.checkPartition(
+                    path.toString(),
+                    entry.getDirName(),
+                    txnPart.getTimestampLo(),
+                    txnPart.getRowCount(),
+                    cachedMetaState,
+                    cvState
+            );
+            renderer.printCheckResult(result, currentTable.getTableName(), txnPart.getRowCount(), out);
+
+            int errors = 0, warnings = 0;
+            for (int j = 0, m = result.getEntries().size(); j < m; j++) {
+                ColumnCheckEntry checkEntry = result.getEntries().getQuick(j);
+                switch (checkEntry.getStatus()) {
+                    case ERROR -> errors++;
+                    case WARNING -> warnings++;
+                }
+            }
+            renderer.printCheckSummary(currentTable.getTableName(), 1, errors, warnings, 0, out);
+        }
+    }
+
+    private void checkColumnsForTable(DiscoveredTable table, PrintStream out, PrintStream err) {
+        MetaState metaState = cachedMetaState != null ? cachedMetaState : metaStateService.readMetaState(dbRoot, table);
+        if (metaState.getColumns().size() == 0) {
+            err.println("no columns found for table: " + table.getTableName());
+            return;
+        }
+
+        TxnState txnState = cachedTxnState != null ? cachedTxnState : txnStateService.readTxnState(dbRoot, table);
+        ColumnVersionState cvState = cachedCvState != null ? cachedCvState : columnVersionStateService.readColumnVersionState(dbRoot, table);
+        ObjList<PartitionScanEntry> partitionScan = cachedPartitionScan;
+        if (partitionScan == null) {
+            try (Path path = new Path()) {
+                path.of(dbRoot).concat(table.getDirName()).$();
+                partitionScan = partitionScanService.scan(path.toString(), txnState, metaState);
+            }
+        }
+
+        try (Path path = new Path()) {
+            path.of(dbRoot).concat(table.getDirName()).$();
+            checkAllPartitions(
+                    table.getTableName(),
+                    path.toString(),
+                    partitionScan,
+                    metaState,
+                    hasCvIssues(cvState) ? null : cvState,
+                    out
+            );
+        }
+    }
+
+    private void checkColumnsFromRoot(PrintStream out, PrintStream err) {
+        if (lastDiscoveredTables.size() == 0) {
+            lastDiscoveredTables = tableDiscoveryService.discoverTables(dbRoot);
+        }
+
+        for (int i = 0, n = lastDiscoveredTables.size(); i < n; i++) {
+            DiscoveredTable table = lastDiscoveredTables.getQuick(i);
+            out.println();
+            out.println("=== " + table.getTableName() + " ===");
+            checkColumnsForTable(table, out, err);
         }
     }
 
@@ -285,6 +456,18 @@ public class RecoverySession {
             return "?";
         }
         return cachedPartitionScan.getQuick(partitionIndex).getPartitionName();
+    }
+
+    private static boolean hasCvIssues(ColumnVersionState cvState) {
+        if (cvState == null) {
+            return true;
+        }
+        for (int i = 0, n = cvState.getIssues().size(); i < n; i++) {
+            if (cvState.getIssues().getQuick(i).getSeverity() == RecoveryIssueSeverity.ERROR) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void ls(PrintStream out, PrintStream err) {

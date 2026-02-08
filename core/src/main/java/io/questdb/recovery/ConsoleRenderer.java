@@ -33,6 +33,44 @@ import io.questdb.std.str.StringSink;
 import java.io.PrintStream;
 
 public class ConsoleRenderer {
+    public void printCheckResult(ColumnCheckResult result, String tableName, long rowCount, PrintStream out) {
+        out.printf("checking %s, partition %s (rows=%d):%n", tableName, result.getPartitionDirName(), rowCount);
+        out.printf("  %-5s %-30s %-15s %-10s %-10s %-15s %-15s%n",
+                "idx", "column", "type", "status", "colTop", "expected", "actual");
+
+        ObjList<ColumnCheckEntry> entries = result.getEntries();
+        for (int i = 0, n = entries.size(); i < n; i++) {
+            ColumnCheckEntry entry = entries.getQuick(i);
+            String colTopStr = entry.getColumnTop() >= 0 ? Long.toString(entry.getColumnTop()) : "-";
+            String expectedStr = entry.getExpectedSize() >= 0 ? formatBytes(entry.getExpectedSize()) : "-";
+            String actualStr = entry.getActualSize() >= 0 ? formatBytes(entry.getActualSize()) : "-";
+
+            out.printf("  %-5d %-30s %-15s %-10s %-10s %-15s %-15s%n",
+                    entry.getColumnIndex(),
+                    entry.getColumnName(),
+                    entry.getColumnTypeName(),
+                    entry.getStatus(),
+                    colTopStr,
+                    expectedStr,
+                    actualStr
+            );
+
+            if (entry.getMessage() != null && !entry.getMessage().isEmpty()) {
+                out.println("        " + entry.getMessage());
+            }
+        }
+        out.println();
+    }
+
+    public void printCheckSkipped(String partitionName, String reason, PrintStream out) {
+        out.println("skipping partition " + partitionName + ": " + reason);
+    }
+
+    public void printCheckSummary(String tableName, int checked, int errors, int warnings, int skipped, PrintStream out) {
+        out.println("check complete: " + checked + " partitions checked, "
+                + errors + " errors, " + warnings + " warnings, " + skipped + " skipped");
+    }
+
     public void printColumns(MetaState metaState, PrintStream out) {
         ObjList<MetaColumnState> columns = metaState.getColumns();
         if (columns.size() == 0) {
@@ -63,6 +101,7 @@ public class ConsoleRenderer {
         out.println("  pwd                    print current path");
         out.println("  tables                 discover and list tables");
         out.println("  show [<name|index>]    show _txn state (views have no _txn)");
+        out.println("  check columns          validate column files against metadata");
         out.println("  help                   show help");
         out.println("  quit|exit              leave recovery mode");
     }

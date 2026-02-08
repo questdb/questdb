@@ -34,9 +34,12 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
+import io.questdb.recovery.BoundedColumnVersionReader;
 import io.questdb.recovery.BoundedMetaReader;
 import io.questdb.recovery.BoundedRegistryReader;
 import io.questdb.recovery.BoundedTxnReader;
+import io.questdb.recovery.ColumnCheckService;
+import io.questdb.recovery.ColumnVersionStateService;
 import io.questdb.recovery.ConsoleRenderer;
 import io.questdb.recovery.MetaStateService;
 import io.questdb.recovery.PartitionScanService;
@@ -1211,6 +1214,202 @@ public class RecoverySessionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckColumnsAtPartitionLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("chk_part_level", 3);
+            String[] result = runSession("cd chk_part_level\ncd 0\ncheck columns\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("checking chk_part_level"));
+            Assert.assertTrue(outText.contains("OK"));
+            Assert.assertTrue(outText.contains("check complete"));
+            Assert.assertTrue(outText.contains("1 partitions checked"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCheckColumnsAtRootLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("chk_root_a", 2);
+            createTableWithRows("chk_root_b", 1);
+            String[] result = runSession("check columns\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("chk_root_a"));
+            Assert.assertTrue(outText.contains("chk_root_b"));
+            Assert.assertTrue(outText.contains("check complete"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCheckColumnsAtTableLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("chk_tbl_level", 3);
+            String[] result = runSession("cd chk_tbl_level\ncheck columns\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("checking chk_tbl_level"));
+            Assert.assertTrue(outText.contains("OK"));
+            Assert.assertTrue(outText.contains("check complete"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCheckColumnsCorruptDFile() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonWalTableWithRows("chk_corrupt_d", 2);
+
+            // truncate the sym.d file in the first partition
+            try (Path path = new Path()) {
+                TableToken token = engine.verifyTableName("chk_corrupt_d");
+                path.of(configuration.getDbRoot()).concat(token).concat("1970-01-01").concat("sym.d");
+                long fd = FF.openRW(path.$(), CairoConfiguration.O_NONE);
+                Assert.assertTrue(fd > -1);
+                try {
+                    Assert.assertTrue(FF.truncate(fd, 1));
+                } finally {
+                    FF.close(fd);
+                }
+            }
+
+            String[] result = runSession("cd chk_corrupt_d\ncheck columns\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue("should detect corrupt .d file", outText.contains("ERROR"));
+            Assert.assertTrue("should show file too short", outText.contains("too short"));
+        });
+    }
+
+    @Test
+    public void testCheckColumnsDroppedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table chk_drop (val int, sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into chk_drop values (1, 'A', '1970-01-01T00:00:00.000000Z')");
+            waitForAppliedRows("chk_drop", 1);
+            execute("alter table chk_drop drop column val");
+            drainWalQueue(engine);
+
+            String[] result = runSession("cd chk_drop\ncheck columns\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue("should show SKIPPED for dropped column", outText.contains("SKIPPED"));
+            Assert.assertTrue("should mention dropped column", outText.contains("dropped column"));
+        });
+    }
+
+    @Test
+    public void testCheckColumnsEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table chk_empty (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
+            waitForEmptyTable("chk_empty");
+
+            String[] result = runSession("cd chk_empty\ncheck columns\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("check complete"));
+            Assert.assertTrue(outText.contains("0 errors"));
+        });
+    }
+
+    @Test
+    public void testCheckColumnsFixedSizeOk() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithTypes("chk_fixed", 2);
+            String[] result = runSession("cd chk_fixed\ncheck columns\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("OK"));
+            Assert.assertTrue(outText.contains("0 errors"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCheckColumnsMissingPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonWalTableWithRows("chk_miss_part", 3);
+            deletePartitionDir("chk_miss_part", "1970-01-02");
+
+            String[] result = runSession("cd chk_miss_part\ncheck columns\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue("should skip MISSING partition", outText.contains("skipping"));
+            Assert.assertTrue(outText.contains("MISSING"));
+        });
+    }
+
+    @Test
+    public void testCheckColumnsNoCvFile() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonWalTableWithRows("chk_no_cv", 2);
+
+            // delete the _cv file
+            try (Path path = new Path()) {
+                TableToken token = engine.verifyTableName("chk_no_cv");
+                path.of(configuration.getDbRoot()).concat(token).concat("_cv");
+                FF.removeQuiet(path.$());
+            }
+
+            String[] result = runSession("cd chk_no_cv\ncheck columns\nquit\n");
+            String outText = result[0];
+            // should gracefully degrade - assume colTop=0
+            Assert.assertTrue(outText.contains("check complete"));
+            Assert.assertTrue(outText.contains("OK"));
+        });
+    }
+
+    @Test
+    public void testCheckColumnsPartitionByNone() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table chk_none (val long, ts timestamp) timestamp(ts) partition by NONE");
+            execute("insert into chk_none select x, timestamp_sequence('1970-01-01', 1000000L) from long_sequence(5)");
+
+            String[] result = runSession("cd chk_none\ncheck columns\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("check complete"));
+            Assert.assertTrue(outText.contains("OK"));
+        });
+    }
+
+    @Test
+    public void testCheckColumnsVarSizeOk() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table chk_var (s string, v varchar, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute(
+                    "insert into chk_var select rnd_str('a','b','c'), rnd_varchar('x','y','z'),"
+                            + " timestamp_sequence('1970-01-01', " + Micros.DAY_MICROS + "L) from long_sequence(2)"
+            );
+            waitForAppliedRows("chk_var", 2);
+
+            String[] result = runSession("cd chk_var\ncheck columns\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("OK"));
+            Assert.assertTrue(outText.contains("0 errors"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCheckColumnsWithColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table chk_top (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into chk_top values (1, '1970-01-01T00:00:00.000000Z')");
+            execute("insert into chk_top values (2, '1970-01-02T00:00:00.000000Z')");
+            waitForAppliedRows("chk_top", 2);
+
+            execute("alter table chk_top add column new_int int");
+            drainWalQueue(engine);
+
+            execute("insert into chk_top values (3, '1970-01-03T00:00:00.000000Z', 42)");
+            waitForAppliedRows("chk_top", 3);
+
+            String[] result = runSession("cd chk_top\ncheck columns\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("check complete"));
+            Assert.assertTrue(outText.contains("0 errors"));
+            // new_int should be SKIPPED for old partitions (not in partition) or OK
+            Assert.assertTrue(
+                    outText.contains("SKIPPED") || outText.contains("OK")
+            );
+        });
+    }
+
+    @Test
     public void testViewWithDeletedViewFile() throws Exception {
         assertMemoryLeak(() -> {
             createViewWithBase("del_view", "del_view_base");
@@ -1357,6 +1556,8 @@ public class RecoverySessionTest extends AbstractCairoTest {
     private static String[] runSession(String commands) throws Exception {
         RecoverySession session = new RecoverySession(
                 configuration.getDbRoot(),
+                new ColumnCheckService(FF),
+                new ColumnVersionStateService(new BoundedColumnVersionReader(FF)),
                 new MetaStateService(new BoundedMetaReader(FF)),
                 new PartitionScanService(FF),
                 new RegistryStateService(new BoundedRegistryReader(FF)),
