@@ -24,8 +24,8 @@
 
 package io.questdb.recovery;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableUtils;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
@@ -61,7 +61,7 @@ public class ConsoleRenderer {
         out.println("  cd /                   return to root");
         out.println("  pwd                    print current path");
         out.println("  tables                 discover and list tables");
-        out.println("  show [<name|index>]    show _txn state (current table if inside one)");
+        out.println("  show [<name|index>]    show _txn state (views have no _txn)");
         out.println("  help                   show help");
         out.println("  quit|exit              leave recovery mode");
     }
@@ -169,15 +169,16 @@ public class ConsoleRenderer {
         if (tables.size() == 0) {
             out.println("No tables discovered.");
         } else {
-            out.printf("%-5s %-36s %-36s %-10s %-10s %-12s %-8s%n", "idx", "table_name", "dir_name", "state", "wal", "registry", "issues");
+            out.printf("%-5s %-36s %-36s %-10s %-10s %-10s %-12s %-8s%n", "idx", "table_name", "dir_name", "type", "state", "wal", "registry", "issues");
             for (int i = 0, n = tables.size(); i < n; i++) {
                 DiscoveredTable table = tables.getQuick(i);
                 String registryStatus = getRegistryStatus(table);
                 out.printf(
-                        "%-5d %-36s %-36s %-10s %-10s %-12s %-8d%n",
+                        "%-5d %-36s %-36s %-10s %-10s %-10s %-12s %-8d%n",
                         i + 1,
                         table.getTableName(),
                         table.getDirName(),
+                        table.getTableTypeName(),
                         table.getState(),
                         table.isWalEnabledKnown() ? table.isWalEnabled() : "unknown",
                         registryStatus,
@@ -213,11 +214,11 @@ public class ConsoleRenderer {
                     headerPrinted = true;
                 }
                 out.printf(
-                        "  %-36s %-36s %-8d %-8d%n",
+                        "  %-36s %-36s %-8d %-8s%n",
                         entry.getTableName(),
                         entry.getDirName(),
                         entry.getTableId(),
-                        entry.getTableType()
+                        formatTableType(entry.getTableType())
                 );
             }
         }
@@ -236,6 +237,15 @@ public class ConsoleRenderer {
             return "MISMATCH";
         }
         return "";
+    }
+
+    static String formatTableType(int tableType) {
+        return switch (tableType) {
+            case TableUtils.TABLE_TYPE_NON_WAL, TableUtils.TABLE_TYPE_WAL -> "table";
+            case TableUtils.TABLE_TYPE_MAT -> "matview";
+            case TableUtils.TABLE_TYPE_VIEW -> "view";
+            default -> String.valueOf(tableType);
+        };
     }
 
     static String formatPartitionDirName(String partitionName, long nameTxn) {

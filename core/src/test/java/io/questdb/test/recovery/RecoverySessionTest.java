@@ -28,8 +28,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.recovery.BoundedMetaReader;
@@ -123,6 +125,37 @@ public class RecoverySessionTest extends AbstractCairoTest {
             Assert.assertTrue(result[0].contains("ts"));
             Assert.assertTrue(result[0].contains("SYMBOL"));
             Assert.assertTrue(result[0].contains("TIMESTAMP"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCdIntoMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            createMatViewWithBase("cd_mv", "cd_mv_base", 5);
+            String[] result = runSession("tables\ncd cd_mv\npwd\nquit\n");
+            Assert.assertTrue(result[0].contains("/cd_mv\n"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCdIntoMatViewPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            createMatViewWithBase("cd_mv_part", "cd_mv_part_base", 5);
+            String[] result = runSession("tables\ncd cd_mv_part\nls\ncd 0\nls\nquit\n");
+            // should show columns inside the partition
+            Assert.assertTrue(result[0].contains("column_name"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCdIntoView() throws Exception {
+        assertMemoryLeak(() -> {
+            createViewWithBase("cd_view", "cd_view_base");
+            String[] result = runSession("tables\ncd cd_view\npwd\nquit\n");
+            Assert.assertTrue(result[0].contains("/cd_view\n"));
             Assert.assertEquals("", result[1]);
         });
     }
@@ -474,6 +507,49 @@ public class RecoverySessionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDroppedMatViewNotInRegistry() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table dmv_base (sym symbol, price double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            drainWalQueue(engine);
+            execute("create materialized view dmv_target as (select sym, last(price) as price, ts from dmv_base sample by 1h) partition by DAY");
+            drainWalAndMatViewQueues();
+            execute("drop materialized view dmv_target");
+            drainWalAndMatViewQueues();
+
+            String[] result = runSession("tables\nquit\n");
+            String outText = result[0];
+            // the dir may still exist on disk after drop, but registry should not have it
+            for (String line : outText.split("\n")) {
+                if (line.contains("dmv_target")) {
+                    Assert.assertTrue("dropped matview should show NOT_IN_REG", line.contains("NOT_IN_REG"));
+                    break;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDroppedViewNotInRegistry() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table dv_base (sym symbol, price double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            drainWalQueue(engine);
+            execute("create view dv_target as (select sym, last(price) as price, ts from dv_base sample by 1h)");
+            execute("drop view dv_target");
+            drainWalQueue(engine);
+
+            String[] result = runSession("tables\nquit\n");
+            String outText = result[0];
+            // the dir may still exist on disk after drop, but registry should not have it
+            for (String line : outText.split("\n")) {
+                if (line.contains("dv_target")) {
+                    Assert.assertTrue("dropped view should show NOT_IN_REG", line.contains("NOT_IN_REG"));
+                    break;
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLsAtRoot() throws Exception {
         assertMemoryLeak(() -> {
             createTableWithRows("nav_ls_root", 2);
@@ -518,6 +594,29 @@ public class RecoverySessionTest extends AbstractCairoTest {
             String outText = result[0];
             Assert.assertFalse("_fake dir should be filtered", outText.contains("_fake"));
             Assert.assertFalse(".hidden dir should be filtered", outText.contains(".hidden"));
+        });
+    }
+
+    @Test
+    public void testLsInMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            createMatViewWithBase("ls_mv", "ls_mv_base", 5);
+            String[] result = runSession("tables\ncd ls_mv\nls\nquit\n");
+            // matview has partitions like a WAL table
+            Assert.assertTrue(result[0].contains("dir"));
+            Assert.assertTrue(result[0].contains("rows"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testLsInView() throws Exception {
+        assertMemoryLeak(() -> {
+            createViewWithBase("ls_view", "ls_view_base");
+            String[] result = runSession("tables\ncd ls_view\nls\nquit\n");
+            // views have no partitions
+            Assert.assertTrue(result[0].contains("No partitions"));
+            Assert.assertEquals("", result[1]);
         });
     }
 
@@ -726,6 +825,43 @@ public class RecoverySessionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMatViewOrphanDir() throws Exception {
+        assertMemoryLeak(() -> {
+            // create orphan dir with _mv file to simulate an unregistered matview
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat("orphan_mv").slash$();
+                Assert.assertEquals(0, FF.mkdirs(path, configuration.getMkDirMode()));
+                // create _mv marker file
+                path.trimTo(path.size() - 1).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$();
+                long fd = FF.openRW(path.$(), CairoConfiguration.O_NONE);
+                Assert.assertTrue(fd > -1);
+                FF.close(fd);
+            }
+
+            String[] result = runSession("tables\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue("orphan matview dir should show matview type", outText.contains("matview"));
+            Assert.assertTrue("orphan matview dir should show NOT_IN_REG", outText.contains("NOT_IN_REG"));
+        });
+    }
+
+    @Test
+    public void testMatViewRegistryBlank() throws Exception {
+        assertMemoryLeak(() -> {
+            createMatViewWithBase("reg_mv", "reg_mv_base", 5);
+            String[] result = runSession("tables\nquit\n");
+            String outText = result[0];
+            for (String line : outText.split("\n")) {
+                if (line.contains("reg_mv") && !line.contains("reg_mv_base")) {
+                    Assert.assertFalse("registry should be blank for matched matview", line.contains("MISMATCH"));
+                    Assert.assertFalse("registry should be blank for matched matview", line.contains("NOT_IN_REG"));
+                    break;
+                }
+            }
+        });
+    }
+
+    @Test
     public void testNonWalTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table nav_nonwal (val long, ts timestamp) timestamp(ts) partition by DAY");
@@ -800,6 +936,41 @@ public class RecoverySessionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            createMatViewWithBase("show_mv", "show_mv_base", 5);
+            String[] result = runSession("tables\nshow show_mv\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("table: show_mv"));
+            Assert.assertTrue(outText.contains("partitions:"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testShowView() throws Exception {
+        assertMemoryLeak(() -> {
+            createViewWithBase("show_view", "show_view_base");
+            String[] result = runSession("tables\nshow show_view\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("table: show_view"));
+            // views are created through the same path as tables and have _txn files
+            Assert.assertTrue(outText.contains("_txn path:"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testShowViewWhileCdInto() throws Exception {
+        assertMemoryLeak(() -> {
+            createViewWithBase("show_v_cd", "show_v_cd_base");
+            String[] result = runSession("tables\ncd show_v_cd\nshow\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("table: show_v_cd"));
+        });
+    }
+
+    @Test
     public void testUnknownCommandInsideTable() throws Exception {
         assertMemoryLeak(() -> {
             createTableWithRows("nav_unknown", 2);
@@ -840,6 +1011,108 @@ public class RecoverySessionTest extends AbstractCairoTest {
                     "orphan dir should show NOT_IN_REG",
                     outText.contains("NOT_IN_REG")
             );
+        });
+    }
+
+    @Test
+    public void testTablesMatViewDiscoveryState() throws Exception {
+        assertMemoryLeak(() -> {
+            createMatViewWithBase("state_mv", "state_mv_base", 5);
+            String[] result = runSession("tables\nquit\n");
+            String outText = result[0];
+            // matview has _txn file, should show HAS_TXN state
+            for (String line : outText.split("\n")) {
+                if (line.contains("state_mv") && !line.contains("state_mv_base")) {
+                    Assert.assertTrue("matview should show HAS_TXN state", line.contains("HAS_TXN"));
+                    break;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTablesShowsMatViewType() throws Exception {
+        assertMemoryLeak(() -> {
+            createMatViewWithBase("type_mv", "type_mv_base", 5);
+            String[] result = runSession("tables\nquit\n");
+            String outText = result[0];
+            boolean found = false;
+            for (String line : outText.split("\n")) {
+                if (line.contains("type_mv") && !line.contains("type_mv_base")) {
+                    Assert.assertTrue("matview should show 'matview' type", line.contains("matview"));
+                    found = true;
+                    break;
+                }
+            }
+            Assert.assertTrue("should find type_mv in output", found);
+        });
+    }
+
+    @Test
+    public void testTablesShowsMixedTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonWalTableWithRows("mix_nonwal", 1);
+            createTableWithRows("mix_wal", 1);
+            createViewWithBase("mix_view", "mix_view_base");
+            createMatViewWithBase("mix_mv", "mix_mv_base", 1);
+
+            String[] result = runSession("tables\nquit\n");
+            String outText = result[0];
+            // check type column for each table type
+            boolean foundNonwal = false, foundWal = false, foundView = false, foundMv = false;
+            for (String line : outText.split("\n")) {
+                if (line.contains("mix_nonwal")) {
+                    Assert.assertTrue("non-WAL table should show 'table' type", line.contains("table"));
+                    foundNonwal = true;
+                } else if (line.contains("mix_wal") && !line.contains("mix_view") && !line.contains("mix_mv")) {
+                    Assert.assertTrue("WAL table should show 'table' type", line.contains("table"));
+                    foundWal = true;
+                } else if (line.contains("mix_view") && !line.contains("mix_view_base")) {
+                    Assert.assertTrue("view should show 'view' type", line.contains("view"));
+                    foundView = true;
+                } else if (line.contains("mix_mv") && !line.contains("mix_mv_base")) {
+                    Assert.assertTrue("matview should show 'matview' type", line.contains("matview"));
+                    foundMv = true;
+                }
+            }
+            Assert.assertTrue("should find non-WAL table", foundNonwal);
+            Assert.assertTrue("should find WAL table", foundWal);
+            Assert.assertTrue("should find view", foundView);
+            Assert.assertTrue("should find matview", foundMv);
+        });
+    }
+
+    @Test
+    public void testTablesShowsViewType() throws Exception {
+        assertMemoryLeak(() -> {
+            createViewWithBase("type_view", "type_view_base");
+            String[] result = runSession("tables\nquit\n");
+            String outText = result[0];
+            boolean found = false;
+            for (String line : outText.split("\n")) {
+                if (line.contains("type_view") && !line.contains("type_view_base")) {
+                    Assert.assertTrue("view should show 'view' type", line.contains("view"));
+                    found = true;
+                    break;
+                }
+            }
+            Assert.assertTrue("should find type_view in output", found);
+        });
+    }
+
+    @Test
+    public void testTablesViewDiscoveryState() throws Exception {
+        assertMemoryLeak(() -> {
+            createViewWithBase("state_view", "state_view_base");
+            String[] result = runSession("tables\nquit\n");
+            String outText = result[0];
+            // views are created through the same path as tables and have _txn files
+            for (String line : outText.split("\n")) {
+                if (line.contains("state_view") && !line.contains("state_view_base")) {
+                    Assert.assertTrue("view should show HAS_TXN state", line.contains("HAS_TXN"));
+                    break;
+                }
+            }
         });
     }
 
@@ -900,6 +1173,71 @@ public class RecoverySessionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testViewOrphanDir() throws Exception {
+        assertMemoryLeak(() -> {
+            // create orphan dir with _view file to simulate an unregistered view
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat("orphan_view").slash$();
+                Assert.assertEquals(0, FF.mkdirs(path, configuration.getMkDirMode()));
+                // create _view marker file
+                path.trimTo(path.size() - 1).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$();
+                long fd = FF.openRW(path.$(), CairoConfiguration.O_NONE);
+                Assert.assertTrue(fd > -1);
+                FF.close(fd);
+            }
+
+            String[] result = runSession("tables\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue("orphan view dir should show view type", outText.contains("view"));
+            Assert.assertTrue("orphan view dir should show NOT_IN_REG", outText.contains("NOT_IN_REG"));
+        });
+    }
+
+    @Test
+    public void testViewRegistryBlank() throws Exception {
+        assertMemoryLeak(() -> {
+            createViewWithBase("reg_view", "reg_view_base");
+            String[] result = runSession("tables\nquit\n");
+            String outText = result[0];
+            for (String line : outText.split("\n")) {
+                if (line.contains("reg_view") && !line.contains("reg_view_base")) {
+                    Assert.assertFalse("registry should be blank for matched view", line.contains("MISMATCH"));
+                    Assert.assertFalse("registry should be blank for matched view", line.contains("NOT_IN_REG"));
+                    break;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testViewWithDeletedViewFile() throws Exception {
+        assertMemoryLeak(() -> {
+            createViewWithBase("del_view", "del_view_base");
+
+            // delete _view file
+            TableToken token = engine.verifyTableName("del_view");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token.getDirName())
+                        .concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$();
+                Assert.assertTrue(FF.removeQuiet(path.$()));
+            }
+
+            String[] result = runSession("tables\nquit\n");
+            String outText = result[0];
+            // table should still be discovered (dir exists), type unknown since no _view
+            // but registry may provide type
+            boolean found = false;
+            for (String line : outText.split("\n")) {
+                if (line.contains("del_view") && !line.contains("del_view_base")) {
+                    found = true;
+                    break;
+                }
+            }
+            Assert.assertTrue("view with deleted _view file should still be discovered", found);
+        });
+    }
+
     private static void deleteAllRegistryFiles() {
         try (Path path = new Path()) {
             long findPtr = FF.findFirst(path.of(configuration.getDbRoot()).$());
@@ -921,6 +1259,21 @@ public class RecoverySessionTest extends AbstractCairoTest {
                 FF.findClose(findPtr);
             }
         }
+    }
+
+    private static void createMatViewWithBase(String mvName, String baseName, int rowCount) throws SqlException {
+        execute("create table " + baseName
+                + " (sym symbol, price double, ts timestamp) timestamp(ts) partition by DAY WAL");
+        if (rowCount > 0) {
+            execute("insert into " + baseName
+                    + " select rnd_symbol('A','B'), rnd_double(),"
+                    + " timestamp_sequence('2024-01-01', 3600000000L) from long_sequence(" + rowCount + ")");
+        }
+        drainWalQueue(engine);
+        execute("create materialized view " + mvName
+                + " as (select sym, last(price) as price, ts from " + baseName
+                + " sample by 1h) partition by DAY");
+        drainWalAndMatViewQueues();
     }
 
     private static void createOrphanDir(String tableName, String orphanName) {
@@ -974,6 +1327,14 @@ public class RecoverySessionTest extends AbstractCairoTest {
                         + " from long_sequence(" + rowCount + ")"
         );
         waitForAppliedRows(tableName, rowCount);
+    }
+
+    private static void createViewWithBase(String viewName, String baseName) throws SqlException {
+        execute("create table " + baseName
+                + " (sym symbol, price double, ts timestamp) timestamp(ts) partition by DAY WAL");
+        drainWalQueue(engine);
+        execute("create view " + viewName
+                + " as (select sym, last(price) as price, ts from " + baseName + " sample by 1h)");
     }
 
     private static void deletePartitionDir(String tableName, String partitionDirName) {

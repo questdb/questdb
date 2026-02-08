@@ -63,6 +63,40 @@ public class BoundedRegistryReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadAfterDropMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table drop_mv_base (sym symbol, price double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            drainWalQueue(engine);
+            execute("create materialized view drop_mv as (select sym, last(price) as price, ts from drop_mv_base sample by 1h) partition by DAY");
+            drainWalQueue(engine);
+            execute("drop materialized view drop_mv");
+            drainWalQueue(engine);
+
+            RegistryState state = readRegistryState();
+            RegistryEntry entry = findEntryByTableName(state, "drop_mv");
+            Assert.assertNull("dropped matview should not be in registry", entry);
+        });
+    }
+
+    @Test
+    public void testReadAfterDropView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table drop_v_base (sym symbol, price double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            drainWalQueue(engine);
+            execute("create view drop_v as (select sym, last(price) as price, ts from drop_v_base sample by 1h)");
+
+            RegistryState stateBefore = readRegistryState();
+            Assert.assertNotNull("view should be in registry before drop", findEntryByTableName(stateBefore, "drop_v"));
+
+            execute("drop view drop_v");
+            drainWalQueue(engine);
+
+            RegistryState stateAfter = readRegistryState();
+            Assert.assertNull("dropped view should not be in registry", findEntryByTableName(stateAfter, "drop_v"));
+        });
+    }
+
+    @Test
     public void testReadAfterDropTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table drop_tbl (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
@@ -76,6 +110,32 @@ public class BoundedRegistryReaderTest extends AbstractCairoTest {
                 Assert.assertNotEquals("drop_tbl", state.getEntries().getQuick(i).getTableName());
             }
             Assert.assertEquals(0, countIssuesWithCode(state, RecoveryIssueCode.CORRUPT_REGISTRY));
+        });
+    }
+
+    @Test
+    public void testReadAllTableTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table all_nonwal (val long, ts timestamp) timestamp(ts) partition by DAY");
+            execute("create table all_wal (sym symbol, price double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            drainWalQueue(engine);
+            execute("create view all_view as (select sym, last(price) as price, ts from all_wal sample by 1h)");
+            execute("create materialized view all_mv as (select sym, last(price) as price, ts from all_wal sample by 1h) partition by DAY");
+            drainWalQueue(engine);
+
+            RegistryState state = readRegistryState();
+            // non-WAL tables are NOT in tables.d
+            Assert.assertNull("non-WAL table should not be in registry", findEntryByTableName(state, "all_nonwal"));
+            // WAL, view, matview should all be present
+            RegistryEntry wal = findEntryByTableName(state, "all_wal");
+            Assert.assertNotNull("WAL table should be in registry", wal);
+            Assert.assertEquals(TableUtils.TABLE_TYPE_WAL, wal.getTableType());
+            RegistryEntry view = findEntryByTableName(state, "all_view");
+            Assert.assertNotNull("view should be in registry", view);
+            Assert.assertEquals(TableUtils.TABLE_TYPE_VIEW, view.getTableType());
+            RegistryEntry mv = findEntryByTableName(state, "all_mv");
+            Assert.assertNotNull("matview should be in registry", mv);
+            Assert.assertEquals(TableUtils.TABLE_TYPE_MAT, mv.getTableType());
         });
     }
 
@@ -227,6 +287,37 @@ public class BoundedRegistryReaderTest extends AbstractCairoTest {
             RegistryState state = readRegistryState();
             RegistryEntry entry = findEntryByTableName(state, "non_wal_tbl");
             Assert.assertNull("non-wal table should not be in registry", entry);
+        });
+    }
+
+    @Test
+    public void testReadSingleMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table mv_base (sym symbol, price double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            drainWalQueue(engine);
+            execute("create materialized view mv_single as (select sym, last(price) as price, ts from mv_base sample by 1h) partition by DAY");
+            drainWalQueue(engine);
+
+            RegistryState state = readRegistryState();
+            RegistryEntry entry = findEntryByTableName(state, "mv_single");
+            Assert.assertNotNull("matview should be in registry", entry);
+            Assert.assertEquals(TableUtils.TABLE_TYPE_MAT, entry.getTableType());
+            Assert.assertFalse(entry.isRemoved());
+        });
+    }
+
+    @Test
+    public void testReadSingleView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table view_base (sym symbol, price double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            drainWalQueue(engine);
+            execute("create view view_single as (select sym, last(price) as price, ts from view_base sample by 1h)");
+
+            RegistryState state = readRegistryState();
+            RegistryEntry entry = findEntryByTableName(state, "view_single");
+            Assert.assertNotNull("view should be in registry", entry);
+            Assert.assertEquals(TableUtils.TABLE_TYPE_VIEW, entry.getTableType());
+            Assert.assertFalse(entry.isRemoved());
         });
     }
 

@@ -25,6 +25,8 @@
 package io.questdb.recovery;
 
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.wal.WalUtils;
@@ -62,6 +64,9 @@ public class TableDiscoveryService {
             DiscoveredTable table = byDirName.get(entry.getDirName());
             if (table != null) {
                 table.setRegistryEntry(entry);
+                if (table.getTableType() < 0) {
+                    table.setTableType(entry.getTableType());
+                }
                 if (!entry.getTableName().equals(table.getTableName())) {
                     table.addIssue(
                             RecoveryIssueSeverity.WARN,
@@ -131,17 +136,32 @@ public class TableDiscoveryService {
         }
 
         final MetaWalFlag walFlag = readMetaWalFlag(path, rootLen, dirNameSink);
+        final int tableType = detectTableType(path, rootLen, dirNameSink, walFlag);
         final DiscoveredTable discoveredTable = new DiscoveredTable(
                 tableName,
                 dirName,
                 state,
                 walFlag.known,
-                walFlag.value
+                walFlag.value,
+                tableType
         );
         if (walFlag.issueCode != null) {
             discoveredTable.addIssue(walFlag.severity, walFlag.issueCode, walFlag.message);
         }
         return discoveredTable;
+    }
+
+    private int detectTableType(Path path, int rootLen, Utf8StringSink dirNameSink, MetaWalFlag walFlag) {
+        if (ff.exists(path.trimTo(rootLen).concat(dirNameSink).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$())) {
+            return TableUtils.TABLE_TYPE_VIEW;
+        }
+        if (ff.exists(path.trimTo(rootLen).concat(dirNameSink).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$())) {
+            return TableUtils.TABLE_TYPE_MAT;
+        }
+        if (walFlag.known) {
+            return walFlag.value ? TableUtils.TABLE_TYPE_WAL : TableUtils.TABLE_TYPE_NON_WAL;
+        }
+        return -1;
     }
 
     private MetaWalFlag readMetaWalFlag(Path path, int rootLen, Utf8StringSink dirNameSink) {

@@ -24,6 +24,7 @@
 
 package io.questdb.recovery;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
@@ -33,6 +34,7 @@ public class DiscoveredTable {
     private RegistryEntry registryEntry;
     private final TableDiscoveryState state;
     private final String tableName;
+    private int tableType;
     private final boolean walEnabled;
     private final boolean walEnabledKnown;
 
@@ -41,13 +43,15 @@ public class DiscoveredTable {
             String dirName,
             TableDiscoveryState state,
             boolean walEnabledKnown,
-            boolean walEnabled
+            boolean walEnabled,
+            int tableType
     ) {
         this.tableName = tableName;
         this.dirName = dirName;
         this.state = state;
         this.walEnabledKnown = walEnabledKnown;
         this.walEnabled = walEnabled;
+        this.tableType = tableType;
     }
 
     public void addIssue(RecoveryIssueSeverity severity, RecoveryIssueCode code, String message) {
@@ -75,6 +79,19 @@ public class DiscoveredTable {
         return tableName;
     }
 
+    public int getTableType() {
+        return tableType;
+    }
+
+    public String getTableTypeName() {
+        return switch (tableType) {
+            case TableUtils.TABLE_TYPE_NON_WAL, TableUtils.TABLE_TYPE_WAL -> "table";
+            case TableUtils.TABLE_TYPE_MAT -> "matview";
+            case TableUtils.TABLE_TYPE_VIEW -> "view";
+            default -> "";
+        };
+    }
+
     @Nullable
     public Boolean getWalEnabledOrNull() {
         return walEnabledKnown ? walEnabled : null;
@@ -82,6 +99,10 @@ public class DiscoveredTable {
 
     public void setRegistryEntry(RegistryEntry registryEntry) {
         this.registryEntry = registryEntry;
+    }
+
+    public void setTableType(int tableType) {
+        this.tableType = tableType;
     }
 
     public boolean isWalEnabled() {
