@@ -172,6 +172,7 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
     public void clear() {
         Misc.free(ownerChain);
         Misc.free(ownerMemoryPool);
+        Misc.free(ownerRecordA);
         Misc.free(ownerRecordB);
         freePerWorkerChainsAndPools();
         ownerSelectivityStats.clear();

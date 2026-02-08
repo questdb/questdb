@@ -224,6 +224,8 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         Misc.freeObjList(perWorkerDataAddresses);
         Misc.free(ownerAuxAddresses);
         Misc.freeObjList(perWorkerAuxAddresses);
+        Misc.freeObjList(frameFilteredMemoryRecords);
+        Misc.free(ownerPageFrameFilteredNoRandomAccessMemoryRecord);
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                 Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));

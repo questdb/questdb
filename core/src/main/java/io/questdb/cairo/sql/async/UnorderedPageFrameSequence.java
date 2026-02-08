@@ -398,7 +398,6 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private void reduceLocally(int frameIndex) {
         try {
             if (isActive()) {
-                workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
                 localRecord.of(getSymbolTableSource());
                 reduceStartedCounter.incrementAndGet();
                 reducer.reduce(-1, localRecord, frameIndex, workStealCircuitBreaker, this, this);
