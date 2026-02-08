@@ -123,7 +123,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
     private void buildValue() {
         frameSequence.prepareForDispatch();
-        frameSequence.getAtom().initMemoryPools(frameSequence.getPageFrameAddressCache());
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache());
         frameSequence.dispatchAndAwait();
 
         // Merge the values.

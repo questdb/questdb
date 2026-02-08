@@ -185,7 +185,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
     @Override
     public boolean usesCompiledFilter() {
-        return frameSequence.getAtom().getCompiledFilter() != null;
+        return frameSequence.getAtom().getFilterContext().getCompiledFilter() != null;
     }
 
     @Override
@@ -207,7 +207,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
         final boolean owner = stealingFrameSequence == frameSequence;
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final PageFrameMemoryPool frameMemoryPool = atom.getMemoryPool(slotId);
+        final AsyncFilterContext fCtx = atom.getFilterContext();
+        final PageFrameMemoryPool frameMemoryPool = fCtx.getMemoryPool(slotId);
         final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
         record.init(frameMemory);
 
@@ -371,26 +372,27 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
         final boolean owner = stealingFrameSequence == frameSequence;
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+        final AsyncFilterContext fCtx = atom.getFilterContext();
         final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
         final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
-        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
+        final boolean useLateMaterialization = fCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
 
-        final PageFrameMemoryPool frameMemoryPool = atom.getMemoryPool(slotId);
+        final PageFrameMemoryPool frameMemoryPool = fCtx.getMemoryPool(slotId);
         final PageFrameMemory frameMemory;
         if (useLateMaterialization) {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex, atom.getFilterUsedColumnIndexes());
+            frameMemory = frameMemoryPool.navigateTo(frameIndex, fCtx.getFilterUsedColumnIndexes());
         } else {
             frameMemory = frameMemoryPool.navigateTo(frameIndex);
         }
         record.init(frameMemory);
 
-        final DirectLongList rows = atom.getFilteredRows(slotId);
+        final DirectLongList rows = fCtx.getFilteredRows(slotId);
         rows.clear();
 
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final AsyncGroupByAtom.MapFragment fragment = atom.getFragment(slotId);
-        final CompiledFilter compiledFilter = atom.getCompiledFilter();
-        final Function filter = atom.getFilter(slotId);
+        final CompiledFilter compiledFilter = fCtx.getCompiledFilter();
+        final Function filter = fCtx.getFilter(slotId);
         final RecordSink mapSink = atom.getMapSink(slotId);
         try {
             fragment.resetLocalStats();
@@ -400,23 +402,23 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             } else {
                 AsyncFilterUtils.applyCompiledFilter(
                         compiledFilter,
-                        atom.getBindVarMemory(),
-                        atom.getBindVarFunctions(),
+                        fCtx.getBindVarMemory(),
+                        fCtx.getBindVarFunctions(),
                         frameMemory,
                         addressCache,
-                        atom.getDataAddresses(slotId),
-                        atom.getAuxAddresses(slotId),
+                        fCtx.getDataAddresses(slotId),
+                        fCtx.getAuxAddresses(slotId),
                         rows,
                         frameRowCount
                 );
             }
 
             if (isParquetFrame) {
-                atom.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
+                fCtx.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
             }
-            if (useLateMaterialization && frameMemory.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, false)) {
-                PageFrameFilteredNoRandomAccessMemoryRecord filteredMemoryRecord = atom.getPageFrameFilteredMemoryRecord(slotId);
-                filteredMemoryRecord.of(frameMemory, record, atom.getFilterUsedColumnIndexes());
+            if (useLateMaterialization && frameMemory.populateRemainingColumns(fCtx.getFilterUsedColumnIndexes(), rows, false)) {
+                PageFrameFilteredNoRandomAccessMemoryRecord filteredMemoryRecord = fCtx.getPageFrameFilteredMemoryRecord(slotId);
+                filteredMemoryRecord.of(frameMemory, record, fCtx.getFilterUsedColumnIndexes());
                 record = filteredMemoryRecord;
             }
 

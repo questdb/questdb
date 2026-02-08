@@ -132,7 +132,7 @@ class AsyncTopKRecordCursor implements RecordCursor {
 
     private void buildChain() {
         frameSequence.prepareForDispatch();
-        frameSequence.getAtom().initMemoryPools(frameSequence.getPageFrameAddressCache());
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache());
         frameSequence.dispatchAndAwait();
 
         // merge everything into owner chain
@@ -177,7 +177,7 @@ class AsyncTopKRecordCursor implements RecordCursor {
             atom.reopen();
         }
         this.frameSequence = frameSequence;
-        this.frameMemoryPool = atom.getOwnerMemoryPool();
+        this.frameMemoryPool = atom.getFilterContext().getOwnerMemoryPool();
         this.recordA = atom.getOwnerRecordA();
         this.recordB = atom.getOwnerRecordB();
         isChainBuilt = false;

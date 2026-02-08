@@ -189,7 +189,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
     private void buildMap() {
         frameSequence.prepareForDispatch();
-        frameSequence.getAtom().initMemoryPools(frameSequence.getPageFrameAddressCache());
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache());
         frameSequence.dispatchAndAwait();
 
         final AsyncGroupByAtom atom = frameSequence.getAtom();
