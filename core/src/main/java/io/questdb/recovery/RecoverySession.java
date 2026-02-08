@@ -40,6 +40,7 @@ public class RecoverySession {
     private RegistryState cachedRegistryState;
     private TxnState cachedTxnState;
     private final ColumnCheckService columnCheckService;
+    private final AnsiColor color;
     private final ColumnVersionStateService columnVersionStateService;
     private int currentPartitionIndex = -1;
     private DiscoveredTable currentTable;
@@ -63,6 +64,7 @@ public class RecoverySession {
             TxnStateService txnStateService,
             ConsoleRenderer renderer
     ) {
+        this.color = renderer.getColor();
         this.dbRoot = dbRoot;
         this.columnCheckService = columnCheckService;
         this.columnVersionStateService = columnVersionStateService;
@@ -433,7 +435,7 @@ public class RecoverySession {
         for (int i = 0, n = lastDiscoveredTables.size(); i < n; i++) {
             DiscoveredTable table = lastDiscoveredTables.getQuick(i);
             out.println();
-            out.println("=== " + table.getTableName() + " ===");
+            out.println(color.bold("=== " + table.getTableName() + " ==="));
             checkColumnsForTable(table, out, err);
         }
     }

@@ -32,6 +32,7 @@ import io.questdb.recovery.BoundedRegistryReader;
 import io.questdb.recovery.BoundedTxnReader;
 import io.questdb.recovery.ColumnCheckService;
 import io.questdb.recovery.ColumnVersionStateService;
+import io.questdb.recovery.AnsiColor;
 import io.questdb.recovery.ConsoleRenderer;
 import io.questdb.recovery.MetaStateService;
 import io.questdb.recovery.PartitionScanService;
@@ -92,6 +93,8 @@ public class RecoveryMain {
             }
             lockFd = lockResult.lockFd;
 
+            boolean colorEnabled = !cliConfig.noColor && System.console() != null;
+            AnsiColor ansiColor = new AnsiColor(colorEnabled);
             RecoverySession session = new RecoverySession(
                     dbRoot,
                     new ColumnCheckService(ff),
@@ -101,7 +104,7 @@ public class RecoveryMain {
                     new RegistryStateService(new BoundedRegistryReader(ff)),
                     new TableDiscoveryService(ff),
                     new TxnStateService(new BoundedTxnReader(ff)),
-                    new ConsoleRenderer()
+                    new ConsoleRenderer(ansiColor)
             );
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(in))) {
                 return session.run(reader, out, err);
@@ -170,13 +173,14 @@ public class RecoveryMain {
     }
 
     private static void printUsage(PrintStream out) {
-        out.println("usage: RecoveryMain -d <installRoot> [--db <dbRoot>] [--help]");
+        out.println("usage: RecoveryMain -d <installRoot> [--db <dbRoot>] [--no-color] [--help]");
     }
 
     private static CliConfig parseArgs(String[] args, PrintStream err) {
         String installRoot = null;
         String explicitDbRoot = null;
         boolean help = false;
+        boolean noColor = false;
 
         for (int i = 0; i < args.length; i++) {
             String arg = args[i];
@@ -184,6 +188,9 @@ public class RecoveryMain {
                 case "--help":
                 case "-h":
                     help = true;
+                    break;
+                case "--no-color":
+                    noColor = true;
                     break;
                 case "-d":
                     if (i + 1 >= args.length) {
@@ -210,18 +217,20 @@ public class RecoveryMain {
             return null;
         }
 
-        return new CliConfig(help, installRoot, explicitDbRoot);
+        return new CliConfig(help, installRoot, explicitDbRoot, noColor);
     }
 
     private static class CliConfig {
         private final String explicitDbRoot;
         private final boolean help;
         private final String installRoot;
+        private final boolean noColor;
 
-        private CliConfig(boolean help, String installRoot, String explicitDbRoot) {
+        private CliConfig(boolean help, String installRoot, String explicitDbRoot, boolean noColor) {
             this.help = help;
             this.installRoot = installRoot;
             this.explicitDbRoot = explicitDbRoot;
+            this.noColor = noColor;
         }
     }
 

@@ -33,10 +33,30 @@ import io.questdb.std.str.StringSink;
 import java.io.PrintStream;
 
 public class ConsoleRenderer {
+    private final AnsiColor color;
+
+    public ConsoleRenderer() {
+        this(AnsiColor.NONE);
+    }
+
+    public ConsoleRenderer(AnsiColor color) {
+        this.color = color;
+    }
+
+    public AnsiColor getColor() {
+        return color;
+    }
+
     public void printCheckResult(ColumnCheckResult result, String tableName, long rowCount, PrintStream out) {
         out.printf("checking %s, partition %s (rows=%d):%n", tableName, result.getPartitionDirName(), rowCount);
-        out.printf("  %-5s %-30s %-15s %-10s %-10s %-15s %-15s%n",
-                "idx", "column", "type", "status", "colTop", "expected", "actual");
+        out.printf("  %s %s %s %s %s %s %s%n",
+                color.bold(String.format("%-5s", "idx")),
+                color.bold(String.format("%-30s", "column")),
+                color.bold(String.format("%-15s", "type")),
+                color.bold(String.format("%-10s", "status")),
+                color.bold(String.format("%-10s", "colTop")),
+                color.bold(String.format("%-15s", "expected")),
+                color.bold(String.format("%-15s", "actual")));
 
         ObjList<ColumnCheckEntry> entries = result.getEntries();
         for (int i = 0, n = entries.size(); i < n; i++) {
@@ -44,31 +64,34 @@ public class ConsoleRenderer {
             String colTopStr = entry.getColumnTop() >= 0 ? Long.toString(entry.getColumnTop()) : "-";
             String expectedStr = entry.getExpectedSize() >= 0 ? formatBytes(entry.getExpectedSize()) : "-";
             String actualStr = entry.getActualSize() >= 0 ? formatBytes(entry.getActualSize()) : "-";
+            String statusStr = colorCheckStatus(entry.getStatus());
 
-            out.printf("  %-5d %-30s %-15s %-10s %-10s %-15s %-15s%n",
+            out.printf("  %-5d %-30s %-15s %s %-10s %-15s %-15s%n",
                     entry.getColumnIndex(),
                     entry.getColumnName(),
                     entry.getColumnTypeName(),
-                    entry.getStatus(),
+                    statusStr,
                     colTopStr,
                     expectedStr,
                     actualStr
             );
 
             if (entry.getMessage() != null && !entry.getMessage().isEmpty()) {
-                out.println("        " + entry.getMessage());
+                out.println("        " + color.red(entry.getMessage()));
             }
         }
         out.println();
     }
 
     public void printCheckSkipped(String partitionName, String reason, PrintStream out) {
-        out.println("skipping partition " + partitionName + ": " + reason);
+        out.println(color.cyan("skipping partition " + partitionName + ": " + reason));
     }
 
     public void printCheckSummary(String tableName, int checked, int errors, int warnings, int skipped, PrintStream out) {
+        String errorsStr = errors > 0 ? color.red(errors + " errors") : errors + " errors";
+        String warningsStr = warnings > 0 ? color.yellow(warnings + " warnings") : warnings + " warnings";
         out.println("check complete: " + checked + " partitions checked, "
-                + errors + " errors, " + warnings + " warnings, " + skipped + " skipped");
+                + errorsStr + ", " + warningsStr + ", " + skipped + " skipped");
     }
 
     public void printColumns(MetaState metaState, PrintStream out) {
@@ -76,7 +99,11 @@ public class ConsoleRenderer {
         if (columns.size() == 0) {
             out.println("No columns.");
         } else {
-            out.printf("%-5s %-30s %-15s %-8s%n", "idx", "column_name", "type", "indexed");
+            out.printf("%s %s %s %s%n",
+                    color.bold(String.format("%-5s", "idx")),
+                    color.bold(String.format("%-30s", "column_name")),
+                    color.bold(String.format("%-15s", "type")),
+                    color.bold(String.format("%-8s", "indexed")));
             for (int i = 0, n = columns.size(); i < n; i++) {
                 MetaColumnState col = columns.getQuick(i);
                 out.printf(
@@ -115,14 +142,20 @@ public class ConsoleRenderer {
         if (entries.size() == 0) {
             out.println("No partitions.");
         } else {
-            out.printf("%-5s %-30s %-12s %-10s %-10s %-10s%n", "idx", "dir", "rows", "format", "readOnly", "status");
+            out.printf("%s %s %s %s %s %s%n",
+                    color.bold(String.format("%-5s", "idx")),
+                    color.bold(String.format("%-30s", "dir")),
+                    color.bold(String.format("%-12s", "rows")),
+                    color.bold(String.format("%-10s", "format")),
+                    color.bold(String.format("%-10s", "readOnly")),
+                    color.bold(String.format("%-10s", "status")));
             for (int i = 0, n = entries.size(); i < n; i++) {
                 PartitionScanEntry entry = entries.getQuick(i);
                 TxnPartitionState part = entry.getTxnPartition();
                 String statusStr = switch (entry.getStatus()) {
                     case MATCHED -> "";
-                    case ORPHAN -> "ORPHAN";
-                    case MISSING -> "MISSING";
+                    case ORPHAN -> color.yellow("ORPHAN");
+                    case MISSING -> color.red("MISSING");
                 };
                 if (part != null) {
                     out.printf(
@@ -217,7 +250,15 @@ public class ConsoleRenderer {
         if (tables.size() == 0) {
             out.println("No tables discovered.");
         } else {
-            out.printf("%-5s %-36s %-36s %-10s %-10s %-10s %-12s %-8s%n", "idx", "table_name", "dir_name", "type", "state", "wal", "registry", "issues");
+            out.printf("%s %s %s %s %s %s %s %s%n",
+                    color.bold(String.format("%-5s", "idx")),
+                    color.bold(String.format("%-36s", "table_name")),
+                    color.bold(String.format("%-36s", "dir_name")),
+                    color.bold(String.format("%-10s", "type")),
+                    color.bold(String.format("%-10s", "state")),
+                    color.bold(String.format("%-10s", "wal")),
+                    color.bold(String.format("%-12s", "registry")),
+                    color.bold(String.format("%-8s", "issues")));
             for (int i = 0, n = tables.size(); i < n; i++) {
                 DiscoveredTable table = tables.getQuick(i);
                 String registryStatus = getRegistryStatus(table);
@@ -272,17 +313,17 @@ public class ConsoleRenderer {
         }
     }
 
-    private static String getRegistryStatus(DiscoveredTable table) {
+    private String getRegistryStatus(DiscoveredTable table) {
         RegistryEntry entry = table.getRegistryEntry();
         if (entry == null) {
             // tables.d only contains WAL tables; non-WAL tables are never registered
             if (table.isWalEnabledKnown() && !table.isWalEnabled()) {
                 return "";
             }
-            return "NOT_IN_REG";
+            return color.yellow("NOT_IN_REG");
         }
         if (!entry.getTableName().equals(table.getTableName())) {
-            return "MISMATCH";
+            return color.red("MISMATCH");
         }
         return "";
     }
@@ -346,6 +387,23 @@ public class ConsoleRenderer {
         }
     }
 
+    private String colorCheckStatus(ColumnCheckStatus status) {
+        return switch (status) {
+            case ERROR -> color.red(String.format("%-10s", status));
+            case OK -> color.green(String.format("%-10s", status));
+            case SKIPPED -> color.cyan(String.format("%-10s", status));
+            case WARNING -> color.yellow(String.format("%-10s", status));
+        };
+    }
+
+    private String colorSeverity(RecoveryIssueSeverity severity) {
+        return switch (severity) {
+            case ERROR -> color.red("[" + severity + "]");
+            case WARN -> color.yellow("[" + severity + "]");
+            case INFO -> color.cyan("[" + severity + "]");
+        };
+    }
+
     private void printIssues(String title, ObjList<ReadIssue> issues, PrintStream out) {
         if (issues.size() == 0) {
             return;
@@ -353,7 +411,7 @@ public class ConsoleRenderer {
         out.println(title + ":");
         for (int i = 0, n = issues.size(); i < n; i++) {
             ReadIssue issue = issues.getQuick(i);
-            out.println("  [" + issue.getSeverity() + "] " + issue.getCode() + " " + issue.getMessage());
+            out.println("  " + colorSeverity(issue.getSeverity()) + " " + issue.getCode() + " " + issue.getMessage());
         }
     }
 }

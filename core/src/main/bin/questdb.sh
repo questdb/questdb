@@ -99,6 +99,7 @@ function usage {
     echo "  -p    Enable async profiler at startup - continuous profiling"
     echo "  -d    Set QuestDB root directory"
     echo "  -t    Set process tag for identification"
+    echo "  --no-color  Disable ANSI color output (recover command)"
     echo ""
     echo "Profiling modes:"
     echo "  1. Attach to running instance (profile command):"
@@ -141,7 +142,7 @@ function recover {
     ${JVM_PREPEND}
     "
 
-    ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${RECOVERY_MAIN} -d ${QDB_ROOT}
+    ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${RECOVERY_MAIN} -d ${QDB_ROOT} ${QDB_NO_COLOR}
 }
 
 function export_pid {
@@ -223,6 +224,7 @@ function export_args {
     export QDB_OVERWRITE_PUBLIC=""
     export QDB_DISABLE_HUP_HANDLER=""
     export QDB_CONTAINER_MODE=""
+    export QDB_NO_COLOR=""
     export QDB_PROFILING_ENABLED=""
     export QDB_ROOT=${QDB_DEFAULT_ROOT}
 
@@ -238,6 +240,9 @@ function export_args {
                 ;;
             -c)
                 export QDB_CONTAINER_MODE="-c"
+                ;;
+            --no-color)
+                export QDB_NO_COLOR="--no-color"
                 ;;
             -p)
                 export QDB_PROFILING_ENABLED="true"
