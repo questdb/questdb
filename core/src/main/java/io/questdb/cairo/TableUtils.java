@@ -92,6 +92,7 @@ public final class TableUtils {
     public static final String CHECKPOINT_LEGACY_META_FILE_NAME = "_snapshot";
     public static final String CHECKPOINT_LEGACY_META_FILE_NAME_TXT = "_snapshot.txt";
     public static final String CHECKPOINT_META_FILE_NAME = "_checkpoint_meta.d";
+    public static final String CHECKPOINT_SEQ_TXN_FILE_NAME = "_txn";
     public static final long COLUMN_NAME_TXN_NONE = -1L;
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
     public static final String DEFAULT_PARTITION_NAME = "default";
@@ -162,7 +163,6 @@ public final class TableUtils {
      * TableUtils.resetTxn() writes to this file, it could be using different offsets, beware
      */
     public static final String TXN_FILE_NAME = "_txn";
-    public static final String CHECKPOINT_SEQ_TXN_FILE_NAME = "_txn";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
     // transaction file structure
     // @formatter:off
@@ -314,10 +314,6 @@ public final class TableUtils {
             checksum = -1337;
         }
         return checksum;
-    }
-
-    public static void cleanupDirQuiet(FilesFacade ff, Utf8Sequence dir) {
-        cleanupDirQuiet(ff, dir, LOG);
     }
 
     public static void cleanupDirQuiet(FilesFacade ff, Utf8Sequence dir, Log log) {
@@ -1252,6 +1248,38 @@ public final class TableUtils {
         return address;
     }
 
+    /**
+     * Maps a file in read-only mode without using the MmapCache.
+     * Useful for streaming reads where we want each mapping to be independent.
+     */
+    public static long mapRONoCache(FilesFacade ff, long fd, long size, int memoryTag) {
+        assert fd != -1;
+        final long address = ff.mmapNoCache(fd, size, 0, Files.MAP_RO, memoryTag);
+        if (address == FilesFacade.MAP_FAILED) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not mmap (no cache) ")
+                    .put(" [size=").put(size)
+                    .put(", fd=").put(fd)
+                    .put(", memUsed=").put(Unsafe.getMemUsed())
+                    .put(", fileLen=").put(ff.length(fd))
+                    .put(']');
+        }
+        return address;
+    }
+
+    /**
+     * Maps a file in read-only mode without using the MmapCache.
+     * Opens the file, maps it, and closes the fd.
+     */
+    public static long mapRONoCache(FilesFacade ff, LPSZ path, Log log, long size, int memoryTag) {
+        final long fd = openRO(ff, path, log);
+        try {
+            return mapRONoCache(ff, fd, size, memoryTag);
+        } finally {
+            ff.close(fd);
+        }
+    }
+
     public static long mapRW(FilesFacade ff, long fd, long size, int memoryTag) {
         return mapRW(ff, fd, size, 0, memoryTag);
     }
@@ -1331,6 +1359,29 @@ public final class TableUtils {
             throw CairoException.critical(errno).put("could not remap file [previousSize=").put(prevSize)
                     .put(", newSize=").put(newSize)
                     .put(", offset=").put(offset)
+                    .put(", fd=").put(fd)
+                    .put(']');
+        }
+        return page;
+    }
+
+    /**
+     * Remap memory without using the MmapCache. Useful for streaming reads.
+     */
+    public static long mremapNoCache(
+            FilesFacade ff,
+            long fd,
+            long prevAddress,
+            long prevSize,
+            long newSize,
+            int mapMode,
+            int memoryTag
+    ) {
+        final long page = ff.mremapNoCache(fd, prevAddress, prevSize, newSize, 0L, mapMode, memoryTag);
+        if (page == FilesFacade.MAP_FAILED) {
+            int errno = ff.errno();
+            throw CairoException.critical(errno).put("could not remap file (no cache) [previousSize=").put(prevSize)
+                    .put(", newSize=").put(newSize)
                     .put(", fd=").put(fd)
                     .put(']');
         }
