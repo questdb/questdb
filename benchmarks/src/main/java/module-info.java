@@ -30,7 +30,6 @@ module io.questdb.benchmarks {
     requires simpleclient.common;
     requires org.jetbrains.annotations;
     requires java.sql;
-    requires org.postgresql.jdbc;
 
     exports org.questdb.jmh_generated;
 }
