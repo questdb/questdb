@@ -54,7 +54,9 @@ public class LastNotNullDateGroupByFunction extends FirstDateGroupByFunction {
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (arg.getDate(record) != Numbers.LONG_NULL) {
-            computeFirst(mapValue, record, rowId);
+            if (mapValue.getDate(valueIndex + 1) == Numbers.LONG_NULL || rowId > mapValue.getLong(valueIndex)) {
+                computeFirst(mapValue, record, rowId);
+            }
         }
     }
 

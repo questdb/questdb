@@ -65,11 +65,13 @@ public class LastArrayGroupByFunction extends ArrayFunction implements GroupByFu
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        mapValue.putLong(valueIndex, rowId);
-        long ptr = mapValue.getLong(valueIndex + 1);
-        sink.of(ptr);
-        sink.put(arg.getArray(record));
-        mapValue.putLong(valueIndex + 1, sink.ptr());
+        if (rowId > mapValue.getLong(valueIndex)) {
+            mapValue.putLong(valueIndex, rowId);
+            long ptr = mapValue.getLong(valueIndex + 1);
+            sink.of(ptr);
+            sink.put(arg.getArray(record));
+            mapValue.putLong(valueIndex + 1, sink.ptr());
+        }
     }
 
     @Override

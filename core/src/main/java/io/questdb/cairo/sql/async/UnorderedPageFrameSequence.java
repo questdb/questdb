@@ -49,8 +49,8 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -74,7 +74,6 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private final StringSink errorMsg = new StringSink();
     private final PageFrameAddressCache frameAddressCache;
     private final LongList frameRowCounts = new LongList();
-    private final MessageBus messageBus;
     private final MPSequence reducePubSeq;
     private final RingQueue<UnorderedPageFrameReduceTask> reduceQueue;
     private final AtomicInteger reduceStartedCounter = new AtomicInteger(0);
@@ -107,7 +106,6 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         try {
             this.atom = atom;
             this.frameAddressCache = new PageFrameAddressCache();
-            this.messageBus = messageBus;
             this.reducer = reducer;
             this.clock = configuration.getMillisecondClock();
             this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, sharedQueryWorkerCount);
@@ -223,16 +221,16 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         return atom;
     }
 
+    public int getCancelReason() {
+        return cancelReason.get();
+    }
+
     public SqlExecutionCircuitBreaker getCircuitBreaker() {
         return sqlExecutionContext.getCircuitBreaker();
     }
 
     public SOUnboundedCountDownLatch getDoneLatch() {
         return doneLatch;
-    }
-
-    public int getCancelReason() {
-        return cancelReason.get();
     }
 
     public int getFrameCount() {
@@ -251,12 +249,12 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         return frameAddressCache;
     }
 
-    public UnorderedPageFrameReducer getReducer() {
-        return reducer;
-    }
-
     public AtomicInteger getReduceStartedCounter() {
         return reduceStartedCounter;
+    }
+
+    public UnorderedPageFrameReducer getReducer() {
+        return reducer;
     }
 
     public long getStartTime() {
@@ -272,7 +270,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     }
 
     public boolean hasError() {
-        return errorMsg.length() > 0;
+        return !errorMsg.isEmpty();
     }
 
     public boolean isActive() {
@@ -346,7 +344,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
      */
     public synchronized void setError(Throwable th) {
         // First error wins.
-        if (errorMsg.length() > 0) {
+        if (!errorMsg.isEmpty()) {
             return;
         }
         if (th instanceof CairoException e) {
@@ -356,7 +354,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             isOutOfMemory = e.isOutOfMemory();
             cancel(e.getInterruptionReason());
         } else {
-            errorMsg.put("unexpected error: ").put(th.getMessage());
+            errorMsg.put("unexpected filter error: ").put(th.getMessage());
             cancel(SqlExecutionCircuitBreaker.STATE_OK);
         }
     }

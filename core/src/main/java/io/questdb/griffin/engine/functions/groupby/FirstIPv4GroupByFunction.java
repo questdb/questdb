@@ -59,7 +59,9 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        // empty
+        if (rowId < mapValue.getLong(valueIndex)) {
+            computeFirst(mapValue, record, rowId);
+        }
     }
 
     @Override

@@ -53,8 +53,12 @@ public class FirstNotNullFloatGroupByFunction extends FirstFloatGroupByFunction 
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (Numbers.isNull(mapValue.getFloat(valueIndex + 1))) {
-            computeFirst(mapValue, record, rowId);
+        float val = arg.getFloat(record);
+        if (!Numbers.isNull(val)) {
+            if (Numbers.isNull(mapValue.getFloat(valueIndex + 1)) || rowId < mapValue.getLong(valueIndex)) {
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putFloat(valueIndex + 1, val);
+            }
         }
     }
 

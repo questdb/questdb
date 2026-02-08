@@ -38,8 +38,13 @@ public class FirstNotNullUuidGroupByFunction extends FirstUuidGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (Uuid.isNull(mapValue.getLong128Lo(valueIndex + 1), mapValue.getLong128Hi(valueIndex + 1))) {
-            computeFirst(mapValue, record, rowId);
+        long lo = arg.getLong128Lo(record);
+        long hi = arg.getLong128Hi(record);
+        if (!Uuid.isNull(lo, hi)) {
+            if (Uuid.isNull(mapValue.getLong128Lo(valueIndex + 1), mapValue.getLong128Hi(valueIndex + 1)) || rowId < mapValue.getLong(valueIndex)) {
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putLong128(valueIndex + 1, lo, hi);
+            }
         }
     }
 

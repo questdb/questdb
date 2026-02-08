@@ -40,11 +40,13 @@ public class LastNotNullArrayGroupByFunction extends FirstArrayGroupByFunction {
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         ArrayView array = arg.getArray(record);
         if (array != null && !array.isNull()) {
-            mapValue.putLong(valueIndex, rowId);
-            long ptr = mapValue.getLong(valueIndex + 1);
-            sink.of(ptr);
-            sink.put(array);
-            mapValue.putLong(valueIndex + 1, sink.ptr());
+            if (mapValue.getLong(valueIndex + 1) == 0 || rowId > mapValue.getLong(valueIndex)) {
+                mapValue.putLong(valueIndex, rowId);
+                long ptr = mapValue.getLong(valueIndex + 1);
+                sink.of(ptr);
+                sink.put(array);
+                mapValue.putLong(valueIndex + 1, sink.ptr());
+            }
         }
     }
 

@@ -53,8 +53,12 @@ public class FirstNotNullDateGroupByFunction extends FirstDateGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (mapValue.getDate(valueIndex + 1) == Numbers.LONG_NULL) {
-            computeFirst(mapValue, record, rowId);
+        long val = arg.getDate(record);
+        if (val != Numbers.LONG_NULL) {
+            if (mapValue.getDate(valueIndex + 1) == Numbers.LONG_NULL || rowId < mapValue.getLong(valueIndex)) {
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putDate(valueIndex + 1, val);
+            }
         }
     }
 

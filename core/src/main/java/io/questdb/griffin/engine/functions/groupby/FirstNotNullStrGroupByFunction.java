@@ -38,9 +38,9 @@ public class FirstNotNullStrGroupByFunction extends FirstStrGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (mapValue.getBool(valueIndex + 2)) {
-            final CharSequence val = arg.getStrA(record);
-            if (val != null) {
+        final CharSequence val = arg.getStrA(record);
+        if (val != null) {
+            if (mapValue.getBool(valueIndex + 2) || rowId < mapValue.getLong(valueIndex)) {
                 mapValue.putLong(valueIndex, rowId);
                 long ptr = mapValue.getLong(valueIndex + 1);
                 sink.of(ptr).clearAndSet(val);

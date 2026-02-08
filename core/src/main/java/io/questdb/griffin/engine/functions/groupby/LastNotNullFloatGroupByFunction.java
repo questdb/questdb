@@ -54,7 +54,9 @@ public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (!Numbers.isNull(arg.getFloat(record))) {
-            computeFirst(mapValue, record, rowId);
+            if (Numbers.isNull(mapValue.getFloat(valueIndex + 1)) || rowId > mapValue.getLong(valueIndex)) {
+                computeFirst(mapValue, record, rowId);
+            }
         }
     }
 

@@ -37,8 +37,12 @@ public class FirstNotNullTimestampGroupByFunction extends FirstTimestampGroupByF
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (mapValue.getTimestamp(valueIndex + 1) == Numbers.LONG_NULL) {
-            computeFirst(mapValue, record, rowId);
+        long val = arg.getTimestamp(record);
+        if (val != Numbers.LONG_NULL) {
+            if (mapValue.getTimestamp(valueIndex + 1) == Numbers.LONG_NULL || rowId < mapValue.getLong(valueIndex)) {
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putLong(valueIndex + 1, val);
+            }
         }
     }
 

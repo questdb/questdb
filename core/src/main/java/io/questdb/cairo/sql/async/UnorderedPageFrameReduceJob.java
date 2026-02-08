@@ -60,17 +60,15 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
 
     /**
      * Tries to consume a single task from the unordered queue.
-     *
-     * @return true if nothing was processed (queue empty), false if a task was processed
      */
-    public static boolean consumeQueue(
+    public static void consumeQueue(
             RingQueue<UnorderedPageFrameReduceTask> queue,
             MCSequence subSeq,
             PageFrameMemoryRecord record,
             SqlExecutionCircuitBreakerWrapper circuitBreaker,
             @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
     ) {
-        return consumeQueue(-1, queue, subSeq, record, circuitBreaker, stealingFrameSequence);
+        consumeQueue(-1, queue, subSeq, record, circuitBreaker, stealingFrameSequence);
     }
 
     @Override
