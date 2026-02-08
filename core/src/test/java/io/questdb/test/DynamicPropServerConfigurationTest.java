@@ -1441,6 +1441,65 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testSecretFileRotationDoesNotNotifyStaleWatchers() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a secret file for pg.password
+            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "pg_password.txt");
+            Files.createDirectories(secretFilePath.getParent());
+            Files.writeString(secretFilePath, "initial_password");
+
+            // Initial config: a dynamic property + a secret file reference
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("cairo.sql.asof.join.evacuation.threshold=100\n");
+                w.write("pg.password.file=" + secretFilePath.toString().replace("\\", "\\\\") + "\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                // Register a listener that watches ONLY the evacuation threshold
+                final AtomicLong listenerCounter = new AtomicLong(0);
+                final var listener = new ConfigReloader.Listener() {
+                    private final ConfigPropertyKey[] WATCHED_PROPERTIES = new ConfigPropertyKey[]{
+                            PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD
+                    };
+
+                    @Override
+                    public void configChanged() {
+                        listenerCounter.incrementAndGet();
+                    }
+
+                    @Override
+                    public @NotNull ConfigPropertyKey[] getWatchedConfigKeys() {
+                        return WATCHED_PROPERTIES;
+                    }
+                };
+                serverMain.getEngine().getConfigReloader().watch(listener);
+
+                // [1] Change the evacuation threshold in server.conf → listener should fire
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.sql.asof.join.evacuation.threshold=200\n");
+                    w.write("pg.password.file=" + secretFilePath.toString().replace("\\", "\\\\") + "\n");
+                }
+                serverMain.getEngine().getConfigReloader().reload();
+                Assert.assertEquals(1, listenerCounter.get());
+
+                // [2] Now rotate ONLY the secret file. Do NOT touch server.conf.
+                // The listener watches evacuation.threshold which hasn't changed,
+                // so it should NOT fire again.
+                Files.writeString(secretFilePath, "rotated_password");
+                serverMain.getEngine().getConfigReloader().reload();
+
+                Assert.assertEquals(
+                        "listener for evacuation.threshold should not fire on secret file rotation",
+                        1,
+                        listenerCounter.get()
+                );
+            }
+        });
+    }
+
+    @Test
     public void testUnknownPropertyRemovalIsIgnored() throws Exception {
         assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {
