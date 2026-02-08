@@ -1232,62 +1232,50 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testAsOfToleranceMaximum() throws Exception {
-        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "U",
+        // micros - maxValue is Long.MAX_VALUE, can only fail on parse overflow
+        // Using a value larger than Long.MAX_VALUE as a string
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance 9999999999999999999999U",
                 48,
-                "invalid tolerance value [value=2147483648U, maximum=2147483647U]",
+                "invalid tolerance value [value=9999999999999999999999U, maximum=9223372036854775807U]",
                 modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
         );
 
-        // millis
-        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "T",
+        // millis - Long.MAX_VALUE / 1000 = 9223372036854775
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance 9223372036854776T",
                 48,
-                "invalid tolerance value [value=2147483648T, maximum=2147483647T]",
+                "tolerance value too high for given units [value=9223372036854776T, maximum=9223372036854775T]",
                 modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
         );
 
-        // seconds
-        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "s",
+        // seconds - Long.MAX_VALUE / 1000000 = 9223372036854
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance 9223372036855s",
                 48,
-                "invalid tolerance value [value=2147483648s, maximum=2147483647s]",
+                "tolerance value too high for given units [value=9223372036855s, maximum=9223372036854s]",
                 modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
         );
 
-        // minutes
-        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "m",
+        // minutes - Long.MAX_VALUE / 60000000 = 153722867280
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance 153722867281m",
                 48,
-                "invalid tolerance value [value=2147483648m, maximum=2147483647m]",
+                "tolerance value too high for given units [value=153722867281m, maximum=153722867280m]",
                 modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
         );
 
-        // hours
-        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "h",
+        // hours - Long.MAX_VALUE / 3600000000 = 2562047788
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance 2562047789h",
                 48,
-                "invalid tolerance value [value=2147483648h, maximum=2147483647h]",
+                "tolerance value too high for given units [value=2562047789h, maximum=2562047788h]",
                 modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
         );
 
-        // days - int overflow
-        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "d",
-                48,
-                "invalid tolerance value [value=2147483648d, maximum=106751991d]",
-                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
-        );
-
-        // days - overflow in micros
+        // days - Long.MAX_VALUE / 86400000000 = 106751991
         assertSyntaxError("select * from tab t1 asof join tab t2 tolerance 106751992d",
                 48,
                 "tolerance value too high for given units [value=106751992d, maximum=106751991d]",
                 modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
         );
 
-        // weeks - int overflow
-        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "w",
-                48,
-                "invalid tolerance value [value=2147483648w, maximum=15250284w]",
-                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
-        );
-
-        // weeks - overflow in micros
+        // weeks - Long.MAX_VALUE / 604800000000 = 15250284
         assertSyntaxError("select * from tab t1 asof join tab t2 tolerance 15250285w",
                 48,
                 "tolerance value too high for given units [value=15250285w, maximum=15250284w]",
