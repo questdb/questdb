@@ -399,6 +399,10 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     }
 
     private void stealWork() {
+        // N.B. consumeQueue may process a task from any UnorderedPageFrameSequence,
+        // not just this one, which will re-initialize localRecord for the foreign
+        // sequence's symbol table. Callers must not assume localRecord state is
+        // preserved across this call.
         UnorderedPageFrameReduceJob.consumeQueue(
                 reduceQueue,
                 reduceSubSeq,
