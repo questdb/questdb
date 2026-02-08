@@ -266,7 +266,6 @@ public class MessageBusImpl implements MessageBus {
         copyExportRequestSubSeq.clear();
         vectorAggregateSubSeq.clear();
         walTxnNotificationSubSequence.clear();
-        walTxnNotificationSubSequence.clear();
         unorderedPageFrameReduceSubSeq.clear();
         for (int i = 0, n = pageFrameReduceSubSeq.length; i < n; i++) {
             pageFrameReduceSubSeq[i].clear();
