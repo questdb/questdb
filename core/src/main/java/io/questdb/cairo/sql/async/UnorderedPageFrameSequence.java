@@ -88,7 +88,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private boolean isCancelled;
     private boolean isOutOfMemory;
     private PageFrameMemoryRecord localRecord;
-    private volatile int queuedCount;
+    private int queuedCount;
     private boolean isReadyToDispatch;
     private SqlExecutionContext sqlExecutionContext;
     private long startTime;
@@ -162,30 +162,35 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         int localCount = 0;
 
         // Phase 1: Dispatch all frames.
-        for (int i = 0; i < frameCount; i++) {
-            while (true) {
-                long cursor = reducePubSeq.next();
-                if (cursor > -1) {
-                    reduceQueue.get(cursor).of(this, i);
-                    reducePubSeq.done(cursor);
-                    queued++;
-                    break;
-                } else if (cursor == -1) {
-                    // Queue full.
-                    if (workStealingStrategy.shouldSteal(localCount)) {
-                        stealWork();
-                        continue;
+        // The try/finally ensures queuedCount is set even if reduceLocally() throws,
+        // so that await() in close() properly drains in-flight tasks.
+        try {
+            for (int i = 0; i < frameCount; i++) {
+                while (true) {
+                    long cursor = reducePubSeq.next();
+                    if (cursor > -1) {
+                        reduceQueue.get(cursor).of(this, i);
+                        reducePubSeq.done(cursor);
+                        queued++;
+                        break;
+                    } else if (cursor == -1) {
+                        // Queue full.
+                        if (workStealingStrategy.shouldSteal(localCount)) {
+                            stealWork();
+                            continue;
+                        }
+                        // Reduce locally as fallback.
+                        reduceLocally(i);
+                        localCount++;
+                        break;
+                    } else {
+                        Os.pause();
                     }
-                    // Reduce locally as fallback.
-                    reduceLocally(i);
-                    localCount++;
-                    break;
-                } else {
-                    Os.pause();
                 }
             }
+        } finally {
+            this.queuedCount = queued;
         }
-        this.queuedCount = queued;
 
         // Phase 2: Wait for all queued frames to complete.
         while (!doneLatch.done(queued)) {

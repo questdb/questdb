@@ -34,11 +34,13 @@ import io.questdb.std.Mutable;
 public class UnorderedPageFrameReduceTask implements Mutable {
     private int frameIndex = -1;
     private UnorderedPageFrameSequence<?> frameSequence;
+    private long frameSequenceId = -1;
 
     @Override
     public void clear() {
         frameIndex = -1;
         frameSequence = null;
+        frameSequenceId = -1;
     }
 
     public int getFrameIndex() {
@@ -49,8 +51,13 @@ public class UnorderedPageFrameReduceTask implements Mutable {
         return frameSequence;
     }
 
+    public long getFrameSequenceId() {
+        return frameSequenceId;
+    }
+
     public void of(UnorderedPageFrameSequence<?> seq, int frameIndex) {
         this.frameSequence = seq;
+        this.frameSequenceId = seq.getId();
         this.frameIndex = frameIndex;
     }
 }

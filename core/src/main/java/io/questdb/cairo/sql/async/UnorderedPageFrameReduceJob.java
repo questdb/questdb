@@ -104,11 +104,14 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                 // Read task fields before releasing the slot.
                 final UnorderedPageFrameSequence<?> frameSequence = task.getFrameSequence();
                 final int frameIndex = task.getFrameIndex();
+                final long taskSequenceId = task.getFrameSequenceId();
                 // Release the queue slot immediately.
                 task.clear();
                 subSeq.done(cursor);
 
                 try {
+                    assert taskSequenceId == frameSequence.getId()
+                            : "stale task: expected id=" + frameSequence.getId() + ", got=" + taskSequenceId;
                     if (frameSequence.isActive()) {
                         // Always initialize the circuit breaker before checking state.
                         circuitBreaker.init(frameSequence.getCircuitBreaker());
