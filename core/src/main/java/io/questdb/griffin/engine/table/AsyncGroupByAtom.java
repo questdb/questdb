@@ -88,7 +88,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final ObjList<Function> ownerKeyFunctions;
     private final RecordSink ownerMapSink;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
-    private final ObjList<Function> perWorkerFilters;
     private final ObjList<MapFragment> perWorkerFragments;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
@@ -132,7 +131,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             this.configuration = configuration;
             this.keyTypes = new ArrayColumnTypes().addAll(keyTypes);
             this.valueTypes = new ArrayColumnTypes().addAll(valueTypes);
-            this.perWorkerFilters = perWorkerFilters;
             this.ownerKeyFunctions = ownerKeyFunctions;
             this.perWorkerKeyFunctions = perWorkerKeyFunctions;
             this.ownerGroupByFunctions = ownerGroupByFunctions;
@@ -376,29 +374,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             Function.init(ownerKeyFunctions, symbolTableSource, executionContext, null);
         }
 
-        if (perWorkerKeyFunctions != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
-                    Function.init(perWorkerKeyFunctions.getQuick(i), symbolTableSource, executionContext, null);
-                }
-            } finally {
-                executionContext.setCloneSymbolTables(current);
-            }
-        }
-
-        if (perWorkerGroupByFunctions != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                    Function.init(perWorkerGroupByFunctions.getQuick(i), symbolTableSource, executionContext, null);
-                }
-            } finally {
-                executionContext.setCloneSymbolTables(current);
-            }
-        }
+        initPerWorkerFunctions(perWorkerKeyFunctions, symbolTableSource, executionContext);
+        initPerWorkerFunctions(perWorkerGroupByFunctions, symbolTableSource, executionContext);
     }
 
     public boolean isSharded() {
@@ -601,6 +578,24 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             totalCardinality += groupByFunctions.getQuick(i).getCardinalityStat();
         }
         return totalCardinality;
+    }
+
+    private void initPerWorkerFunctions(
+            ObjList<? extends ObjList<? extends Function>> functions,
+            SymbolTableSource symbolTableSource,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (functions != null) {
+            final boolean current = executionContext.getCloneSymbolTables();
+            executionContext.setCloneSymbolTables(true);
+            try {
+                for (int i = 0, n = functions.size(); i < n; i++) {
+                    Function.init(functions.getQuick(i), symbolTableSource, executionContext, null);
+                }
+            } finally {
+                executionContext.setCloneSymbolTables(current);
+            }
+        }
     }
 
     private Map reopenDestShard(int shardIndex) {
