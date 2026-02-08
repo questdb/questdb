@@ -66,34 +66,54 @@ public class ConsoleRenderer {
         out.println("  quit|exit              leave recovery mode");
     }
 
-    public void printPartitions(TxnState txnState, MetaState metaState, PrintStream out) {
-        ObjList<TxnPartitionState> partitions = txnState.getPartitions();
-        if (partitions.size() == 0) {
+    public void printPartitionScan(
+            ObjList<PartitionScanEntry> entries,
+            TxnState txnState,
+            MetaState metaState,
+            PrintStream out
+    ) {
+        if (entries.size() == 0) {
             out.println("No partitions.");
         } else {
-            int partitionBy = metaState != null ? metaState.getPartitionBy() : TxnState.UNSET_INT;
-            int timestampType = metaState != null ? metaState.getTimestampColumnType() : ColumnType.TIMESTAMP;
-
-            out.printf("%-5s %-24s %-12s %-10s %-10s %-10s%n", "idx", "partition", "rows", "nameTxn", "format", "readOnly");
-            for (int i = 0, n = partitions.size(); i < n; i++) {
-                TxnPartitionState part = partitions.getQuick(i);
-                String partName = formatPartitionName(partitionBy, timestampType, part.getTimestampLo());
-                out.printf(
-                        "%-5d %-24s %-12d %-10d %-10s %-10s%n",
-                        i,
-                        partName,
-                        part.getRowCount(),
-                        part.getNameTxn(),
-                        part.isParquetFormat() ? "parquet" : "native",
-                        part.isReadOnly()
-                );
+            out.printf("%-5s %-30s %-12s %-10s %-10s %-10s%n", "idx", "dir", "rows", "format", "readOnly", "status");
+            for (int i = 0, n = entries.size(); i < n; i++) {
+                PartitionScanEntry entry = entries.getQuick(i);
+                TxnPartitionState part = entry.getTxnPartition();
+                String statusStr = switch (entry.getStatus()) {
+                    case MATCHED -> "";
+                    case ORPHAN -> "ORPHAN";
+                    case MISSING -> "MISSING";
+                };
+                if (part != null) {
+                    out.printf(
+                            "%-5d %-30s %-12d %-10s %-10s %-10s%n",
+                            i,
+                            entry.getDirName(),
+                            part.getRowCount(),
+                            part.isParquetFormat() ? "parquet" : "native",
+                            part.isReadOnly(),
+                            statusStr
+                    );
+                } else {
+                    out.printf(
+                            "%-5d %-30s %-12s %-10s %-10s %-10s%n",
+                            i,
+                            entry.getDirName(),
+                            "-",
+                            "-",
+                            "-",
+                            statusStr
+                    );
+                }
             }
         }
 
         if (metaState != null) {
             printIssues("meta issues", metaState.getIssues(), out);
         }
-        printIssues("txn issues", txnState.getIssues(), out);
+        if (txnState != null) {
+            printIssues("txn issues", txnState.getIssues(), out);
+        }
     }
 
     public void printShow(DiscoveredTable table, TxnState state, PrintStream out) {
@@ -145,25 +165,81 @@ public class ConsoleRenderer {
         printIssues("txn issues", state.getIssues(), out);
     }
 
-    public void printTables(ObjList<DiscoveredTable> tables, PrintStream out) {
+    public void printTables(ObjList<DiscoveredTable> tables, RegistryState registryState, PrintStream out) {
         if (tables.size() == 0) {
             out.println("No tables discovered.");
+        } else {
+            out.printf("%-5s %-36s %-36s %-10s %-10s %-12s %-8s%n", "idx", "table_name", "dir_name", "state", "wal", "registry", "issues");
+            for (int i = 0, n = tables.size(); i < n; i++) {
+                DiscoveredTable table = tables.getQuick(i);
+                String registryStatus = getRegistryStatus(table);
+                out.printf(
+                        "%-5d %-36s %-36s %-10s %-10s %-12s %-8d%n",
+                        i + 1,
+                        table.getTableName(),
+                        table.getDirName(),
+                        table.getState(),
+                        table.isWalEnabledKnown() ? table.isWalEnabled() : "unknown",
+                        registryStatus,
+                        table.getIssues().size()
+                );
+            }
+        }
+
+        if (registryState != null) {
+            printRegistryMissing(tables, registryState, out);
+            printIssues("registry issues", registryState.getIssues(), out);
+        }
+    }
+
+    private void printRegistryMissing(ObjList<DiscoveredTable> tables, RegistryState registryState, PrintStream out) {
+        ObjList<RegistryEntry> entries = registryState.getEntries();
+        if (entries.size() == 0) {
             return;
         }
 
-        out.printf("%-5s %-36s %-36s %-10s %-10s %-8s%n", "idx", "table_name", "dir_name", "state", "wal", "issues");
+        java.util.HashSet<String> discoveredDirs = new java.util.HashSet<>();
         for (int i = 0, n = tables.size(); i < n; i++) {
-            DiscoveredTable table = tables.getQuick(i);
-            out.printf(
-                    "%-5d %-36s %-36s %-10s %-10s %-8d%n",
-                    i + 1,
-                    table.getTableName(),
-                    table.getDirName(),
-                    table.getState(),
-                    table.isWalEnabledKnown() ? table.isWalEnabled() : "unknown",
-                    table.getIssues().size()
-            );
+            discoveredDirs.add(tables.getQuick(i).getDirName());
         }
+
+        boolean headerPrinted = false;
+        for (int i = 0, n = entries.size(); i < n; i++) {
+            RegistryEntry entry = entries.getQuick(i);
+            if (!discoveredDirs.contains(entry.getDirName())) {
+                if (!headerPrinted) {
+                    out.println("registry entries with missing directories:");
+                    out.printf("  %-36s %-36s %-8s %-8s%n", "table_name", "dir_name", "tableId", "type");
+                    headerPrinted = true;
+                }
+                out.printf(
+                        "  %-36s %-36s %-8d %-8d%n",
+                        entry.getTableName(),
+                        entry.getDirName(),
+                        entry.getTableId(),
+                        entry.getTableType()
+                );
+            }
+        }
+    }
+
+    private static String getRegistryStatus(DiscoveredTable table) {
+        RegistryEntry entry = table.getRegistryEntry();
+        if (entry == null) {
+            // tables.d only contains WAL tables; non-WAL tables are never registered
+            if (table.isWalEnabledKnown() && !table.isWalEnabled()) {
+                return "";
+            }
+            return "NOT_IN_REG";
+        }
+        if (!entry.getTableName().equals(table.getTableName())) {
+            return "MISMATCH";
+        }
+        return "";
+    }
+
+    static String formatPartitionDirName(String partitionName, long nameTxn) {
+        return nameTxn > -1L ? partitionName + "." + nameTxn : partitionName;
     }
 
     static String formatPartitionName(int partitionBy, int timestampType, long timestampLo) {

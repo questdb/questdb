@@ -27,69 +27,75 @@ package io.questdb.recovery;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
-public class DiscoveredTable {
-    private final String dirName;
+public final class RegistryState {
+    private final ObjList<RegistryEntry> entries = new ObjList<>();
     private final ObjList<ReadIssue> issues = new ObjList<>();
-    private RegistryEntry registryEntry;
-    private final TableDiscoveryState state;
-    private final String tableName;
-    private final boolean walEnabled;
-    private final boolean walEnabledKnown;
-
-    public DiscoveredTable(
-            String tableName,
-            String dirName,
-            TableDiscoveryState state,
-            boolean walEnabledKnown,
-            boolean walEnabled
-    ) {
-        this.tableName = tableName;
-        this.dirName = dirName;
-        this.state = state;
-        this.walEnabledKnown = walEnabledKnown;
-        this.walEnabled = walEnabled;
-    }
+    private long appendOffset;
+    private int entryCount;
+    private long fileSize;
+    private String registryPath;
+    private int version;
 
     public void addIssue(RecoveryIssueSeverity severity, RecoveryIssueCode code, String message) {
         issues.add(new ReadIssue(severity, code, message));
     }
 
-    public String getDirName() {
-        return dirName;
+    @Nullable
+    public RegistryEntry findByDirName(String dirName) {
+        for (int i = 0, n = entries.size(); i < n; i++) {
+            RegistryEntry entry = entries.getQuick(i);
+            if (!entry.isRemoved() && dirName.equals(entry.getDirName())) {
+                return entry;
+            }
+        }
+        return null;
+    }
+
+    public long getAppendOffset() {
+        return appendOffset;
+    }
+
+    public ObjList<RegistryEntry> getEntries() {
+        return entries;
+    }
+
+    public int getEntryCount() {
+        return entryCount;
+    }
+
+    public long getFileSize() {
+        return fileSize;
     }
 
     public ObjList<ReadIssue> getIssues() {
         return issues;
     }
 
-    @Nullable
-    public RegistryEntry getRegistryEntry() {
-        return registryEntry;
+    public String getRegistryPath() {
+        return registryPath;
     }
 
-    public TableDiscoveryState getState() {
-        return state;
+    public int getVersion() {
+        return version;
     }
 
-    public String getTableName() {
-        return tableName;
+    void setAppendOffset(long appendOffset) {
+        this.appendOffset = appendOffset;
     }
 
-    @Nullable
-    public Boolean getWalEnabledOrNull() {
-        return walEnabledKnown ? walEnabled : null;
+    void setEntryCount(int entryCount) {
+        this.entryCount = entryCount;
     }
 
-    public void setRegistryEntry(RegistryEntry registryEntry) {
-        this.registryEntry = registryEntry;
+    void setFileSize(long fileSize) {
+        this.fileSize = fileSize;
     }
 
-    public boolean isWalEnabled() {
-        return walEnabled;
+    void setRegistryPath(String registryPath) {
+        this.registryPath = registryPath;
     }
 
-    public boolean isWalEnabledKnown() {
-        return walEnabledKnown;
+    void setVersion(int version) {
+        this.version = version;
     }
 }
-

@@ -33,15 +33,20 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.recovery.BoundedMetaReader;
+import io.questdb.recovery.BoundedRegistryReader;
 import io.questdb.recovery.BoundedTxnReader;
 import io.questdb.recovery.ConsoleRenderer;
 import io.questdb.recovery.MetaStateService;
+import io.questdb.recovery.PartitionScanService;
 import io.questdb.recovery.RecoverySession;
+import io.questdb.recovery.RegistryStateService;
 import io.questdb.recovery.TableDiscoveryService;
 import io.questdb.recovery.TxnStateService;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
@@ -91,7 +96,7 @@ public class RecoverySessionTest extends AbstractCairoTest {
             createTableWithRows("nav_dotdot_part", 2);
             String[] result = runSession("cd nav_dotdot_part\ncd 0\ncd ..\nls\nquit\n");
             // after cd .. from partition, ls should show partition list
-            Assert.assertTrue(result[0].contains("partition"));
+            Assert.assertTrue(result[0].contains("dir"));
             Assert.assertTrue(result[0].contains("rows"));
             Assert.assertEquals("", result[1]);
         });
@@ -119,6 +124,17 @@ public class RecoverySessionTest extends AbstractCairoTest {
             Assert.assertTrue(result[0].contains("SYMBOL"));
             Assert.assertTrue(result[0].contains("TIMESTAMP"));
             Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCdIntoMissingPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonWalTableWithRows("nav_cd_missing", 3);
+            deletePartitionDir("nav_cd_missing", "1970-01-02");
+            String[] result = runSession("cd nav_cd_missing\ncd 2\npwd\nquit\n");
+            // MISSING entry for deleted partition; cd by index should still work
+            Assert.assertTrue(result[0].contains("1970-01-02"));
         });
     }
 
@@ -152,11 +168,55 @@ public class RecoverySessionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCdIntoOrphanPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonWalTableWithRows("nav_cd_orphan", 2);
+            createOrphanDir("nav_cd_orphan", "old-backup");
+            String[] result = runSession("cd nav_cd_orphan\ncd old-backup\npwd\nquit\n");
+            Assert.assertTrue(result[0].contains("old-backup"));
+        });
+    }
+
+    @Test
+    public void testCdIntoPartitionByDirName() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create table with O3 inserts to get nameTxn > -1 (dir names with ".N" suffix)
+            execute("create table nav_part_dir (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into nav_part_dir values (1, '1970-01-02T00:00:00.000000Z')");
+            waitForAppliedRows("nav_part_dir", 1);
+            // O3 insert into the same partition triggers rename with nameTxn
+            execute("insert into nav_part_dir values (2, '1970-01-02T12:00:00.000000Z')");
+            waitForAppliedRows("nav_part_dir", 2);
+
+            // ls to discover the dir name (may or may not have .N suffix)
+            String[] result = runSession("cd nav_part_dir\nls\nquit\n");
+            String outText = result[0];
+            // extract the dir name from the listing
+            String dirName = null;
+            for (String line : outText.split("\n")) {
+                if (line.contains("1970-01-02")) {
+                    String[] parts = line.trim().split("\\s+");
+                    if (parts.length >= 2) {
+                        dirName = parts[1];
+                    }
+                    break;
+                }
+            }
+            Assert.assertNotNull("should find dir name in output", dirName);
+
+            // cd by that exact dir name
+            String[] result2 = runSession("cd nav_part_dir\ncd " + dirName + "\nls\nquit\n");
+            Assert.assertTrue(result2[0].contains("column_name"));
+            Assert.assertEquals("", result2[1]);
+        });
+    }
+
+    @Test
     public void testCdIntoTableAndLs() throws Exception {
         assertMemoryLeak(() -> {
             createTableWithRows("nav_tbl_ls", 4);
             String[] result = runSession("cd nav_tbl_ls\nls\nquit\n");
-            Assert.assertTrue(result[0].contains("partition"));
+            Assert.assertTrue(result[0].contains("dir"));
             Assert.assertTrue(result[0].contains("1970-01-01"));
             Assert.assertTrue(result[0].contains("rows"));
             Assert.assertEquals("", result[1]);
@@ -170,7 +230,7 @@ public class RecoverySessionTest extends AbstractCairoTest {
             TableToken token = engine.verifyTableName("nav_tbl_dir");
             String dirName = token.getDirName();
             String[] result = runSession("cd " + dirName + "\nls\nquit\n");
-            Assert.assertTrue(result[0].contains("partition"));
+            Assert.assertTrue(result[0].contains("dir"));
             Assert.assertEquals("", result[1]);
         });
     }
@@ -182,7 +242,7 @@ public class RecoverySessionTest extends AbstractCairoTest {
             // ls first to discover tables, then cd by index
             String[] result = runSession("ls\ncd 1\nls\nquit\n");
             // second ls should show partitions
-            Assert.assertTrue(result[0].contains("partition"));
+            Assert.assertTrue(result[0].contains("dir"));
             Assert.assertTrue(result[0].contains("rows"));
             Assert.assertEquals("", result[1]);
         });
@@ -234,7 +294,7 @@ public class RecoverySessionTest extends AbstractCairoTest {
             createTableWithRows("nav_auto", 2);
             // cd without prior ls or tables should auto-discover
             String[] result = runSession("cd nav_auto\nls\nquit\n");
-            Assert.assertTrue(result[0].contains("partition"));
+            Assert.assertTrue(result[0].contains("dir"));
             Assert.assertEquals("", result[1]);
         });
     }
@@ -254,7 +314,7 @@ public class RecoverySessionTest extends AbstractCairoTest {
             String[] result = runSession("cd nav_nometa\nls\nquit\n");
             // should still show partitions from _txn, but with raw timestamps
             String outText = result[0];
-            Assert.assertTrue(outText.contains("partition") || outText.contains("rows"));
+            Assert.assertTrue(outText.contains("dir") || outText.contains("rows"));
             // Bug #2: meta issues should be printed even though partition list format degrades
             Assert.assertTrue(
                     "meta issues should be printed when _meta is missing",
@@ -300,10 +360,10 @@ public class RecoverySessionTest extends AbstractCairoTest {
 
             String[] result = runSession("cd nav_notxn\nls\nquit\n");
             String outText = result[0];
-            // Bug #2: should show "No partitions" AND txn issues (MISSING_FILE)
-            Assert.assertTrue(outText.contains("No partitions"));
+            // with _txn deleted, partition dirs on disk become ORPHAN
+            Assert.assertTrue(outText.contains("ORPHAN"));
             Assert.assertTrue(
-                    "txn issues should be printed even when partition list is empty",
+                    "txn issues should be printed when _txn is missing",
                     outText.contains("MISSING_FILE") || outText.contains("txn issues")
             );
         });
@@ -362,7 +422,7 @@ public class RecoverySessionTest extends AbstractCairoTest {
             // ls should show partitions with raw timestamps, not throw
             String[] result = runSession("cd nav_corrupt_pb\nls\nquit\n");
             String outText = result[0];
-            Assert.assertTrue(outText.contains("partition"));
+            Assert.assertTrue(outText.contains("dir"));
             Assert.assertTrue(outText.contains("rows"));
             // must NOT have "command failed" from an exception
             Assert.assertFalse(
@@ -408,7 +468,7 @@ public class RecoverySessionTest extends AbstractCairoTest {
             createTableWithRows("nav_empty_line", 2);
             String[] result = runSession("cd nav_empty_line\n\nls\nquit\n");
             // empty line should be skipped, ls should work
-            Assert.assertTrue(result[0].contains("partition"));
+            Assert.assertTrue(result[0].contains("dir"));
             Assert.assertEquals("", result[1]);
         });
     }
@@ -421,6 +481,56 @@ public class RecoverySessionTest extends AbstractCairoTest {
             Assert.assertTrue(result[0].contains("nav_ls_root"));
             Assert.assertTrue(result[0].contains("table_name"));
             Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testLsFiltersInternalDirs() throws Exception {
+        assertMemoryLeak(() -> {
+            // WAL tables have wal*, txn_seq, seq dirs
+            execute("create table nav_filter (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into nav_filter values (1, '1970-01-01T00:00:00.000000Z')");
+            waitForAppliedRows("nav_filter", 1);
+
+            String[] result = runSession("cd nav_filter\nls\nquit\n");
+            String outText = result[0];
+            // internal dirs should NOT appear in the listing
+            for (String line : outText.split("\n")) {
+                // skip header and non-data lines
+                if (line.trim().startsWith("idx") || line.trim().isEmpty() || line.contains("recover:") || line.contains("issues")) {
+                    continue;
+                }
+                Assert.assertFalse("wal dir should be filtered: " + line, line.contains("wal"));
+                Assert.assertFalse("txn_seq dir should be filtered: " + line, line.contains("txn_seq"));
+                Assert.assertFalse("seq dir should be filtered: " + line, line.contains(" seq "));
+            }
+        });
+    }
+
+    @Test
+    public void testLsFiltersUnderscoreAndDotDirs() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonWalTableWithRows("nav_filter_ud", 1);
+            createOrphanDir("nav_filter_ud", "_fake");
+            createOrphanDir("nav_filter_ud", ".hidden");
+
+            String[] result = runSession("cd nav_filter_ud\nls\nquit\n");
+            String outText = result[0];
+            Assert.assertFalse("_fake dir should be filtered", outText.contains("_fake"));
+            Assert.assertFalse(".hidden dir should be filtered", outText.contains(".hidden"));
+        });
+    }
+
+    @Test
+    public void testLsNonWalTableOrphanDir() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonWalTableWithRows("nav_nonwal_orphan", 2);
+            createOrphanDir("nav_nonwal_orphan", "stale-backup");
+
+            String[] result = runSession("cd nav_nonwal_orphan\nls\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("ORPHAN"));
+            Assert.assertTrue(outText.contains("stale-backup"));
         });
     }
 
@@ -518,13 +628,111 @@ public class RecoverySessionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLsPartitionScanOrderMatchedFirst() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonWalTableWithRows("nav_order", 3);
+            createOrphanDir("nav_order", "orphan-dir");
+
+            String[] result = runSession("cd nav_order\nls\nquit\n");
+            String outText = result[0];
+            // matched partitions should appear before the orphan
+            int firstMatchedPos = outText.indexOf("1970-01-01");
+            int orphanPos = outText.indexOf("orphan-dir");
+            Assert.assertTrue("matched partitions before orphan", firstMatchedPos < orphanPos);
+        });
+    }
+
+    @Test
+    public void testLsShowsBothOrphanAndMissing() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonWalTableWithRows("nav_both", 2);
+            deletePartitionDir("nav_both", "1970-01-02");
+            createOrphanDir("nav_both", "stale-dir");
+
+            String[] result = runSession("cd nav_both\nls\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue("ORPHAN should be present", outText.contains("ORPHAN"));
+            Assert.assertTrue("MISSING should be present", outText.contains("MISSING"));
+        });
+    }
+
+    @Test
+    public void testLsShowsDirColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("nav_dircol", 2);
+            String[] result = runSession("cd nav_dircol\nls\nquit\n");
+            String outText = result[0];
+            // should show raw dir names
+            Assert.assertTrue(outText.contains("1970-01-01"));
+            Assert.assertTrue(outText.contains("dir"));
+        });
+    }
+
+    @Test
+    public void testLsShowsMissingPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonWalTableWithRows("nav_missing", 3);
+            deletePartitionDir("nav_missing", "1970-01-02");
+
+            String[] result = runSession("cd nav_missing\nls\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue("MISSING should appear for deleted partition", outText.contains("MISSING"));
+            // other partitions should not have MISSING/ORPHAN status
+            // count MISSING occurrences — should be exactly 1
+            int count = 0;
+            for (String line : outText.split("\n")) {
+                if (line.contains("MISSING")) {
+                    count++;
+                }
+            }
+            Assert.assertEquals("exactly one MISSING partition", 1, count);
+        });
+    }
+
+    @Test
+    public void testLsShowsOrphanDirectory() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonWalTableWithRows("nav_orphan", 2);
+            createOrphanDir("nav_orphan", "old-backup");
+
+            String[] result = runSession("cd nav_orphan\nls\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("old-backup"));
+            Assert.assertTrue(outText.contains("ORPHAN"));
+        });
+    }
+
+    @Test
+    public void testLsWithCorruptTxnShowsAllAsOrphan() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("nav_corrupt_txn", 2);
+
+            // delete _txn file
+            try (Path path = new Path()) {
+                TableToken token = engine.verifyTableName("nav_corrupt_txn");
+                path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.TXN_FILE_NAME);
+                Assert.assertTrue(FF.removeQuiet(path.$()));
+            }
+
+            String[] result = runSession("cd nav_corrupt_txn\nls\nquit\n");
+            String outText = result[0];
+            // all partition dirs should show as ORPHAN
+            Assert.assertTrue(outText.contains("ORPHAN"));
+            Assert.assertTrue(
+                    "txn issues should be printed",
+                    outText.contains("MISSING_FILE") || outText.contains("txn issues")
+            );
+        });
+    }
+
+    @Test
     public void testNonWalTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table nav_nonwal (val long, ts timestamp) timestamp(ts) partition by DAY");
             execute("insert into nav_nonwal select x, timestamp_sequence('1970-01-01', 86400000000L) from long_sequence(3)");
 
             String[] result = runSession("cd nav_nonwal\nls\nquit\n");
-            Assert.assertTrue(result[0].contains("partition"));
+            Assert.assertTrue(result[0].contains("dir"));
             Assert.assertTrue(result[0].contains("1970-01-01"));
             Assert.assertEquals("", result[1]);
         });
@@ -600,6 +808,142 @@ public class RecoverySessionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testTablesCorruptRegistryShowsIssues() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("reg_corrupt", 1);
+
+            // delete all tables.d.* files
+            deleteAllRegistryFiles();
+
+            String[] result = runSession("tables\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(
+                    "should show registry issue about missing file",
+                    outText.contains("MISSING_FILE") || outText.contains("registry issues")
+            );
+        });
+    }
+
+    @Test
+    public void testTablesNotInRegistry() throws Exception {
+        assertMemoryLeak(() -> {
+            // create an orphan dir with _txn file but no registry entry
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat("orphan_dir").slash$();
+                Assert.assertEquals(0, FF.mkdirs(path, configuration.getMkDirMode()));
+            }
+
+            String[] result = runSession("tables\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(
+                    "orphan dir should show NOT_IN_REG",
+                    outText.contains("NOT_IN_REG")
+            );
+        });
+    }
+
+    @Test
+    public void testTablesRegistryDirMissing() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("reg_dir_missing", 1);
+
+            // delete the table directory
+            TableToken token = engine.verifyTableName("reg_dir_missing");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token.getDirName()).$();
+                Assert.assertTrue(FF.rmdir(path));
+            }
+
+            String[] result = runSession("tables\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(
+                    "should show DIR_MISSING entry for table with deleted dir",
+                    outText.contains("missing directories") || outText.contains("reg_dir_missing")
+            );
+        });
+    }
+
+    @Test
+    public void testTablesRegistryMatchBlank() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("reg_match", 1);
+
+            String[] result = runSession("tables\nquit\n");
+            String outText = result[0];
+            // find the line with reg_match
+            boolean found = false;
+            for (String line : outText.split("\n")) {
+                if (line.contains("reg_match")) {
+                    // registry column should be blank (not MISMATCH, not NOT_IN_REG)
+                    Assert.assertFalse("registry should be blank for matching table", line.contains("MISMATCH"));
+                    Assert.assertFalse("registry should be blank for matching table", line.contains("NOT_IN_REG"));
+                    found = true;
+                    break;
+                }
+            }
+            Assert.assertTrue("should find reg_match in output", found);
+        });
+    }
+
+    @Test
+    public void testTablesShowsRegistryColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("reg_col", 1);
+
+            String[] result = runSession("tables\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(
+                    "output should contain registry column header",
+                    outText.contains("registry")
+            );
+        });
+    }
+
+    private static void deleteAllRegistryFiles() {
+        try (Path path = new Path()) {
+            long findPtr = FF.findFirst(path.of(configuration.getDbRoot()).$());
+            if (findPtr < 1) {
+                return;
+            }
+            try {
+                io.questdb.std.str.StringSink nameSink = new io.questdb.std.str.StringSink();
+                do {
+                    nameSink.clear();
+                    Utf8s.utf8ToUtf16Z(FF.findName(findPtr), nameSink);
+                    if (Chars.startsWith(nameSink, "tables.d.")) {
+                        try (Path filePath = new Path()) {
+                            FF.removeQuiet(filePath.of(configuration.getDbRoot()).concat(nameSink).$());
+                        }
+                    }
+                } while (FF.findNext(findPtr) > 0);
+            } finally {
+                FF.findClose(findPtr);
+            }
+        }
+    }
+
+    private static void createOrphanDir(String tableName, String orphanName) {
+        TableToken token = engine.verifyTableName(tableName);
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token.getDirName()).concat(orphanName).slash$();
+            Assert.assertEquals("failed to create orphan dir: " + path, 0, FF.mkdirs(path, configuration.getMkDirMode()));
+        }
+    }
+
+    private static void createNonWalTableWithRows(String tableName, int rowCount) throws SqlException {
+        execute("create table " + tableName + " (sym symbol, ts timestamp) timestamp(ts) partition by DAY");
+        execute(
+                "insert into "
+                        + tableName
+                        + " select rnd_symbol('AA', 'BB', 'CC'), timestamp_sequence('1970-01-01', "
+                        + Micros.DAY_MICROS
+                        + "L) from long_sequence("
+                        + rowCount
+                        + ")"
+        );
+    }
+
     private static void createTableWithRows(String tableName, int rowCount) throws SqlException {
         execute("create table " + tableName + " (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
         execute(
@@ -632,6 +976,14 @@ public class RecoverySessionTest extends AbstractCairoTest {
         waitForAppliedRows(tableName, rowCount);
     }
 
+    private static void deletePartitionDir(String tableName, String partitionDirName) {
+        TableToken token = engine.verifyTableName(tableName);
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token.getDirName()).concat(partitionDirName).$();
+            Assert.assertTrue("failed to remove partition dir: " + path, FF.rmdir(path));
+        }
+    }
+
     private static long getRowCount(String tableName) throws SqlException {
         try (RecordCursorFactory factory = select("select count() from " + tableName)) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -645,6 +997,8 @@ public class RecoverySessionTest extends AbstractCairoTest {
         RecoverySession session = new RecoverySession(
                 configuration.getDbRoot(),
                 new MetaStateService(new BoundedMetaReader(FF)),
+                new PartitionScanService(FF),
+                new RegistryStateService(new BoundedRegistryReader(FF)),
                 new TableDiscoveryService(FF),
                 new TxnStateService(new BoundedTxnReader(FF)),
                 new ConsoleRenderer()

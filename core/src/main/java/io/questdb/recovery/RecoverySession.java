@@ -27,6 +27,7 @@ package io.questdb.recovery;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Path;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -34,12 +35,16 @@ import java.io.PrintStream;
 
 public class RecoverySession {
     private MetaState cachedMetaState;
+    private ObjList<PartitionScanEntry> cachedPartitionScan;
+    private RegistryState cachedRegistryState;
     private TxnState cachedTxnState;
     private int currentPartitionIndex = -1;
     private DiscoveredTable currentTable;
     private final CharSequence dbRoot;
     private ObjList<DiscoveredTable> lastDiscoveredTables = new ObjList<>();
     private final MetaStateService metaStateService;
+    private final PartitionScanService partitionScanService;
+    private final RegistryStateService registryStateService;
     private final ConsoleRenderer renderer;
     private final TableDiscoveryService tableDiscoveryService;
     private final TxnStateService txnStateService;
@@ -47,12 +52,16 @@ public class RecoverySession {
     public RecoverySession(
             CharSequence dbRoot,
             MetaStateService metaStateService,
+            PartitionScanService partitionScanService,
+            RegistryStateService registryStateService,
             TableDiscoveryService tableDiscoveryService,
             TxnStateService txnStateService,
             ConsoleRenderer renderer
     ) {
         this.dbRoot = dbRoot;
         this.metaStateService = metaStateService;
+        this.partitionScanService = partitionScanService;
+        this.registryStateService = registryStateService;
         this.tableDiscoveryService = tableDiscoveryService;
         this.txnStateService = txnStateService;
         this.renderer = renderer;
@@ -89,7 +98,9 @@ public class RecoverySession {
             try {
                 if ("tables".equalsIgnoreCase(line)) {
                     lastDiscoveredTables = tableDiscoveryService.discoverTables(dbRoot);
-                    renderer.printTables(lastDiscoveredTables, out);
+                    cachedRegistryState = registryStateService.readRegistryState(dbRoot);
+                    tableDiscoveryService.crossReferenceRegistry(lastDiscoveredTables, cachedRegistryState);
+                    renderer.printTables(lastDiscoveredTables, cachedRegistryState, out);
                     continue;
                 }
 
@@ -175,7 +186,7 @@ public class RecoverySession {
     }
 
     private void cdIntoPartition(String target, PrintStream err) {
-        if (cachedTxnState == null || cachedTxnState.getPartitions().size() == 0) {
+        if (cachedPartitionScan == null || cachedPartitionScan.size() == 0) {
             err.println("no partitions available");
             return;
         }
@@ -183,7 +194,7 @@ public class RecoverySession {
         // try numeric index (0-based)
         try {
             int index = Numbers.parseInt(target);
-            if (index >= 0 && index < cachedTxnState.getPartitions().size()) {
+            if (index >= 0 && index < cachedPartitionScan.size()) {
                 currentPartitionIndex = index;
                 return;
             }
@@ -192,10 +203,17 @@ public class RecoverySession {
             // not a number, try by name
         }
 
-        // try by formatted partition name
-        for (int i = 0, n = cachedTxnState.getPartitions().size(); i < n; i++) {
-            String partName = formatPartitionName(i);
-            if (target.equals(partName)) {
+        // try by partition name, then by raw dir name
+        for (int i = 0, n = cachedPartitionScan.size(); i < n; i++) {
+            PartitionScanEntry entry = cachedPartitionScan.getQuick(i);
+            if (target.equals(entry.getPartitionName())) {
+                currentPartitionIndex = i;
+                return;
+            }
+        }
+        for (int i = 0, n = cachedPartitionScan.size(); i < n; i++) {
+            PartitionScanEntry entry = cachedPartitionScan.getQuick(i);
+            if (target.equals(entry.getDirName())) {
                 currentPartitionIndex = i;
                 return;
             }
@@ -219,13 +237,21 @@ public class RecoverySession {
         currentPartitionIndex = -1;
         cachedTxnState = txnStateService.readTxnState(dbRoot, table);
         cachedMetaState = metaStateService.readMetaState(dbRoot, table);
+        try (Path path = new Path()) {
+            path.of(dbRoot).concat(table.getDirName()).$();
+            cachedPartitionScan = partitionScanService.scan(
+                    path.toString(),
+                    cachedTxnState, cachedMetaState
+            );
+        }
     }
 
     private void cdRoot() {
         currentTable = null;
         currentPartitionIndex = -1;
-        cachedTxnState = null;
         cachedMetaState = null;
+        cachedPartitionScan = null;
+        cachedTxnState = null;
     }
 
     private void cdUp() {
@@ -255,25 +281,20 @@ public class RecoverySession {
     }
 
     private String formatPartitionName(int partitionIndex) {
-        if (cachedTxnState == null || partitionIndex < 0 || partitionIndex >= cachedTxnState.getPartitions().size()) {
+        if (cachedPartitionScan == null || partitionIndex < 0 || partitionIndex >= cachedPartitionScan.size()) {
             return "?";
         }
-        int partitionBy = cachedMetaState != null ? cachedMetaState.getPartitionBy() : TxnState.UNSET_INT;
-        int timestampType = cachedMetaState != null ? cachedMetaState.getTimestampColumnType() : io.questdb.cairo.ColumnType.TIMESTAMP;
-        long timestampLo = cachedTxnState.getPartitions().getQuick(partitionIndex).getTimestampLo();
-        return ConsoleRenderer.formatPartitionName(partitionBy, timestampType, timestampLo);
+        return cachedPartitionScan.getQuick(partitionIndex).getPartitionName();
     }
 
     private void ls(PrintStream out, PrintStream err) {
         if (currentTable == null) {
             lastDiscoveredTables = tableDiscoveryService.discoverTables(dbRoot);
-            renderer.printTables(lastDiscoveredTables, out);
+            cachedRegistryState = registryStateService.readRegistryState(dbRoot);
+            tableDiscoveryService.crossReferenceRegistry(lastDiscoveredTables, cachedRegistryState);
+            renderer.printTables(lastDiscoveredTables, cachedRegistryState, out);
         } else if (currentPartitionIndex < 0) {
-            if (cachedTxnState == null) {
-                err.println("no txn state cached for current table");
-                return;
-            }
-            renderer.printPartitions(cachedTxnState, cachedMetaState, out);
+            renderer.printPartitionScan(cachedPartitionScan, cachedTxnState, cachedMetaState, out);
         } else {
             if (cachedMetaState == null) {
                 err.println("no meta state cached for current table");

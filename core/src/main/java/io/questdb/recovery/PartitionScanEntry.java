@@ -24,20 +24,44 @@
 
 package io.questdb.recovery;
 
-public enum RecoveryIssueCode {
-    CORRUPT_META,
-    CORRUPT_REGISTRY,
-    CORRUPT_TXN,
-    INVALID_COUNT,
-    INVALID_OFFSET,
-    IO_ERROR,
-    META_COLUMN_COUNT_MISMATCH,
-    MISSING_FILE,
-    OUT_OF_RANGE,
-    PARTIAL_READ,
-    REGISTRY_DIR_MISSING,
-    REGISTRY_MISMATCH,
-    REGISTRY_NOT_FOUND,
-    SHORT_FILE,
-    TRUNCATED_OUTPUT
+public final class PartitionScanEntry {
+    private final String dirName;
+    private final String partitionName;
+    private final PartitionScanStatus status;
+    private final int txnIndex;
+    private final TxnPartitionState txnPartition;
+
+    public PartitionScanEntry(
+            String dirName,
+            String partitionName,
+            PartitionScanStatus status,
+            TxnPartitionState txnPartition,
+            int txnIndex
+    ) {
+        this.dirName = dirName;
+        this.partitionName = partitionName;
+        this.status = status;
+        this.txnPartition = txnPartition;
+        this.txnIndex = txnIndex;
+    }
+
+    public String getDirName() {
+        return dirName;
+    }
+
+    public String getPartitionName() {
+        return partitionName;
+    }
+
+    public PartitionScanStatus getStatus() {
+        return status;
+    }
+
+    public int getTxnIndex() {
+        return txnIndex;
+    }
+
+    public TxnPartitionState getTxnPartition() {
+        return txnPartition;
+    }
 }

@@ -27,10 +27,13 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.recovery.BoundedMetaReader;
+import io.questdb.recovery.BoundedRegistryReader;
 import io.questdb.recovery.BoundedTxnReader;
 import io.questdb.recovery.ConsoleRenderer;
 import io.questdb.recovery.MetaStateService;
+import io.questdb.recovery.PartitionScanService;
 import io.questdb.recovery.RecoverySession;
+import io.questdb.recovery.RegistryStateService;
 import io.questdb.recovery.TableDiscoveryService;
 import io.questdb.recovery.TxnStateService;
 import io.questdb.std.FilesFacade;
@@ -89,6 +92,8 @@ public class RecoveryMain {
             RecoverySession session = new RecoverySession(
                     dbRoot,
                     new MetaStateService(new BoundedMetaReader(ff)),
+                    new PartitionScanService(ff),
+                    new RegistryStateService(new BoundedRegistryReader(ff)),
                     new TableDiscoveryService(ff),
                     new TxnStateService(new BoundedTxnReader(ff)),
                     new ConsoleRenderer()

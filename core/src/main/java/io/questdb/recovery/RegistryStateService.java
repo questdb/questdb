@@ -24,20 +24,14 @@
 
 package io.questdb.recovery;
 
-public enum RecoveryIssueCode {
-    CORRUPT_META,
-    CORRUPT_REGISTRY,
-    CORRUPT_TXN,
-    INVALID_COUNT,
-    INVALID_OFFSET,
-    IO_ERROR,
-    META_COLUMN_COUNT_MISMATCH,
-    MISSING_FILE,
-    OUT_OF_RANGE,
-    PARTIAL_READ,
-    REGISTRY_DIR_MISSING,
-    REGISTRY_MISMATCH,
-    REGISTRY_NOT_FOUND,
-    SHORT_FILE,
-    TRUNCATED_OUTPUT
+public class RegistryStateService {
+    private final BoundedRegistryReader reader;
+
+    public RegistryStateService(BoundedRegistryReader reader) {
+        this.reader = reader;
+    }
+
+    public RegistryState readRegistryState(CharSequence dbRoot) {
+        return reader.read(dbRoot);
+    }
 }

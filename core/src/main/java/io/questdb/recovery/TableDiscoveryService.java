@@ -36,11 +36,57 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 
+import java.util.HashMap;
+
 public class TableDiscoveryService {
     private final FilesFacade ff;
 
     public TableDiscoveryService(FilesFacade ff) {
         this.ff = ff;
+    }
+
+    public void crossReferenceRegistry(ObjList<DiscoveredTable> tables, RegistryState registryState) {
+        if (registryState == null || registryState.getEntries().size() == 0) {
+            return;
+        }
+
+        HashMap<String, DiscoveredTable> byDirName = new HashMap<>();
+        for (int i = 0, n = tables.size(); i < n; i++) {
+            DiscoveredTable table = tables.getQuick(i);
+            byDirName.put(table.getDirName(), table);
+        }
+
+        ObjList<RegistryEntry> entries = registryState.getEntries();
+        for (int i = 0, n = entries.size(); i < n; i++) {
+            RegistryEntry entry = entries.getQuick(i);
+            DiscoveredTable table = byDirName.get(entry.getDirName());
+            if (table != null) {
+                table.setRegistryEntry(entry);
+                if (!entry.getTableName().equals(table.getTableName())) {
+                    table.addIssue(
+                            RecoveryIssueSeverity.WARN,
+                            RecoveryIssueCode.REGISTRY_MISMATCH,
+                            "registry table name differs [registry=" + entry.getTableName()
+                                    + ", discovered=" + table.getTableName() + ']'
+                    );
+                }
+            }
+        }
+
+        for (int i = 0, n = tables.size(); i < n; i++) {
+            DiscoveredTable table = tables.getQuick(i);
+            if (table.getRegistryEntry() == null) {
+                // tables.d only contains WAL tables; non-WAL tables are never registered
+                boolean expectInRegistry = !table.isWalEnabledKnown() || table.isWalEnabled();
+                if (expectInRegistry) {
+                    table.addIssue(
+                            RecoveryIssueSeverity.WARN,
+                            RecoveryIssueCode.REGISTRY_NOT_FOUND,
+                            "directory not found in tables.d registry [dir=" + table.getDirName() + ']'
+                    );
+                }
+            }
+        }
     }
 
     public ObjList<DiscoveredTable> discoverTables(CharSequence dbRoot) {
