@@ -27,10 +27,13 @@ package io.questdb.recovery;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
 public class ColumnCheckService {
+    private static final int CHUNK_ENTRIES = 4096;
     private final FilesFacade ff;
 
     public ColumnCheckService(FilesFacade ff) {
@@ -93,6 +96,55 @@ public class ColumnCheckService {
         return new ColumnCheckResult(partitionDirName, entries);
     }
 
+    private String checkArrayColumn(long auxFd, long dataSize, long effectiveRows) {
+        final int entrySize = 16;
+        final long totalBytes = effectiveRows * entrySize;
+        final long scratchSize = (long) CHUNK_ENTRIES * entrySize;
+        final long scratch = Unsafe.malloc(scratchSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            long prevEnd = 0;
+            long fileOffset = 0;
+            long rowsChecked = 0;
+
+            while (rowsChecked < effectiveRows) {
+                long remainingRows = effectiveRows - rowsChecked;
+                int chunkRows = (int) Math.min(remainingRows, CHUNK_ENTRIES);
+                long chunkBytes = (long) chunkRows * entrySize;
+                long bytesRead = ff.read(auxFd, scratch, chunkBytes, fileOffset);
+                if (bytesRead < chunkBytes) {
+                    return "aux file read failed at row " + rowsChecked;
+                }
+
+                for (int i = 0; i < chunkRows; i++) {
+                    long entryAddr = scratch + (long) i * entrySize;
+                    long offset = Unsafe.getUnsafe().getLong(entryAddr) & ((1L << 48) - 1);
+                    int size = Unsafe.getUnsafe().getInt(entryAddr + Long.BYTES);
+                    long row = rowsChecked + i;
+
+                    if (size == 0) {
+                        continue; // null array
+                    }
+                    if (offset < prevEnd) {
+                        return "data offset goes backward at row " + row
+                                + " [prev_end=" + prevEnd + ", offset=" + offset + ']';
+                    }
+                    long end = offset + size;
+                    if (end > dataSize) {
+                        return "data file too short at row " + row
+                                + " [needed=" + end + ", actual=" + dataSize + ']';
+                    }
+                    prevEnd = end;
+                }
+
+                rowsChecked += chunkRows;
+                fileOffset += chunkBytes;
+            }
+            return null; // OK
+        } finally {
+            Unsafe.free(scratch, scratchSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
     private void checkFixedSizeColumn(
             CharSequence tableDir,
             String partitionDirName,
@@ -134,6 +186,119 @@ public class ColumnCheckService {
                         columnTop, expectedSize, actualSize
                 ));
             }
+        }
+    }
+
+    private String checkStringColumn(long auxFd, long dataSize, long effectiveRows, boolean isBinary) {
+        final int entrySize = 8;
+        final long totalEntries = effectiveRows + 1; // N+1 model
+        final int minGap = isBinary ? 8 : 4;
+        final long scratchSize = (long) CHUNK_ENTRIES * entrySize;
+        final long scratch = Unsafe.malloc(scratchSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            long prevOffset = -1;
+            long fileOffset = 0;
+            long entriesChecked = 0;
+
+            while (entriesChecked < totalEntries) {
+                long remainingEntries = totalEntries - entriesChecked;
+                int chunkEntries = (int) Math.min(remainingEntries, CHUNK_ENTRIES);
+                long chunkBytes = (long) chunkEntries * entrySize;
+                long bytesRead = ff.read(auxFd, scratch, chunkBytes, fileOffset);
+                if (bytesRead < chunkBytes) {
+                    return "aux file read failed at entry " + entriesChecked;
+                }
+
+                for (int i = 0; i < chunkEntries; i++) {
+                    long offset = Unsafe.getUnsafe().getLong(scratch + (long) i * entrySize);
+                    long entryIndex = entriesChecked + i;
+
+                    if (entryIndex == 0 && offset != 0) {
+                        return "first offset is not zero [offset=" + offset + ']';
+                    }
+                    if (prevOffset >= 0) {
+                        long gap = offset - prevOffset;
+                        if (gap < 0) {
+                            return "offset goes backward at row " + (entryIndex - 1)
+                                    + " [prev=" + prevOffset + ", curr=" + offset + ']';
+                        }
+                        if (entryIndex <= effectiveRows && gap < minGap) {
+                            return "gap too small at row " + (entryIndex - 1)
+                                    + " [gap=" + gap + ", min=" + minGap + ']';
+                        }
+                    }
+                    prevOffset = offset;
+                }
+
+                entriesChecked += chunkEntries;
+                fileOffset += chunkBytes;
+            }
+
+            // final boundary check: prevOffset is offset[N]
+            if (prevOffset > dataSize) {
+                return "data file too short [expected=" + prevOffset + ", actual=" + dataSize + ']';
+            }
+            return null; // OK
+        } finally {
+            Unsafe.free(scratch, scratchSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private String checkVarcharColumn(long auxFd, long dataSize, long effectiveRows) {
+        final int entrySize = 16;
+        final long scratchSize = (long) CHUNK_ENTRIES * entrySize;
+        final long scratch = Unsafe.malloc(scratchSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            long prevDataEnd = 0;
+            long fileOffset = 0;
+            long rowsChecked = 0;
+
+            while (rowsChecked < effectiveRows) {
+                long remainingRows = effectiveRows - rowsChecked;
+                int chunkRows = (int) Math.min(remainingRows, CHUNK_ENTRIES);
+                long chunkBytes = (long) chunkRows * entrySize;
+                long bytesRead = ff.read(auxFd, scratch, chunkBytes, fileOffset);
+                if (bytesRead < chunkBytes) {
+                    return "aux file read failed at row " + rowsChecked;
+                }
+
+                for (int i = 0; i < chunkRows; i++) {
+                    long entryAddr = scratch + (long) i * entrySize;
+                    int raw = Unsafe.getUnsafe().getInt(entryAddr);
+                    long row = rowsChecked + i;
+
+                    if (raw == 0) {
+                        return "invalid aux header at row " + row + " (zero)";
+                    }
+                    // NULL: no data consumed
+                    if ((raw & 4) != 0) {
+                        continue;
+                    }
+                    // INLINED: no data consumed in .d file
+                    if ((raw & 1) != 0) {
+                        continue;
+                    }
+                    // non-inlined entry
+                    long dataOffset = Unsafe.getUnsafe().getLong(entryAddr + Long.BYTES) >>> 16;
+                    int size = (raw >>> 4) & ((1 << 28) - 1);
+                    if (dataOffset < prevDataEnd) {
+                        return "data offset goes backward at row " + row
+                                + " [prev_end=" + prevDataEnd + ", offset=" + dataOffset + ']';
+                    }
+                    long end = dataOffset + size;
+                    if (end > dataSize) {
+                        return "data file too short at row " + row
+                                + " [needed=" + end + ", actual=" + dataSize + ']';
+                    }
+                    prevDataEnd = end;
+                }
+
+                rowsChecked += chunkRows;
+                fileOffset += chunkBytes;
+            }
+            return null; // OK
+        } finally {
+            Unsafe.free(scratch, scratchSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -188,12 +353,44 @@ public class ColumnCheckService {
                         "aux file too short [expected=" + expectedAuxSize + ", actual=" + auxSize + ']',
                         columnTop, expectedAuxSize, auxSize
                 ));
-            } else {
+                return;
+            }
+
+            // per-row validation: open aux file and dispatch to type-specific check
+            long auxFd = ff.openRO(path.$());
+            if (auxFd < 0) {
                 entries.add(new ColumnCheckEntry(
                         colIdx, col.getName(), col.getTypeName(),
-                        ColumnCheckStatus.OK, null,
-                        columnTop, expectedAuxSize, auxSize
+                        ColumnCheckStatus.ERROR, "cannot open aux file",
+                        columnTop, -1, -1
                 ));
+                return;
+            }
+
+            try {
+                short tag = ColumnType.tagOf(type);
+                String error = switch (tag) {
+                    case ColumnType.STRING -> checkStringColumn(auxFd, dataSize, effectiveRows, false);
+                    case ColumnType.BINARY -> checkStringColumn(auxFd, dataSize, effectiveRows, true);
+                    case ColumnType.VARCHAR -> checkVarcharColumn(auxFd, dataSize, effectiveRows);
+                    default -> checkArrayColumn(auxFd, dataSize, effectiveRows); // ARRAY
+                };
+
+                if (error != null) {
+                    entries.add(new ColumnCheckEntry(
+                            colIdx, col.getName(), col.getTypeName(),
+                            ColumnCheckStatus.ERROR, error,
+                            columnTop, -1, dataSize
+                    ));
+                } else {
+                    entries.add(new ColumnCheckEntry(
+                            colIdx, col.getName(), col.getTypeName(),
+                            ColumnCheckStatus.OK, null,
+                            columnTop, expectedAuxSize, auxSize
+                    ));
+                }
+            } finally {
+                ff.close(auxFd);
             }
         }
     }

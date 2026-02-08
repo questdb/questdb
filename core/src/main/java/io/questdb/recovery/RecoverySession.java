@@ -282,6 +282,7 @@ public class RecoverySession {
             ObjList<PartitionScanEntry> partitionScan,
             MetaState metaState,
             ColumnVersionState cvState,
+            TxnState txnState,
             PrintStream out
     ) {
         int checked = 0;
@@ -311,15 +312,16 @@ public class RecoverySession {
                 continue;
             }
 
+            long rowCount = resolvePartitionRowCount(txnPart, i, partitionScan.size(), txnState);
             ColumnCheckResult result = columnCheckService.checkPartition(
                     tableDir,
                     entry.getDirName(),
                     txnPart.getTimestampLo(),
-                    txnPart.getRowCount(),
+                    rowCount,
                     metaState,
                     cvState
             );
-            renderer.printCheckResult(result, tableName, txnPart.getRowCount(), out);
+            renderer.printCheckResult(result, tableName, rowCount, out);
             checked++;
 
             for (int j = 0, m = result.getEntries().size(); j < m; j++) {
@@ -365,6 +367,8 @@ public class RecoverySession {
             return;
         }
 
+        long rowCount = resolvePartitionRowCount(txnPart, currentPartitionIndex, cachedPartitionScan.size(), cachedTxnState);
+
         try (Path path = new Path()) {
             path.of(dbRoot).concat(currentTable.getDirName()).$();
             ColumnVersionState cvState = hasCvIssues(cachedCvState) ? null : cachedCvState;
@@ -372,11 +376,11 @@ public class RecoverySession {
                     path.toString(),
                     entry.getDirName(),
                     txnPart.getTimestampLo(),
-                    txnPart.getRowCount(),
+                    rowCount,
                     cachedMetaState,
                     cvState
             );
-            renderer.printCheckResult(result, currentTable.getTableName(), txnPart.getRowCount(), out);
+            renderer.printCheckResult(result, currentTable.getTableName(), rowCount, out);
 
             int errors = 0, warnings = 0;
             for (int j = 0, m = result.getEntries().size(); j < m; j++) {
@@ -415,6 +419,7 @@ public class RecoverySession {
                     partitionScan,
                     metaState,
                     hasCvIssues(cvState) ? null : cvState,
+                    txnState,
                     out
             );
         }
@@ -496,6 +501,17 @@ public class RecoverySession {
             }
         }
         out.println(sb);
+    }
+
+    private static long resolvePartitionRowCount(TxnPartitionState txnPart, int partitionIndex, int totalPartitions, TxnState txnState) {
+        // The last partition's row count is stored in transientRowCount in the _txn header,
+        // not in the partition entry itself (which stores 0 for the last partition).
+        if (partitionIndex == totalPartitions - 1
+                && txnState != null
+                && txnState.getTransientRowCount() != TxnState.UNSET_LONG) {
+            return txnState.getTransientRowCount();
+        }
+        return txnPart.getRowCount();
     }
 
     private void show(String target, PrintStream out, PrintStream err) {

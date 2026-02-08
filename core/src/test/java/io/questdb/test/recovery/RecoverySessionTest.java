@@ -1385,6 +1385,150 @@ public class RecoverySessionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckColumnsArrayDFileOk() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table chk_arr_ok (arr double[], ts timestamp) timestamp(ts) partition by DAY");
+            execute(
+                    "insert into chk_arr_ok select ARRAY[1.0, 2.0, 3.0],"
+                            + " timestamp_sequence('1970-01-01', 1000000L) from long_sequence(2)"
+            );
+
+            String[] result = runSession("cd chk_arr_ok\ncheck columns\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("OK"));
+            Assert.assertTrue(outText.contains("0 errors"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCheckColumnsArrayDFileTruncated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table chk_arr_trunc (arr double[], ts timestamp) timestamp(ts) partition by DAY");
+            execute(
+                    "insert into chk_arr_trunc select ARRAY[1.0, 2.0, 3.0],"
+                            + " timestamp_sequence('1970-01-01', 1000000L) from long_sequence(2)"
+            );
+
+            // truncate .d to 1 byte — guaranteed shorter than data regardless of alignment
+            truncateColumnFileTo("chk_arr_trunc", "1970-01-01", "arr.d", 1);
+
+            String[] result = runSession("cd chk_arr_trunc\ncheck columns\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue("should detect corrupt .d file", outText.contains("ERROR"));
+            Assert.assertTrue("should show data file too short", outText.contains("data file too short"));
+        });
+    }
+
+    @Test
+    public void testCheckColumnsStringDFileTruncated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table chk_str_trunc (s string, ts timestamp) timestamp(ts) partition by DAY");
+            execute(
+                    "insert into chk_str_trunc select rnd_str('hello','world','test'),"
+                            + " timestamp_sequence('1970-01-01', 1000000L) from long_sequence(3)"
+            );
+
+            // truncate .d to 1 byte — guaranteed shorter than data regardless of alignment
+            truncateColumnFileTo("chk_str_trunc", "1970-01-01", "s.d", 1);
+
+            String[] result = runSession("cd chk_str_trunc\ncheck columns\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue("should detect corrupt .d file", outText.contains("ERROR"));
+            Assert.assertTrue("should show data file too short", outText.contains("data file too short"));
+        });
+    }
+
+    @Test
+    public void testCheckColumnsStringDFileTruncatedToZero() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table chk_str_zero (s string, ts timestamp) timestamp(ts) partition by DAY");
+            execute(
+                    "insert into chk_str_zero select rnd_str('hello','world','test'),"
+                            + " timestamp_sequence('1970-01-01', 1000000L) from long_sequence(3)"
+            );
+
+            truncateColumnFileTo("chk_str_zero", "1970-01-01", "s.d", 0);
+
+            String[] result = runSession("cd chk_str_zero\ncheck columns\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue("should detect corrupt .d file", outText.contains("ERROR"));
+        });
+    }
+
+    @Test
+    public void testCheckColumnsStringNullsOk() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table chk_str_null (s string, ts timestamp) timestamp(ts) partition by DAY");
+            execute(
+                    "insert into chk_str_null select rnd_str('hello', null, 'test'),"
+                            + " timestamp_sequence('1970-01-01', 1000000L) from long_sequence(3)"
+            );
+
+            String[] result = runSession("cd chk_str_null\ncheck columns\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("OK"));
+            Assert.assertTrue(outText.contains("0 errors"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCheckColumnsVarcharDFileTruncated() throws Exception {
+        assertMemoryLeak(() -> {
+            // use long strings (>9 bytes) to ensure they are NOT inlined
+            execute("create table chk_vc_trunc (v varchar, ts timestamp) timestamp(ts) partition by DAY");
+            execute(
+                    "insert into chk_vc_trunc select rnd_varchar('this_is_a_long_string','another_long_string_here','yet_more_long_text'),"
+                            + " timestamp_sequence('1970-01-01', 1000000L) from long_sequence(3)"
+            );
+
+            // truncate .d to 1 byte — guaranteed shorter than data regardless of alignment
+            truncateColumnFileTo("chk_vc_trunc", "1970-01-01", "v.d", 1);
+
+            String[] result = runSession("cd chk_vc_trunc\ncheck columns\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue("should detect corrupt .d file", outText.contains("ERROR"));
+            Assert.assertTrue("should show data file too short", outText.contains("data file too short"));
+        });
+    }
+
+    @Test
+    public void testCheckColumnsVarcharInlinedOk() throws Exception {
+        assertMemoryLeak(() -> {
+            // short strings (<=9 bytes) are fully inlined, .d file not needed
+            execute("create table chk_vc_inline (v varchar, ts timestamp) timestamp(ts) partition by DAY");
+            execute(
+                    "insert into chk_vc_inline select rnd_varchar('a','bb','ccc'),"
+                            + " timestamp_sequence('1970-01-01', 1000000L) from long_sequence(3)"
+            );
+
+            String[] result = runSession("cd chk_vc_inline\ncheck columns\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("OK"));
+            Assert.assertTrue(outText.contains("0 errors"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCheckColumnsVarcharMixedInlinedAndNonInlined() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table chk_vc_mix (v varchar, ts timestamp) timestamp(ts) partition by DAY");
+            execute(
+                    "insert into chk_vc_mix select rnd_varchar('a','this_is_a_long_string','bb','another_long_string_here'),"
+                            + " timestamp_sequence('1970-01-01', 1000000L) from long_sequence(4)"
+            );
+
+            String[] result = runSession("cd chk_vc_mix\ncheck columns\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("OK"));
+            Assert.assertTrue(outText.contains("0 errors"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
     public void testCheckColumnsWithColumnTop() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table chk_top (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
@@ -1534,6 +1678,20 @@ public class RecoverySessionTest extends AbstractCairoTest {
         drainWalQueue(engine);
         execute("create view " + viewName
                 + " as (select sym, last(price) as price, ts from " + baseName + " sample by 1h)");
+    }
+
+    private static void truncateColumnFileTo(String tableName, String partitionDirName, String columnFileName, long targetSize) {
+        TableToken token = engine.verifyTableName(tableName);
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token).concat(partitionDirName).concat(columnFileName);
+            long fd = FF.openRW(path.$(), CairoConfiguration.O_NONE);
+            Assert.assertTrue("failed to open file: " + path, fd > -1);
+            try {
+                Assert.assertTrue("failed to truncate file: " + path, FF.truncate(fd, targetSize));
+            } finally {
+                FF.close(fd);
+            }
+        }
     }
 
     private static void deletePartitionDir(String tableName, String partitionDirName) {
