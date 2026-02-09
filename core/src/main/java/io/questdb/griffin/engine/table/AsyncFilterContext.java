@@ -63,8 +63,8 @@ public class AsyncFilterContext implements Closeable {
     private final SelectivityStats ownerSelectivityStats = new SelectivityStats();
     private final ObjList<DirectLongList> perWorkerAuxAddresses;
     private final ObjList<DirectLongList> perWorkerDataAddresses;
-    private final ObjList<Function> perWorkerFilters;
     private final ObjList<DirectLongList> perWorkerFilteredRows;
+    private final ObjList<Function> perWorkerFilters;
     private final ObjList<PageFrameMemoryPool> perWorkerMemoryPools;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
 
@@ -186,15 +186,15 @@ public class AsyncFilterContext implements Closeable {
         return perWorkerFilters.getQuick(slotId);
     }
 
+    public @Nullable IntHashSet getFilterUsedColumnIndexes() {
+        return filterUsedColumnIndexes;
+    }
+
     public DirectLongList getFilteredRows(int slotId) {
         if (slotId == -1) {
             return ownerFilteredRows;
         }
         return perWorkerFilteredRows.getQuick(slotId);
-    }
-
-    public @Nullable IntHashSet getFilterUsedColumnIndexes() {
-        return filterUsedColumnIndexes;
     }
 
     public PageFrameMemoryPool getMemoryPool(int slotId) {
@@ -208,15 +208,15 @@ public class AsyncFilterContext implements Closeable {
         return ownerMemoryPool;
     }
 
-    public ObjList<PageFrameMemoryPool> getPerWorkerMemoryPools() {
-        return perWorkerMemoryPools;
-    }
-
     public PageFrameFilteredNoRandomAccessMemoryRecord getPageFrameFilteredMemoryRecord(int slotId) {
         if (slotId == -1) {
             return ownerPageFrameFilteredNoRandomAccessMemoryRecord;
         }
         return frameFilteredMemoryRecords.getQuick(slotId);
+    }
+
+    public ObjList<PageFrameMemoryPool> getPerWorkerMemoryPools() {
+        return perWorkerMemoryPools;
     }
 
     public SelectivityStats getSelectivityStats(int slotId) {
