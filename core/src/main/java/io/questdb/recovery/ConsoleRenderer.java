@@ -262,15 +262,21 @@ public class ConsoleRenderer {
             out.printf("  [%d] count=%d transient=%d%n", symbol.getIndex(), symbol.getCount(), symbol.getTransientCount());
         }
 
-        out.println("partitions: " + state.getPartitions().size());
-        for (int i = 0, n = state.getPartitions().size(); i < n; i++) {
+        int partitionCount = state.getPartitions().size();
+        out.println("partitions: " + partitionCount);
+        for (int i = 0; i < partitionCount; i++) {
             TxnPartitionState partition = state.getPartitions().getQuick(i);
+            // last partition's row count is stored in transientRowCount, not in the entry
+            boolean isLast = (i == partitionCount - 1);
+            long rowCount = (isLast && state.getTransientRowCount() != TxnState.UNSET_LONG)
+                    ? state.getTransientRowCount()
+                    : partition.getRowCount();
             if (partition.isParquetFormat()) {
                 out.printf(
                         "  [%d] %s  rows=%d  parquet=true  readOnly=%s  parquetFileSize=%s%n",
                         partition.getIndex(),
                         formatTimestamp(partition.getTimestampLo()),
-                        partition.getRowCount(),
+                        rowCount,
                         partition.isReadOnly(),
                         formatBytes(partition.getParquetFileSize())
                 );
@@ -279,7 +285,7 @@ public class ConsoleRenderer {
                         "  [%d] %s  rows=%d  parquet=false  readOnly=%s%n",
                         partition.getIndex(),
                         formatTimestamp(partition.getTimestampLo()),
-                        partition.getRowCount(),
+                        rowCount,
                         partition.isReadOnly()
                 );
             }
