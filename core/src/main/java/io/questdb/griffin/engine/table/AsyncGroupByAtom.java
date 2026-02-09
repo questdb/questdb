@@ -126,7 +126,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         assert perWorkerKeyFunctions == null || perWorkerKeyFunctions.size() == workerCount;
         assert perWorkerGroupByFunctions == null || perWorkerGroupByFunctions.size() == workerCount;
 
-        final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
+        final int slotCount = workerCount;
         try {
             this.configuration = configuration;
             this.keyTypes = new ArrayColumnTypes().addAll(keyTypes);
