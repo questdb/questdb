@@ -866,7 +866,8 @@ public class MicrosFormatCompiler {
                     parseDigits(assertRemainingIndex, parseIntIndex, 3, -1);
                     break;
                 case OP_NANOS_GREEDY:
-                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, -1);
+                    stackState &= ~(1 << LOCAL_TEMP_LONG);
+                    invokeParseIntSafelyAndStore(parseInt000GreedyIndex, decodeLenIndex, decodeIntIndex, -1);
                     break;
                 case OP_MILLIS_ONE_DIGIT:
                     stackState &= ~(1 << LOCAL_MILLIS);
