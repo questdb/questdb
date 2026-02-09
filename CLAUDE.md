@@ -22,25 +22,41 @@ Use modern Java features:
 - enhanced switch
 - multiline string literal
 
-Java class members are grouped by kind and sorted alphabetically. When adding
-new methods (especially tests), always insert them in the correct alphabetical
-position.
+Java class members are grouped by kind (static vs. instance) and visibility, and
+sorted alphabetically. When adding new methods (especially tests), always insert
+them in the correct alphabetical position.
 
 `Numbers.parseInt()` / `parseLong()` in `io.questdb.std.Numbers` already support
 underscore separators (e.g., `10_000`). When scanning digit boundaries
 elsewhere, remember to include `_` so the full token reaches these methods.
+
+### QuestDB's SQL dialect
+
+- QuestDB supports multidimensional arrays (e.g., `DOUBLE[]`, `DOUBLE[][]`).
+  Dimensionality is encoded in the column type itself, so `DOUBLE[]` and
+  `DOUBLE[][]` are distinct column types.
+- QuestDB does not support DELETE.
 
 ### Error Position Convention
 
 `SqlException.$(position, msg)` — the position should point at the specific
 offending character, not the start of the expression.
 
+### Code Style
+
+- PR titles follow Conventional Commits: `feat(sql):`, `fix(core):`,
+  `test(ilp):`
+- Commit titles do NOT use Conventional Commits prefixes. Keep them short (up to
+  50 chars) and descriptive in plain English.
+
 ### Writing Style
 
-Prefer active voice over passive voice in commit messages, PR descriptions, and
-comments.
+- Prefer active voice over passive voice in commit messages, PR descriptions,
+  and comments.
+  - Good: "The owner thread waits for the latch"
+  - Avoid: "The latch is waited on by the owner thread"
 
-### Git & PR Conventions
+## Git & PR Conventions
 
 - PR titles must follow Conventional Commits format: `type(scope): description`
   (e.g., `fix(sql): fix ...`, `feat(core): add ...`). The description part is
@@ -61,7 +77,7 @@ comments.
 - Common PR labels: `Bug`, `CI`, `Compatibility`, `Core`, `Documentation`,
   `Enhancement`, `Flaky Test`, `ILP`, `Materialized View`, `New feature`,
   `Performance`, `Postgres Wire`, `REST API`, `SQL`, `Security`, `UI`, `WAL`,
-  `Windows`, `regression`, `rust`, `storage`.
+  `Windows`, `regression`, `rust`, `storage`.=======
 
 ## Build Commands
 
@@ -71,6 +87,17 @@ comments.
 - Maven 3
 - `JAVA_HOME` environment variable set
 
+## Coding guidelines
+
+Java class members are grouped by kind and sorted alphabetically. When adding
+new methods or fields, insert them in the correct alphabetical position among
+existing members of the same kind. Don't insert comments as "section headings"
+because methods won't stay together after auto-sorting.
+
+Use modern Java features:
+
+- enhanced switch
+- multiline string literal >>>>>>> master
 
 ### Building
 
@@ -167,27 +194,3 @@ cmake --build build/release --config Release
 - `CairoEngine.java` - Storage engine core
 - `SqlCompiler.java` / `SqlCompilerImpl.java` - SQL compilation
 - `TableWriter.java` / `TableReader.java` - Table I/O
-
-## Writing Style
-
-- Prefer active voice over passive voice in commit messages, PR descriptions,
-  and comments.
-  - Good: "The owner thread waits for the latch"
-  - Avoid: "The latch is waited on by the owner thread"
-
-## Code Style
-
-- PR titles follow Conventional Commits: `feat(sql):`, `fix(core):`,
-  `test(ilp):`
-- Commit titles do NOT use Conventional Commits prefixes. Keep them short (up to
-  50 chars) and descriptive in plain English.
-
-## PR Labels
-
-Always add GitHub labels consistent with the PR title. For example, a
-`perf(sql):` PR should get "SQL" and "Performance" labels.
-
-Common labels: `Bug`, `CI`, `Compatibility`, `Core`, `Documentation`,
-`Enhancement`, `Flaky Test`, `ILP`, `Materialized View`, `New feature`,
-`Performance`, `Postgres Wire`, `REST API`, `SQL`, `Security`, `UI`, `WAL`,
-`Windows`, `regression`, `rust`, `storage`.
