@@ -1943,7 +1943,28 @@ public void testLsShowsTransientRowCountForLastPartition() throws Exception {
             Assert.assertTrue(outText.contains("column: s"));
             Assert.assertTrue(outText.contains("type: STRING"));
             Assert.assertTrue(outText.contains("effectiveRows: 2"));
+            Assert.assertTrue(outText.contains("expected data size: 14 B"));
             Assert.assertTrue(outText.contains("expected aux size: 24 B"));
+            Assert.assertTrue(outText.contains("actual aux size:"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testShowAtColumnLevelArrayNullsExpectedSizes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table nav_col_show_arr_null (arr double[], ts timestamp) timestamp(ts) partition by DAY");
+            execute("insert into nav_col_show_arr_null values (null, '1970-01-01T00:00:00.000000Z')");
+            execute("insert into nav_col_show_arr_null values (null, '1970-01-01T00:00:01.000000Z')");
+
+            String[] result = runSession("cd nav_col_show_arr_null\ncd 0\ncd arr\nshow\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("column: arr"));
+            Assert.assertTrue(outText.contains("type: DOUBLE[]"));
+            Assert.assertTrue(outText.contains("effectiveRows: 2"));
+            Assert.assertTrue(outText.contains("expected data size: 0 B"));
+            Assert.assertTrue(outText.contains("expected aux size: 32 B"));
+            Assert.assertTrue(outText.contains("actual data size:"));
             Assert.assertTrue(outText.contains("actual aux size:"));
             Assert.assertEquals("", result[1]);
         });
