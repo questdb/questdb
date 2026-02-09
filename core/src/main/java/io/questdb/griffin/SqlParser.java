@@ -2637,6 +2637,12 @@ public class SqlParser {
                 CharSequence nextTok = SqlUtil.fetchNext(lexer);
                 boolean isWindowClause = false;
                 if (nextTok != null) {
+                    if (isAsKeyword(nextTok)) {
+                        // WINDOW AS (...) - missing window name
+                        lexer.backTo(windowLastPos, windowTok);
+                        tok = optTok(lexer);
+                        break;
+                    }
                     CharSequence afterName = SqlUtil.fetchNext(lexer);
                     if (afterName != null && isAsKeyword(afterName)) {
                         isWindowClause = true;
@@ -2828,53 +2834,18 @@ public class SqlParser {
             } while (tok != null && Chars.equals(tok, ','));
         }
 
-        // expect [order by]
-
-        if (tok != null && isOrderKeyword(tok)) {
-            model.setOrderByPosition(lexer.lastTokenPosition());
-            expectBy(lexer);
-            do {
-                tokIncludingLocalBrace(lexer, "literal");
-                lexer.unparseLast();
-
-                ExpressionNode n = expr(lexer, model, sqlParserCallback, model.getDecls());
-                if (n == null || (n.type == ExpressionNode.QUERY || n.type == ExpressionNode.SET_OPERATION)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "literal or expression expected");
-                }
-
-                // token can sometimes be null, like during parsing of CASE clause
-                if ((n.type == ExpressionNode.CONSTANT && Chars.equals("''", n.token))
-                        || (n.type == ExpressionNode.LITERAL && (n.token == null || n.token.isEmpty()))) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "non-empty literal or expression expected");
-                }
-
-                tok = optTok(lexer);
-
-                if (tok != null && isDescKeyword(tok)) {
-                    model.addOrderBy(n, QueryModel.ORDER_DIRECTION_DESCENDING);
-                    tok = optTok(lexer);
-                } else {
-                    model.addOrderBy(n, QueryModel.ORDER_DIRECTION_ASCENDING);
-
-                    if (tok != null && isAscKeyword(tok)) {
-                        tok = optTok(lexer);
-                    }
-                }
-
-                if (model.getOrderBy().size() >= MAX_ORDER_BY_COLUMNS) {
-                    throw err(lexer, tok, "Too many columns");
-                }
-            } while (tok != null && Chars.equals(tok, ','));
-        }
-
         // expect [window]
         // WINDOW clause for named window definitions: WINDOW w AS (PARTITION BY ... ORDER BY ...)
+        // SQL standard places WINDOW between HAVING/GROUP BY and ORDER BY.
         if (tok != null && isWindowKeyword(tok)) {
             do {
                 // Parse window name
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "window name expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "window name expected after 'window'");
+                }
+                if (isAsKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "window name expected after 'window'");
                 }
                 validateIdentifier(lexer, tok);
                 SqlKeywords.assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
@@ -2917,6 +2888,45 @@ public class SqlParser {
         // Validate that all named window references in SELECT columns are defined.
         // Fail fast here rather than waiting for the optimizer.
         validateNamedWindowReferences(masterModel);
+
+        // expect [order by]
+
+        if (tok != null && isOrderKeyword(tok)) {
+            model.setOrderByPosition(lexer.lastTokenPosition());
+            expectBy(lexer);
+            do {
+                tokIncludingLocalBrace(lexer, "literal");
+                lexer.unparseLast();
+
+                ExpressionNode n = expr(lexer, model, sqlParserCallback, model.getDecls());
+                if (n == null || (n.type == ExpressionNode.QUERY || n.type == ExpressionNode.SET_OPERATION)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "literal or expression expected");
+                }
+
+                // token can sometimes be null, like during parsing of CASE clause
+                if ((n.type == ExpressionNode.CONSTANT && Chars.equals("''", n.token))
+                        || (n.type == ExpressionNode.LITERAL && (n.token == null || n.token.isEmpty()))) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "non-empty literal or expression expected");
+                }
+
+                tok = optTok(lexer);
+
+                if (tok != null && isDescKeyword(tok)) {
+                    model.addOrderBy(n, QueryModel.ORDER_DIRECTION_DESCENDING);
+                    tok = optTok(lexer);
+                } else {
+                    model.addOrderBy(n, QueryModel.ORDER_DIRECTION_ASCENDING);
+
+                    if (tok != null && isAscKeyword(tok)) {
+                        tok = optTok(lexer);
+                    }
+                }
+
+                if (model.getOrderBy().size() >= MAX_ORDER_BY_COLUMNS) {
+                    throw err(lexer, tok, "Too many columns");
+                }
+            } while (tok != null && Chars.equals(tok, ','));
+        }
 
         // expect [limit]
         if (tok != null && isLimitKeyword(tok)) {

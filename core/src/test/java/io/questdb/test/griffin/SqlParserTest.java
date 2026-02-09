@@ -13599,6 +13599,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
     }
 
+    // Join keyword as window name in WINDOW clause should fail
     @Test
     public void testWindowNameJoinKeywordInWindowClause() throws Exception {
         assertSyntaxError(
@@ -13609,6 +13610,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
     }
 
+    // SQL keyword as window name in OVER clause should fail
     @Test
     public void testWindowNameKeywordInOverClause() throws Exception {
         assertSyntaxError(
@@ -13619,6 +13621,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
     }
 
+    // SQL keyword as window name in WINDOW clause should fail
     @Test
     public void testWindowNameKeywordInWindowClause() throws Exception {
         assertSyntaxError(
@@ -13629,6 +13632,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
     }
 
+    // Number as window name should fail
     @Test
     public void testWindowNameNumberInOverClause() throws Exception {
         assertSyntaxError(
@@ -13639,6 +13643,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
     }
 
+    // Number as window name in WINDOW clause should fail
     @Test
     public void testWindowNameNumberInWindowClause() throws Exception {
         assertSyntaxError(

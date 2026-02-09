@@ -118,7 +118,8 @@ public final class WindowExpression extends QueryColumn {
      * Used when resolving named window references in the optimizer.
      * <p>
      * ExpressionNode references in partition-by and order-by lists are shared, not deep-copied.
-     * This is safe because the optimizer replaces list entries rather than mutating shared nodes.
+     * This is safe because each list independently replaces its entries via replaceLiteralList,
+     * so shared references are not read after replacement.
      *
      * @param source the named window definition to copy from
      */

@@ -11176,13 +11176,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
 
-            // WINDOW AS (...) - 'as' is a keyword so the lookahead doesn't detect
-            // the WINDOW clause pattern (needs name AS). Falls through to WINDOW JOIN
-            // path which expects 'join' keyword next.
+            // WINDOW AS (...) - missing window name
             assertExceptionNoLeakCheck(
                     "SELECT sum(x) OVER w FROM t WINDOW AS (ORDER BY ts)",
-                    28,
-                    "'join' expected"
+                    35,
+                    "window name expected after 'window'"
             );
 
             // WINDOW w (...) without AS - lookahead sees w then (, not AS,
@@ -11723,6 +11721,69 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "WINDOW w AS (ORDER BY ts)",
                     19,
                     "WINDOW functions are not allowed in WINDOW JOIN queries"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithExcludeCurrentRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+            execute("insert into t values (3, 2000000)");
+
+            // EXCLUDE CURRENT ROW with ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+            // Row 1: no preceding rows, exclude self -> NaN
+            // Row 2: preceding row is 1, exclude self -> 1
+            // Row 3: preceding rows are 1,2, exclude self -> 3
+            assertQueryNoLeakCheck(
+                    "x\tsum\n" +
+                            "1\tnull\n" +
+                            "2\t1.0\n" +
+                            "3\t3.0\n",
+                    "SELECT x, sum(x) OVER w as sum FROM t " +
+                            "WINDOW w AS (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithOrderByAfterWindowClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+            execute("insert into t values (3, 2000000)");
+
+            // SQL standard: WINDOW clause comes before ORDER BY
+            assertQueryNoLeakCheck(
+                    "x\tsum\n" +
+                            "3\t6.0\n" +
+                            "2\t3.0\n" +
+                            "1\t1.0\n",
+                    "SELECT x, sum(x) OVER w as sum FROM t " +
+                            "WINDOW w AS (ORDER BY ts) ORDER BY ts DESC",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWindowInheritanceError() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+
+            // Window inheritance (w2 references w1) is not supported
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) OVER w2 FROM t WINDOW w1 AS (ORDER BY ts), w2 AS (w1 ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING)",
+                    64,
+                    "window inheritance is not supported"
             );
         });
     }

@@ -4139,6 +4139,8 @@ public class SqlOptimiser implements Mutable {
         return nextLiteral(characterStoreEntry.toImmutable());
     }
 
+    // Walks only the nested-model chain (not join models) because named windows are defined
+    // on the masterModel and propagated through nesting, never on join models.
     private WindowExpression lookupNamedWindow(QueryModel model, CharSequence windowName) {
         QueryModel current = model;
         while (current != null) {
@@ -4590,6 +4592,38 @@ public class SqlOptimiser implements Mutable {
 
     private ExpressionNode nextLiteral(CharSequence token) {
         return nextLiteral(token, 0);
+    }
+
+    private void normalizeWindowFrame(WindowExpression ac, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        long rowsLo = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsLoExpr(), sqlExecutionContext);
+        long rowsHi = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsHiExpr(), sqlExecutionContext);
+
+        switch (ac.getRowsLoKind()) {
+            case WindowExpression.PRECEDING:
+                rowsLo = rowsLo != Long.MAX_VALUE ? -rowsLo : Long.MIN_VALUE;
+                break;
+            case WindowExpression.FOLLOWING:
+                break;
+            default:
+                // CURRENT ROW
+                rowsLo = 0;
+                break;
+        }
+
+        switch (ac.getRowsHiKind()) {
+            case WindowExpression.PRECEDING:
+                rowsHi = rowsHi != Long.MAX_VALUE ? -rowsHi : Long.MIN_VALUE;
+                break;
+            case WindowExpression.FOLLOWING:
+                break;
+            default:
+                // CURRENT ROW
+                rowsHi = 0;
+                break;
+        }
+
+        ac.setRowsLo(rowsLo);
+        ac.setRowsHi(rowsHi);
     }
 
     private boolean nonAggregateFunctionDependsOn(ExpressionNode node, ExpressionNode timestampNode) {
@@ -8786,8 +8820,6 @@ public class SqlOptimiser implements Mutable {
                 QueryModel innerWm = innerWindowModels.getQuick(i);
                 innerWm.setNestedModel(root);
                 innerWm.copyHints(model.getHints());
-                // Copy named window definitions for validateWindowFunctions (unreferenced definitions).
-                innerWm.getNamedWindows().putAll(model.getNamedWindows());
                 root = innerWm;
             }
         }
@@ -8797,8 +8829,6 @@ public class SqlOptimiser implements Mutable {
             windowModel.moveLimitFrom(limitSource);
             windowModel.moveJoinAliasFrom(limitSource);
             windowModel.copyHints(model.getHints());
-            // Copy named window definitions for validateWindowFunctions (unreferenced definitions).
-            windowModel.getNamedWindows().putAll(model.getNamedWindows());
             root = windowModel;
             limitSource = windowModel;
         } else if ((rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) {
@@ -9620,37 +9650,7 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0, n = queryColumns.size(); i < n; i++) {
                 QueryColumn qc = queryColumns.getQuick(i);
                 if (qc.isWindowExpression()) {
-                    final WindowExpression ac = (WindowExpression) qc;
-                    // preceding and following accept non-negative values only
-                    long rowsLo = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsLoExpr(), sqlExecutionContext);
-                    long rowsHi = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsHiExpr(), sqlExecutionContext);
-
-                    switch (ac.getRowsLoKind()) {
-                        case WindowExpression.PRECEDING:
-                            rowsLo = rowsLo != Long.MAX_VALUE ? -rowsLo : Long.MIN_VALUE;
-                            break;
-                        case WindowExpression.FOLLOWING:
-                            break;
-                        default:
-                            // CURRENT ROW
-                            rowsLo = 0;
-                            break;
-                    }
-
-                    switch (ac.getRowsHiKind()) {
-                        case WindowExpression.PRECEDING:
-                            rowsHi = rowsHi != Long.MAX_VALUE ? -rowsHi : Long.MIN_VALUE;
-                            break;
-                        case WindowExpression.FOLLOWING:
-                            break;
-                        default:
-                            // CURRENT ROW
-                            rowsHi = 0;
-                            break;
-                    }
-
-                    ac.setRowsLo(rowsLo);
-                    ac.setRowsHi(rowsHi);
+                    normalizeWindowFrame((WindowExpression) qc, sqlExecutionContext);
                 }
             }
         }
@@ -9663,35 +9663,7 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0, n = keys.size(); i < n; i++) {
                 WindowExpression ac = namedWindows.get(keys.getQuick(i));
                 if (ac != null) {
-                    long rowsLo = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsLoExpr(), sqlExecutionContext);
-                    long rowsHi = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsHiExpr(), sqlExecutionContext);
-
-                    switch (ac.getRowsLoKind()) {
-                        case WindowExpression.PRECEDING:
-                            rowsLo = rowsLo != Long.MAX_VALUE ? -rowsLo : Long.MIN_VALUE;
-                            break;
-                        case WindowExpression.FOLLOWING:
-                            break;
-                        default:
-                            // CURRENT ROW
-                            rowsLo = 0;
-                            break;
-                    }
-
-                    switch (ac.getRowsHiKind()) {
-                        case WindowExpression.PRECEDING:
-                            rowsHi = rowsHi != Long.MAX_VALUE ? -rowsHi : Long.MIN_VALUE;
-                            break;
-                        case WindowExpression.FOLLOWING:
-                            break;
-                        default:
-                            // CURRENT ROW
-                            rowsHi = 0;
-                            break;
-                    }
-
-                    ac.setRowsLo(rowsLo);
-                    ac.setRowsHi(rowsHi);
+                    normalizeWindowFrame(ac, sqlExecutionContext);
                 }
             }
         }

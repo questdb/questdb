@@ -757,7 +757,7 @@ public class ExpressionParser {
      * @param sqlParserCallback callback for nested expression parsing
      * @param decls             declarations for expression parsing
      */
-    public void parseWindowSpec(
+    void parseWindowSpec(
             GenericLexer lexer,
             WindowExpression windowCol,
             SqlParserCallback sqlParserCallback,
@@ -766,6 +766,33 @@ public class ExpressionParser {
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "')' or window specification expected");
+        }
+
+        // Detect window inheritance attempts like WINDOW w2 AS (w1 ORDER BY y) or (w1).
+        // If the first token is an unquoted non-keyword identifier followed by ')' or a
+        // window clause keyword, it's a reference to another named window.
+        if (tok.charAt(0) != ')'
+                && !SqlKeywords.isPartitionKeyword(tok)
+                && !SqlKeywords.isOrderKeyword(tok)
+                && !SqlKeywords.isRowsKeyword(tok)
+                && !SqlKeywords.isRangeKeyword(tok)
+                && !SqlKeywords.isGroupsKeyword(tok)
+                && !SqlKeywords.isCumulativeKeyword(tok)
+                && !Chars.isQuoted(tok)) {
+            int inheritPos = lexer.lastTokenPosition();
+            CharSequence nextTok = SqlUtil.fetchNext(lexer);
+            // Look at what follows: if it's ')' or a window clause keyword, this is inheritance
+            if (nextTok != null && (nextTok.charAt(0) == ')'
+                    || SqlKeywords.isPartitionKeyword(nextTok)
+                    || SqlKeywords.isOrderKeyword(nextTok)
+                    || SqlKeywords.isRowsKeyword(nextTok)
+                    || SqlKeywords.isRangeKeyword(nextTok)
+                    || SqlKeywords.isGroupsKeyword(nextTok))) {
+                throw SqlException.$(inheritPos, "window inheritance is not supported");
+            }
+            // Not inheritance - restore both tokens and let downstream parsing handle the error
+            lexer.backTo(inheritPos, tok);
+            tok = SqlUtil.fetchNext(lexer);
         }
 
         // Handle PARTITION BY
@@ -854,7 +881,6 @@ public class ExpressionParser {
                 }
 
                 if (framingMode == -1) {
-                    // Unrecognized keyword after ORDER BY - provide helpful error message
                     throw SqlException.$(frameModePos, "'rows', 'range', 'groups', 'cumulative' or ')' expected");
                 }
 
