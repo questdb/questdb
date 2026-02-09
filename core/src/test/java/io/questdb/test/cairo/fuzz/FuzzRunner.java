@@ -1018,7 +1018,7 @@ public class FuzzRunner {
                     engine.releaseInactiveTableSequencers();
                 }
             } catch (Throwable e) {
-                e.printStackTrace();
+                e.printStackTrace(System.out);
                 errors.add(e);
             } finally {
                 Path.clearThreadLocals();
@@ -1053,6 +1053,7 @@ public class FuzzRunner {
     }
 
     private TableReader getReaderHandleTableDropped(String tableNameWal) {
+        int metadataTimeoutRetries = 10;
         while (true) {
             try {
                 return getReader(tableNameWal);
@@ -1062,6 +1063,12 @@ public class FuzzRunner {
                         || e instanceof EntryLockedException) {
                     LOG.error().$((Throwable) e).$();
                     Os.sleep(10);
+                } else if (Chars.contains(e.getFlyweightMessage(), "Metadata read timeout")) {
+                    if (--metadataTimeoutRetries < 0) {
+                        throw e;
+                    }
+                    LOG.error().$("metadata read timeout, retrying [remainingRetries=").$(metadataTimeoutRetries).$("]").$((Throwable) e).$();
+                    Os.sleep(100);
                 } else {
                     throw e;
                 }
