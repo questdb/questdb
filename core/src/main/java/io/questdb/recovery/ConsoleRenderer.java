@@ -196,7 +196,7 @@ public class ConsoleRenderer {
                             "%-5d %-30s %-12d %-10s %-10s %-10s%n",
                             i,
                             entry.getDirName(),
-                            part.getRowCount(),
+                            entry.getRowCount(),
                             part.isParquetFormat() ? "parquet" : "native",
                             part.isReadOnly(),
                             statusStr

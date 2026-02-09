@@ -807,6 +807,28 @@ public class RecoverySessionTest extends AbstractCairoTest {
     }
 
     @Test
+public void testLsShowsTransientRowCountForLastPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            // 2 rows across 2 day-partitions: 1970-01-01 (1 row) and 1970-01-02 (1 row).
+            // The last partition's row count is stored as transientRowCount in the _txn
+            // header; its partition entry stores 0. ls must display the resolved count.
+            createNonWalTableWithRows("nav_transient_rc", 2);
+
+            String[] result = runSession("cd nav_transient_rc\nls\nquit\n");
+            String outText = result[0];
+            for (String line : outText.split("\n")) {
+                if (line.contains("1970-01-02")) {
+                    Assert.assertFalse(
+                            "last partition should show transientRowCount, not 0: " + line,
+                            line.matches(".*1970-01-02\\S*\\s+0\\s.*")
+                    );
+                    break;
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLsWithCorruptTxnShowsAllAsOrphan() throws Exception {
         assertMemoryLeak(() -> {
             createTableWithRows("nav_corrupt_txn", 2);

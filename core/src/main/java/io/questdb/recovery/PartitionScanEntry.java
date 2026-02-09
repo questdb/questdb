@@ -27,6 +27,7 @@ package io.questdb.recovery;
 public final class PartitionScanEntry {
     private final String dirName;
     private final String partitionName;
+    private final long rowCount;
     private final PartitionScanStatus status;
     private final int txnIndex;
     private final TxnPartitionState txnPartition;
@@ -36,13 +37,15 @@ public final class PartitionScanEntry {
             String partitionName,
             PartitionScanStatus status,
             TxnPartitionState txnPartition,
-            int txnIndex
+            int txnIndex,
+            long rowCount
     ) {
         this.dirName = dirName;
         this.partitionName = partitionName;
         this.status = status;
         this.txnPartition = txnPartition;
         this.txnIndex = txnIndex;
+        this.rowCount = rowCount;
     }
 
     public String getDirName() {
@@ -51,6 +54,10 @@ public final class PartitionScanEntry {
 
     public String getPartitionName() {
         return partitionName;
+    }
+
+    public long getRowCount() {
+        return rowCount;
     }
 
     public PartitionScanStatus getStatus() {

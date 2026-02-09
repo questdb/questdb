@@ -363,7 +363,7 @@ public class RecoverySession {
         PartitionScanEntry entry = cachedPartitionScan.getQuick(currentPartitionIndex);
         TxnPartitionState txnPart = entry.getTxnPartition();
         long partitionRowCount = txnPart != null
-                ? resolvePartitionRowCount(entry, cachedTxnState)
+                ? entry.getRowCount()
                 : 0;
         long partitionTimestamp = txnPart != null ? txnPart.getTimestampLo() : 0;
 
@@ -430,7 +430,7 @@ public class RecoverySession {
                 continue;
             }
 
-            long rowCount = resolvePartitionRowCount(entry, txnState);
+            long rowCount = entry.getRowCount();
             ColumnCheckResult result = columnCheckService.checkPartition(
                     tableDir,
                     entry.getDirName(),
@@ -485,7 +485,7 @@ public class RecoverySession {
             return;
         }
 
-        long rowCount = resolvePartitionRowCount(entry, cachedTxnState);
+        long rowCount = entry.getRowCount();
 
         try (Path path = new Path()) {
             path.of(dbRoot).concat(currentTable.getDirName()).$();
@@ -683,16 +683,6 @@ public class RecoverySession {
         out.println(sb);
     }
 
-    private static long resolvePartitionRowCount(PartitionScanEntry entry, TxnState txnState) {
-        // The last partition's row count is stored in transientRowCount in the _txn header,
-        // not in the partition entry itself (which stores 0 for the last partition).
-        if (txnState != null
-                && entry.getTxnIndex() == txnState.getPartitions().size() - 1
-                && txnState.getTransientRowCount() != TxnState.UNSET_LONG) {
-            return txnState.getTransientRowCount();
-        }
-        return entry.getTxnPartition().getRowCount();
-    }
 
     private void showColumn(PrintStream out, PrintStream err) {
         if (cachedMetaState == null || currentColumnIndex < 0) {

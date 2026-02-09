@@ -91,7 +91,7 @@ public class PartitionScanService {
                                 } else {
                                     orphanEntries.add(new PartitionScanEntry(
                                             name, name,
-                                            PartitionScanStatus.ORPHAN, null, -1
+                                            PartitionScanStatus.ORPHAN, null, -1, -1
                                     ));
                                 }
                             }
@@ -116,7 +116,8 @@ public class PartitionScanService {
                             partitionNameList.getQuick(i),
                             PartitionScanStatus.MATCHED,
                             partitions.getQuick(i),
-                            i
+                            i,
+                            resolveRowCount(partitions.getQuick(i), i, txnPartitionCount, txnState)
                     ));
                 }
             }
@@ -138,13 +139,24 @@ public class PartitionScanService {
                             partitionNameList.getQuick(i),
                             PartitionScanStatus.MISSING,
                             partitions.getQuick(i),
-                            i
+                            i,
+                            resolveRowCount(partitions.getQuick(i), i, txnPartitionCount, txnState)
                     ));
                 }
             }
         }
 
         return result;
+    }
+
+    private static long resolveRowCount(TxnPartitionState part, int txnIndex, int txnPartitionCount, TxnState txnState) {
+        // The last partition's row count is stored in transientRowCount in the _txn header,
+        // not in the partition entry itself (which stores 0 for the last partition).
+        if (txnIndex == txnPartitionCount - 1
+                && txnState.getTransientRowCount() != TxnState.UNSET_LONG) {
+            return txnState.getTransientRowCount();
+        }
+        return part.getRowCount();
     }
 
     static boolean isInternalDir(String name) {
