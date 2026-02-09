@@ -41,12 +41,20 @@ import org.junit.Test;
 public class HorizonJoinTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(HorizonJoinTest.class);
     private final TestTimestampType leftTableTimestampType;
+    private final boolean parallelHorizonJoinEnabled;
     private final TestTimestampType rightTableTimestampType;
 
     public HorizonJoinTest() {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         this.leftTableTimestampType = TestUtils.getTimestampType(rnd);
         this.rightTableTimestampType = TestUtils.getTimestampType(rnd);
+        this.parallelHorizonJoinEnabled = rnd.nextBoolean();
+    }
+
+    @Override
+    public void setUp() {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, String.valueOf(parallelHorizonJoinEnabled));
+        super.setUp();
     }
 
     @Test
@@ -309,16 +317,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             HORIZON JOIN prices AS p ON (t.sym = p.sym)
                             RANGE FROM 0s TO 1s STEP 1s AS h
                             """,
-                    """
-                            Async Horizon Join workers: 1 offsets: 2
-                              values: [avg(p.price),sum(t.qty)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trades
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: prices
-                            """
+                    getHorizonJoinPlanType() + " offsets: 2\n" +
+                            "  values: [avg(p.price),sum(t.qty)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trades\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: prices\n"
             );
         });
     }
@@ -519,6 +525,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Test
     public void testHorizonJoinParallelExecution() throws Exception {
         // Test parallel execution of HORIZON JOIN GROUP BY with larger dataset
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, "true");
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 10);
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10);
 
@@ -593,7 +600,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             ORDER BY h.offset
                             """;
 
-                    StringSink planSink = new StringSink();
+                    final StringSink planSink = new StringSink();
                     try (
                             RecordCursorFactory planFactory = engine.select("EXPLAIN " + sql, sqlExecutionContext);
                             RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)
@@ -626,7 +633,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "RANGE FROM 0s TO 1s STEP 1s AS h",
                     "VirtualRecord\n" +
                             "  functions: [sec_off,avg,avg1]\n" +
-                            "    Async Horizon Join workers: 1 offsets: 2\n" +
+                            "    " + getHorizonJoinPlanType() + " offsets: 2\n" +
                             "      keys: [sec_off]\n" +
                             "      values: [avg(p.bid),avg(p.ask)]\n" +
                             "        PageFrame\n" +
@@ -696,7 +703,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                 planSink.clear();
                 CursorPrinter.println(cursor, planFactory.getMetadata(), planSink);
             }
-            TestUtils.assertContains(planSink, "Async Horizon Join");
+            TestUtils.assertContains(planSink, getHorizonJoinPlanType());
 
             // Verify results
             assertQueryNoLeakCheck(
@@ -1562,7 +1569,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "  keys: [sec_offs]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [sec_offs,avg]\n" +
-                            "        Async Horizon Join workers: 1 offsets: 3\n" +
+                            "        " + getHorizonJoinPlanType() + " offsets: 3\n" +
                             "          keys: [sec_offs]\n" +
                             "          values: [avg(p.price)]\n" +
                             "            PageFrame\n" +
@@ -2558,6 +2565,10 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     true
             );
         });
+    }
+
+    private String getHorizonJoinPlanType() {
+        return parallelHorizonJoinEnabled ? "Async Horizon Join workers: 1" : "Horizon Join";
     }
 
     private long getMinutesDivisor() {

@@ -120,6 +120,7 @@ public class MarkoutTimeFrameHelper {
         if (timeFrameCursor.open() == 0) {
             return Long.MIN_VALUE;
         }
+        timeFrameCursor.recordAt(record, frameIndex, rowIndex);
 
         // Pre-compute master key hash once (avoids re-hashing on every iteration)
         final MapKey masterKey = keyToRowIdMap.withKey();
@@ -177,6 +178,7 @@ public class MarkoutTimeFrameHelper {
                     continue;
                 }
                 rowIndex = timeFrame.getRowHi() - 1;
+                timeFrameCursor.recordAt(record, frameIndex, rowIndex);
             }
         }
 
@@ -395,6 +397,7 @@ public class MarkoutTimeFrameHelper {
 
         int frameIndex = startFrameIndex;
         long rowIndex = startRowIndex;
+        timeFrameCursor.recordAt(record, frameIndex, rowIndex);
 
         while (true) {
             long currentRowId = Rows.toRowID(frameIndex, rowIndex);
@@ -433,6 +436,7 @@ public class MarkoutTimeFrameHelper {
                 }
                 frameIndex = timeFrame.getFrameIndex();
                 rowIndex = timeFrame.getRowLo();
+                timeFrameCursor.recordAt(record, frameIndex, rowIndex);
             }
         }
     }
@@ -469,11 +473,7 @@ public class MarkoutTimeFrameHelper {
     }
 
     public void recordAt(long rowId) {
-        int frameIndex = Rows.toPartitionIndex(rowId);
-        long rowIndex = Rows.toLocalRowID(rowId);
-        timeFrameCursor.jumpTo(frameIndex);
-        timeFrameCursor.open();
-        timeFrameCursor.recordAtRowIndex(record, rowIndex);
+        timeFrameCursor.recordAt(record, rowId);
     }
 
     /**

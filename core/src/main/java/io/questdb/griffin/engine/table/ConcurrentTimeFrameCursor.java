@@ -31,6 +31,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
@@ -46,6 +47,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -195,7 +197,6 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
         }
         final long rowCount = frameRowCounts.getQuick(frameIndex);
         if (rowCount > 0) {
-            frameMemoryPool.navigateTo(frameIndex, record);
             final int cacheOffset = frameIndex * 2;
             long timestampLo = frameTimestampCache.get(cacheOffset);
             long timestampHi;
@@ -203,11 +204,11 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
                 // Cache hit - use cached timestamps
                 timestampHi = frameTimestampCache.get(cacheOffset + 1);
             } else {
-                // Cache miss - read timestamps and cache them
-                record.setRowIndex(0);
-                timestampLo = record.getTimestamp(metadata.getTimestampIndex());
-                record.setRowIndex(rowCount - 1);
-                timestampHi = record.getTimestamp(metadata.getTimestampIndex());
+                // Cache miss - read timestamps directly from frame memory
+                final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+                final long timestampAddress = frameMemory.getPageAddress(metadata.getTimestampIndex());
+                timestampLo = Unsafe.getUnsafe().getLong(timestampAddress);
+                timestampHi = Unsafe.getUnsafe().getLong(timestampAddress + (rowCount - 1) * 8);
                 frameTimestampCache.set(cacheOffset, timestampLo);
                 frameTimestampCache.set(cacheOffset + 1, timestampHi);
             }

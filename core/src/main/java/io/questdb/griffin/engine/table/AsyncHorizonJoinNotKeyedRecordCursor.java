@@ -76,10 +76,10 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
     private SqlExecutionContext executionContext;
     private int frameLimit;
     private PageFrameSequence<AsyncHorizonJoinNotKeyedAtom> frameSequence;
+    private boolean isExhausted;
     private boolean isOpen;
     private boolean isSlaveTimeFrameCacheBuilt;
     private boolean isValueBuilt;
-    private int recordsRemaining = 1;
     private TablePageFrameCursor slaveFrameCursor;
 
     public AsyncHorizonJoinNotKeyedRecordCursor(
@@ -95,9 +95,9 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-        if (recordsRemaining > 0) {
-            counter.add(recordsRemaining);
-            recordsRemaining = 0;
+        if (!isExhausted) {
+            counter.inc();
+            isExhausted = true;
         }
     }
 
@@ -138,11 +138,15 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
 
     @Override
     public boolean hasNext() {
-        buildSlaveTimeFrameCacheConditionally();
+        if (isExhausted) {
+            return false;
+        }
         if (!isValueBuilt) {
+            buildSlaveTimeFrameCacheConditionally();
             buildValue();
         }
-        return recordsRemaining-- > 0;
+        isExhausted = true;
+        return true;
     }
 
     @Override
@@ -162,7 +166,7 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
 
     @Override
     public void toTop() {
-        recordsRemaining = 1;
+        isExhausted = false;
         GroupByUtils.toTop(groupByFunctions);
         if (frameSequence != null) {
             frameSequence.getAtom().toTop();

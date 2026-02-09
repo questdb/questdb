@@ -88,6 +88,10 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
 
     /**
      * Opens frame rows for record navigation and updates frame's row lo/hi fields.
+     * <p>
+     * Note: this method does NOT initialize the record for access. Use
+     * {@link #recordAt(Record, int, long)} or {@link #recordAt(Record, long)}
+     * to position and initialize the record after opening a frame.
      *
      * @return frame size in rows
      */

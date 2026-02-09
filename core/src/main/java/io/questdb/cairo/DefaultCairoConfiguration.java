@@ -1535,6 +1535,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelHorizonJoinEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlParallelWindowJoinEnabled() {
         return true;
     }

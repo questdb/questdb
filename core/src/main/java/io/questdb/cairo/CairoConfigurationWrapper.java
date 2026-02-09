@@ -1512,6 +1512,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelHorizonJoinEnabled() {
+        return getDelegate().isSqlParallelHorizonJoinEnabled();
+    }
+
+    @Override
     public boolean isSqlParallelWindowJoinEnabled() {
         return getDelegate().isSqlParallelWindowJoinEnabled();
     }

@@ -89,7 +89,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     protected final GroupByFunctionsUpdater ownerFunctionUpdater;
     protected final ObjList<GroupByFunction> ownerGroupByFunctions;
     // Per-worker horizon timestamp iterators for sorted processing
-    protected final HorizonTimestampIterator ownerHorizonIterator;
+    protected final AsyncHorizonTimestampIterator ownerHorizonIterator;
     protected final ConcurrentTimeFrameCursor ownerSlaveTimeFrameCursor;
     protected final MarkoutTimeFrameHelper ownerSlaveTimeFrameHelper;
     protected final SymbolTranslatingRecord ownerSymbolTranslatingRecord;
@@ -99,7 +99,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     protected final ObjList<Function> perWorkerFilters;
     protected final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     protected final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
-    protected final ObjList<HorizonTimestampIterator> perWorkerHorizonIterators;
+    protected final ObjList<AsyncHorizonTimestampIterator> perWorkerHorizonIterators;
     protected final PerWorkerLocks perWorkerLocks;
     protected final ObjList<ConcurrentTimeFrameCursor> perWorkerSlaveTimeFrameCursors;
     protected final ObjList<MarkoutTimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
@@ -343,7 +343,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
      * Get the horizon timestamp iterator for the given slot.
      * Used for sorted processing of horizon timestamps within a page frame.
      */
-    public HorizonTimestampIterator getHorizonIterator(int slotId) {
+    public AsyncHorizonTimestampIterator getHorizonIterator(int slotId) {
         if (slotId == -1) {
             return ownerHorizonIterator;
         }
@@ -551,11 +551,11 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         }
     }
 
-    private static HorizonTimestampIterator createHorizonIterator(LongList offsets) {
+    private static AsyncHorizonTimestampIterator createHorizonIterator(LongList offsets) {
         if (offsets.size() == 1) {
-            return new SingleOffsetHorizonTimestampIterator(offsets.getQuick(0));
+            return new AsyncSingleOffsetHorizonTimestampIterator(offsets.getQuick(0));
         }
-        return new MultiOffsetHorizonTimestampIterator(offsets);
+        return new AsyncMultiOffsetHorizonTimestampIterator(offsets);
     }
 
     /**

@@ -35,7 +35,7 @@ import io.questdb.std.DirectLongList;
  * Returns horizon timestamps in master's resolution (master_ts + offset).
  * Callers must scale externally for ASOF lookup when master/slave timestamp types differ.
  */
-public class SingleOffsetHorizonTimestampIterator implements HorizonTimestampIterator {
+public class AsyncSingleOffsetHorizonTimestampIterator implements AsyncHorizonTimestampIterator {
     private final long offset;
     private long currentHorizonTs;
     private long currentIndex;
@@ -47,7 +47,7 @@ public class SingleOffsetHorizonTimestampIterator implements HorizonTimestampIte
     private int timestampColumnIndex;
     private long tupleCount;
 
-    public SingleOffsetHorizonTimestampIterator(long offset) {
+    public AsyncSingleOffsetHorizonTimestampIterator(long offset) {
         this.offset = offset;
     }
 

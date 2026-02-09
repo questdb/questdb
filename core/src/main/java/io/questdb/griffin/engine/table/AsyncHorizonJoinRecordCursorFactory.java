@@ -322,7 +322,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             final Record masterKeyRecord = atom.getMasterKeyRecord(slotId, record);
 
             // Get horizon timestamp iterator and initialize for filtered rows
-            final HorizonTimestampIterator horizonIterator = atom.getHorizonIterator(slotId);
+            final AsyncHorizonTimestampIterator horizonIterator = atom.getHorizonIterator(slotId);
             record.setRowIndex(0);
             long baseRowId = record.getRowId();
             horizonIterator.ofFiltered(record, rows, masterTimestampColumnIndex);
@@ -365,7 +365,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
      * Watermarks are tracked internally by the helper and reset via toTop().
      */
     private static void processSortedHorizonTimestamps(
-            HorizonTimestampIterator horizonIterator,
+            AsyncHorizonTimestampIterator horizonIterator,
             PageFrameMemoryRecord masterRecord,
             Record masterKeyRecord,
             long baseRowId,
@@ -518,7 +518,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             final Record masterKeyRecord = atom.getMasterKeyRecord(slotId, record);
 
             // Get horizon timestamp iterator and initialize for this frame
-            final HorizonTimestampIterator horizonIterator = atom.getHorizonIterator(slotId);
+            final AsyncHorizonTimestampIterator horizonIterator = atom.getHorizonIterator(slotId);
             record.setRowIndex(0);
             long baseRowId = record.getRowId();
             horizonIterator.of(record, 0, frameRowCount, masterTimestampColumnIndex);

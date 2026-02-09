@@ -103,6 +103,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD("cairo.sql.parallel.filter.pretouch.threshold"),
     CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT("cairo.sql.parallel.filter.dispatch.limit"),
     CAIRO_SQL_PARALLEL_TOP_K_ENABLED("cairo.sql.parallel.topk.enabled"),
+    CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED("cairo.sql.parallel.horizon.join.enabled"),
     CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED("cairo.sql.parallel.window.join.enabled"),
     CAIRO_SQL_PARALLEL_GROUPBY_ENABLED("cairo.sql.parallel.groupby.enabled"),
     CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY("cairo.sql.parallel.groupby.merge.shard.queue.capacity"),

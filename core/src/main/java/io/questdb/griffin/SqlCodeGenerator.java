@@ -277,7 +277,9 @@ import io.questdb.griffin.engine.table.FilterOnExcludedValuesRecordCursorFactory
 import io.questdb.griffin.engine.table.FilterOnSubQueryRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnValuesRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinRecord;
+import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllSymbolsFilteredRecordCursorFactory;
@@ -3224,9 +3226,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ObjList<Function> bindVarFunctions = null;
         Function filter = null;
         ExpressionNode filterExpr = null;
-        boolean supportsParallelism = masterFactory.supportsPageFrameCursor();
+        final boolean parallelHorizonJoinEnabled = executionContext.isParallelHorizonJoinEnabled();
+        boolean supportsParallelism = parallelHorizonJoinEnabled && masterFactory.supportsPageFrameCursor();
 
-        if (!supportsParallelism && masterFactory.supportsFilterStealing()) {
+        if (parallelHorizonJoinEnabled && masterFactory.supportsFilterStealing() && masterFactory.getBaseFactory().supportsPageFrameCursor()) {
             RecordCursorFactory filterFactory = masterFactory;
             masterFactory = masterFactory.getBaseFactory();
             assert masterFactory.supportsPageFrameCursor();
@@ -3239,12 +3242,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             filterFactory.halfClose();
         }
 
-        // HORIZON JOIN tasks are "heavy", hence smaller frame sizes
-        masterFactory.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
-
-        if (!supportsParallelism) {
-            throw SqlException.position(slaveModel.getJoinKeywordPosition())
-                    .put("HORIZON JOIN master table must support page frames");
+        if (supportsParallelism) {
+            // HORIZON JOIN tasks are "heavy", hence smaller frame sizes
+            masterFactory.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
         }
 
         // Check slave factory supports TimeFrameCursor for parallel cursor creation
@@ -3316,41 +3316,45 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // Check if parallel execution is supported
         ObjList<Function> keyFunctions = extractVirtualFunctionsFromProjection(tempInnerProjectionFunctions, projectionFunctionFlags);
         if (!SqlUtil.isParallelismSupported(keyFunctions) || !GroupByUtils.isParallelismSupported(groupByFunctions)) {
-            throw SqlException.position(slaveModel.getJoinKeywordPosition())
-                    .put("HORIZON JOIN GROUP BY functions must support parallelism");
+            supportsParallelism = false;
         }
 
-        // Compile per-worker inner projection functions for expression keys
-        ObjList<ObjList<Function>> perWorkerInnerProjectionFunctions = compilePerWorkerInnerProjectionFunctions(
-                executionContext,
-                parentModel.getColumns(),
-                tempInnerProjectionFunctions,
-                workerCount,
-                innerMetadata
-        );
+        ObjList<ObjList<Function>> perWorkerKeyFunctions = null;
+        ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = null;
 
-        // Extract per-worker key functions (for expression keys)
-        ObjList<ObjList<Function>> perWorkerKeyFunctions = extractWorkerFunctionsConditionally(
-                tempInnerProjectionFunctions,
-                projectionFunctionFlags,
-                perWorkerInnerProjectionFunctions,
-                GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL
-        );
+        if (supportsParallelism) {
+            // Compile per-worker inner projection functions for expression keys
+            ObjList<ObjList<Function>> perWorkerInnerProjectionFunctions = compilePerWorkerInnerProjectionFunctions(
+                    executionContext,
+                    parentModel.getColumns(),
+                    tempInnerProjectionFunctions,
+                    workerCount,
+                    innerMetadata
+            );
 
-        // Compile per-worker GROUP BY functions
-        ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = compileWorkerGroupByFunctionsConditionally(
-                executionContext,
-                parentModel,
-                groupByFunctions,
-                workerCount,
-                innerMetadata
-        );
+            // Extract per-worker key functions (for expression keys)
+            perWorkerKeyFunctions = extractWorkerFunctionsConditionally(
+                    tempInnerProjectionFunctions,
+                    projectionFunctionFlags,
+                    perWorkerInnerProjectionFunctions,
+                    GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL
+            );
 
-        // If null (thread-safe functions), create per-worker lists that reuse owner functions
-        if (perWorkerGroupByFunctions == null) {
-            perWorkerGroupByFunctions = new ObjList<>(workerCount);
-            for (int i = 0; i < workerCount; i++) {
-                perWorkerGroupByFunctions.add(groupByFunctions);
+            // Compile per-worker GROUP BY functions
+            perWorkerGroupByFunctions = compileWorkerGroupByFunctionsConditionally(
+                    executionContext,
+                    parentModel,
+                    groupByFunctions,
+                    workerCount,
+                    innerMetadata
+            );
+
+            // If null (thread-safe functions), create per-worker lists that reuse owner functions
+            if (perWorkerGroupByFunctions == null) {
+                perWorkerGroupByFunctions = new ObjList<>(workerCount);
+                for (int i = 0; i < workerCount; i++) {
+                    perWorkerGroupByFunctions.add(groupByFunctions);
+                }
             }
         }
 
@@ -3503,6 +3507,63 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             );
         }
 
+        if (!supportsParallelism) {
+            // Single-threaded path: verify master factory supports random access (needed to revisit rows in sorted order)
+            if (!masterFactory.recordCursorSupportsRandomAccess()) {
+                throw SqlException.position(slaveModel.getJoinKeywordPosition())
+                        .put("HORIZON JOIN master table must support random access or page frames");
+            }
+
+            // Choose single-threaded factory based on whether there are GROUP BY keys
+            if (keyTypesCopy.getColumnCount() == 0) {
+                return new HorizonJoinNotKeyedRecordCursorFactory(
+                        configuration,
+                        outerProjectionMetadata,
+                        innerMetadata,
+                        masterFactory,
+                        slaveFactory,
+                        offsets,
+                        masterTimestampColumnIndex,
+                        groupByFunctions,
+                        valueTypesCopy.getColumnCount(),
+                        asOfJoinKeyTypes,
+                        masterAsOfJoinMapSink,
+                        slaveAsOfJoinMapSink,
+                        masterMetadata.getColumnCount(),
+                        masterSymbolKeyColumnIndices,
+                        slaveSymbolKeyColumnIndices,
+                        columnSources,
+                        columnIndices,
+                        asm
+                );
+            }
+
+            return new HorizonJoinRecordCursorFactory(
+                    configuration,
+                    outerProjectionMetadata,
+                    innerMetadata,
+                    masterFactory,
+                    slaveFactory,
+                    offsets,
+                    masterTimestampColumnIndex,
+                    groupByFunctions,
+                    new ObjList<>(tempOuterProjectionFunctions),
+                    keyTypesCopy,
+                    valueTypesCopy,
+                    asOfJoinKeyTypes,
+                    masterAsOfJoinMapSink,
+                    slaveAsOfJoinMapSink,
+                    masterMetadata.getColumnCount(),
+                    masterSymbolKeyColumnIndices,
+                    slaveSymbolKeyColumnIndices,
+                    groupByColumnFilter,
+                    keyFunctions,
+                    columnSources,
+                    columnIndices,
+                    asm
+            );
+        }
+
         final ObjList<Function> perWorkerFilters = compileWorkerFiltersConditionally(
                 executionContext,
                 filter,
@@ -3511,7 +3572,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 masterMetadata
         );
 
-        // Choose factory based on whether there are GROUP BY keys
+        // Choose async factory based on whether there are GROUP BY keys
         if (keyTypesCopy.getColumnCount() == 0) {
             // Non-keyed GROUP BY: produces a single output row
             return new AsyncHorizonJoinNotKeyedRecordCursorFactory(
