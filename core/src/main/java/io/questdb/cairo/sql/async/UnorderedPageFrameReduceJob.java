@@ -113,7 +113,7 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                 if (taskSequenceId != frameSequence.getId()) {
                     // Stale task from a previous dispatch cycle; discard without
                     // touching the (already reset) latch or error state.
-                    LOG.info()
+                    LOG.error()
                             .$("skipping stale task [expected=").$(frameSequence.getId())
                             .$(", got=").$(taskSequenceId)
                             .I$();
