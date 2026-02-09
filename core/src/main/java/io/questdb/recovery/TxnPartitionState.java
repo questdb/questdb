@@ -36,6 +36,7 @@ public final class TxnPartitionState {
     private final boolean parquetFormat;
     private final boolean readOnly;
     private final long rowCount;
+    private final int squashCount;
     private final long timestampLo;
 
     public TxnPartitionState(
@@ -45,7 +46,8 @@ public final class TxnPartitionState {
             long nameTxn,
             long parquetFileSize,
             boolean parquetFormat,
-            boolean readOnly
+            boolean readOnly,
+            int squashCount
     ) {
         this.index = index;
         this.timestampLo = timestampLo;
@@ -54,6 +56,7 @@ public final class TxnPartitionState {
         this.parquetFileSize = parquetFileSize;
         this.parquetFormat = parquetFormat;
         this.readOnly = readOnly;
+        this.squashCount = squashCount;
     }
 
     public int getIndex() {
@@ -70,6 +73,10 @@ public final class TxnPartitionState {
 
     public long getRowCount() {
         return rowCount;
+    }
+
+    public int getSquashCount() {
+        return squashCount;
     }
 
     public long getTimestampLo() {

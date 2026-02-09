@@ -26,10 +26,13 @@ package io.questdb.recovery;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
 import java.io.BufferedReader;
@@ -41,7 +44,7 @@ import java.util.Map;
 /**
  * Interactive recovery REPL. Runs a read-eval-print loop that accepts commands:
  * {@code tables}, {@code cd}, {@code ls}, {@code show}, {@code print},
- * {@code pwd}, {@code help}, and {@code check columns}.
+ * {@code pwd}, {@code help}, {@code truncate}, and {@code check columns}.
  *
  * <p>Command dispatch is table-driven: {@link #buildCommandMap()} registers all
  * commands as static methods implementing {@link RecoveryCommand}. Each command
@@ -81,6 +84,7 @@ public class RecoverySession {
         );
         this.commandCtx = new CommandContext(
                 nav,
+                txnReader,
                 columnCheckService,
                 columnValueReader,
                 ff,
@@ -153,6 +157,7 @@ public class RecoverySession {
         map.put("pwd", RecoverySession::cmdPwd);
         map.put("show", RecoverySession::cmdShow);
         map.put("tables", RecoverySession::cmdTables);
+        map.put("truncate", RecoverySession::cmdTruncate);
         return map;
     }
 
@@ -309,6 +314,296 @@ public class RecoverySession {
 
         TxnState state = nav.getTxnReader().readForTable(nav.getDbRoot(), table);
         ctx.getRenderer().printShow(table, state, out);
+    }
+
+    private static void cmdTruncate(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
+        NavigationContext nav = ctx.getNav();
+        FilesFacade ff = ctx.getFf();
+
+        if (!nav.isAtPartition()) {
+            err.println("truncate is only valid at partition level (cd into a partition first)");
+            return;
+        }
+
+        long newRowCount;
+        try {
+            newRowCount = Numbers.parseLong(arg);
+        } catch (NumericException e) {
+            err.println("invalid row count: " + arg);
+            return;
+        }
+
+        if (newRowCount <= 0) {
+            err.println("row count must be > 0");
+            return;
+        }
+
+        TxnState cachedTxnState = nav.getCachedTxnState();
+        MetaState cachedMetaState = nav.getCachedMetaState();
+        ColumnVersionState cachedCvState = nav.getCachedCvState();
+        if (cachedTxnState == null || cachedMetaState == null) {
+            err.println("no txn/meta state cached for current table");
+            return;
+        }
+
+        PartitionScanEntry entry = nav.getCachedPartitionScan().getQuick(nav.getCurrentPartitionIndex());
+        TxnPartitionState txnPart = entry.getTxnPartition();
+        if (txnPart == null) {
+            err.println("partition has no row count (ORPHAN)");
+            return;
+        }
+
+        if (txnPart.isParquetFormat()) {
+            err.println("cannot truncate a parquet partition");
+            return;
+        }
+
+        // Use the resolved row count from the scan entry, which handles the last-partition
+        // convention: the _txn file stores the last partition's row count in the header's
+        // transientRowCount field, not in the partition entry itself.
+        long currentRowCount = entry.getRowCount();
+        if (newRowCount >= currentRowCount) {
+            err.println("new row count (" + newRowCount + ") must be less than current (" + currentRowCount + ")");
+            return;
+        }
+
+        ObjList<TxnPartitionState> oldPartitions = cachedTxnState.getPartitions();
+        int partitionCount = oldPartitions.size();
+        int targetTxnIndex = txnPart.getIndex();
+        boolean isLastPartition = (targetTxnIndex == partitionCount - 1);
+
+        // build modified state
+        // baseVersion must equal txn — they are checked by TxReader.unsafeLoadAll()
+        TxnState modified = new TxnState();
+        long newTxn = cachedTxnState.getTxn() + 1;
+        modified.setBaseVersion(newTxn);
+        modified.setTxn(newTxn);
+        modified.setMinTimestamp(cachedTxnState.getMinTimestamp());
+        modified.setMaxTimestamp(cachedTxnState.getMaxTimestamp());
+        modified.setStructureVersion(cachedTxnState.getStructureVersion());
+        modified.setDataVersion(cachedTxnState.getDataVersion() + 1);
+        modified.setPartitionTableVersion(cachedTxnState.getPartitionTableVersion() + 1);
+        modified.setColumnVersion(cachedTxnState.getColumnVersion());
+        modified.setTruncateVersion(cachedTxnState.getTruncateVersion() + 1);
+        modified.setSeqTxn(cachedTxnState.getSeqTxn());
+        modified.setLagTxnCount(cachedTxnState.getLagTxnCount());
+        modified.setLagRowCount(cachedTxnState.getLagRowCount());
+        modified.setLagMinTimestamp(cachedTxnState.getLagMinTimestamp());
+        modified.setLagMaxTimestamp(cachedTxnState.getLagMaxTimestamp());
+        modified.setMapWriterCount(cachedTxnState.getMapWriterCount());
+
+        // copy symbols
+        for (int i = 0, n = cachedTxnState.getSymbols().size(); i < n; i++) {
+            modified.getSymbols().add(cachedTxnState.getSymbols().getQuick(i));
+        }
+
+        // rebuild partitions with modified row count
+        for (int i = 0; i < partitionCount; i++) {
+            TxnPartitionState p = oldPartitions.getQuick(i);
+            if (i == targetTxnIndex) {
+                modified.getPartitions().add(new TxnPartitionState(
+                        i,
+                        p.getTimestampLo(),
+                        newRowCount,
+                        p.getNameTxn(),
+                        p.getParquetFileSize(),
+                        p.isParquetFormat(),
+                        p.isReadOnly(),
+                        p.getSquashCount()
+                ));
+            } else {
+                modified.getPartitions().add(p);
+            }
+        }
+
+        // recompute fixedRowCount and transientRowCount
+        // For non-last partitions, TxnPartitionState.getRowCount() is the actual value.
+        // For the last partition, the _txn file stores 0 in the entry; the real count is
+        // in the header's transientRowCount. We use the entry value for non-last, and
+        // either newRowCount (if we're truncating the last) or the original header
+        // transientRowCount (if we're truncating a non-last partition).
+        long fixedRowCount = 0;
+        for (int i = 0; i < partitionCount - 1; i++) {
+            fixedRowCount += modified.getPartitions().getQuick(i).getRowCount();
+        }
+        modified.setFixedRowCount(fixedRowCount);
+        if (isLastPartition) {
+            modified.setTransientRowCount(newRowCount);
+        } else {
+            modified.setTransientRowCount(cachedTxnState.getTransientRowCount());
+        }
+
+        // update maxTimestamp if truncating the last partition
+        long oldMaxTimestamp = cachedTxnState.getMaxTimestamp();
+        long newMaxTimestamp = oldMaxTimestamp;
+        if (isLastPartition) {
+            int tsIndex = cachedMetaState.getTimestampIndex();
+            if (tsIndex < 0) {
+                err.println("no timestamp column found in metadata");
+                return;
+            }
+
+            long tsColumnTop = 0;
+            if (cachedCvState != null && !NavigationContext.hasCvIssues(cachedCvState)) {
+                tsColumnTop = cachedCvState.getColumnTop(txnPart.getTimestampLo(), tsIndex);
+            }
+
+            if (tsColumnTop >= newRowCount) {
+                err.println("timestamp column top (" + tsColumnTop + ") >= new row count (" + newRowCount + "); cannot determine max timestamp");
+                return;
+            }
+
+            long fileRowIndex = newRowCount - 1 - tsColumnTop;
+            MetaColumnState tsCol = cachedMetaState.getColumns().getQuick(tsIndex);
+            long tsNameTxn = -1;
+            if (cachedCvState != null && !NavigationContext.hasCvIssues(cachedCvState)) {
+                tsNameTxn = cachedCvState.getColumnNameTxn(txnPart.getTimestampLo(), tsIndex);
+            }
+
+            try (Path path = new Path()) {
+                path.of(nav.getDbRoot()).concat(nav.getCurrentTable().getDirName())
+                        .slash().concat(entry.getDirName()).slash();
+                TableUtils.dFile(path, tsCol.getName(), tsNameTxn);
+
+                long fd = ff.openRO(path.$());
+                if (fd < 0) {
+                    err.println("cannot open timestamp file: " + path);
+                    return;
+                }
+                try {
+                    long scratch = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        long readOffset = fileRowIndex * Long.BYTES;
+                        long bytesRead = ff.read(fd, scratch, Long.BYTES, readOffset);
+                        if (bytesRead != Long.BYTES) {
+                            err.println("cannot read timestamp at row " + fileRowIndex);
+                            return;
+                        }
+                        newMaxTimestamp = Unsafe.getUnsafe().getLong(scratch);
+                    } finally {
+                        Unsafe.free(scratch, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    }
+                } finally {
+                    ff.close(fd);
+                }
+            }
+            modified.setMaxTimestamp(newMaxTimestamp);
+        }
+
+        // recompute lag checksum
+        modified.setLagChecksum(TableUtils.calculateTxnLagChecksum(
+                modified.getTxn(),
+                modified.getSeqTxn(),
+                modified.getLagRowCount(),
+                modified.getLagMinTimestamp(),
+                modified.getLagMaxTimestamp(),
+                modified.getLagTxnCount()
+        ));
+
+        // backup original _txn
+        try (Path txnPath = new Path(); Path bakPath = new Path()) {
+            txnPath.of(nav.getDbRoot()).concat(nav.getCurrentTable().getDirName())
+                    .concat(TableUtils.TXN_FILE_NAME).$();
+
+            String bakSuffix = ".bak";
+            bakPath.of(txnPath).put(bakSuffix).$();
+            int bakNum = 0;
+            while (ff.exists(bakPath.$())) {
+                bakNum++;
+                bakPath.of(txnPath).put(".bak.").put(bakNum).$();
+            }
+
+            int copyResult = ff.copy(txnPath.$(), bakPath.$());
+            if (copyResult < 0) {
+                err.println("failed to create backup: " + bakPath);
+                return;
+            }
+            out.println("backup: " + bakPath);
+
+            // print before/after summary
+            out.println("partition: " + entry.getPartitionName());
+            out.println("  rows: " + currentRowCount + " -> " + newRowCount);
+            if (newMaxTimestamp != oldMaxTimestamp) {
+                out.println("  maxTimestamp: " + ConsoleRenderer.formatTimestamp(oldMaxTimestamp)
+                        + " -> " + ConsoleRenderer.formatTimestamp(newMaxTimestamp));
+            }
+            out.println("  fixedRowCount: " + modified.getFixedRowCount());
+            out.println("  transientRowCount: " + modified.getTransientRowCount());
+
+            // write
+            TxnSerializer.write(modified, txnPath.$(), ff);
+
+            // validate with BoundedTxnReader
+            TxnState readBack = ctx.getBoundedTxnReader().read(txnPath.$());
+            boolean valid = true;
+            if (readBack.getPartitions().size() != partitionCount) {
+                err.println("WARNING: partition count mismatch after write: expected "
+                        + partitionCount + ", got " + readBack.getPartitions().size());
+                valid = false;
+            }
+            if (readBack.getPartitions().size() > targetTxnIndex) {
+                long readBackRowCount = readBack.getPartitions().getQuick(targetTxnIndex).getRowCount();
+                if (readBackRowCount != newRowCount) {
+                    err.println("WARNING: row count mismatch after write: expected "
+                            + newRowCount + ", got " + readBackRowCount);
+                    valid = false;
+                }
+            }
+            if (readBack.getFixedRowCount() != modified.getFixedRowCount()) {
+                err.println("WARNING: fixedRowCount mismatch: expected "
+                        + modified.getFixedRowCount() + ", got " + readBack.getFixedRowCount());
+                valid = false;
+            }
+            if (readBack.getTransientRowCount() != modified.getTransientRowCount()) {
+                err.println("WARNING: transientRowCount mismatch: expected "
+                        + modified.getTransientRowCount() + ", got " + readBack.getTransientRowCount());
+                valid = false;
+            }
+            if (readBack.getMaxTimestamp() != modified.getMaxTimestamp()) {
+                err.println("WARNING: maxTimestamp mismatch: expected "
+                        + modified.getMaxTimestamp() + ", got " + readBack.getMaxTimestamp());
+                valid = false;
+            }
+
+            // validate with production TxReader
+            try (TxReader txReader = new TxReader(ff)) {
+                txReader.ofRO(txnPath.$(), cachedMetaState.getTimestampColumnType(), cachedMetaState.getPartitionBy());
+                if (!txReader.unsafeLoadAll()) {
+                    err.println("WARNING: production TxReader failed to load the written _txn file");
+                    valid = false;
+                } else {
+                    if (txReader.getPartitionCount() != partitionCount) {
+                        err.println("WARNING: TxReader partition count mismatch: expected "
+                                + partitionCount + ", got " + txReader.getPartitionCount());
+                        valid = false;
+                    }
+                    if (txReader.getFixedRowCount() != modified.getFixedRowCount()) {
+                        err.println("WARNING: TxReader fixedRowCount mismatch: expected "
+                                + modified.getFixedRowCount() + ", got " + txReader.getFixedRowCount());
+                        valid = false;
+                    }
+                    if (txReader.getTransientRowCount() != modified.getTransientRowCount()) {
+                        err.println("WARNING: TxReader transientRowCount mismatch: expected "
+                                + modified.getTransientRowCount() + ", got " + txReader.getTransientRowCount());
+                        valid = false;
+                    }
+                    if (txReader.getMaxTimestamp() != modified.getMaxTimestamp()) {
+                        err.println("WARNING: TxReader maxTimestamp mismatch: expected "
+                                + modified.getMaxTimestamp() + ", got " + txReader.getMaxTimestamp());
+                        valid = false;
+                    }
+                }
+            }
+
+            if (valid) {
+                out.println("OK");
+            }
+
+            // invalidate caches and re-navigate
+            String tableName = nav.getCurrentTable().getTableName();
+            nav.cdRoot();
+            nav.cd(tableName, err);
+        }
     }
 
     private static void cmdTables(String arg, CommandContext ctx, PrintStream out, PrintStream err) {

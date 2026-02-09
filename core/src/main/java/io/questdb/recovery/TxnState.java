@@ -44,6 +44,7 @@ public final class TxnState {
     private final ObjList<ReadIssue> issues = new ObjList<>();
     private final ObjList<TxnPartitionState> partitions = new ObjList<>();
     private final ObjList<TxnSymbolState> symbols = new ObjList<>();
+    private int lagChecksum = UNSET_INT;
     private int lagRowCount = UNSET_INT;
     private int lagTxnCount = UNSET_INT;
     private int mapWriterCount = UNSET_INT;
@@ -91,6 +92,10 @@ public final class TxnState {
 
     public ObjList<ReadIssue> getIssues() {
         return issues;
+    }
+
+    public int getLagChecksum() {
+        return lagChecksum;
     }
 
     public long getLagMaxTimestamp() {
@@ -186,6 +191,10 @@ public final class TxnState {
 
     void setFixedRowCount(long fixedRowCount) {
         this.fixedRowCount = fixedRowCount;
+    }
+
+    void setLagChecksum(int lagChecksum) {
+        this.lagChecksum = lagChecksum;
     }
 
     void setLagMaxTimestamp(long lagMaxTimestamp) {

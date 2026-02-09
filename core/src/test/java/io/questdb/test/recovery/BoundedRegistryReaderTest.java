@@ -425,6 +425,71 @@ public class BoundedRegistryReaderTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testReadAddRemoveReAdd() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table readd_tbl (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
+            drainWalQueue(engine);
+            execute("drop table readd_tbl");
+            drainWalQueue(engine);
+            execute("create table readd_tbl (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
+            drainWalQueue(engine);
+
+            RegistryState state = readRegistryState();
+            RegistryEntry entry = findEntryByTableName(state, "readd_tbl");
+            Assert.assertNotNull("re-added table should be in registry", entry);
+            Assert.assertFalse("re-added table should not be marked as removed", entry.isRemoved());
+        });
+    }
+
+    @Test
+    public void testReadCorruptStringLengthExceedsMax() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table corrupt_maxstr (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
+            drainWalQueue(engine);
+
+            // set table name char count to 2000 (exceeds reader max of 1024)
+            String registryPath = findRegistryPath();
+            long fd = FF.openRW(Path.getThreadLocal(registryPath).$(), CairoConfiguration.O_NONE);
+            Assert.assertTrue(fd > -1);
+            try {
+                long scratch = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    // offset 12 = table name char count (after 8-byte header + 4-byte operation)
+                    Unsafe.getUnsafe().putInt(scratch, 2000);
+                    FF.write(fd, scratch, Integer.BYTES, Long.BYTES + Integer.BYTES);
+                } finally {
+                    Unsafe.free(scratch, Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            } finally {
+                FF.close(fd);
+            }
+
+            RegistryState state = readRegistryState();
+            Assert.assertTrue(hasIssue(state, RecoveryIssueCode.INVALID_COUNT));
+        });
+    }
+
+    @Test
+    public void testReadZeroLengthFile() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table zero_len (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
+            drainWalQueue(engine);
+
+            String registryPath = findRegistryPath();
+            long fd = FF.openRW(Path.getThreadLocal(registryPath).$(), CairoConfiguration.O_NONE);
+            Assert.assertTrue(fd > -1);
+            try {
+                Assert.assertTrue(FF.truncate(fd, 0));
+            } finally {
+                FF.close(fd);
+            }
+
+            RegistryState state = readRegistryState();
+            Assert.assertTrue(hasIssue(state, RecoveryIssueCode.SHORT_FILE));
+        });
+    }
+
     private static int countIssuesWithCode(RegistryState state, RecoveryIssueCode code) {
         int count = 0;
         for (int i = 0, n = state.getIssues().size(); i < n; i++) {

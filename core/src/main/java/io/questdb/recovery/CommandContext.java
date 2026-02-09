@@ -32,6 +32,7 @@ import io.questdb.std.FilesFacade;
  * with the services and renderer that commands need.
  */
 public class CommandContext {
+    private final BoundedTxnReader boundedTxnReader;
     private final AnsiColor color;
     private final ColumnCheckService columnCheckService;
     private final ColumnValueReader columnValueReader;
@@ -42,12 +43,14 @@ public class CommandContext {
 
     public CommandContext(
             NavigationContext nav,
+            BoundedTxnReader boundedTxnReader,
             ColumnCheckService columnCheckService,
             ColumnValueReader columnValueReader,
             FilesFacade ff,
             PartitionScanService partitionScanService,
             ConsoleRenderer renderer
     ) {
+        this.boundedTxnReader = boundedTxnReader;
         this.color = renderer.getColor();
         this.columnCheckService = columnCheckService;
         this.columnValueReader = columnValueReader;
@@ -55,6 +58,10 @@ public class CommandContext {
         this.nav = nav;
         this.partitionScanService = partitionScanService;
         this.renderer = renderer;
+    }
+
+    public BoundedTxnReader getBoundedTxnReader() {
+        return boundedTxnReader;
     }
 
     public AnsiColor getColor() {

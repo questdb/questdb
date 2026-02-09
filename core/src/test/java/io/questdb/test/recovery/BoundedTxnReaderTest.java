@@ -514,22 +514,22 @@ public class BoundedTxnReaderTest extends AbstractCairoTest {
 
     @Test
     public void testReadFailureOnLagMaxTimestampField() throws Exception {
-        assertMemoryLeak(() -> assertReadFailureOnNthCall(19, "lagMaxTimestamp"));
+        assertMemoryLeak(() -> assertReadFailureOnNthCall(20, "lagMaxTimestamp"));
     }
 
     @Test
     public void testReadFailureOnLagMinTimestampField() throws Exception {
-        assertMemoryLeak(() -> assertReadFailureOnNthCall(18, "lagMinTimestamp"));
+        assertMemoryLeak(() -> assertReadFailureOnNthCall(19, "lagMinTimestamp"));
     }
 
     @Test
     public void testReadFailureOnLagRowCountField() throws Exception {
-        assertMemoryLeak(() -> assertReadFailureOnNthCall(17, "lagRowCount"));
+        assertMemoryLeak(() -> assertReadFailureOnNthCall(18, "lagRowCount"));
     }
 
     @Test
     public void testReadFailureOnLagTxnCountField() throws Exception {
-        assertMemoryLeak(() -> assertReadFailureOnNthCall(16, "lagTxnCount"));
+        assertMemoryLeak(() -> assertReadFailureOnNthCall(17, "lagTxnCount"));
     }
 
     @Test
@@ -612,17 +612,17 @@ public class BoundedTxnReaderTest extends AbstractCairoTest {
 
     @Test
     public void testReadFailureOnPartitionMaskedSizeField() throws Exception {
-        assertMemoryLeak(() -> assertReadFailureOnNthCall(24, "partition.maskedSize"));
+        assertMemoryLeak(() -> assertReadFailureOnNthCall(25, "partition.maskedSize"));
     }
 
     @Test
     public void testReadFailureOnPartitionNameTxnField() throws Exception {
-        assertMemoryLeak(() -> assertReadFailureOnNthCall(25, "partition.nameTxn"));
+        assertMemoryLeak(() -> assertReadFailureOnNthCall(26, "partition.nameTxn"));
     }
 
     @Test
     public void testReadFailureOnPartitionParquetSizeField() throws Exception {
-        assertMemoryLeak(() -> assertReadFailureOnNthCall(26, "partition.parquetFileSize"));
+        assertMemoryLeak(() -> assertReadFailureOnNthCall(27, "partition.parquetFileSize"));
     }
 
     @Test
@@ -682,7 +682,7 @@ public class BoundedTxnReaderTest extends AbstractCairoTest {
 
     @Test
     public void testReadFailureOnSymbolTransientCountField() throws Exception {
-        assertMemoryLeak(() -> assertReadFailureOnNthCall(22, "symbol.transientCount"));
+        assertMemoryLeak(() -> assertReadFailureOnNthCall(23, "symbol.transientCount"));
     }
 
     @Test
@@ -845,6 +845,77 @@ public class BoundedTxnReaderTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals(2, state.getPartitions().size());
                 Assert.assertEquals(1, state.getSymbols().size());
+            }
+        });
+    }
+
+    @Test
+    public void testCorruptBaseOffsetExceedsFileSize() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "txn_base_beyond";
+            createTableWithTxnPartitions(tableName, 2);
+
+            try (Path txnPath = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                Path path = txnPathOf(tableName, txnPath);
+                mem.smallFile(FF, path.$(), MemoryTag.MMAP_DEFAULT);
+
+                long version = mem.getLong(TableUtils.TX_BASE_OFFSET_VERSION_64);
+                boolean isA = (version & 1L) == 0L;
+                // set base offset to a huge value beyond any reasonable file
+                mem.putInt(isA ? TableUtils.TX_BASE_OFFSET_A_32 : TableUtils.TX_BASE_OFFSET_B_32, Integer.MAX_VALUE / 2);
+
+                TxnState state = new BoundedTxnReader(FF).read(path.$());
+                Assert.assertTrue(hasIssue(state, RecoveryIssueCode.PARTIAL_READ));
+            }
+        });
+    }
+
+    @Test
+    public void testCorruptPartitionSegmentExceedsRemainingFile() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "txn_pseg_beyond";
+            createTableWithTxnPartitions(tableName, 2);
+
+            try (Path txnPath = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                Path path = txnPathOf(tableName, txnPath);
+                mem.smallFile(FF, path.$(), MemoryTag.MMAP_DEFAULT);
+
+                long version = mem.getLong(TableUtils.TX_BASE_OFFSET_VERSION_64);
+                boolean isA = (version & 1L) == 0L;
+                // set partition segment size to a huge value that would exceed the file
+                mem.putInt(
+                        isA ? TableUtils.TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TableUtils.TX_BASE_OFFSET_PARTITIONS_SIZE_B_32,
+                        100_000
+                );
+
+                TxnState state = new BoundedTxnReader(FF).read(path.$());
+                Assert.assertTrue(hasIssue(state, RecoveryIssueCode.PARTIAL_READ));
+            }
+        });
+    }
+
+    @Test
+    public void testExtremeTimestampValues() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "txn_extreme_ts";
+            createTableWithTxnPartitions(tableName, 2);
+
+            try (Path txnPath = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                Path path = txnPathOf(tableName, txnPath);
+                mem.smallFile(FF, path.$(), MemoryTag.MMAP_DEFAULT);
+
+                long version = mem.getLong(TableUtils.TX_BASE_OFFSET_VERSION_64);
+                boolean isA = (version & 1L) == 0L;
+                int baseOffset = mem.getInt(isA ? TableUtils.TX_BASE_OFFSET_A_32 : TableUtils.TX_BASE_OFFSET_B_32);
+                // set min timestamp to Long.MIN_VALUE and max to Long.MAX_VALUE
+                mem.putLong(baseOffset + TableUtils.TX_OFFSET_MIN_TIMESTAMP_64, Long.MIN_VALUE);
+                mem.putLong(baseOffset + TableUtils.TX_OFFSET_MAX_TIMESTAMP_64, Long.MAX_VALUE);
+
+                TxnState state = new BoundedTxnReader(FF).read(path.$());
+                Assert.assertEquals(Long.MIN_VALUE, state.getMinTimestamp());
+                Assert.assertEquals(Long.MAX_VALUE, state.getMaxTimestamp());
+                // should parse without error (timestamps are opaque values)
+                Assert.assertFalse(hasIssue(state, RecoveryIssueCode.IO_ERROR));
             }
         });
     }

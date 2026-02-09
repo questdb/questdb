@@ -170,6 +170,7 @@ public class ConsoleRenderer {
         out.println("  tables                 discover and list tables");
         out.println("  show [<name|index>]    show _txn state (views have no _txn)");
         out.println("  print <rowNo>          print value at row (column level only)");
+        out.println("  truncate <rowCount>    shrink partition to given row count (partition level)");
         out.println("  check columns          validate column files against metadata");
         out.println("  help                   show help");
         out.println("  quit|exit              leave recovery mode");

@@ -25,6 +25,7 @@
 package io.questdb.test.recovery;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
@@ -36,7 +37,10 @@ import io.questdb.recovery.ColumnVersionState;
 import io.questdb.recovery.ReadIssue;
 import io.questdb.recovery.RecoveryIssueCode;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -112,6 +116,281 @@ public class BoundedColumnVersionReaderTest extends AbstractCairoTest {
 
             ColumnVersionState state = readCvState("cv_trunc");
             Assert.assertTrue(hasIssue(state, RecoveryIssueCode.SHORT_FILE));
+        });
+    }
+
+    @Test
+    public void testColumnTopLookupForNonExistentColumnIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table cv_noexist (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into cv_noexist values (1, '1970-01-01T00:00:00.000000Z')");
+            waitForAppliedRows("cv_noexist", 1);
+
+            ColumnVersionState state = readCvState("cv_noexist");
+            // column index 999 never existed
+            long colTop = state.getColumnTop(0L, 999);
+            Assert.assertEquals("absent column should return 0 (present from start)", 0, colTop);
+        });
+    }
+
+    @Test
+    public void testColumnTopLookupForNonExistentTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table cv_nots (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into cv_nots values (1, '1970-01-01T00:00:00.000000Z')");
+            waitForAppliedRows("cv_nots", 1);
+
+            execute("alter table cv_nots add column new_col int");
+            drainWalQueue(engine);
+
+            execute("insert into cv_nots values (2, '1970-01-02T00:00:00.000000Z', 42)");
+            waitForAppliedRows("cv_nots", 2);
+
+            ColumnVersionState state = readCvState("cv_nots");
+            // timestamp that does not exist in any partition
+            long colTop = state.getColumnTop(999 * Micros.DAY_MICROS, 2);
+            // should use default partition logic
+            Assert.assertTrue("lookup for non-existent timestamp should not crash", colTop >= -1);
+        });
+    }
+
+    @Test
+    public void testConstructorClampsZeroCap() throws Exception {
+        assertMemoryLeak(() -> {
+            createSimpleTable("cv_clamp", 2);
+            // maxRecords=0 should be clamped to 1
+            ColumnVersionState state = readCvStateWithCap("cv_clamp", 0);
+            Assert.assertTrue(state.getRecordCount() <= 1);
+        });
+    }
+
+    @Test
+    public void testCorruptAreaExtendsBeforeHeader() throws Exception {
+        assertMemoryLeak(() -> {
+            createSimpleTable("cv_bad_off", 2);
+
+            try (Path path = new Path()) {
+                TableToken token = engine.verifyTableName("cv_bad_off");
+                path.of(configuration.getDbRoot()).concat(token).concat("_cv");
+
+                // corrupt the area offset to point into the header, and set a non-zero size
+                // so the reader doesn't short-circuit at the areaSize==0 check
+                long fd = FF.openRW(path.$(), CairoConfiguration.O_NONE);
+                Assert.assertTrue(fd > -1);
+                try {
+                    long fileSize = FF.length(fd);
+                    if (fileSize >= ColumnVersionReader.HEADER_SIZE) {
+                        long scratch = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                        try {
+                            // read version to find active side
+                            FF.read(fd, scratch, Long.BYTES, ColumnVersionReader.OFFSET_VERSION_64);
+                            long version = Unsafe.getUnsafe().getLong(scratch);
+                            boolean isA = (version & 1L) == 0L;
+                            long offsetSlot = isA ? ColumnVersionReader.OFFSET_OFFSET_A_64 : ColumnVersionReader.OFFSET_OFFSET_B_64;
+                            long sizeSlot = isA ? ColumnVersionReader.OFFSET_SIZE_A_64 : ColumnVersionReader.OFFSET_SIZE_B_64;
+
+                            // set area offset to 8 (inside header)
+                            Unsafe.getUnsafe().putLong(scratch, 8);
+                            FF.write(fd, scratch, Long.BYTES, offsetSlot);
+                            // set area size to one block so the reader proceeds past the areaSize==0 check
+                            Unsafe.getUnsafe().putLong(scratch, ColumnVersionReader.BLOCK_SIZE_BYTES);
+                            FF.write(fd, scratch, Long.BYTES, sizeSlot);
+                        } finally {
+                            Unsafe.free(scratch, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                        }
+                    }
+                } finally {
+                    FF.close(fd);
+                }
+
+                ColumnVersionState state = new BoundedColumnVersionReader(FF).read(path.$());
+                Assert.assertTrue(hasIssue(state, RecoveryIssueCode.INVALID_OFFSET));
+            }
+        });
+    }
+
+    @Test
+    public void testCorruptAreaExtendsBeforeHeaderBeyondFile() throws Exception {
+        assertMemoryLeak(() -> {
+            createSimpleTable("cv_beyond", 2);
+
+            try (Path path = new Path()) {
+                TableToken token = engine.verifyTableName("cv_beyond");
+                path.of(configuration.getDbRoot()).concat(token).concat("_cv");
+
+                // corrupt size to extend beyond file, with a valid offset (>= HEADER_SIZE)
+                long fd = FF.openRW(path.$(), CairoConfiguration.O_NONE);
+                Assert.assertTrue(fd > -1);
+                try {
+                    long fileSize = FF.length(fd);
+                    if (fileSize >= ColumnVersionReader.HEADER_SIZE) {
+                        long scratch = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                        try {
+                            FF.read(fd, scratch, Long.BYTES, ColumnVersionReader.OFFSET_VERSION_64);
+                            long version = Unsafe.getUnsafe().getLong(scratch);
+                            boolean isA = (version & 1L) == 0L;
+                            long offsetSlot = isA ? ColumnVersionReader.OFFSET_OFFSET_A_64 : ColumnVersionReader.OFFSET_OFFSET_B_64;
+                            long sizeSlot = isA ? ColumnVersionReader.OFFSET_SIZE_A_64 : ColumnVersionReader.OFFSET_SIZE_B_64;
+
+                            // ensure offset is valid (at HEADER_SIZE)
+                            Unsafe.getUnsafe().putLong(scratch, ColumnVersionReader.HEADER_SIZE);
+                            FF.write(fd, scratch, Long.BYTES, offsetSlot);
+                            // set area size to something huge
+                            Unsafe.getUnsafe().putLong(scratch, fileSize * 10);
+                            FF.write(fd, scratch, Long.BYTES, sizeSlot);
+                        } finally {
+                            Unsafe.free(scratch, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                        }
+                    }
+                } finally {
+                    FF.close(fd);
+                }
+
+                ColumnVersionState state = new BoundedColumnVersionReader(FF).read(path.$());
+                Assert.assertTrue(hasIssue(state, RecoveryIssueCode.PARTIAL_READ));
+            }
+        });
+    }
+
+    @Test
+    public void testCorruptNegativeAreaSize() throws Exception {
+        assertMemoryLeak(() -> {
+            createSimpleTable("cv_neg_size", 2);
+
+            try (Path path = new Path()) {
+                TableToken token = engine.verifyTableName("cv_neg_size");
+                path.of(configuration.getDbRoot()).concat(token).concat("_cv");
+
+                long fd = FF.openRW(path.$(), CairoConfiguration.O_NONE);
+                Assert.assertTrue(fd > -1);
+                try {
+                    long fileSize = FF.length(fd);
+                    if (fileSize >= ColumnVersionReader.HEADER_SIZE) {
+                        long scratch = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                        try {
+                            FF.read(fd, scratch, Long.BYTES, ColumnVersionReader.OFFSET_VERSION_64);
+                            long version = Unsafe.getUnsafe().getLong(scratch);
+                            boolean isA = (version & 1L) == 0L;
+                            long sizeSlot = isA ? ColumnVersionReader.OFFSET_SIZE_A_64 : ColumnVersionReader.OFFSET_SIZE_B_64;
+
+                            Unsafe.getUnsafe().putLong(scratch, -100);
+                            FF.write(fd, scratch, Long.BYTES, sizeSlot);
+                        } finally {
+                            Unsafe.free(scratch, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                        }
+                    }
+                } finally {
+                    FF.close(fd);
+                }
+
+                ColumnVersionState state = new BoundedColumnVersionReader(FF).read(path.$());
+                Assert.assertTrue(hasIssue(state, RecoveryIssueCode.INVALID_COUNT));
+            }
+        });
+    }
+
+    @Test
+    public void testCorruptNonBlockAlignedAreaSize() throws Exception {
+        assertMemoryLeak(() -> {
+            createSimpleTable("cv_nalign", 2);
+
+            try (Path path = new Path()) {
+                TableToken token = engine.verifyTableName("cv_nalign");
+                path.of(configuration.getDbRoot()).concat(token).concat("_cv");
+
+                long fd = FF.openRW(path.$(), CairoConfiguration.O_NONE);
+                Assert.assertTrue(fd > -1);
+                try {
+                    long fileSize = FF.length(fd);
+                    if (fileSize >= ColumnVersionReader.HEADER_SIZE) {
+                        long scratch = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                        try {
+                            FF.read(fd, scratch, Long.BYTES, ColumnVersionReader.OFFSET_VERSION_64);
+                            long version = Unsafe.getUnsafe().getLong(scratch);
+                            boolean isA = (version & 1L) == 0L;
+                            long sizeSlot = isA ? ColumnVersionReader.OFFSET_SIZE_A_64 : ColumnVersionReader.OFFSET_SIZE_B_64;
+                            long offsetSlot = isA ? ColumnVersionReader.OFFSET_OFFSET_A_64 : ColumnVersionReader.OFFSET_OFFSET_B_64;
+
+                            // set area offset to header size and size to 17 (not block-aligned)
+                            Unsafe.getUnsafe().putLong(scratch, ColumnVersionReader.HEADER_SIZE);
+                            FF.write(fd, scratch, Long.BYTES, offsetSlot);
+                            Unsafe.getUnsafe().putLong(scratch, 17);
+                            FF.write(fd, scratch, Long.BYTES, sizeSlot);
+                        } finally {
+                            Unsafe.free(scratch, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                        }
+                    }
+                } finally {
+                    FF.close(fd);
+                }
+
+                ColumnVersionState state = new BoundedColumnVersionReader(FF).read(path.$());
+                Assert.assertTrue(hasIssue(state, RecoveryIssueCode.INVALID_COUNT));
+            }
+        });
+    }
+
+    @Test
+    public void testReadCannotOpen() throws Exception {
+        assertMemoryLeak(() -> {
+            createSimpleTable("cv_noopen", 1);
+
+            try (Path path = new Path()) {
+                TableToken token = engine.verifyTableName("cv_noopen");
+                path.of(configuration.getDbRoot()).concat(token).concat("_cv");
+                final String cvPathStr = path.$().toString();
+
+                FilesFacade failOpenFf = new TestFilesFacadeImpl() {
+                    @Override
+                    public long openRO(LPSZ name) {
+                        if (name.toString().equals(cvPathStr)) {
+                            return -1;
+                        }
+                        return super.openRO(name);
+                    }
+                };
+
+                ColumnVersionState state = new BoundedColumnVersionReader(failOpenFf).read(path.$());
+                Assert.assertTrue(hasIssue(state, RecoveryIssueCode.IO_ERROR));
+            }
+        });
+    }
+
+    @Test
+    public void testReadZeroAreaSize() throws Exception {
+        assertMemoryLeak(() -> {
+            createSimpleTable("cv_zero_area", 2);
+
+            try (Path path = new Path()) {
+                TableToken token = engine.verifyTableName("cv_zero_area");
+                path.of(configuration.getDbRoot()).concat(token).concat("_cv");
+
+                long fd = FF.openRW(path.$(), CairoConfiguration.O_NONE);
+                Assert.assertTrue(fd > -1);
+                try {
+                    long fileSize = FF.length(fd);
+                    if (fileSize >= ColumnVersionReader.HEADER_SIZE) {
+                        long scratch = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                        try {
+                            FF.read(fd, scratch, Long.BYTES, ColumnVersionReader.OFFSET_VERSION_64);
+                            long version = Unsafe.getUnsafe().getLong(scratch);
+                            boolean isA = (version & 1L) == 0L;
+                            long sizeSlot = isA ? ColumnVersionReader.OFFSET_SIZE_A_64 : ColumnVersionReader.OFFSET_SIZE_B_64;
+
+                            Unsafe.getUnsafe().putLong(scratch, 0);
+                            FF.write(fd, scratch, Long.BYTES, sizeSlot);
+                        } finally {
+                            Unsafe.free(scratch, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                        }
+                    }
+                } finally {
+                    FF.close(fd);
+                }
+
+                ColumnVersionState state = new BoundedColumnVersionReader(FF).read(path.$());
+                Assert.assertEquals(0, state.getRecordCount());
+                Assert.assertEquals(0, state.getIssues().size());
+            }
         });
     }
 

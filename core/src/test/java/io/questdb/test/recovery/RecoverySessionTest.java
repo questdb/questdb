@@ -25,8 +25,11 @@
 package io.questdb.test.recovery;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -2120,6 +2123,150 @@ public void testLsShowsTransientRowCountForLastPartition() throws Exception {
                 }
             }
             Assert.assertTrue("view with deleted _view file should still be discovered", found);
+        });
+    }
+
+    // -- truncate command tests --
+
+    @Test
+    public void testTruncateCreatesBackup() throws Exception {
+        assertMemoryLeak(() -> {
+            // partition 0 needs multiple rows so truncation is valid
+            execute("create table trunc_bak (sym symbol, ts timestamp) timestamp(ts) partition by DAY");
+            execute("insert into trunc_bak select rnd_symbol('AA','BB'), "
+                    + "timestamp_sequence('1970-01-01', 1000000L) from long_sequence(10)");
+
+            String[] result = runSession("cd trunc_bak\ncd 0\ntruncate 5\nquit\n");
+            Assert.assertTrue("should mention backup", result[0].contains("_txn.bak"));
+            Assert.assertEquals("", result[1]);
+
+            // verify .bak file exists
+            TableToken token = engine.verifyTableName("trunc_bak");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token.getDirName())
+                        .concat(TableUtils.TXN_FILE_NAME).put(".bak").$();
+                Assert.assertTrue("backup file should exist", FF.exists(path.$()));
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateLastPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonWalTableWithRows("trunc_last", 3);
+            // 3 partitions (1 row each). cd into last (index 2), truncate would require
+            // at least 2 rows. So let's create a table where last partition has multiple rows.
+            execute("create table trunc_last2 (sym symbol, ts timestamp) timestamp(ts) partition by DAY");
+            execute("insert into trunc_last2 select rnd_symbol('AA','BB'), "
+                    + "timestamp_sequence('1970-01-03', 1000000L) from long_sequence(10)");
+            // This creates 1 partition (1970-01-03) with 10 rows
+
+            String[] result = runSession("cd trunc_last2\ncd 0\ntruncate 5\nquit\n");
+            Assert.assertTrue("should print OK", result[0].contains("OK"));
+            Assert.assertTrue("should show row change", result[0].contains("10 -> 5"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testTruncateMiddlePartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trunc_mid (sym symbol, ts timestamp) timestamp(ts) partition by DAY");
+            // Create 3 partitions: day 1 has 10 rows, day 2 has 10 rows, day 3 has 10 rows
+            execute("insert into trunc_mid select rnd_symbol('AA','BB'), "
+                    + "timestamp_sequence('1970-01-01', 1000000L) from long_sequence(10)");
+            execute("insert into trunc_mid select rnd_symbol('AA','BB'), "
+                    + "timestamp_sequence('1970-01-02', 1000000L) from long_sequence(10)");
+            execute("insert into trunc_mid select rnd_symbol('AA','BB'), "
+                    + "timestamp_sequence('1970-01-03', 1000000L) from long_sequence(10)");
+
+            // cd into middle partition (index 1), truncate to 5
+            String[] result = runSession("cd trunc_mid\ncd 1\ntruncate 5\nquit\n");
+            Assert.assertTrue("should print OK", result[0].contains("OK"));
+            Assert.assertTrue("should show row change", result[0].contains("10 -> 5"));
+            // maxTimestamp should not change since we're truncating a middle partition
+            Assert.assertFalse("maxTimestamp should not change", result[0].contains("maxTimestamp:"));
+            Assert.assertEquals("", result[1]);
+
+            // verify the written _txn preserves the last partition's row count
+            TableToken token = engine.verifyTableName("trunc_mid");
+            try (Path path = new Path(); TxReader txReader = new TxReader(FF)) {
+                path.of(configuration.getDbRoot()).concat(token.getDirName())
+                        .concat(TableUtils.TXN_FILE_NAME).$();
+                txReader.ofRO(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+                Assert.assertTrue("should load", txReader.unsafeLoadAll());
+                Assert.assertEquals("transientRowCount must be preserved", 10, txReader.getTransientRowCount());
+                Assert.assertEquals("fixedRowCount = 10 + 5", 15, txReader.getFixedRowCount());
+                Assert.assertEquals(3, txReader.getPartitionCount());
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateRefusesAtWrongLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonWalTableWithRows("trunc_level", 3);
+            // at root level
+            String[] result = runSession("truncate 5\nquit\n");
+            Assert.assertTrue("should refuse at root", result[1].contains("partition level"));
+
+            // at table level
+            result = runSession("cd trunc_level\ntruncate 5\nquit\n");
+            Assert.assertTrue("should refuse at table", result[1].contains("partition level"));
+        });
+    }
+
+    @Test
+    public void testTruncateRefusesInvalidRowCount() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonWalTableWithRows("trunc_invalid", 3);
+            // newRowCount >= currentRowCount
+            String[] result = runSession("cd trunc_invalid\ncd 0\ntruncate 5\nquit\n");
+            Assert.assertTrue("should refuse >= current", result[1].contains("must be less than"));
+
+            // newRowCount <= 0
+            result = runSession("cd trunc_invalid\ncd 0\ntruncate 0\nquit\n");
+            Assert.assertTrue("should refuse 0", result[1].contains("must be > 0"));
+
+            result = runSession("cd trunc_invalid\ncd 0\ntruncate -1\nquit\n");
+            Assert.assertTrue("should refuse negative", result[1].contains("must be > 0"));
+        });
+    }
+
+    @Test
+    public void testTruncateRefusesNonNumericArg() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonWalTableWithRows("trunc_nan", 3);
+            String[] result = runSession("cd trunc_nan\ncd 0\ntruncate abc\nquit\n");
+            Assert.assertTrue("should refuse non-numeric", result[1].contains("invalid row count"));
+        });
+    }
+
+    @Test
+    public void testTruncateRefusesParquet() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("trunc_parquet", 3);
+            execute("ALTER TABLE trunc_parquet CONVERT PARTITION TO PARQUET WHERE ts = '1970-01-01'");
+            drainWalQueue(engine);
+
+            String[] result = runSession("cd trunc_parquet\ncd 0\ntruncate 1\nquit\n");
+            Assert.assertTrue("should refuse parquet", result[1].contains("parquet"));
+        });
+    }
+
+    @Test
+    public void testTruncateSinglePartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trunc_single (sym symbol, ts timestamp) timestamp(ts) partition by DAY");
+            execute("insert into trunc_single select rnd_symbol('AA','BB'), "
+                    + "timestamp_sequence('1970-01-01', 1000000L) from long_sequence(10)");
+
+            String[] result = runSession("cd trunc_single\ncd 0\ntruncate 5\nquit\n");
+            Assert.assertTrue("should print OK", result[0].contains("OK"));
+            Assert.assertTrue("should show row change", result[0].contains("10 -> 5"));
+            // maxTimestamp should change for single partition
+            Assert.assertTrue("should update maxTimestamp", result[0].contains("maxTimestamp:"));
+            Assert.assertEquals("", result[1]);
         });
     }
 

@@ -467,6 +467,84 @@ public class BoundedMetaReaderTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testReadMetaDroppedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table meta_dropped (val long, extra int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("meta_dropped")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putLong(0, 42);
+                row.putInt(1, 7);
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("meta_dropped", 1);
+            execute("alter table meta_dropped drop column extra");
+            drainWalQueue(engine);
+
+            MetaState state = readMetaState("meta_dropped", new BoundedMetaReader(FF));
+            Assert.assertEquals(0, countIssuesWithCode(state, RecoveryIssueCode.INVALID_COUNT));
+            // dropped column should have a negative type
+            boolean foundDropped = false;
+            for (int i = 0, n = state.getColumns().size(); i < n; i++) {
+                MetaColumnState col = state.getColumns().getQuick(i);
+                if (col.getType() < 0) {
+                    foundDropped = true;
+                    break;
+                }
+            }
+            Assert.assertTrue("should find a dropped column with negative type", foundDropped);
+        });
+    }
+
+    @Test
+    public void testReadMetaInvalidPartitionBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithTypes("meta_bad_pb");
+
+            try (Path metaPath = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                Path path = metaPathOf("meta_bad_pb", metaPath);
+                mem.smallFile(FF, path.$(), MemoryTag.MMAP_DEFAULT);
+                mem.putInt(TableUtils.META_OFFSET_PARTITION_BY, 99);
+
+                MetaState state = new BoundedMetaReader(FF).read(path.$());
+                // invalid partitionBy is stored as-is (no validation in reader)
+                Assert.assertEquals(99, state.getPartitionBy());
+                // should still read columns successfully
+                Assert.assertTrue(state.getColumns().size() > 0);
+            }
+        });
+    }
+
+    @Test
+    public void testReadMetaTimestampIndexExceedsColumnCount() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithTypes("meta_bad_ts_idx");
+
+            try (Path metaPath = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                Path path = metaPathOf("meta_bad_ts_idx", metaPath);
+                mem.smallFile(FF, path.$(), MemoryTag.MMAP_DEFAULT);
+                // set timestampIndex to 999 (way beyond columnCount=6)
+                mem.putInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX, 999);
+
+                MetaState state = new BoundedMetaReader(FF).read(path.$());
+                Assert.assertEquals(999, state.getTimestampIndex());
+                // columns should still be readable
+                Assert.assertTrue(state.getColumns().size() > 0);
+            }
+        });
+    }
+
+    private static int countIssuesWithCode(MetaState state, RecoveryIssueCode issueCode) {
+        int count = 0;
+        for (int i = 0, n = state.getIssues().size(); i < n; i++) {
+            if (state.getIssues().getQuick(i).getCode() == issueCode) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     private static void createNonWalTable(String tableName, int rowCount) throws SqlException {
         execute("create table " + tableName + " (val long, ts timestamp) timestamp(ts) partition by DAY");
         execute(

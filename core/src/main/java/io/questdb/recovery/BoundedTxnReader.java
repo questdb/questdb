@@ -171,6 +171,11 @@ public class BoundedTxnReader extends AbstractBoundedReader {
             return false;
         }
 
+        txnState.setLagChecksum(readIntValue(fd, fileSize, scratch, issues, baseOffset + TableUtils.TX_OFFSET_CHECKSUM_32, "lagChecksum"));
+        if (issues.size() > issuesBefore) {
+            return false;
+        }
+
         txnState.setLagTxnCount(readIntValue(fd, fileSize, scratch, issues, baseOffset + TableUtils.TX_OFFSET_LAG_TXN_COUNT_32, "lagTxnCount"));
         if (issues.size() > issuesBefore) {
             return false;
@@ -295,6 +300,7 @@ public class BoundedTxnReader extends AbstractBoundedReader {
             }
 
             final long rowCount = maskedSize & PARTITION_SIZE_MASK;
+            final int squashCount = (int) ((maskedSize >>> 44) & 0xFFFF);
             txnState.getPartitions().add(
                     new TxnPartitionState(
                             i,
@@ -303,7 +309,8 @@ public class BoundedTxnReader extends AbstractBoundedReader {
                             nameTxn,
                             parquetFileSize,
                             isBitSet(maskedSize, PARTITION_FLAG_PARQUET_BIT_OFFSET),
-                            isBitSet(maskedSize, PARTITION_FLAG_READ_ONLY_BIT_OFFSET)
+                            isBitSet(maskedSize, PARTITION_FLAG_READ_ONLY_BIT_OFFSET),
+                            squashCount
                     )
             );
         }

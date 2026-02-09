@@ -122,6 +122,77 @@ public class TableDiscoveryServiceTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testDiscoverEmptyDatabase() throws Exception {
+        assertMemoryLeak(() -> {
+            io.questdb.std.ObjList<DiscoveredTable> tables = discover();
+            // may contain telemetry/telemetry_config tables; just verify no crash
+            for (int i = 0, n = tables.size(); i < n; i++) {
+                Assert.assertNotNull(tables.getQuick(i).getDirName());
+            }
+        });
+    }
+
+    @Test
+    public void testDiscoverMultipleTableTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("disc_multi_wal", true, 2);
+            createTableWithRows("disc_multi_nonwal", false, 2);
+
+            io.questdb.std.ObjList<DiscoveredTable> tables = discover();
+            DiscoveredTable wal = findByTableName(tables, "disc_multi_wal");
+            Assert.assertNotNull("WAL table should be discovered", wal);
+            Assert.assertTrue(wal.isWalEnabledKnown());
+            Assert.assertTrue(wal.isWalEnabled());
+            Assert.assertEquals(TableDiscoveryState.HAS_TXN, wal.getState());
+
+            DiscoveredTable nonWal = findByTableName(tables, "disc_multi_nonwal");
+            Assert.assertNotNull("non-WAL table should be discovered", nonWal);
+            Assert.assertTrue(nonWal.isWalEnabledKnown());
+            Assert.assertFalse(nonWal.isWalEnabled());
+            Assert.assertEquals(TableDiscoveryState.HAS_TXN, nonWal.getState());
+        });
+    }
+
+    @Test
+    public void testDiscoverTableDirWithNoMetadata() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "disc_no_meta";
+            createTableWithRows(tableName, false, 1);
+            removeTableFile(tableName, TableUtils.TXN_FILE_NAME);
+            removeTableFile(tableName, TableUtils.META_FILE_NAME);
+
+            DiscoveredTable table = findByTableName(discover(), tableName);
+            Assert.assertNotNull("table dir should still be discovered", table);
+            Assert.assertEquals(TableDiscoveryState.NO_TXN, table.getState());
+        });
+    }
+
+    @Test
+    public void testDiscoverTableWithEmptyNameFile() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "disc_empty_name";
+            createTableWithRows(tableName, false, 1);
+
+            // truncate _name file to 0 bytes
+            TableToken token = engine.verifyTableName(tableName);
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.TABLE_NAME_FILE);
+                long fd = FF.openRW(path.$(), CairoConfiguration.O_NONE);
+                Assert.assertTrue(fd > -1);
+                try {
+                    Assert.assertTrue(FF.truncate(fd, 0));
+                } finally {
+                    FF.close(fd);
+                }
+            }
+
+            // table should still be discovered (fallback to dir name)
+            DiscoveredTable table = findByDirName(discover(), token.getDirName());
+            Assert.assertNotNull("table should be discovered even with empty _name", table);
+        });
+    }
+
     private static void createTableWithRows(String tableName, boolean walEnabled, int rowCount) throws SqlException {
         execute(
                 "create table "
