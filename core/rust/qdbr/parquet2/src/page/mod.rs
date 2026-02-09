@@ -133,6 +133,13 @@ impl DataPageHeader {
             DataPageHeader::V2(d) => d.num_values as usize,
         }
     }
+
+    pub fn null_count(&self) -> Option<i64> {
+        match &self {
+            DataPageHeader::V1(d) => d.statistics.as_ref().and_then(|x| x.null_count),
+            DataPageHeader::V2(d) => Some(d.num_nulls as i64),
+        }
+    }
 }
 
 /// A [`DataPage`] is an uncompressed, encoded representation of a Parquet data page. It holds actual data

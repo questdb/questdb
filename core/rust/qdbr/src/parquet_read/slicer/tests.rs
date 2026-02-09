@@ -1,4 +1,7 @@
+use num_traits::AsPrimitive;
+
 use super::*;
+use crate::parquet_read::column_sink::fixed::{Day, Millis};
 use crate::parquet_read::slicer::dict_decoder::DictDecoder;
 use crate::parquet_read::slicer::rle::{RleDictionarySlicer, RleLocalIsGlobalSymbolDecoder};
 
@@ -226,43 +229,45 @@ fn test_boolean_bitmap_slicer_skip() {
 #[test]
 fn test_value_convert_slicer_next_into() {
     let data: Vec<u8> = vec![0, 0, 0, 0, 1, 0, 0, 0, 109, 1, 0, 0];
-    let inner = DataPageFixedSlicer::<4>::new(&data, 3);
-    let mut slicer = ValueConvertSlicer::<8, _, DaysToMillisConverter>::new(inner);
+    let data = unsafe {
+        std::slice::from_raw_parts(
+            data.as_ptr() as *const Day,
+            data.len() / std::mem::size_of::<Day>(),
+        )
+    };
 
     // Day 0 = 0 millis
-    let mut sink = TestSink::new();
-    slicer.next_into(&mut sink).unwrap();
-    let millis = i64::from_le_bytes(sink.into_inner().try_into().unwrap());
-    assert_eq!(millis, 0);
+    let millis: Millis = data[0].as_();
+    assert_eq!(millis, Millis::new(0));
 
     // Day 1 = 86400000 millis
-    let mut sink = TestSink::new();
-    slicer.next_into(&mut sink).unwrap();
-    let millis = i64::from_le_bytes(sink.into_inner().try_into().unwrap());
-    assert_eq!(millis, 86400 * 1000);
+    let millis: Millis = data[1].as_();
+    assert_eq!(millis, Millis::new(86400 * 1000));
 
     // Day 365
-    let mut sink = TestSink::new();
-    slicer.next_into(&mut sink).unwrap();
-    let millis = i64::from_le_bytes(sink.into_inner().try_into().unwrap());
-    assert_eq!(millis, 365 * 86400 * 1000);
+    let millis: Millis = data[2].as_();
+    assert_eq!(millis, Millis::new(365 * 86400 * 1000));
 }
 
 #[test]
 fn test_value_convert_slicer_next_slice_into() {
     let data: Vec<u8> = vec![0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0];
-    let inner = DataPageFixedSlicer::<4>::new(&data, 3);
-    let mut slicer = ValueConvertSlicer::<8, _, DaysToMillisConverter>::new(inner);
+    let data = unsafe {
+        std::slice::from_raw_parts(
+            data.as_ptr() as *const Day,
+            data.len() / std::mem::size_of::<Day>(),
+        )
+    };
 
-    let mut sink = TestSink::new();
-    slicer.next_slice_into(3, &mut sink).unwrap();
-
-    let result = sink.into_inner();
-    let millis: Vec<i64> = result
-        .chunks(8)
-        .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
-        .collect();
-    assert_eq!(millis, vec![0, 86400 * 1000, 2 * 86400 * 1000]);
+    let millis = data.iter().map(|x| x.as_()).collect::<Vec<Millis>>();
+    assert_eq!(
+        millis,
+        vec![
+            Millis::new(0),
+            Millis::new(86400 * 1000),
+            Millis::new(2 * 86400 * 1000)
+        ]
+    );
 }
 
 #[test]
@@ -303,86 +308,6 @@ fn test_plain_var_slicer_mixed_operations() {
     let mut sink = TestSink::new();
     slicer.next_slice_into(2, &mut sink).unwrap();
     assert_eq!(sink.into_inner(), b"str3str4");
-}
-
-#[test]
-fn test_delta_binary_packed_slicer_next_into() {
-    let values: Vec<i64> = vec![1, 2, 3, 4, 5];
-    let mut encoded = Vec::new();
-    parquet2::encoding::delta_bitpacked::encode(values.iter().copied(), &mut encoded);
-
-    let mut slicer = DeltaBinaryPackedSlicer::<8>::try_new(&encoded, 5).unwrap();
-
-    for expected in &values {
-        let mut sink = TestSink::new();
-        slicer.next_into(&mut sink).unwrap();
-        let value = i64::from_le_bytes(sink.into_inner().try_into().unwrap());
-        assert_eq!(value, *expected);
-    }
-    assert!(slicer.result().is_ok());
-}
-
-#[test]
-fn test_delta_binary_packed_slicer_next_slice_into() {
-    let values: Vec<i64> = vec![10, 20, 30, 40, 50];
-    let mut encoded = Vec::new();
-    parquet2::encoding::delta_bitpacked::encode(values.iter().copied(), &mut encoded);
-
-    let mut slicer = DeltaBinaryPackedSlicer::<8>::try_new(&encoded, 5).unwrap();
-
-    let mut sink = TestSink::new();
-    slicer.next_slice_into(3, &mut sink).unwrap();
-
-    let result: Vec<i64> = sink
-        .into_inner()
-        .chunks(8)
-        .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
-        .collect();
-    assert_eq!(result, vec![10, 20, 30]);
-
-    // Read remaining
-    let mut sink = TestSink::new();
-    slicer.next_slice_into(2, &mut sink).unwrap();
-    let result: Vec<i64> = sink
-        .into_inner()
-        .chunks(8)
-        .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
-        .collect();
-    assert_eq!(result, vec![40, 50]);
-}
-
-#[test]
-fn test_delta_binary_packed_slicer_4byte() {
-    let values: Vec<i64> = vec![100, 200, 300];
-    let mut encoded = Vec::new();
-    parquet2::encoding::delta_bitpacked::encode(values.iter().copied(), &mut encoded);
-    let mut slicer = DeltaBinaryPackedSlicer::<4>::try_new(&encoded, 3).unwrap();
-
-    let mut sink = TestSink::new();
-    slicer.next_slice_into(3, &mut sink).unwrap();
-
-    let result: Vec<i32> = sink
-        .into_inner()
-        .chunks(4)
-        .map(|c| i32::from_le_bytes(c.try_into().unwrap()))
-        .collect();
-    assert_eq!(result, vec![100, 200, 300]);
-}
-
-#[test]
-fn test_delta_binary_packed_slicer_skip() {
-    let values: Vec<i64> = vec![1, 2, 3, 4, 5, 6, 7, 8];
-    let mut encoded = Vec::new();
-    parquet2::encoding::delta_bitpacked::encode(values.iter().copied(), &mut encoded);
-
-    let mut slicer = DeltaBinaryPackedSlicer::<8>::try_new(&encoded, 8).unwrap();
-
-    slicer.skip(3);
-
-    let mut sink = TestSink::new();
-    slicer.next_into(&mut sink).unwrap();
-    let value = i64::from_le_bytes(sink.into_inner().try_into().unwrap());
-    assert_eq!(value, 4);
 }
 
 #[test]

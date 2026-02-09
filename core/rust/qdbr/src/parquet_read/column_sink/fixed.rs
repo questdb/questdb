@@ -1,5 +1,8 @@
+use num_traits::AsPrimitive;
+use parquet2::encoding::delta_bitpacked;
+
 use crate::allocator::AcVec;
-use crate::parquet::error::ParquetResult;
+use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::DataPageSlicer;
 use crate::parquet_read::ColumnChunkBuffers;
@@ -25,6 +28,254 @@ pub type FixedInt2ByteColumnSink<'a, T> = FixedColumnSink<'a, 1, 4, T>;
 pub type FixedLong256ColumnSink<'a, T> = FixedColumnSink<'a, 32, 32, T>;
 pub type FixedLong128ColumnSink<'a, T> = FixedColumnSink<'a, 16, 16, T>;
 pub type FixedBooleanColumnSink<'a, T> = FixedColumnSink<'a, 1, 1, T>;
+
+/// A decoder for primitive types with plain encoding
+/// T is the source type
+/// U is the destination type
+pub struct PlainPrimitiveDecoder<'a, T, U> {
+    values: *const T,
+    values_offset: usize,
+    buffers: &'a mut ColumnChunkBuffers,
+    buffers_ptr: *mut U,
+    buffers_offset: usize,
+    null_value: U,
+}
+
+impl<'a, T, U> PlainPrimitiveDecoder<'a, T, U> {
+    pub fn new(values: &'a [u8], buffers: &'a mut ColumnChunkBuffers, null_value: U) -> Self {
+        let existing = buffers.data_vec.len();
+        debug_assert_eq!(
+            existing % std::mem::size_of::<U>(),
+            0,
+            "data_vec length is not aligned to element size"
+        );
+        let buffers_offset = existing / std::mem::size_of::<U>();
+        Self {
+            values: values.as_ptr().cast(),
+            values_offset: 0,
+            buffers_ptr: buffers.data_vec.as_mut_ptr().cast(),
+            buffers,
+            buffers_offset,
+            null_value,
+        }
+    }
+}
+
+impl<'a, T, U> Pushable for PlainPrimitiveDecoder<'a, T, U>
+where
+    U: Copy + 'static,
+    T: AsPrimitive<U>,
+{
+    fn push(&mut self) -> ParquetResult<()> {
+        unsafe {
+            *self.buffers_ptr.add(self.buffers_offset) =
+                (*self.values.add(self.values_offset)).as_();
+            self.buffers_offset += 1;
+            self.values_offset += 1;
+        }
+        Ok(())
+    }
+
+    fn push_null(&mut self) -> ParquetResult<()> {
+        unsafe {
+            *self.buffers_ptr.add(self.buffers_offset) = self.null_value;
+            self.buffers_offset += 1;
+        }
+        Ok(())
+    }
+
+    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
+        let out = unsafe { self.buffers_ptr.add(self.buffers_offset) };
+        for i in 0..count {
+            unsafe {
+                *out.add(i) = self.null_value;
+            }
+        }
+        self.buffers_offset += count;
+        Ok(())
+    }
+
+    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
+        let out = unsafe { self.buffers_ptr.add(self.buffers_offset) };
+        for i in 0..count {
+            unsafe {
+                let v = *self.values.add(self.values_offset + i);
+                let v = v.as_();
+                *out.add(i) = v;
+            }
+        }
+        self.buffers_offset += count;
+        self.values_offset += count;
+        Ok(())
+    }
+
+    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
+        let needed = (self.buffers_offset + count) * std::mem::size_of::<U>();
+        if self.buffers.data_vec.len() < needed {
+            let additional = needed - self.buffers.data_vec.len();
+            self.buffers.data_vec.reserve(additional)?;
+            unsafe {
+                self.buffers.data_vec.set_len(needed);
+            }
+        }
+        self.buffers_ptr = self.buffers.data_vec.as_mut_ptr().cast();
+        Ok(())
+    }
+
+    fn skip(&mut self, count: usize) {
+        self.values_offset += count;
+    }
+
+    fn result(&self) -> ParquetResult<()> {
+        Ok(())
+    }
+}
+
+/// A decoder for primitive types with delta-binary packed encoding
+/// T is the destination type
+pub struct DeltaBinaryPackedPrimitiveDecoder<'a, T>
+where
+    T: Copy + 'static,
+    i64: AsPrimitive<T>,
+{
+    decoder: delta_bitpacked::Decoder<'a>,
+    buffers: &'a mut ColumnChunkBuffers,
+    buffers_ptr: *mut T,
+    buffers_offset: usize,
+    null_value: T,
+    error: ParquetResult<()>,
+}
+
+impl<'a, T> DeltaBinaryPackedPrimitiveDecoder<'a, T>
+where
+    T: Copy + 'static,
+    i64: AsPrimitive<T>,
+{
+    pub fn try_new(
+        data: &'a [u8],
+        buffers: &'a mut ColumnChunkBuffers,
+        null_value: T,
+    ) -> ParquetResult<Self> {
+        let decoder = delta_bitpacked::Decoder::try_new(data)?;
+        Ok(Self {
+            decoder,
+            buffers_ptr: buffers.data_vec.as_mut_ptr().cast(),
+            buffers,
+            buffers_offset: 0,
+            null_value,
+            error: Ok(()),
+        })
+    }
+
+    #[inline]
+    fn next(&mut self) -> T {
+        let res = self.decoder.next();
+        match res {
+            Some(val) => match val {
+                Ok(val) => val.as_(),
+                Err(_) => {
+                    // TODO(amunra): Clean-up, this is _not_ a layout error!
+                    self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
+                    0i64.as_()
+                }
+            },
+            None => {
+                // TODO(amunra): Clean-up, this is _not_ a layout error!
+                self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
+                0i64.as_()
+            }
+        }
+    }
+}
+
+impl<'a, T> Pushable for DeltaBinaryPackedPrimitiveDecoder<'a, T>
+where
+    T: Copy + 'static,
+    i64: AsPrimitive<T>,
+{
+    fn push(&mut self) -> ParquetResult<()> {
+        unsafe {
+            *self.buffers_ptr.add(self.buffers_offset) = self.next();
+            self.buffers_offset += 1;
+        }
+        Ok(())
+    }
+
+    fn push_null(&mut self) -> ParquetResult<()> {
+        unsafe {
+            *self.buffers_ptr.add(self.buffers_offset) = self.null_value;
+            self.buffers_offset += 1;
+        }
+        Ok(())
+    }
+
+    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
+        let out = unsafe { self.buffers_ptr.add(self.buffers_offset) };
+        for i in 0..count {
+            unsafe {
+                *out.add(i) = self.null_value;
+            }
+        }
+        self.buffers_offset += count;
+        Ok(())
+    }
+
+    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
+        let out = unsafe { self.buffers_ptr.add(self.buffers_offset) };
+        for i in 0..count {
+            unsafe {
+                *out.add(i) = self.next();
+            }
+        }
+        self.buffers_offset += count;
+        Ok(())
+    }
+
+    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
+        let needed = (self.buffers_offset + count) * std::mem::size_of::<T>();
+        if self.buffers.data_vec.len() < needed {
+            let additional = needed - self.buffers.data_vec.len();
+            self.buffers.data_vec.reserve(additional)?;
+            unsafe {
+                self.buffers.data_vec.set_len(needed);
+            }
+        }
+        self.buffers_ptr = self.buffers.data_vec.as_mut_ptr().cast();
+        Ok(())
+    }
+
+    fn skip(&mut self, count: usize) {
+        for _ in 0..count {
+            self.next();
+        }
+    }
+
+    fn result(&self) -> ParquetResult<()> {
+        self.error.clone()
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Day(i32);
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Millis(i64);
+
+impl AsPrimitive<Millis> for Day {
+    fn as_(self) -> Millis {
+        Millis(self.0 as i64 * 24 * 60 * 60 * 1000)
+    }
+}
+
+impl Millis {
+    pub const NULL_VALUE: Self = Self(i64::MIN);
+
+    pub fn new(value: i64) -> Self {
+        Self(value)
+    }
+}
 
 impl<const N: usize, const R: usize, T: DataPageSlicer> Pushable for FixedColumnSink<'_, N, R, T> {
     fn reserve(&mut self, count: usize) -> ParquetResult<()> {

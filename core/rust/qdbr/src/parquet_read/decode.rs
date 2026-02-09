@@ -3,9 +3,10 @@ use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
 use crate::parquet::util::{align8b, ARRAY_NDIMS_LIMIT};
 use crate::parquet_read::column_sink::fixed::{
-    FixedBooleanColumnSink, FixedDoubleColumnSink, FixedFloatColumnSink, FixedInt2ByteColumnSink,
-    FixedInt2ShortColumnSink, FixedIntColumnSink, FixedLong128ColumnSink, FixedLong256ColumnSink,
-    FixedLongColumnSink, IntDecimalColumnSink, NanoTimestampColumnSink, ReverseFixedColumnSink,
+    Day, DeltaBinaryPackedPrimitiveDecoder, FixedBooleanColumnSink, FixedDoubleColumnSink,
+    FixedFloatColumnSink, FixedInt2ByteColumnSink, FixedInt2ShortColumnSink, FixedIntColumnSink,
+    FixedLong128ColumnSink, FixedLong256ColumnSink, FixedLongColumnSink, IntDecimalColumnSink,
+    Millis, NanoTimestampColumnSink, PlainPrimitiveDecoder, ReverseFixedColumnSink,
 };
 use crate::parquet_read::column_sink::var::ARRAY_AUX_SIZE;
 use crate::parquet_read::column_sink::var::{
@@ -15,9 +16,8 @@ use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::dict_decoder::{FixedDictDecoder, VarDictDecoder};
 use crate::parquet_read::slicer::rle::{RleDictionarySlicer, RleLocalIsGlobalSymbolDecoder};
 use crate::parquet_read::slicer::{
-    BooleanBitmapSlicer, DataPageFixedSlicer, DataPageSlicer, DaysToMillisConverter,
-    DeltaBinaryPackedSlicer, DeltaBytesArraySlicer, DeltaLengthArraySlicer, PlainVarSlicer,
-    ValueConvertSlicer,
+    BooleanBitmapSlicer, DataPageFixedSlicer, DataPageSlicer, DeltaBytesArraySlicer,
+    DeltaLengthArraySlicer, PlainVarSlicer,
 };
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnChunkStats, DecodeContext, ParquetDecoder, RowGroupBuffers,
@@ -36,10 +36,10 @@ use parquet2::read::levels::get_bit_width;
 use parquet2::read::{SlicePageReader, SlicedDataPage, SlicedDictPage, SlicedPage};
 use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
-use std::cmp;
 use std::cmp::min;
 use std::ptr;
 use std::slice;
+use std::{cmp, i32};
 
 impl RowGroupBuffers {
     pub fn new(allocator: QdbAllocator) -> Self {
@@ -890,11 +890,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedInt2ShortColumnSink::new(
-                            &mut DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
-                            bufs,
-                            &SHORT_NULL,
-                        ),
+                        &mut PlainPrimitiveDecoder::<i32, i16>::new(values_buffer, bufs, 0),
                     )?;
                     Ok(())
                 }
@@ -912,14 +908,11 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedInt2ShortColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<2>::try_new(
-                                values_buffer,
-                                page_row_count,
-                            )?,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i16>::try_new(
+                            values_buffer,
                             bufs,
-                            &SHORT_NULL,
-                        ),
+                            0,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -932,11 +925,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedInt2ByteColumnSink::new(
-                            &mut DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
-                            bufs,
-                            &BYTE_NULL,
-                        ),
+                        &mut PlainPrimitiveDecoder::<i32, i8>::new(values_buffer, bufs, 0),
                     )?;
                     Ok(())
                 }
@@ -954,14 +943,11 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedInt2ByteColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<1>::try_new(
-                                values_buffer,
-                                page_row_count,
-                            )?,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i8>::try_new(
+                            values_buffer,
                             bufs,
-                            &BYTE_NULL,
-                        ),
+                            0,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -979,11 +965,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedIntColumnSink::new(
-                            &mut DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
-                            bufs,
-                            &INT_NULL,
-                        ),
+                        &mut PlainPrimitiveDecoder::<i32, i32>::new(values_buffer, bufs, i32::MIN),
                     )?;
                     Ok(())
                 }
@@ -996,12 +978,10 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedLongColumnSink::new(
-                            &mut ValueConvertSlicer::<8, _, DaysToMillisConverter>::new(
-                                DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
-                            ),
+                        &mut PlainPrimitiveDecoder::<Day, Millis>::new(
+                            values_buffer,
                             bufs,
-                            &LONG_NULL,
+                            Millis::NULL_VALUE,
                         ),
                     )?;
                     Ok(())
@@ -1020,14 +1000,11 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedIntColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<4>::try_new(
-                                values_buffer,
-                                page_row_count,
-                            )?,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i32>::try_new(
+                            values_buffer,
                             bufs,
-                            &INT_NULL,
-                        ),
+                            i32::MIN,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -1191,11 +1168,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedLongColumnSink::new(
-                            &mut DataPageFixedSlicer::<8>::new(values_buffer, page_row_count),
-                            bufs,
-                            &LONG_NULL,
-                        ),
+                        &mut PlainPrimitiveDecoder::<i64, i64>::new(values_buffer, bufs, i64::MIN),
                     )?;
                     Ok(())
                 }
@@ -1216,14 +1189,11 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedLongColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<8>::try_new(
-                                values_buffer,
-                                page_row_count,
-                            )?,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i64>::try_new(
+                            values_buffer,
                             bufs,
-                            &LONG_NULL,
-                        ),
+                            i64::MIN,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -1622,11 +1592,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                     row_lo,
                     row_hi,
                     rows_filter,
-                    &mut FixedDoubleColumnSink::new(
-                        &mut DataPageFixedSlicer::<8>::new(values_buffer, page_row_count),
-                        bufs,
-                        &DOUBLE_NULL,
-                    ),
+                    &mut PlainPrimitiveDecoder::<f64, f64>::new(values_buffer, bufs, f64::NAN),
                 )?;
                 Ok(())
             }
@@ -1742,11 +1708,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedFloatColumnSink::new(
-                            &mut DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
-                            bufs,
-                            &FLOAT_NULL,
-                        ),
+                        &mut PlainPrimitiveDecoder::<f32, f32>::new(values_buffer, bufs, f32::NAN),
                     )?;
                     Ok(())
                 }
@@ -1845,11 +1807,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedInt2ShortColumnSink::new(
-                            &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
-                            bufs,
-                            &SHORT_NULL,
-                        ),
+                        &mut PlainPrimitiveDecoder::<i32, i16>::new(values_buffer, bufs, 0),
                     )?;
                     Ok(())
                 }
@@ -1863,11 +1821,11 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedInt2ShortColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<2>::try_new(values_buffer, row_count)?,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i16>::try_new(
+                            values_buffer,
                             bufs,
-                            &SHORT_NULL,
-                        ),
+                            0,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -1876,11 +1834,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedInt2ByteColumnSink::new(
-                            &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
-                            bufs,
-                            &BYTE_NULL,
-                        ),
+                        &mut PlainPrimitiveDecoder::<i32, i8>::new(values_buffer, bufs, 0),
                     )?;
                     Ok(())
                 }
@@ -1894,11 +1848,11 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedInt2ByteColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<1>::try_new(values_buffer, row_count)?,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i8>::try_new(
+                            values_buffer,
                             bufs,
-                            &BYTE_NULL,
-                        ),
+                            0,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -1912,11 +1866,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedIntColumnSink::new(
-                            &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
-                            bufs,
-                            &INT_NULL,
-                        ),
+                        &mut PlainPrimitiveDecoder::<i32, i32>::new(values_buffer, bufs, i32::MIN),
                     )?;
                     Ok(())
                 }
@@ -1925,12 +1875,10 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedLongColumnSink::new(
-                            &mut ValueConvertSlicer::<8, _, DaysToMillisConverter>::new(
-                                DataPageFixedSlicer::<4>::new(values_buffer, row_count),
-                            ),
+                        &mut PlainPrimitiveDecoder::<Day, Millis>::new(
+                            values_buffer,
                             bufs,
-                            &LONG_NULL,
+                            Millis::NULL_VALUE,
                         ),
                     )?;
                     Ok(())
@@ -1945,11 +1893,11 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedIntColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<4>::try_new(values_buffer, row_count)?,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i32>::try_new(
+                            values_buffer,
                             bufs,
-                            &INT_NULL,
-                        ),
+                            i32::MIN,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -2086,11 +2034,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedLongColumnSink::new(
-                            &mut DataPageFixedSlicer::<8>::new(values_buffer, row_count),
-                            bufs,
-                            &LONG_NULL,
-                        ),
+                        &mut PlainPrimitiveDecoder::<i64, i64>::new(values_buffer, bufs, i64::MIN),
                     )?;
                     Ok(())
                 }
@@ -2107,11 +2051,11 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedLongColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<8>::try_new(values_buffer, row_count)?,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i64>::try_new(
+                            values_buffer,
                             bufs,
-                            &LONG_NULL,
-                        ),
+                            i64::MIN,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -2168,11 +2112,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedLong128ColumnSink::new(
-                            &mut DataPageFixedSlicer::<16>::new(values_buffer, row_count),
-                            bufs,
-                            &UUID_NULL,
-                        ),
+                        &mut PlainPrimitiveDecoder::<i128, i128>::new(values_buffer, bufs, 0),
                     )?;
                     Ok(())
                 }
@@ -2419,11 +2359,7 @@ pub fn decode_page(
                     page,
                     row_lo,
                     row_hi,
-                    &mut FixedDoubleColumnSink::new(
-                        &mut DataPageFixedSlicer::<8>::new(values_buffer, row_count),
-                        bufs,
-                        &DOUBLE_NULL,
-                    ),
+                    &mut PlainPrimitiveDecoder::<f64, f64>::new(values_buffer, bufs, f64::NAN),
                 )?;
                 Ok(())
             }
@@ -2507,11 +2443,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedFloatColumnSink::new(
-                            &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
-                            bufs,
-                            &FLOAT_NULL,
-                        ),
+                        &mut PlainPrimitiveDecoder::<f32, f32>::new(values_buffer, bufs, f32::NAN),
                     )?;
                     Ok(())
                 }
@@ -3019,6 +2951,11 @@ fn decode_null_bitmap(
     page: &DataPage,
     count: usize,
 ) -> ParquetResult<Option<HybridDecoderBitmapIter<'_>>> {
+    let nc = page.header().null_count();
+    if nc == Some(0) {
+        return Ok(None);
+    }
+
     let def_levels = split_buffer(page)?.1;
     if def_levels.is_empty() {
         return Ok(None);
