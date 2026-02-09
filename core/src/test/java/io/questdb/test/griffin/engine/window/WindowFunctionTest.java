@@ -11320,7 +11320,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "sum\n" +
                             "1.0\n" +
                             "3.0\n",
-                    "SELECT sum(x) OVER \"\u7A97\u53E3\" FROM t WINDOW \"\u7A97\u53E3\" AS (ORDER BY ts)"
+                    "SELECT sum(x) OVER \"窗口\" FROM t WINDOW \"窗口\" AS (ORDER BY ts)"
             );
         });
     }
