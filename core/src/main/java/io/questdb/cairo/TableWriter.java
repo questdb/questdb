@@ -694,11 +694,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             openNewColumnFiles(columnName, columnType, isIndexed, indexValueBlockCapacity);
         }
 
-        // Atomic metadata update using BlockFile dual-region approach.
-        // No swap files, no prev files, no todo recovery needed.
-        // The BlockFile version counter provides atomic visibility switching.
-        saveMetadata(metadata);
-        commitMetadataAndColumnStructureChange();
+        commitStructuralMetadataChange();
 
         try {
             if (!Os.isWindows()) {
@@ -715,14 +711,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (securityContext != null) {
                 ddlListener.onColumnAdded(securityContext, tableToken, columnName);
             }
-
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.hydrateTable(metadata);
-            }
         } catch (CairoError err) {
             throw err;
         } catch (Throwable th) {
-            throwDistressException(th);
+            handleHousekeepingException(th);
         }
     }
 
@@ -767,14 +759,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnMetadata.setSymbolIndexFlag(true);
         columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
-        commitMetadataChange();
-
         indexers.extendAndSet(columnIndex, indexer);
         populateDenseIndexerList();
 
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable(metadata);
-        }
+        commitNonstructuralMetadataChange();
+
         LOG.info().$("ADDED index to '").$safe(columnName).$('[').$(ColumnType.nameOf(existingType))
                 .$("]' to ").$substr(pathRootSize, path).$();
     }
@@ -1001,7 +990,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             symbolMapWriter.updateCacheFlag(cache);
             TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
             columnMetadata.setSymbolCacheFlag(cache);
-            writeMetadataToDisk();
+            commitNonstructuralMetadataChange();
         }
     }
 
@@ -1106,7 +1095,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 populateDenseIndexerList();
             }
 
-            commitMetadataAndColumnStructureChange();
         } catch (Throwable th) {
             LOG.critical().$("could not change column type [table=").$(tableToken).$(", column=").$safe(columnName)
                     .$(", error=").$(th).I$();
@@ -1118,9 +1106,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(pathSize);
         }
 
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable(metadata);
-        }
+        commitStructuralMetadataChange();
     }
 
     @Override
@@ -1203,8 +1189,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         symbolCacheFlag
                 );
 
-                saveMetadata(metadata);
-                commitMetadataChange();
+                commitNonstructuralMetadataChange();
             } catch (CairoException e) {
                 throwDistressException(e);
             }
@@ -1978,18 +1963,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0; i < columnCount; i++) {
             metadata.getColumnMetadata(i).setDedupKeyFlag(false);
         }
-        // Atomic metadata update using BlockFile dual-region approach.
-        // No swap files, no prev files, no todo recovery needed.
-        // The BlockFile version counter provides atomic visibility switching.
         if (dedupColumnCommitAddresses != null) {
             dedupColumnCommitAddresses.setDedupColumnCount(0);
         }
-        saveMetadata(metadata);
-        commitMetadataAndColumnStructureChange();
-
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable(metadata);
-        }
+        commitStructuralMetadataChange();
     }
 
     @Override
@@ -2034,32 +2011,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // refresh metadata
             columnMetadata.setSymbolIndexFlag(false);
             columnMetadata.setIndexValueBlockCapacity(defaultIndexValueBlockSize);
-            // Atomic metadata update using BlockFile dual-region approach.
-            // No swap files, no prev files, no todo recovery needed.
-            // The BlockFile version counter provides atomic visibility switching.
-            saveMetadata(metadata);
-            commitMetadataChange();
-
-            // remove indexer
-            ColumnIndexer columnIndexer = indexers.getQuick(columnIndex);
-            if (columnIndexer != null) {
-                indexers.setQuick(columnIndex, null);
-                Misc.free(columnIndexer);
-                populateDenseIndexerList();
-            }
-
-            // purge old column versions
-            finishColumnPurge();
-            LOG.info().$("REMOVED index [txn=").$(txWriter.getTxn()).I$();
-
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.hydrateTable(metadata);
-            }
-
-            LOG.info().$("END DROP INDEX [txn=").$(txWriter.getTxn())
-                    .$(", table=").$(tableToken)
-                    .$(", column=").$safe(columnName)
-                    .I$();
         } catch (CairoException e) {
             // LOG original exception detail
             LOG.critical().$("exception on index drop [txn=").$(txWriter.getTxn())
@@ -2085,6 +2036,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .put(", table=").put(tableToken.getTableName())
                     .put(", column=").put(columnName)
                     .put("]: ").put(e.getMessage());
+        }
+
+        commitNonstructuralMetadataChange();
+
+        try {
+            // remove indexer
+            ColumnIndexer columnIndexer = indexers.getQuick(columnIndex);
+            if (columnIndexer != null) {
+                indexers.setQuick(columnIndex, null);
+                Misc.free(columnIndexer);
+                populateDenseIndexerList();
+            }
+
+            // purge old column versions
+            finishColumnPurge();
+            LOG.info().$("REMOVED index [txn=").$(txWriter.getTxn()).I$();
+
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.hydrateTable(metadata);
+            }
+
+            LOG.info().$("END DROP INDEX [txn=").$(txWriter.getTxn())
+                    .$(", table=").$(tableToken)
+                    .$(", column=").$safe(columnName)
+                    .I$();
+        } catch (Throwable th) {
+            handleHousekeepingException(th);
         }
     }
 
@@ -2129,11 +2107,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 j++;
             }
         }
-        // Atomic metadata update using BlockFile dual-region approach.
-        // No swap files, no prev files, no todo recovery needed.
-        // The BlockFile version counter provides atomic visibility switching.
-        saveMetadata(metadata);
-        commitMetadataAndColumnStructureChange();
+        commitStructuralMetadataChange();
 
         if (dedupColumnCommitAddresses == null) {
             dedupColumnCommitAddresses = new DedupColumnCommitAddresses();
@@ -2142,9 +2116,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         dedupColumnCommitAddresses.setDedupColumnCount(columnsIndexes.size() - 1);
 
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable(metadata);
-        }
         return isSubsetOfOldKeys;
     }
 
@@ -2718,23 +2689,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // schedule to remove column files after the commit
             scheduleColumnPurge(index, columnName, type, isIndexed);
-            // Atomic metadata update using BlockFile dual-region approach.
-            // No swap files, no prev files, no todo recovery needed.
-            // The BlockFile version counter provides atomic visibility switching.
-            saveMetadata(metadata);
-            commitMetadataAndColumnStructureChange();
-
-            finishColumnPurge();
-
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.hydrateTable(metadata);
-            }
-            LOG.info().$("REMOVED column '").$safe(name).$('[').$(ColumnType.nameOf(type)).$("]' from ").$substr(pathRootSize, path).$();
         } catch (CairoError err) {
             throw err;
         } catch (Throwable th) {
             throwDistressException(th);
         }
+
+        // Atomic metadata update using BlockFile dual-region approach.
+        // No swap files, no prev files, no todo recovery needed.
+        // The BlockFile version counter provides atomic visibility switching.
+        commitStructuralMetadataChange();
+
+        try {
+            finishColumnPurge();
+        } catch (Throwable th) {
+            handleHousekeepingException(th);
+        }
+        LOG.info().$("REMOVED column '").$safe(name).$('[').$(ColumnType.nameOf(type)).$("]' from ").$substr(pathRootSize, path).$();
     }
 
     @Override
@@ -2804,13 +2775,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // rename column files has to be done before _todo is removed
             hardLinkAndPurgeColumnFiles(columnName, index, isIndexed, newColumnName, type);
 
-            // Save metadata changes using block writer to A/B section
-            saveMetadata(metadata);
-            // commit to _txn file
-            commitMetadataAndColumnStructureChange();
         } catch (CairoException e) {
             throwDistressException(e);
         }
+
+        commitStructuralMetadataChange();
 
         try {
 
@@ -2823,10 +2792,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             if (securityContext != null) {
                 ddlListener.onColumnRenamed(securityContext, tableToken, columnName, newColumnName);
-            }
-
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.hydrateTable(metadata);
             }
 
             LOG.info().$("RENAMED column '").$safe(columnName).$("' to '").$safe(newColumnName).$("' from ").$substr(pathRootSize, path).$();
@@ -2846,7 +2811,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(pathSize);
         }
         // Record column structure version bump in txn file for WAL sequencer structure version to match the writer structure version.
-        commitMetadataAndColumnStructureChange();
+        commitStructuralMetadataChange();
     }
 
     @Override
@@ -2959,21 +2924,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void setMetaMaxUncommittedRows(int maxUncommittedRows) {
         commit();
         metadata.setMaxUncommittedRows(maxUncommittedRows);
-        writeMetadataToDisk();
+        commitNonstructuralMetadataChange();
     }
 
     @Override
     public void setMetaO3MaxLag(long o3MaxLagUs) {
         commit();
         metadata.setO3MaxLag(o3MaxLagUs);
-        writeMetadataToDisk();
+        commitNonstructuralMetadataChange();
     }
 
     @Override
     public void setMetaTtl(int ttlHoursOrMonths) {
         commit();
         metadata.setTtlHoursOrMonths(ttlHoursOrMonths);
-        writeMetadataToDisk();
+        commitNonstructuralMetadataChange();
     }
 
     public void setSeqTxn(long seqTxn) {
@@ -4041,24 +4006,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.committedMasterRef = masterRef;
     }
 
-    private void commitMetadataAndColumnStructureChange() {
+    private void commitMetadataChange(boolean bumpColumnStructure) {
         try {
             columnVersionWriter.commit();
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
-            txWriter.commitMetadataChange(metadata.getMetadataVersion(), true, denseSymbolMapWriters);
+            saveMetadata(metadata);
+
+            txWriter.commitMetadataChange(metadata.getMetadataVersion(), bumpColumnStructure, denseSymbolMapWriters);
         } catch (CairoException e) {
             throwDistressException(e);
+        }
+
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
+        } catch (Throwable th) {
+            handleHousekeepingException(th);
         }
     }
 
-    private void commitMetadataChange() {
-        try {
-            columnVersionWriter.commit();
-            txWriter.setColumnVersion(columnVersionWriter.getVersion());
-            txWriter.commitMetadataChange(metadata.getMetadataVersion(), false, denseSymbolMapWriters);
-        } catch (CairoException e) {
-            throwDistressException(e);
-        }
+    private void commitNonstructuralMetadataChange() {
+        commitMetadataChange(false);
     }
 
     private void commitRemovePartitionOperation() {
@@ -4066,6 +4033,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         txWriter.commit(denseSymbolMapWriters);
         processPartitionRemoveCandidates();
+    }
+
+    private void commitStructuralMetadataChange() {
+        commitMetadataChange(true);
     }
 
     private void configureAppendPosition() {
@@ -9603,8 +9574,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     columns
             );
             metadata.setMetadataVersion(newVersion);
+        } catch (CairoException e) {
+            LOG.critical().$("could not write metadata to BlockFile [path=").$(path).$(", errno=").$(e.errno).I$();
+            throw e;
         } catch (Throwable th) {
-            LOG.critical().$("could not write metadata to BlockFile [path=").$(path).$(']').$();
+            LOG.critical().$("could not write metadata to BlockFile [path=").$(path).$(", error=").$(th).I$();
             throw th;
         } finally {
             path.trimTo(pathSize);
@@ -10420,15 +10394,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.error().$("rolling back index created so far [path=").$substr(pathRootSize, path).I$();
             rollbackRemoveIndexFiles(columnName, columnIndex);
             throw th;
-        }
-    }
-
-    private void writeMetadataToDisk() {
-        // Atomic metadata update using BlockFile dual-region approach.
-        saveMetadata(metadata);
-        commitMetadataChange();
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable(metadata);
         }
     }
 

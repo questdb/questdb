@@ -259,12 +259,12 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             int newCapacity,
             boolean newCacheFlag
     ) {
+        final int plen = path.size();
         try {
             // Re-open files and re-build indexes keeping .c, .o files.
             // This is very similar to the constructor, but we need to keep .c, .o files and re-nitialize k,v files.
             // Also cache is conditionally re-used.
 
-            final int plen = path.size();
             int symbolCount = getSymbolCount();
             final FilesFacade ff = configuration.getFilesFacade();
 
@@ -364,6 +364,8 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         } catch (Throwable th) {
             closeNoTruncate();
             throw th;
+        } finally {
+            path.trimTo(plen);
         }
     }
 

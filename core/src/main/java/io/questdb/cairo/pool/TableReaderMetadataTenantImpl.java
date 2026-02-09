@@ -234,7 +234,12 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
                     Os.pause();
                     continue;
                 case VERSION_MISMATCH:
-                    // Version mismatch - caller should re-read txn
+                    // Version mismatch - check timeout, caller should re-read txn
+                    if (clock.getTicks() > deadline) {
+                        throw CairoException.critical(0).put("Metadata version mismatch timeout [src=metadata, txnMetadataVersion=").put(txnMetadataVersion)
+                                .put(", metaFileVersion=").put(getMetadataVersion())
+                                .put(", timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
+                    }
                     return false;
             }
 
@@ -244,10 +249,16 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
     }
 
     private void reloadSlow() {
-        final long deadline = clock.getTicks() + configuration.getSpinLockTimeout();
+        long deadline = clock.getTicks() + configuration.getSpinLockTimeout();
+        long prevTxn = txn;
         do {
             // Reload txn
             readTxnSlow(deadline);
+            // Reset deadline when txn advances (we're making progress)
+            if (txn != prevTxn) {
+                deadline = clock.getTicks() + configuration.getSpinLockTimeout();
+                prevTxn = txn;
+            }
             // Reload _meta if structure version updated, reload _cv if column version updated
             // Start again if _meta with matching structure version cannot be loaded
         } while (!reloadMetadata(txFile.getMetadataVersion(), deadline));

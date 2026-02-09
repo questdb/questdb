@@ -1677,7 +1677,12 @@ public class TableReader implements Closeable, SymbolTableSource {
                     Os.pause();
                     continue;
                 case VERSION_MISMATCH:
-                    // Version mismatch - caller should re-read txn
+                    // Version mismatch - check timeout, caller should re-read txn
+                    if (clock.getTicks() > deadline) {
+                        throw CairoException.critical(0).put("Metadata version mismatch timeout [src=reader, txnMetadataVersion=").put(txnMetadataVersion)
+                                .put(", metaFileVersion=").put(metadata.getMetadataVersion())
+                                .put(", timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
+                    }
                     return false;
             }
 
@@ -1714,10 +1719,16 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void reloadSlow(boolean reshuffle) {
-        final long deadline = clock.getTicks() + configuration.getSpinLockTimeout();
+        long deadline = clock.getTicks() + configuration.getSpinLockTimeout();
+        long prevTxn = txn;
         do {
             // Reload txn
             readTxnSlow(deadline);
+            // Reset deadline when txn advances (we're making progress)
+            if (txn != prevTxn) {
+                deadline = clock.getTicks() + configuration.getSpinLockTimeout();
+                prevTxn = txn;
+            }
             // Reload _meta if the structure version updated, reload _cv if column version updated
         } while (
             // Reload column versions, column version used in metadata reload column shuffle
