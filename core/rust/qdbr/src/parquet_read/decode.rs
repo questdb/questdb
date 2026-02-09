@@ -27,7 +27,7 @@ use crate::parquet_write::array::{
     append_array_null, append_array_nulls, calculate_array_shape, LevelsIterator,
 };
 use parquet2::deserialize::{HybridDecoderBitmapIter, HybridEncoded};
-use parquet2::encoding::hybrid_rle::BitmapIter;
+
 use parquet2::encoding::hybrid_rle::HybridRleDecoder;
 use parquet2::encoding::{hybrid_rle, Encoding};
 use parquet2::page::DataPageHeader;
@@ -2511,43 +2511,21 @@ fn decode_page0<T: Pushable>(
             let run = run?;
             match run {
                 HybridEncoded::Bitmap(values, length) => {
-                    // consume `length` items
-                    let mut iter = BitmapIter::new(values, 0, length);
-                    // first, scan values to skip, if any
+                    // Handle skip phase using popcnt for fast counting
                     let local_skip_count = min(skip_count, length);
                     skip_count -= local_skip_count;
-                    let mut to_skip = 0usize;
-                    for _ in 0..local_skip_count {
-                        if let Some(item) = iter.next() {
-                            to_skip += item as usize;
-                        }
-                    }
-                    sink.skip(to_skip);
-                    // next, copy the remaining values, if any
-                    // consecutive true/false values together
-                    let mut consecutive_true = 0usize;
-                    let mut consecutive_false = 0usize;
-                    while let Some(item) = iter.next() {
-                        if item {
-                            if consecutive_false > 0 {
-                                sink.push_nulls(consecutive_false)?;
-                                consecutive_false = 0;
-                            }
-                            consecutive_true += 1;
-                        } else {
-                            if consecutive_true > 0 {
-                                sink.push_slice(consecutive_true)?;
-                                consecutive_true = 0;
-                            }
-                            consecutive_false += 1;
-                        }
+                    let mut bit_offset = 0usize;
+
+                    if local_skip_count > 0 {
+                        let to_skip = count_ones_in_bitmap(values, 0, local_skip_count);
+                        sink.skip(to_skip);
+                        bit_offset = local_skip_count;
                     }
 
-                    if consecutive_true > 0 {
-                        sink.push_slice(consecutive_true)?;
-                    }
-                    if consecutive_false > 0 {
-                        sink.push_nulls(consecutive_false)?;
+                    // Process remaining bits using word-at-a-time approach
+                    let remaining = length - bit_offset;
+                    if remaining > 0 {
+                        decode_bitmap_runs(values, bit_offset, remaining, sink)?;
                     }
                 }
                 HybridEncoded::Repeated(is_set, length) => {
@@ -2572,6 +2550,162 @@ fn decode_page0<T: Pushable>(
         sink.push_slice(row_hi - row_lo)?;
     }
     sink.result()
+}
+
+/// Process bitmap runs using word-at-a-time approach with trailing_ones/trailing_zeros.
+#[inline]
+fn decode_bitmap_runs<T: Pushable>(
+    values: &[u8],
+    bit_offset: usize,
+    count: usize,
+    sink: &mut T,
+) -> ParquetResult<()> {
+    let mut remaining = count;
+    let mut pos = bit_offset;
+    let mut consecutive_true = 0usize;
+    let mut consecutive_false = 0usize;
+
+    // Handle unaligned start bits to reach byte boundary
+    let start_bit = pos & 7;
+    if start_bit != 0 {
+        let bits_in_byte = (8 - start_bit).min(remaining);
+        let byte = values[pos >> 3] >> start_bit;
+        for i in 0..bits_in_byte {
+            if (byte >> i) & 1 == 1 {
+                if consecutive_false > 0 {
+                    sink.push_nulls(consecutive_false)?;
+                    consecutive_false = 0;
+                }
+                consecutive_true += 1;
+            } else {
+                if consecutive_true > 0 {
+                    sink.push_slice(consecutive_true)?;
+                    consecutive_true = 0;
+                }
+                consecutive_false += 1;
+            }
+        }
+        pos += bits_in_byte;
+        remaining -= bits_in_byte;
+    }
+
+    // Process 8 bytes (64 bits) at a time
+    while remaining >= 64 && (pos >> 3) + 8 <= values.len() {
+        let word = unsafe { (values.as_ptr().add(pos >> 3) as *const u64).read_unaligned() };
+
+        if word == u64::MAX {
+            // All 64 bits set
+            if consecutive_false > 0 {
+                sink.push_nulls(consecutive_false)?;
+                consecutive_false = 0;
+            }
+            consecutive_true += 64;
+        } else if word == 0 {
+            // All 64 bits clear
+            if consecutive_true > 0 {
+                sink.push_slice(consecutive_true)?;
+                consecutive_true = 0;
+            }
+            consecutive_false += 64;
+        } else {
+            // Mixed: scan runs using trailing_ones/trailing_zeros
+            let mut w = word;
+            let mut bits_left = 64usize;
+            while bits_left > 0 {
+                if w & 1 == 1 {
+                    let ones = (w.trailing_ones() as usize).min(bits_left);
+                    if consecutive_false > 0 {
+                        sink.push_nulls(consecutive_false)?;
+                        consecutive_false = 0;
+                    }
+                    consecutive_true += ones;
+                    w >>= ones;
+                    bits_left -= ones;
+                } else {
+                    let zeros = if w == 0 {
+                        bits_left
+                    } else {
+                        (w.trailing_zeros() as usize).min(bits_left)
+                    };
+                    if consecutive_true > 0 {
+                        sink.push_slice(consecutive_true)?;
+                        consecutive_true = 0;
+                    }
+                    consecutive_false += zeros;
+                    w >>= zeros;
+                    bits_left -= zeros;
+                }
+            }
+        }
+        pos += 64;
+        remaining -= 64;
+    }
+
+    // Process remaining full bytes
+    while remaining >= 8 {
+        let byte = values[pos >> 3];
+        if byte == 0xFF {
+            if consecutive_false > 0 {
+                sink.push_nulls(consecutive_false)?;
+                consecutive_false = 0;
+            }
+            consecutive_true += 8;
+        } else if byte == 0 {
+            if consecutive_true > 0 {
+                sink.push_slice(consecutive_true)?;
+                consecutive_true = 0;
+            }
+            consecutive_false += 8;
+        } else {
+            for i in 0..8 {
+                if (byte >> i) & 1 == 1 {
+                    if consecutive_false > 0 {
+                        sink.push_nulls(consecutive_false)?;
+                        consecutive_false = 0;
+                    }
+                    consecutive_true += 1;
+                } else {
+                    if consecutive_true > 0 {
+                        sink.push_slice(consecutive_true)?;
+                        consecutive_true = 0;
+                    }
+                    consecutive_false += 1;
+                }
+            }
+        }
+        pos += 8;
+        remaining -= 8;
+    }
+
+    // Handle remaining bits
+    if remaining > 0 {
+        let byte = values[pos >> 3];
+        for i in 0..remaining {
+            if (byte >> i) & 1 == 1 {
+                if consecutive_false > 0 {
+                    sink.push_nulls(consecutive_false)?;
+                    consecutive_false = 0;
+                }
+                consecutive_true += 1;
+            } else {
+                if consecutive_true > 0 {
+                    sink.push_slice(consecutive_true)?;
+                    consecutive_true = 0;
+                }
+                consecutive_false += 1;
+            }
+        }
+    }
+
+    // Flush remaining runs
+    if consecutive_true > 0 {
+        sink.push_slice(consecutive_true)?;
+    }
+    if consecutive_false > 0 {
+        sink.push_nulls(consecutive_false)?;
+    }
+
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5024,5 +5158,309 @@ mod tests {
             })
             .collect();
         assert_eq!(result, expected);
+    }
+
+    use super::decode_bitmap_runs;
+    use crate::parquet_read::column_sink::Pushable;
+
+    /// Records push_slice / push_nulls calls for verification.
+    struct MockPushable {
+        /// Reconstructed bit pattern: true = set (push_slice), false = null.
+        bits: Vec<bool>,
+    }
+
+    impl MockPushable {
+        fn new() -> Self {
+            Self { bits: Vec::new() }
+        }
+    }
+
+    impl Pushable for MockPushable {
+        fn reserve(
+            &mut self,
+            _count: usize,
+        ) -> super::super::super::parquet::error::ParquetResult<()> {
+            Ok(())
+        }
+        fn push(&mut self) -> super::super::super::parquet::error::ParquetResult<()> {
+            self.bits.push(true);
+            Ok(())
+        }
+        fn push_slice(
+            &mut self,
+            count: usize,
+        ) -> super::super::super::parquet::error::ParquetResult<()> {
+            self.bits.extend(std::iter::repeat(true).take(count));
+            Ok(())
+        }
+        fn push_null(&mut self) -> super::super::super::parquet::error::ParquetResult<()> {
+            self.bits.push(false);
+            Ok(())
+        }
+        fn push_nulls(
+            &mut self,
+            count: usize,
+        ) -> super::super::super::parquet::error::ParquetResult<()> {
+            self.bits.extend(std::iter::repeat(false).take(count));
+            Ok(())
+        }
+        fn skip(&mut self, _count: usize) {}
+        fn result(&self) -> super::super::super::parquet::error::ParquetResult<()> {
+            Ok(())
+        }
+    }
+
+    /// Reference implementation: read bits one at a time from a bitmap.
+    fn expected_bits(values: &[u8], bit_offset: usize, count: usize) -> Vec<bool> {
+        (0..count)
+            .map(|i| {
+                let pos = bit_offset + i;
+                (values[pos >> 3] >> (pos & 7)) & 1 == 1
+            })
+            .collect()
+    }
+
+    fn run_bitmap_test(values: &[u8], bit_offset: usize, count: usize) {
+        let mut sink = MockPushable::new();
+        decode_bitmap_runs(values, bit_offset, count, &mut sink).unwrap();
+        let expected = expected_bits(values, bit_offset, count);
+        assert_eq!(
+            sink.bits, expected,
+            "mismatch at bit_offset={bit_offset}, count={count}"
+        );
+    }
+
+    #[test]
+    fn bitmap_runs_empty() {
+        run_bitmap_test(&[0xFF], 0, 0);
+    }
+
+    #[test]
+    fn bitmap_runs_all_ones_small() {
+        // 5 bits, all set
+        run_bitmap_test(&[0xFF], 0, 5);
+    }
+
+    #[test]
+    fn bitmap_runs_all_zeros_small() {
+        // 5 bits, all clear
+        run_bitmap_test(&[0x00], 0, 5);
+    }
+
+    #[test]
+    fn bitmap_runs_all_ones_one_byte() {
+        run_bitmap_test(&[0xFF], 0, 8);
+    }
+
+    #[test]
+    fn bitmap_runs_all_zeros_one_byte() {
+        run_bitmap_test(&[0x00], 0, 8);
+    }
+
+    #[test]
+    fn bitmap_runs_mixed_byte() {
+        // 0b10101010 = alternating 0,1,0,1,0,1,0,1
+        run_bitmap_test(&[0xAA], 0, 8);
+    }
+
+    #[test]
+    fn bitmap_runs_unaligned_start() {
+        // Start at bit 3 within 0xFF, read 5 bits → all ones
+        run_bitmap_test(&[0xFF], 3, 5);
+    }
+
+    #[test]
+    fn bitmap_runs_unaligned_start_mixed() {
+        // 0b11001010 = bits: 0,1,0,1,0,0,1,1
+        // Start at bit 2, read 4 bits → 0,1,0,0
+        run_bitmap_test(&[0xCA], 2, 4);
+    }
+
+    #[test]
+    fn bitmap_runs_unaligned_start_spans_bytes() {
+        // Start at bit 5 of first byte, read 10 bits spanning two bytes
+        run_bitmap_test(&[0xFF, 0x0F], 5, 10);
+    }
+
+    #[test]
+    fn bitmap_runs_exactly_64_all_ones() {
+        let values = [0xFFu8; 8];
+        run_bitmap_test(&values, 0, 64);
+    }
+
+    #[test]
+    fn bitmap_runs_exactly_64_all_zeros() {
+        let values = [0x00u8; 8];
+        run_bitmap_test(&values, 0, 64);
+    }
+
+    #[test]
+    fn bitmap_runs_exactly_64_mixed() {
+        // First 32 bits set, last 32 bits clear
+        let mut values = [0u8; 8];
+        values[0..4].fill(0xFF);
+        run_bitmap_test(&values, 0, 64);
+    }
+
+    #[test]
+    fn bitmap_runs_64bit_trailing_ones_zeros() {
+        // Pattern: 7 ones, 3 zeros, 5 ones, 1 zero, rest ones
+        // This exercises the trailing_ones/trailing_zeros inner loop
+        // 0b01111111 0b11111_000 0b1_0000000 ...
+        let mut values = [0u8; 8];
+        // Bit 0..6: ones (7 ones)
+        values[0] = 0x7F; // 0b01111111
+                          // Bit 7..9: zeros (3 zeros, bit 7 already 0 from 0x7F)
+        values[1] = 0b11111_00_0; // bits 8,9=0, bits 10-15=1
+                                  // Actually let me be more precise. Let me construct this carefully.
+                                  // I want: 7 ones, 3 zeros, 54 ones
+                                  // bits  0- 6: 1 (7 ones)
+                                  // bits  7- 9: 0 (3 zeros)
+                                  // bits 10-63: 1 (54 ones)
+                                  // byte 0: bits 0-7 = 0111_1111 = 0x7F
+                                  // byte 1: bits 8-15 = 1111_11_00 = 0xFC
+        values[0] = 0x7F;
+        values[1] = 0xFC;
+        values[2..8].fill(0xFF);
+        run_bitmap_test(&values, 0, 64);
+    }
+
+    #[test]
+    fn bitmap_runs_unaligned_into_64bit_path() {
+        // 3 bits unaligned, then 64 bits via word path, then 5 remaining bits
+        // Total: 3 + 64 + 5 = 72 bits, starting at bit_offset=5
+        let values = [0xFFu8; 10]; // 80 bits available
+        run_bitmap_test(&values, 5, 72);
+    }
+
+    #[test]
+    fn bitmap_runs_unaligned_into_64bit_zeros() {
+        let values = [0x00u8; 10];
+        run_bitmap_test(&values, 3, 72);
+    }
+
+    #[test]
+    fn bitmap_runs_remaining_full_bytes_all_ones() {
+        // 24 bits (3 bytes), no 64-bit word path
+        let values = [0xFFu8; 3];
+        run_bitmap_test(&values, 0, 24);
+    }
+
+    #[test]
+    fn bitmap_runs_remaining_full_bytes_all_zeros() {
+        let values = [0x00u8; 3];
+        run_bitmap_test(&values, 0, 24);
+    }
+
+    #[test]
+    fn bitmap_runs_remaining_full_bytes_mixed() {
+        // 0xFF, 0x00, 0xAA → 8 ones, 8 zeros, alternating
+        let values = [0xFF, 0x00, 0xAA];
+        run_bitmap_test(&values, 0, 24);
+    }
+
+    #[test]
+    fn bitmap_runs_trailing_bits() {
+        // 11 bits total: 8 full + 3 remaining
+        run_bitmap_test(&[0xFF, 0x05], 0, 11);
+    }
+
+    #[test]
+    fn bitmap_runs_only_trailing_bits() {
+        // Less than 8 bits, no full byte processing
+        run_bitmap_test(&[0b00110101], 0, 6);
+    }
+
+    #[test]
+    fn bitmap_runs_cross_word_run() {
+        // A run of ones that spans from one 64-bit word into the next
+        // 128 bits all set
+        let values = [0xFFu8; 16];
+        run_bitmap_test(&values, 0, 128);
+    }
+
+    #[test]
+    fn bitmap_runs_cross_word_run_with_transition() {
+        // 128 bits: first 60 ones, then 8 zeros, then 60 ones
+        // This tests run accumulation across the word boundary
+        let mut values = [0xFFu8; 16];
+        // Clear bits 60-67
+        // byte 7: bits 56-63 → clear bits 60-63 → byte7 = 0x0F
+        values[7] = 0x0F;
+        // byte 8: bits 64-71 → clear bits 64-67 → byte8 = 0xF0
+        values[8] = 0xF0;
+        run_bitmap_test(&values, 0, 128);
+    }
+
+    #[test]
+    fn bitmap_runs_large_alternating() {
+        // 256 bits of alternating 0xAA pattern
+        let values = [0xAAu8; 32];
+        run_bitmap_test(&values, 0, 256);
+    }
+
+    #[test]
+    fn bitmap_runs_large_with_offset() {
+        // 200 bits starting at offset 7 with mixed pattern
+        let mut values = [0u8; 30];
+        for (i, v) in values.iter_mut().enumerate() {
+            *v = if i % 3 == 0 {
+                0xFF
+            } else if i % 3 == 1 {
+                0x00
+            } else {
+                0xAA
+            };
+        }
+        run_bitmap_test(&values, 7, 200);
+    }
+
+    #[test]
+    fn bitmap_runs_single_bit_true() {
+        run_bitmap_test(&[0x01], 0, 1);
+    }
+
+    #[test]
+    fn bitmap_runs_single_bit_false() {
+        run_bitmap_test(&[0x00], 0, 1);
+    }
+
+    #[test]
+    fn bitmap_runs_flush_trailing_true() {
+        // Ends with ones: 4 zeros then 4 ones
+        run_bitmap_test(&[0xF0], 0, 8);
+    }
+
+    #[test]
+    fn bitmap_runs_flush_trailing_false() {
+        // Ends with zeros: 4 ones then 4 zeros
+        run_bitmap_test(&[0x0F], 0, 8);
+    }
+
+    #[test]
+    fn bitmap_runs_count_less_than_byte_unaligned() {
+        // bit_offset=3, count=3 → only unaligned path, no full bytes or words
+        run_bitmap_test(&[0b11010110], 3, 3);
+    }
+
+    #[test]
+    fn bitmap_runs_64bit_word_starts_with_zeros() {
+        // Mixed word starting with zeros exercises the else branch first
+        let mut values = [0u8; 8];
+        values[0] = 0x00; // 8 zeros
+        values[1] = 0xFF; // 8 ones
+        values[2..8].fill(0xAA);
+        run_bitmap_test(&values, 0, 64);
+    }
+
+    #[test]
+    fn bitmap_runs_64bit_word_w_becomes_zero() {
+        // Pattern where w becomes 0 mid-loop (all remaining bits are zeros)
+        // First 16 ones, then 48 zeros
+        let mut values = [0u8; 8];
+        values[0] = 0xFF;
+        values[1] = 0xFF;
+        // bytes 2-7 already zero
+        run_bitmap_test(&values, 0, 64);
     }
 }
