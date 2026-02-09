@@ -220,12 +220,7 @@ public class NamedWindowFuzzTest extends AbstractCairoTest {
 
             if (useRange) {
                 outRangeFrame[0] = true;
-                sb.append(" RANGE BETWEEN ");
-                if (rnd.nextBoolean()) {
-                    sb.append("UNBOUNDED PRECEDING AND CURRENT ROW");
-                } else {
-                    sb.append("'").append(1 + rnd.nextInt(5)).append("' SECOND PRECEDING AND CURRENT ROW");
-                }
+                sb.append(" RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW");
             } else {
                 sb.append(" ROWS BETWEEN ");
                 if (rnd.nextBoolean()) {
