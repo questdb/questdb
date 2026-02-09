@@ -42,6 +42,16 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.Properties;
 
+/**
+ * Entry point for the offline recovery CLI. Parses command-line arguments ({@code -d},
+ * {@code --db}, {@code --no-color}, {@code --help}), resolves the database root from
+ * {@code server.conf}, acquires an advisory lock on {@code tables.d.lock} to prevent
+ * concurrent access, and launches a {@link RecoverySession} REPL.
+ *
+ * <p>Intended to be invoked when the database is <em>not running</em>.
+ * The lock file is held for the lifetime of the session to guard against
+ * accidental concurrent writes from a running server.
+ */
 public class RecoveryMain {
     private static final int EXIT_BAD_ARGS = 2;
     private static final int EXIT_LOCKED = 3;

@@ -24,6 +24,7 @@
 
 package io.questdb.recovery;
 
+/** Immutable entry from the {@code tables.d} registry: table name, directory, ID, and type. */
 public final class RegistryEntry {
     private final String dirName;
     private final boolean removed;

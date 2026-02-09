@@ -32,6 +32,15 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
+/**
+ * Validates column files within a partition. For each column, checks that
+ * fixed-size data files have the expected size, and that var-size columns
+ * have internally consistent aux files (monotonic offsets, valid inlining
+ * flags, correct N+1 offset models for string/binary).
+ *
+ * <p>Aux files are read in chunks to avoid allocating buffers proportional
+ * to partition row count. Results are collected into {@link ColumnCheckResult}.
+ */
 public class ColumnCheckService {
     private static final int CHUNK_ENTRIES = 4096;
     private final FilesFacade ff;

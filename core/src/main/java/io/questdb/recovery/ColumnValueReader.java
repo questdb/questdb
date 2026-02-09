@@ -37,6 +37,15 @@ import io.questdb.std.str.StringSink;
 
 import java.nio.charset.StandardCharsets;
 
+/**
+ * Reads and formats a single column value for display. Supports all QuestDB
+ * column types: fixed-size types are read directly from the {@code .d} file;
+ * var-size types (varchar, string, binary, array) use the {@code .i} (aux)
+ * file to locate data in the {@code .d} file.
+ *
+ * <p>The {@code withAuxAndData} helper manages the open/read/close lifecycle
+ * for the aux and data file pair shared by all var-size readers.
+ */
 public class ColumnValueReader {
     static final int MAX_DISPLAY_BYTES = 8192;
     private final FilesFacade ff;

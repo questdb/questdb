@@ -24,6 +24,7 @@
 
 package io.questdb.recovery;
 
+/** Categorization codes for issues found during file reading and validation. */
 public enum RecoveryIssueCode {
     CORRUPT_META,
     CORRUPT_REGISTRY,

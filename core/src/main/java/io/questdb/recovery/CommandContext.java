@@ -26,6 +26,11 @@ package io.questdb.recovery;
 
 import io.questdb.std.FilesFacade;
 
+/**
+ * Immutable bundle passed to every {@link RecoveryCommand}. Packages
+ * {@link NavigationContext} (current position and cached state) together
+ * with the services and renderer that commands need.
+ */
 public class CommandContext {
     private final AnsiColor color;
     private final ColumnCheckService columnCheckService;

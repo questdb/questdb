@@ -26,6 +26,13 @@ package io.questdb.recovery;
 
 import io.questdb.std.ObjList;
 
+/**
+ * Parsed state from a {@code tables.d.N} registry file. Contains the list of
+ * non-removed table entries (table name, directory name, table ID, table type),
+ * the file's append offset, and the registry version.
+ *
+ * <p>Populated by {@link BoundedRegistryReader}; setters are package-private.
+ */
 public final class RegistryState {
     private final ObjList<RegistryEntry> entries = new ObjList<>();
     private final ObjList<ReadIssue> issues = new ObjList<>();

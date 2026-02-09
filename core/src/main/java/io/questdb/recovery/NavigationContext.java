@@ -31,6 +31,20 @@ import io.questdb.std.str.Path;
 
 import java.io.PrintStream;
 
+/**
+ * Owns all mutable navigation state for the recovery session. The user navigates
+ * a four-level hierarchy: <em>root → table → partition → column</em>.
+ *
+ * <p>On {@code cd} into a table, the context eagerly reads and caches
+ * {@link TxnState}, {@link MetaState}, {@link ColumnVersionState}, and the
+ * partition scan. On {@code cd} into a column, per-column cache values
+ * (column top, name txn, effective row count, in-partition flag) are computed
+ * from the cached column-version state.
+ *
+ * <p>{@code cd ..} from column level clears column cache only; from partition
+ * level clears the partition index; from table level resets all caches (same
+ * as {@code cd /}).
+ */
 public class NavigationContext {
     private final BoundedColumnVersionReader columnVersionReader;
     private final CharSequence dbRoot;

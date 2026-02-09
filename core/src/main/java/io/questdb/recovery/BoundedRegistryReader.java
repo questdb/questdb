@@ -39,6 +39,15 @@ import io.questdb.std.str.Utf8s;
 
 import java.util.HashMap;
 
+/**
+ * Reads and parses a {@code tables.d.N} registry file into {@link RegistryState}.
+ * The registry is a database-wide append-only log of ADD/REMOVE operations that
+ * maps table names to directory names.
+ *
+ * <p>The reader finds the highest-versioned {@code tables.d.N} file, reads
+ * the append offset, then replays entries. Only non-removed entries survive
+ * into the final state. Entry count is capped by {@code maxEntries}.
+ */
 public class BoundedRegistryReader extends AbstractBoundedReader {
     public static final int DEFAULT_MAX_ENTRIES = 100_000;
     private static final int MAX_STRING_CHARS = 1024;

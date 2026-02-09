@@ -24,6 +24,11 @@
 
 package io.questdb.recovery;
 
+/**
+ * Partition scan outcome: {@code MATCHED} (directory exists and is in {@code _txn}),
+ * {@code MISSING} ({@code _txn} references it but directory is absent), or
+ * {@code ORPHAN} (directory exists but not in {@code _txn}).
+ */
 public enum PartitionScanStatus {
     MATCHED,
     MISSING,

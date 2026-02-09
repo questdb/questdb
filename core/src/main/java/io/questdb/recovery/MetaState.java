@@ -27,6 +27,12 @@ package io.questdb.recovery;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.ObjList;
 
+/**
+ * Parsed state from a {@code _meta} file. Contains the column list (types,
+ * names, indexed flags), partition-by strategy, and designated timestamp index.
+ *
+ * <p>Populated by {@link BoundedMetaReader}; setters are package-private.
+ */
 public final class MetaState {
     private final ObjList<MetaColumnState> columns = new ObjList<>();
     private final ObjList<ReadIssue> issues = new ObjList<>();

@@ -32,6 +32,13 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
+/**
+ * Reads and parses a {@code _meta} file into {@link MetaState}. The {@code _meta}
+ * file stores the column count, partition-by strategy, designated timestamp index,
+ * column types/flags, and UTF-16 column names.
+ *
+ * <p>Column count is capped by {@code maxColumns} to bound memory usage.
+ */
 public class BoundedMetaReader extends AbstractBoundedReader {
     public static final int DEFAULT_MAX_COLUMNS = 10_000;
     private static final int META_FLAG_BIT_INDEXED = 1;

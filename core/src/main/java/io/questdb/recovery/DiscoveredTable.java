@@ -28,6 +28,14 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
+/**
+ * A table directory discovered during filesystem scan. Tracks the table name
+ * (from {@code _name} file), directory name, WAL enablement, table type
+ * (table / materialized view / view), and an optional link to the
+ * {@link RegistryEntry} from {@code tables.d}.
+ *
+ * <p>Populated by {@link TableDiscoveryService}.
+ */
 public class DiscoveredTable {
     private final String dirName;
     private final ObjList<ReadIssue> issues = new ObjList<>();

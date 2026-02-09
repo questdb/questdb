@@ -40,6 +40,17 @@ import io.questdb.std.str.Utf8s;
 
 import java.util.HashMap;
 
+/**
+ * Discovers table directories under the database root. For each subdirectory,
+ * reads the table name from the {@code _name} file (falling back to the
+ * directory name if absent), detects WAL enablement from {@code _meta},
+ * determines the table type (table / materialized view / view), and classifies
+ * discovery state based on presence of {@code _txn} and WAL transaction log files.
+ *
+ * <p>{@link #crossReferenceRegistry} links discovered tables to
+ * {@link RegistryState} entries and reports mismatches (missing directories,
+ * unknown tables).
+ */
 public class TableDiscoveryService {
     private final FilesFacade ff;
 

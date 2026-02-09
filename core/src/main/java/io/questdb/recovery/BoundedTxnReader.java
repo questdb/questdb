@@ -32,6 +32,19 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
+/**
+ * Reads and parses a {@code _txn} file into {@link TxnState}. The {@code _txn}
+ * file stores the current transaction number, row counts, timestamps, partition
+ * list, and symbol counts.
+ *
+ * <p>The reader determines the active A/B side from the base version, reads
+ * the record offset, then parses the header, symbol segment, and partition
+ * segment. Partition flags (parquet, read-only) are decoded from the masked
+ * size field.
+ *
+ * <p>Symbol and partition counts are capped by {@code maxSymbols} and
+ * {@code maxPartitions} to bound memory usage on corrupt files.
+ */
 public class BoundedTxnReader extends AbstractBoundedReader {
     public static final int DEFAULT_MAX_PARTITIONS = 100_000;
     public static final int DEFAULT_MAX_SYMBOLS = 10_000;

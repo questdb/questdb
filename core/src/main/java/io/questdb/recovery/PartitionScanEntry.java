@@ -24,6 +24,11 @@
 
 package io.questdb.recovery;
 
+/**
+ * One entry in a partition scan result. Links a partition directory to its
+ * {@link PartitionScanStatus} and, when matched, to the corresponding
+ * {@link TxnPartitionState} and resolved row count.
+ */
 public final class PartitionScanEntry {
     private final String dirName;
     private final String partitionName;

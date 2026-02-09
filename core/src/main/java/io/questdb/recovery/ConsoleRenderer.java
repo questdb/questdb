@@ -32,6 +32,11 @@ import io.questdb.std.str.StringSink;
 
 import java.io.PrintStream;
 
+/**
+ * Formats and prints recovery output to the console. Renders tables, partitions,
+ * columns, transaction state, column check results, and issues with optional
+ * ANSI coloring. Also provides timestamp and byte-size formatting utilities.
+ */
 public class ConsoleRenderer {
     private final AnsiColor color;
 

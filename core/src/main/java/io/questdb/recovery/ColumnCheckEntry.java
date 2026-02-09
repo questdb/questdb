@@ -24,6 +24,7 @@
 
 package io.questdb.recovery;
 
+/** Validation result for a single column within a partition: status, expected/actual sizes, and message. */
 public final class ColumnCheckEntry {
     private final long actualSize;
     private final int columnIndex;

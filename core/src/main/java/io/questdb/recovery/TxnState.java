@@ -26,6 +26,18 @@ package io.questdb.recovery;
 
 import io.questdb.std.ObjList;
 
+/**
+ * Parsed state from a {@code _txn} file. Contains the transaction header fields
+ * (txn number, row counts, timestamps, versions), the symbol segment (per-symbol
+ * committed/transient counts), and the partition segment (per-partition row counts,
+ * name txns, flags).
+ *
+ * <p>Fields that could not be read are left at sentinel values ({@link #UNSET_INT},
+ * {@link #UNSET_LONG}). Any issues encountered during parsing are accumulated in
+ * the {@link ReadIssue} list.
+ *
+ * <p>Populated by {@link BoundedTxnReader}; setters are package-private.
+ */
 public final class TxnState {
     public static final int UNSET_INT = Integer.MIN_VALUE;
     public static final long UNSET_LONG = Long.MIN_VALUE;

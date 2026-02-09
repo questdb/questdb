@@ -24,6 +24,11 @@
 
 package io.questdb.recovery;
 
+/**
+ * Conditionally wraps text in ANSI terminal color/style codes. When disabled
+ * (e.g. redirected output or {@code --no-color}), all methods return the
+ * input unchanged.
+ */
 public final class AnsiColor {
     public static final AnsiColor NONE = new AnsiColor(false);
     private static final String BOLD = "\033[1m";

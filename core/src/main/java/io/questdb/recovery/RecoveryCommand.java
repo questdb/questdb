@@ -26,6 +26,11 @@ package io.questdb.recovery;
 
 import java.io.PrintStream;
 
+/**
+ * Functional interface for recovery REPL commands. Implementations are
+ * registered as static methods in {@link RecoverySession} and looked up
+ * by command name.
+ */
 @FunctionalInterface
 public interface RecoveryCommand {
     void execute(String arg, CommandContext ctx, PrintStream out, PrintStream err);

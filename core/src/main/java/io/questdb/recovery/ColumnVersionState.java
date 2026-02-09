@@ -27,6 +27,17 @@ package io.questdb.recovery;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.std.ObjList;
 
+/**
+ * Parsed state from a {@code _cv} (column version) file. Stores an array of
+ * records, each four longs: {@code (partitionTimestamp, columnIndex,
+ * columnNameTxn, columnTop)}.
+ *
+ * <p>{@link #getColumnTop} and {@link #getColumnNameTxn} look up the record
+ * for a given partition/column pair. A column top of {@code -1} means the
+ * column did not exist when the partition was created.
+ *
+ * <p>Populated by {@link BoundedColumnVersionReader}; setters are package-private.
+ */
 public final class ColumnVersionState {
     private final ObjList<ReadIssue> issues = new ObjList<>();
     private String cvPath;

@@ -24,6 +24,7 @@
 
 package io.questdb.recovery;
 
+/** Immutable column metadata from {@code _meta}: name, type, and indexed flag. */
 public final class MetaColumnState {
     private final boolean indexed;
     private final String name;

@@ -38,6 +38,18 @@ import java.io.PrintStream;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * Interactive recovery REPL. Runs a read-eval-print loop that accepts commands:
+ * {@code tables}, {@code cd}, {@code ls}, {@code show}, {@code print},
+ * {@code pwd}, {@code help}, and {@code check columns}.
+ *
+ * <p>Command dispatch is table-driven: {@link #buildCommandMap()} registers all
+ * commands as static methods implementing {@link RecoveryCommand}. Each command
+ * receives a {@link CommandContext} that bundles navigation state and services.
+ *
+ * <p>Use the {@link #create(CharSequence, FilesFacade, ConsoleRenderer)} factory
+ * to wire all readers and services with default bounds.
+ */
 public class RecoverySession {
     private final CommandContext commandCtx;
     private final Map<String, RecoveryCommand> commands;

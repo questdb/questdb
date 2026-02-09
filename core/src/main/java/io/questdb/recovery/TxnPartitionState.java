@@ -24,6 +24,11 @@
 
 package io.questdb.recovery;
 
+/**
+ * Immutable partition entry decoded from the {@code _txn} partition segment.
+ * Contains the partition timestamp, row count, name txn, and flags (parquet
+ * format, read-only).
+ */
 public final class TxnPartitionState {
     private final int index;
     private final long nameTxn;

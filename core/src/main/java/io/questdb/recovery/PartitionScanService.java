@@ -35,6 +35,14 @@ import io.questdb.std.str.Utf8s;
 import java.util.Comparator;
 import java.util.HashMap;
 
+/**
+ * Scans a table directory for partition sub-directories and cross-references
+ * them with the partition list from {@link TxnState}. Each result entry is
+ * classified as {@link PartitionScanStatus#MATCHED MATCHED} (directory exists
+ * and is in {@code _txn}), {@link PartitionScanStatus#ORPHAN ORPHAN} (directory
+ * exists but not in {@code _txn}), or {@link PartitionScanStatus#MISSING MISSING}
+ * ({@code _txn} references it but directory is absent).
+ */
 public class PartitionScanService {
     private final FilesFacade ff;
 

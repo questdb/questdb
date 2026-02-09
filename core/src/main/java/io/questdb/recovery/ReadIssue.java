@@ -24,6 +24,7 @@
 
 package io.questdb.recovery;
 
+/** Immutable issue triple accumulated during file reading: severity, code, and human-readable message. */
 public final class ReadIssue {
     private final RecoveryIssueCode code;
     private final String message;

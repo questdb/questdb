@@ -31,6 +31,14 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
+/**
+ * Reads and parses a {@code _cv} (column version) file into {@link ColumnVersionState}.
+ * Each record is four longs: {@code (partitionTimestamp, columnIndex, columnNameTxn,
+ * columnTop)}. The column top indicates where a column's data begins within a
+ * partition (non-zero when a column was added after the partition was created).
+ *
+ * <p>Record count is capped by {@code maxRecords} to bound memory usage.
+ */
 public class BoundedColumnVersionReader extends AbstractBoundedReader {
     public static final int DEFAULT_MAX_RECORDS = 100_000;
     private final int maxRecords;

@@ -24,6 +24,11 @@
 
 package io.questdb.recovery;
 
+/**
+ * Discovery state of a table: {@code HAS_TXN} (has {@code _txn} file),
+ * {@code WAL_ONLY} (WAL txnlog present but no {@code _txn}), or
+ * {@code NO_TXN} (neither).
+ */
 public enum TableDiscoveryState {
     HAS_TXN,
     WAL_ONLY,

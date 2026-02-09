@@ -29,6 +29,19 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 
+/**
+ * Base class for the four bounded file readers ({@code _txn}, {@code _meta},
+ * {@code _cv}, {@code tables.d}). Provides safe read primitives that validate
+ * offset and size against the actual file length before issuing a
+ * {@link io.questdb.std.FilesFacade#read} call.
+ *
+ * <p>All methods accumulate {@link ReadIssue} objects instead of throwing,
+ * so callers can collect multiple problems from a single file.
+ *
+ * <p>"Bounded" means each reader caps the number of records it will parse
+ * (e.g. max partitions, max columns) to avoid runaway memory allocation
+ * on corrupt files.
+ */
 abstract class AbstractBoundedReader {
     protected final FilesFacade ff;
 
