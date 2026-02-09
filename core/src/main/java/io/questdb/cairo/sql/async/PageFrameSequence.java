@@ -424,6 +424,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     }
 
     public void reset() {
+        assert frameCount == 0 || reduceFinishedCounter.get() == dispatchStartFrameIndex;
         // prepare different frame sequence using the same object instance
         frameCount = 0;
         dispatchStartFrameIndex = 0;
