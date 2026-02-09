@@ -112,6 +112,7 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseAsciiCharSequenceObjHashMap;
@@ -4012,6 +4013,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             engine.dropTableOrViewOrMatView(path, tableToken);
                             engine.unlockTableName(tableToken);
                             throw e;
+                        } catch (Throwable e) {
+                            LOG.error().$("could not create table as select [message=").$safe(e instanceof FlyweightMessageContainer
+                                    ? ((FlyweightMessageContainer) e).getFlyweightMessage() : e.getMessage()).I$();
+                            engine.dropTableOrViewOrMatView(path, tableToken);
+                            engine.unlockTableName(tableToken);
+                            throw e;
                         }
                     }
                     createTableOp.updateOperationFutureTableToken(tableToken);
@@ -4751,6 +4758,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'materialized' or 'view' expected");
     }
 
+    protected void compileBackup(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        throw SqlException.$(lexer.lastTokenPosition(),
+                "incremental backup is supported in QuestDB enterprise version only, please use SNAPSHOT backup"
+        );
+    }
+
     protected void compileCreate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         int rollbackPosition = lexer.lastTokenPosition();
         CharSequence tok = expectToken(lexer, "'atomic' or 'table' or 'batch' or 'materialized' or 'view' or 'or replace'");
@@ -4798,12 +4811,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final String viewSql = parser.parseViewSql(lexer, this);
 
         alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
-    }
-
-    protected void compileBackup(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
-        throw SqlException.$(lexer.lastTokenPosition(),
-                "incremental backup is supported in QuestDB enterprise version only, please use SNAPSHOT backup"
-        );
     }
 
     protected void compileDropExt(
