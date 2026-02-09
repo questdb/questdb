@@ -40,8 +40,14 @@ import java.util.concurrent.TimeUnit;
 /**
  * Measures query latency and throughput for GROUP BY and TOP-K queries under
  * varying concurrency. Designed to expose head-of-line (HOL) blocking in the
- * ordered PageFrameSequence by creating skewed partitions: 10 large partitions
- * (500K rows each) interleaved among 490 small partitions (10K rows each).
+ * ordered PageFrameSequence by creating skewed partitions: 5 large partitions
+ * (1M rows each) interleaved among 45 small partitions (1K rows each), giving
+ * a 1000:1 size ratio. Large partitions appear every 10th hour so the ordered
+ * collector never gets a long run of small frames to mask the blocking.
+ * <p>
+ * In addition to standard percentile metrics, the benchmark reports per-iteration
+ * "spread" (max - min latency across concurrent threads) which directly measures
+ * how much slower the slowest thread is compared to the fastest in each batch.
  * <p>
  * Run against a QuestDB server (old or new page-frame-sequence code) to compare
  * latency distributions and throughput scaling.
@@ -54,16 +60,16 @@ import java.util.concurrent.TimeUnit;
  */
 public class HolBlockingBenchmark {
     private static final int[] CONCURRENCY_LEVELS = {1, 2, 4, 8};
-    private static final int LARGE_PARTITION_ROWS = 500_000;
+    private static final int LARGE_PARTITION_ROWS = 1_000_000;
     private static final int MEASUREMENT_ITERATIONS = 100;
     private static final String[][] QUERIES = {
-            {"GroupBy", "SELECT category, count(), sum(value) FROM events GROUP BY category"},
-            {"GroupByNotKeyed", "SELECT count(), sum(value) FROM events"},
-            {"GroupByFiltered", "SELECT category, count() FROM events WHERE value > 990000 GROUP BY category"},
+            {"GroupBy", "SELECT category, count(), sum(sqrt(value)) FROM events GROUP BY category"},
+            {"GroupByNotKeyed", "SELECT count(), sum(log(value + 1)) FROM events"},
+            {"GroupByFiltered", "SELECT category, count(), sum(sqrt(value)) FROM events WHERE value > 500000 GROUP BY category"},
             {"TopK", "SELECT ts, category, value FROM events ORDER BY value DESC LIMIT 10"},
     };
-    private static final int SMALL_PARTITION_ROWS = 10_000;
-    private static final int TOTAL_PARTITIONS = 500;
+    private static final int SMALL_PARTITION_ROWS = 1_000;
+    private static final int TOTAL_PARTITIONS = 50;
     private static final int WARMUP_ITERATIONS = 10;
 
     public static void main(String[] args) throws Exception {
@@ -72,7 +78,7 @@ public class HolBlockingBenchmark {
         int totalLarge = 0;
         int totalSmall = 0;
         for (int hour = 0; hour < TOTAL_PARTITIONS; hour++) {
-            if (hour % 50 == 0) {
+            if (hour % 10 == 0) {
                 totalLarge++;
             } else {
                 totalSmall++;
@@ -170,8 +176,30 @@ public class HolBlockingBenchmark {
         long totalQueries = (long) concurrency * MEASUREMENT_ITERATIONS;
         double qps = totalQueries * 1_000_000_000.0 / overallElapsed;
 
-        System.out.printf("  Concurrency %d:   avg=%.1fms  p50=%.1fms  p90=%.1fms  p99=%.1fms  max=%.1fms  qps=%.0f%n",
-                concurrency, avgMs, p50Ms, p90Ms, p99Ms, maxMs, qps);
+        if (concurrency > 1) {
+            // per-iteration spread: max - min latency across threads
+            long[] spreads = new long[MEASUREMENT_ITERATIONS];
+            for (int i = 0; i < MEASUREMENT_ITERATIONS; i++) {
+                long min = Long.MAX_VALUE;
+                long max = Long.MIN_VALUE;
+                for (long[] threadLatencies : allLatencies) {
+                    if (threadLatencies != null) {
+                        min = Math.min(min, threadLatencies[i]);
+                        max = Math.max(max, threadLatencies[i]);
+                    }
+                }
+                spreads[i] = max - min;
+            }
+            Arrays.sort(spreads);
+            double avgSpreadMs = toMs(avg(spreads));
+            double p50SpreadMs = toMs(percentile(spreads, 50));
+            double p99SpreadMs = toMs(percentile(spreads, 99));
+            System.out.printf("  Concurrency %d:   avg=%.1fms  p50=%.1fms  p90=%.1fms  p99=%.1fms  max=%.1fms  qps=%.0f  spread(avg=%.1fms p50=%.1fms p99=%.1fms)%n",
+                    concurrency, avgMs, p50Ms, p90Ms, p99Ms, maxMs, qps, avgSpreadMs, p50SpreadMs, p99SpreadMs);
+        } else {
+            System.out.printf("  Concurrency %d:   avg=%.1fms  p50=%.1fms  p90=%.1fms  p99=%.1fms  max=%.1fms  qps=%.0f%n",
+                    concurrency, avgMs, p50Ms, p90Ms, p99Ms, maxMs, qps);
+        }
     }
 
     private static Connection createConnection() throws Exception {
@@ -213,17 +241,16 @@ public class HolBlockingBenchmark {
             );
 
             for (int hour = 0; hour < TOTAL_PARTITIONS; hour++) {
-                boolean large = hour % 50 == 0;
+                boolean large = hour % 10 == 0;
                 int rows = large ? LARGE_PARTITION_ROWS : SMALL_PARTITION_ROWS;
-                int day = hour / 24;
-                int hourOfDay = hour % 24;
+                long usStep = 3_600_000_000L / rows;
                 stmt.execute(String.format(
                         "INSERT INTO events " +
-                                "SELECT dateadd('s', x::int, '2024-01-01T00:00:00') + %d * 86400000000L + %d * 3600000000L, " +
+                                "SELECT ('2024-01-01T00:00:00'::timestamp + %d * 3_600_000_000 + (x - 1) * %dL)::timestamp, " +
                                 "rnd_symbol('A','B','C','D','E'), " +
                                 "rnd_long(0, 1000000, 0) " +
                                 "FROM long_sequence(%d)",
-                        day, hourOfDay, rows
+                        hour, usStep, rows
                 ));
                 System.out.printf("  Inserted partition %d/%d (%s, %dK rows)%n",
                         hour + 1, TOTAL_PARTITIONS, large ? "LARGE" : "small", rows / 1000);
