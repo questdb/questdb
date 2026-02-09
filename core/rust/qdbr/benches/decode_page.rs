@@ -162,7 +162,7 @@ impl DecodeBenchState {
 
 fn write_options() -> WriteOptions {
     WriteOptions {
-        write_statistics: false,
+        write_statistics: true,
         version: Version::V1,
         compression: CompressionOptions::Uncompressed,
         row_group_size: None,
@@ -233,7 +233,11 @@ fn make_i8_data(row_count: usize, null_pct: u8, null_value: i8) -> Vec<i8> {
         let v = if is_null_at(i, null_pct) {
             null_value
         } else {
-            base
+            if base == null_value {
+                base.wrapping_add(1)
+            } else {
+                base
+            }
         };
         data.push(v);
     }
@@ -251,7 +255,11 @@ fn make_i16_data(row_count: usize, null_pct: u8, null_value: i16) -> Vec<i16> {
         let v = if is_null_at(i, null_pct) {
             null_value
         } else {
-            base
+            if base == null_value {
+                base.wrapping_add(1)
+            } else {
+                base
+            }
         };
         data.push(v);
     }
