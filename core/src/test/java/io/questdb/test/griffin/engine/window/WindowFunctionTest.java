@@ -10625,7 +10625,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNamedWindowMixedWithInline() throws Exception {
+    public void testNamedWindowCumulativeSum() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
@@ -11260,6 +11260,86 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1.0\n" +
                             "3.0\n",
                     "SELECT sum(x) OVER \"window\" FROM t WINDOW \"window\" AS (ORDER BY ts)"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowQuotedNameResolution() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+
+            // Quoted name in WINDOW clause, unquoted in OVER
+            assertSql(
+                    "sum\n" +
+                            "1.0\n" +
+                            "3.0\n",
+                    "SELECT sum(x) OVER w FROM t WINDOW \"w\" AS (ORDER BY ts)"
+            );
+
+            // Unquoted name in WINDOW clause, quoted in OVER
+            assertSql(
+                    "sum\n" +
+                            "1.0\n" +
+                            "3.0\n",
+                    "SELECT sum(x) OVER \"w\" FROM t WINDOW w AS (ORDER BY ts)"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowNestedWindowFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+            execute("insert into t values (3, 2000000)");
+
+            // Named window referenced inside a nested window function
+            assertSql(
+                    "outer_sum\n" +
+                            "6.0\n" +
+                            "6.0\n" +
+                            "6.0\n",
+                    "SELECT sum(row_number() OVER w) OVER () as outer_sum " +
+                            "FROM t " +
+                            "WINDOW w AS (ORDER BY ts)"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowUnicodeName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+
+            // Unicode characters in quoted window name
+            assertSql(
+                    "sum\n" +
+                            "1.0\n" +
+                            "3.0\n",
+                    "SELECT sum(x) OVER \"\u7A97\u53E3\" FROM t WINDOW \"\u7A97\u53E3\" AS (ORDER BY ts)"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowLongName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+
+            String longName = "a".repeat(200);
+            assertSql(
+                    "sum\n" +
+                            "1.0\n" +
+                            "3.0\n",
+                    "SELECT sum(x) OVER " + longName + " FROM t WINDOW " + longName + " AS (ORDER BY ts)"
             );
         });
     }

@@ -176,6 +176,17 @@ public class SqlKeywordsTest {
     }
 
     @Test
+    public void testIsWindowKeywordIsCaseInsensitive() {
+        Assert.assertTrue(isWindowKeyword("window"));
+        Assert.assertTrue(isWindowKeyword("WINDOW"));
+        Assert.assertTrue(isWindowKeyword("Window"));
+        Assert.assertTrue(isWindowKeyword("wINDOW"));
+        Assert.assertFalse(isWindowKeyword("windo"));
+        Assert.assertFalse(isWindowKeyword("windoww"));
+        Assert.assertFalse(isWindowKeyword("windox"));
+    }
+
+    @Test
     public void testLinear() {
         Assert.assertFalse(isLinearKeyword("12345"));
         Assert.assertFalse(isLinearKeyword("123456"));

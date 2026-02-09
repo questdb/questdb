@@ -523,7 +523,7 @@ public class ExpressionParser {
             // Named window reference - validate and store the name for later resolution
             SqlParser.validateIdentifier(lexer, tok);
             SqlKeywords.assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
-            windowCol.setWindowName(Chars.toString(tok), lexer.lastTokenPosition());
+            windowCol.setWindowName(Chars.toString(GenericLexer.unquote(tok)), lexer.lastTokenPosition());
             return;
         }
 

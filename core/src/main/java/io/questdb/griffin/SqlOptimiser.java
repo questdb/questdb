@@ -4133,15 +4133,12 @@ public class SqlOptimiser implements Mutable {
                 && model.getTimestampOffsetAlias() == null;
     }
 
-    /**
-     * Looks up a named window definition by walking the model hierarchy.
-     * Named windows may be defined on a nested model (e.g., when a window
-     * wrapper model has been created during optimization).
-     *
-     * @param model      the starting model to search from
-     * @param windowName the name of the window to find
-     * @return the WindowExpression for the named window, or null if not found
-     */
+    private ExpressionNode makeJoinAlias() {
+        CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
+        characterStoreEntry.put(SUB_QUERY_ALIAS_PREFIX).put(defaultAliasCount++);
+        return nextLiteral(characterStoreEntry.toImmutable());
+    }
+
     private WindowExpression lookupNamedWindow(QueryModel model, CharSequence windowName) {
         QueryModel current = model;
         while (current != null) {
@@ -4152,12 +4149,6 @@ public class SqlOptimiser implements Mutable {
             current = current.getNestedModel();
         }
         return null;
-    }
-
-    private ExpressionNode makeJoinAlias() {
-        CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
-        characterStoreEntry.put(SUB_QUERY_ALIAS_PREFIX).put(defaultAliasCount++);
-        return nextLiteral(characterStoreEntry.toImmutable());
     }
 
     private ExpressionNode makeModelAlias(CharSequence modelAlias, ExpressionNode node) {
@@ -6173,14 +6164,11 @@ public class SqlOptimiser implements Mutable {
             if (qc.isWindowExpression()) {
                 WindowExpression ac = (WindowExpression) qc;
                 if (ac.isNamedWindowReference()) {
-                    CharSequence windowName = ac.getWindowName();
-                    WindowExpression namedWindow = lookupNamedWindow(model, windowName);
-                    if (namedWindow == null) {
-                        throw SqlException.$(ac.getWindowNamePosition(), "window '").put(windowName).put("' is not defined");
-                    }
-                    ac.copySpecFrom(namedWindow);
+                    resolveNamedWindowReference(ac, model);
                 }
             }
+            // Resolve named window references inside nested expressions (e.g., sum(row_number() OVER w) OVER ())
+            resolveNamedWindowsInExpr(qc.getAst(), model);
         }
 
         // recurse into nested, join, and union models
@@ -6195,6 +6183,32 @@ public class SqlOptimiser implements Mutable {
         QueryModel union = model.getUnionModel();
         if (union != null) {
             resolveNamedWindows(union);
+        }
+    }
+
+    private void resolveNamedWindowReference(WindowExpression ac, QueryModel model) throws SqlException {
+        CharSequence windowName = ac.getWindowName();
+        WindowExpression namedWindow = lookupNamedWindow(model, windowName);
+        if (namedWindow == null) {
+            throw SqlException.$(ac.getWindowNamePosition(), "window '").put(windowName).put("' is not defined");
+        }
+        ac.copySpecFrom(namedWindow);
+    }
+
+    private void resolveNamedWindowsInExpr(ExpressionNode node, QueryModel model) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.windowExpression != null && node.windowExpression.isNamedWindowReference()) {
+            resolveNamedWindowReference(node.windowExpression, model);
+        }
+        if (node.paramCount < 3) {
+            resolveNamedWindowsInExpr(node.lhs, model);
+            resolveNamedWindowsInExpr(node.rhs, model);
+        } else {
+            for (int i = 0, n = node.paramCount; i < n; i++) {
+                resolveNamedWindowsInExpr(node.args.getQuick(i), model);
+            }
         }
     }
 

@@ -2881,7 +2881,7 @@ public class SqlParser {
 
                 // Intern the window name immediately before any more lexer operations
                 // (the lexer reuses its buffer, so tok would be overwritten)
-                CharSequence windowName = Chars.toString(tok);
+                CharSequence windowName = Chars.toString(GenericLexer.unquote(tok));
                 int windowNamePos = lexer.lastTokenPosition();
 
                 // Check for duplicate window name in the outer (master) model
@@ -2913,6 +2913,10 @@ public class SqlParser {
                 tok = optTok(lexer);
             } while (tok != null && Chars.equals(tok, ','));
         }
+
+        // Validate that all named window references in SELECT columns are defined.
+        // Fail fast here rather than waiting for the optimizer.
+        validateNamedWindowReferences(masterModel);
 
         // expect [limit]
         if (tok != null && isLimitKeyword(tok)) {
@@ -4640,6 +4644,42 @@ public class SqlParser {
                     c == '_' ||
                     c == '$')) {
                 throw SqlException.position(lexer.lastTokenPosition()).put("identifier can contain letters, digits, '_' or '$'");
+            }
+        }
+    }
+
+    private void validateNamedWindowReferences(QueryModel model) throws SqlException {
+        LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows = model.getNamedWindows();
+        ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            if (qc.isWindowExpression()) {
+                WindowExpression wc = (WindowExpression) qc;
+                if (wc.isNamedWindowReference() && namedWindows.keyIndex(wc.getWindowName()) > -1) {
+                    throw SqlException.$(wc.getWindowNamePosition(), "window '").put(wc.getWindowName()).put("' is not defined");
+                }
+                // Also check nested expression trees (e.g., sum(row_number() OVER w) OVER ())
+                validateNamedWindowReferencesInExpr(qc.getAst(), namedWindows);
+            }
+        }
+    }
+
+    private void validateNamedWindowReferencesInExpr(ExpressionNode node, LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.windowExpression != null && node.windowExpression.isNamedWindowReference()) {
+            CharSequence name = node.windowExpression.getWindowName();
+            if (namedWindows.keyIndex(name) > -1) {
+                throw SqlException.$(node.windowExpression.getWindowNamePosition(), "window '").put(name).put("' is not defined");
+            }
+        }
+        if (node.paramCount < 3) {
+            validateNamedWindowReferencesInExpr(node.lhs, namedWindows);
+            validateNamedWindowReferencesInExpr(node.rhs, namedWindows);
+        } else {
+            for (int i = 0, n = node.paramCount; i < n; i++) {
+                validateNamedWindowReferencesInExpr(node.args.getQuick(i), namedWindows);
             }
         }
     }
