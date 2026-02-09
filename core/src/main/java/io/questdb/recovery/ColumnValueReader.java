@@ -37,6 +37,7 @@ import io.questdb.std.str.StringSink;
 import java.nio.charset.StandardCharsets;
 
 public class ColumnValueReader {
+    static final int MAX_DISPLAY_BYTES = 8192;
     private final FilesFacade ff;
 
     public ColumnValueReader(FilesFacade ff) {
@@ -95,6 +96,9 @@ public class ColumnValueReader {
                 if (size == 0) {
                     return "null";
                 }
+                if (size < 0) {
+                    return "ERROR: invalid array size " + size;
+                }
 
                 // read from .d file
                 path.trimTo(pathLen);
@@ -114,7 +118,7 @@ public class ColumnValueReader {
                         }
                         StringBuilder sb = new StringBuilder();
                         hexDump(dataBuf, displaySize, sb);
-                        if (size > 128) {
+                        if (size > displaySize) {
                             sb.append("... (").append(size).append(" bytes total)");
                         }
                         return sb.toString();
@@ -172,6 +176,9 @@ public class ColumnValueReader {
                         long blobLen = Unsafe.getUnsafe().getLong(lenBuf);
                         if (blobLen == -1) {
                             return "null";
+                        }
+                        if (blobLen < 0) {
+                            return "ERROR: invalid binary length " + blobLen;
                         }
 
                         int displaySize = (int) Math.min(blobLen, 64);
@@ -282,20 +289,28 @@ public class ColumnValueReader {
                         if (strLen == -1) {
                             return "null";
                         }
+                        if (strLen < 0) {
+                            return "ERROR: invalid string length " + strLen;
+                        }
 
                         // string data is UTF-16, strLen chars = strLen * 2 bytes
-                        long dataBytes = (long) strLen * 2;
+                        int displayChars = Math.min(strLen, MAX_DISPLAY_BYTES / 2);
+                        long dataBytes = (long) displayChars * 2;
                         long dataBuf = Unsafe.malloc(dataBytes, MemoryTag.NATIVE_DEFAULT);
                         try {
                             long dataRead = ff.read(dataFd, dataBuf, dataBytes, startOffset + 4);
                             if (dataRead < dataBytes) {
                                 return "ERROR: read failed at data offset " + (startOffset + 4);
                             }
-                            char[] chars = new char[strLen];
-                            for (int i = 0; i < strLen; i++) {
+                            char[] chars = new char[displayChars];
+                            for (int i = 0; i < displayChars; i++) {
                                 chars[i] = Unsafe.getUnsafe().getChar(dataBuf + (long) i * 2);
                             }
-                            return new String(chars);
+                            String result = new String(chars);
+                            if (strLen > displayChars) {
+                                return result + "... (" + strLen + " chars total)";
+                            }
+                            return result;
                         } finally {
                             Unsafe.free(dataBuf, dataBytes, MemoryTag.NATIVE_DEFAULT);
                         }
@@ -372,25 +387,33 @@ public class ColumnValueReader {
                 }
 
                 try {
-                    long dataBuf = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+                    int displaySize = Math.min(size, MAX_DISPLAY_BYTES);
+                    long dataBuf = Unsafe.malloc(displaySize, MemoryTag.NATIVE_DEFAULT);
                     try {
-                        long dataRead = ff.read(dataFd, dataBuf, size, dataOffset);
-                        if (dataRead < size) {
+                        long dataRead = ff.read(dataFd, dataBuf, displaySize, dataOffset);
+                        if (dataRead < displaySize) {
                             return "ERROR: read failed at data offset " + dataOffset;
                         }
-                        byte[] bytes = new byte[size];
-                        for (int i = 0; i < size; i++) {
+                        byte[] bytes = new byte[displaySize];
+                        for (int i = 0; i < displaySize; i++) {
                             bytes[i] = Unsafe.getUnsafe().getByte(dataBuf + i);
                         }
                         try {
-                            return new String(bytes, StandardCharsets.UTF_8);
+                            String result = new String(bytes, StandardCharsets.UTF_8);
+                            if (size > displaySize) {
+                                return result + "... (" + size + " bytes total)";
+                            }
+                            return result;
                         } catch (Exception e) {
                             StringBuilder sb = new StringBuilder();
-                            hexDump(dataBuf, size, sb);
+                            hexDump(dataBuf, displaySize, sb);
+                            if (size > displaySize) {
+                                sb.append("... (").append(size).append(" bytes total)");
+                            }
                             return sb.toString();
                         }
                     } finally {
-                        Unsafe.free(dataBuf, size, MemoryTag.NATIVE_DEFAULT);
+                        Unsafe.free(dataBuf, displaySize, MemoryTag.NATIVE_DEFAULT);
                     }
                 } finally {
                     ff.close(dataFd);
