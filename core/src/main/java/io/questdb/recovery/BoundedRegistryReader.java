@@ -39,11 +39,10 @@ import io.questdb.std.str.Utf8s;
 
 import java.util.HashMap;
 
-public class BoundedRegistryReader {
+public class BoundedRegistryReader extends AbstractBoundedReader {
     public static final int DEFAULT_MAX_ENTRIES = 100_000;
     private static final int MAX_STRING_CHARS = 1024;
     private static final long RESERVED_LONGS_SIZE = GrowOnlyTableNameRegistryStore.TABLE_NAME_ENTRY_RESERVED_LONGS * Long.BYTES;
-    private final FilesFacade ff;
     private final int maxEntries;
 
     public BoundedRegistryReader(FilesFacade ff) {
@@ -51,7 +50,7 @@ public class BoundedRegistryReader {
     }
 
     public BoundedRegistryReader(FilesFacade ff, int maxEntries) {
-        this.ff = ff;
+        super(ff);
         this.maxEntries = Math.max(1, maxEntries);
     }
 
@@ -67,7 +66,6 @@ public class BoundedRegistryReader {
         try (Path path = new Path()) {
             path.of(dbRoot).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put('.').put(version).$();
             final String registryPath = path.toString();
-            state.setRegistryPath(registryPath);
 
             final long fd = ff.openRO(path.$());
             if (fd < 0) {
@@ -156,10 +154,6 @@ public class BoundedRegistryReader {
                 ff.findClose(findPtr);
             }
         }
-    }
-
-    private boolean isRangeReadable(long offset, long width, long fileSize) {
-        return offset >= 0 && width >= 0 && fileSize >= 0 && offset <= fileSize - width;
     }
 
     private void readEntries(long fd, long fileSize, long scratch, RegistryState state, String registryPath) {
@@ -319,8 +313,6 @@ public class BoundedRegistryReader {
                 break;
             }
         }
-
-        state.setEntryCount(entryCount);
 
         // copy final non-removed entries into state
         for (RegistryEntry entry : entryMap.values()) {

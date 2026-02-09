@@ -35,69 +35,73 @@ import io.questdb.std.str.Path;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintStream;
+import java.util.HashMap;
+import java.util.Map;
 
 public class RecoverySession {
-    private boolean cachedColumnInPartition = true;
-    private long cachedColumnNameTxn = -1;
-    private long cachedColumnTop = -1;
-    private ColumnVersionState cachedCvState;
-    private long cachedEffectiveRows = -1;
-    private MetaState cachedMetaState;
-    private ObjList<PartitionScanEntry> cachedPartitionScan;
-    private RegistryState cachedRegistryState;
-    private TxnState cachedTxnState;
-    private final ColumnCheckService columnCheckService;
-    private final AnsiColor color;
-    private final ColumnValueReader columnValueReader;
-    private final ColumnVersionStateService columnVersionStateService;
-    private int currentColumnIndex = -1;
-    private int currentPartitionIndex = -1;
-    private DiscoveredTable currentTable;
-    private final CharSequence dbRoot;
-    private final FilesFacade ff;
-    private ObjList<DiscoveredTable> lastDiscoveredTables = new ObjList<>();
-    private final MetaStateService metaStateService;
-    private final PartitionScanService partitionScanService;
-    private final RegistryStateService registryStateService;
+    private final CommandContext commandCtx;
+    private final Map<String, RecoveryCommand> commands;
+    private final NavigationContext nav;
     private final ConsoleRenderer renderer;
-    private final TableDiscoveryService tableDiscoveryService;
-    private final TxnStateService txnStateService;
 
     public RecoverySession(
             CharSequence dbRoot,
+            BoundedColumnVersionReader columnVersionReader,
+            BoundedMetaReader metaReader,
+            BoundedRegistryReader registryReader,
+            BoundedTxnReader txnReader,
             ColumnCheckService columnCheckService,
             ColumnValueReader columnValueReader,
-            ColumnVersionStateService columnVersionStateService,
             FilesFacade ff,
-            MetaStateService metaStateService,
             PartitionScanService partitionScanService,
-            RegistryStateService registryStateService,
             TableDiscoveryService tableDiscoveryService,
-            TxnStateService txnStateService,
             ConsoleRenderer renderer
     ) {
-        this.color = renderer.getColor();
-        this.dbRoot = dbRoot;
-        this.columnCheckService = columnCheckService;
-        this.columnValueReader = columnValueReader;
-        this.columnVersionStateService = columnVersionStateService;
-        this.ff = ff;
-        this.metaStateService = metaStateService;
-        this.partitionScanService = partitionScanService;
-        this.registryStateService = registryStateService;
-        this.tableDiscoveryService = tableDiscoveryService;
-        this.txnStateService = txnStateService;
         this.renderer = renderer;
+        this.nav = new NavigationContext(
+                dbRoot,
+                columnVersionReader,
+                metaReader,
+                partitionScanService,
+                registryReader,
+                tableDiscoveryService,
+                txnReader
+        );
+        this.commandCtx = new CommandContext(
+                nav,
+                columnCheckService,
+                columnValueReader,
+                ff,
+                partitionScanService,
+                renderer
+        );
+        this.commands = buildCommandMap();
+    }
+
+    public static RecoverySession create(CharSequence dbRoot, FilesFacade ff, ConsoleRenderer renderer) {
+        return new RecoverySession(
+                dbRoot,
+                new BoundedColumnVersionReader(ff),
+                new BoundedMetaReader(ff),
+                new BoundedRegistryReader(ff),
+                new BoundedTxnReader(ff),
+                new ColumnCheckService(ff),
+                new ColumnValueReader(ff),
+                ff,
+                new PartitionScanService(ff),
+                new TableDiscoveryService(ff),
+                renderer
+        );
     }
 
     public int run(BufferedReader in, PrintStream out, PrintStream err) throws IOException {
         out.println("QuestDB offline recovery mode");
-        out.println("dbRoot=" + dbRoot);
+        out.println("dbRoot=" + nav.getDbRoot());
         renderer.printHelp(out);
 
         String line;
         while (true) {
-            out.print(buildPrompt());
+            out.print(nav.buildPrompt());
             out.flush();
             line = in.readLine();
             if (line == null) {
@@ -113,301 +117,209 @@ public class RecoverySession {
                 return 0;
             }
 
-            if ("help".equalsIgnoreCase(line)) {
-                renderer.printHelp(out);
-                continue;
-            }
-
             try {
-                if ("tables".equalsIgnoreCase(line)) {
-                    lastDiscoveredTables = tableDiscoveryService.discoverTables(dbRoot);
-                    cachedRegistryState = registryStateService.readRegistryState(dbRoot);
-                    tableDiscoveryService.crossReferenceRegistry(lastDiscoveredTables, cachedRegistryState);
-                    renderer.printTables(lastDiscoveredTables, cachedRegistryState, out);
-                    continue;
+                ParsedCommand parsed = parseCommand(line);
+                if (parsed == null) {
+                    err.println("Unknown command: " + line);
+                    renderer.printHelp(out);
+                } else {
+                    parsed.command.execute(parsed.arg, commandCtx, out, err);
                 }
-
-                if ("ls".equalsIgnoreCase(line)) {
-                    ls(out, err);
-                    continue;
-                }
-
-                if ("pwd".equalsIgnoreCase(line)) {
-                    pwd(out);
-                    continue;
-                }
-
-                if ("cd".equalsIgnoreCase(line) || "cd /".equalsIgnoreCase(line)) {
-                    cdRoot();
-                    continue;
-                }
-
-                if ("cd ..".equalsIgnoreCase(line)) {
-                    cdUp();
-                    continue;
-                }
-
-                if (line.regionMatches(true, 0, "cd ", 0, 3)) {
-                    cd(line.substring(3).trim(), err);
-                    continue;
-                }
-
-                if ("show".equalsIgnoreCase(line)) {
-                    if (currentColumnIndex >= 0) {
-                        showColumn(out, err);
-                    } else if (currentTable != null) {
-                        show(currentTable.getTableName(), out, err);
-                    } else {
-                        err.println("show requires a table name or index (or cd into a table first)");
-                    }
-                    continue;
-                }
-
-                if (line.regionMatches(true, 0, "show ", 0, 5)) {
-                    show(line.substring(5).trim(), out, err);
-                    continue;
-                }
-
-                if (line.regionMatches(true, 0, "print ", 0, 6)) {
-                    printValue(line.substring(6).trim(), out, err);
-                    continue;
-                }
-
-                if ("check columns".equalsIgnoreCase(line)) {
-                    checkColumns(out, err);
-                    continue;
-                }
-
-                err.println("Unknown command: " + line);
-                renderer.printHelp(out);
             } catch (Throwable th) {
                 err.println("command failed: " + th.getMessage());
             }
         }
     }
 
-    private String buildPrompt() {
-        StringBuilder sb = new StringBuilder("recover:");
-        if (currentTable == null) {
-            sb.append("/");
+    private Map<String, RecoveryCommand> buildCommandMap() {
+        Map<String, RecoveryCommand> map = new HashMap<>();
+        map.put("cd", RecoverySession::cmdCd);
+        map.put("check columns", RecoverySession::cmdCheckColumns);
+        map.put("help", RecoverySession::cmdHelp);
+        map.put("ls", RecoverySession::cmdLs);
+        map.put("print", RecoverySession::cmdPrint);
+        map.put("pwd", RecoverySession::cmdPwd);
+        map.put("show", RecoverySession::cmdShow);
+        map.put("tables", RecoverySession::cmdTables);
+        return map;
+    }
+
+    private ParsedCommand parseCommand(String line) {
+        String lower = line.toLowerCase();
+
+        // exact matches first
+        if (lower.equals("check columns")) {
+            return new ParsedCommand(commands.get("check columns"), "");
+        }
+
+        // extract verb (first word)
+        int spaceIdx = line.indexOf(' ');
+        String verb = spaceIdx < 0 ? line : line.substring(0, spaceIdx);
+        String arg = spaceIdx < 0 ? "" : line.substring(spaceIdx + 1).trim();
+
+        RecoveryCommand cmd = commands.get(verb.toLowerCase());
+        return cmd != null ? new ParsedCommand(cmd, arg) : null;
+    }
+
+    // -- command implementations -----------------------------------------------
+
+    private static void cmdCd(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
+        NavigationContext nav = ctx.getNav();
+        if (arg.isEmpty() || "/".equals(arg)) {
+            nav.cdRoot();
+        } else if ("..".equals(arg)) {
+            nav.cdUp();
         } else {
-            sb.append("/").append(currentTable.getTableName());
-            if (currentPartitionIndex >= 0) {
-                sb.append("/").append(formatPartitionName(currentPartitionIndex));
-                if (currentColumnIndex >= 0) {
-                    sb.append("/").append(formatColumnName(currentColumnIndex));
-                }
-            }
+            nav.cd(arg, err);
         }
-        sb.append("> ");
-        return sb.toString();
     }
 
-    private void cd(String target, PrintStream err) {
-        if (target.isEmpty() || "/".equals(target)) {
-            cdRoot();
-            return;
-        }
-
-        if ("..".equals(target)) {
-            cdUp();
-            return;
-        }
-
-        if (currentTable == null) {
-            cdIntoTable(target, err);
-        } else if (currentPartitionIndex < 0) {
-            cdIntoPartition(target, err);
-        } else if (currentColumnIndex < 0) {
-            cdIntoColumn(target, err);
+    private static void cmdCheckColumns(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
+        NavigationContext nav = ctx.getNav();
+        if (nav.isAtRoot()) {
+            checkColumnsFromRoot(ctx, out, err);
+        } else if (nav.isAtTable()) {
+            checkColumnsForTable(nav.getCurrentTable(), ctx, out, err);
         } else {
-            err.println("already at leaf level (column); cd .. to go up");
+            checkColumnsForPartition(ctx, out, err);
         }
     }
 
-    private void cdIntoPartition(String target, PrintStream err) {
-        if (cachedPartitionScan == null || cachedPartitionScan.size() == 0) {
-            err.println("no partitions available");
+    private static void cmdHelp(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
+        ctx.getRenderer().printHelp(out);
+    }
+
+    private static void cmdLs(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
+        NavigationContext nav = ctx.getNav();
+        ConsoleRenderer renderer = ctx.getRenderer();
+        if (nav.isAtRoot()) {
+            nav.discoverTables();
+            RegistryState registryState = nav.readRegistryState();
+            nav.getTableDiscoveryService().crossReferenceRegistry(nav.getLastDiscoveredTables(), registryState);
+            renderer.printTables(nav.getLastDiscoveredTables(), registryState, out);
+        } else if (nav.isAtTable()) {
+            renderer.printPartitionScan(nav.getCachedPartitionScan(), nav.getCachedTxnState(), nav.getCachedMetaState(), out);
+        } else if (nav.isAtPartition()) {
+            MetaState cachedMetaState = nav.getCachedMetaState();
+            if (cachedMetaState == null) {
+                err.println("no meta state cached for current table");
+                return;
+            }
+            long[] columnTops = nav.computeAllColumnTops();
+            renderer.printColumns(cachedMetaState, columnTops, out);
+        } else {
+            showColumn(ctx, out, err);
+        }
+    }
+
+    private static void cmdPrint(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
+        NavigationContext nav = ctx.getNav();
+        if (!nav.isAtColumn()) {
+            err.println("print is only valid at column level");
             return;
         }
 
-        // try numeric index (0-based)
+        if (!nav.getCachedColumnInPartition()) {
+            err.println("column not in this partition (added later)");
+            return;
+        }
+
+        long rowNo;
         try {
-            int index = Numbers.parseInt(target);
-            if (index >= 0 && index < cachedPartitionScan.size()) {
-                currentPartitionIndex = index;
-                return;
-            }
-            // fall through to try by formatted partition name (e.g. YEAR partitions like "2024")
-        } catch (NumericException ignore) {
-            // not a number, try by name
-        }
-
-        // try by partition name, then by raw dir name
-        for (int i = 0, n = cachedPartitionScan.size(); i < n; i++) {
-            PartitionScanEntry entry = cachedPartitionScan.getQuick(i);
-            if (target.equals(entry.getPartitionName())) {
-                currentPartitionIndex = i;
-                return;
-            }
-        }
-        for (int i = 0, n = cachedPartitionScan.size(); i < n; i++) {
-            PartitionScanEntry entry = cachedPartitionScan.getQuick(i);
-            if (target.equals(entry.getDirName())) {
-                currentPartitionIndex = i;
-                return;
-            }
-        }
-
-        err.println("partition not found: " + target);
-    }
-
-    private void cdIntoColumn(String target, PrintStream err) {
-        if (cachedMetaState == null || cachedMetaState.getColumns().size() == 0) {
-            err.println("no columns available");
+            rowNo = Numbers.parseLong(arg);
+        } catch (NumericException e) {
+            err.println("invalid row number: " + arg);
             return;
         }
 
-        PartitionScanEntry partEntry = cachedPartitionScan.getQuick(currentPartitionIndex);
-        if (partEntry.getTxnPartition() != null && partEntry.getTxnPartition().isParquetFormat()) {
-            err.println("cannot enter columns of a parquet partition");
+        long cachedColumnTop = nav.getCachedColumnTop();
+        long cachedEffectiveRows = nav.getCachedEffectiveRows();
+        long partitionRowCount = cachedEffectiveRows + cachedColumnTop;
+        if (rowNo < 0 || rowNo >= partitionRowCount) {
+            err.println("row out of range [0, " + partitionRowCount + ")");
             return;
         }
 
-        ObjList<MetaColumnState> columns = cachedMetaState.getColumns();
-        int colIndex = -1;
-
-        // try numeric index (0-based)
-        try {
-            int index = Numbers.parseInt(target);
-            if (index >= 0 && index < columns.size()) {
-                colIndex = index;
-            }
-        } catch (NumericException ignore) {
-            // not a number, try by name
-        }
-
-        // try by column name
-        if (colIndex < 0) {
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                if (target.equalsIgnoreCase(columns.getQuick(i).getName())) {
-                    colIndex = i;
-                    break;
-                }
-            }
-        }
-
-        if (colIndex < 0) {
-            err.println("column not found: " + target);
+        if (rowNo < cachedColumnTop) {
+            out.println("[" + rowNo + "] = null (column top)");
             return;
         }
 
-        MetaColumnState col = columns.getQuick(colIndex);
-        if (col.getType() < 0) {
-            err.println("cannot enter dropped column: " + col.getName());
-            return;
-        }
+        MetaColumnState col = nav.getCachedMetaState().getColumns().getQuick(nav.getCurrentColumnIndex());
+        PartitionScanEntry entry = nav.getCachedPartitionScan().getQuick(nav.getCurrentPartitionIndex());
+        long fileRowNo = rowNo - cachedColumnTop;
 
-        currentColumnIndex = colIndex;
-        computeColumnCache();
-    }
-
-    private void cdIntoTable(String target, PrintStream err) {
-        if (lastDiscoveredTables.size() == 0) {
-            lastDiscoveredTables = tableDiscoveryService.discoverTables(dbRoot);
-        }
-
-        DiscoveredTable table = findTable(target);
-        if (table == null) {
-            err.println("table not found: " + target);
-            return;
-        }
-
-        currentTable = table;
-        currentPartitionIndex = -1;
-        cachedTxnState = txnStateService.readTxnState(dbRoot, table);
-        cachedMetaState = metaStateService.readMetaState(dbRoot, table);
-        cachedCvState = columnVersionStateService.readColumnVersionState(dbRoot, table);
         try (Path path = new Path()) {
-            path.of(dbRoot).concat(table.getDirName()).$();
-            cachedPartitionScan = partitionScanService.scan(
+            path.of(nav.getDbRoot()).concat(nav.getCurrentTable().getDirName()).$();
+            String value = ctx.getColumnValueReader().readValue(
                     path.toString(),
-                    cachedTxnState, cachedMetaState
+                    entry.getDirName(),
+                    col.getName(),
+                    nav.getCachedColumnNameTxn(),
+                    col.getType(),
+                    fileRowNo,
+                    cachedEffectiveRows
             );
+            out.println("[" + rowNo + "] = " + value);
         }
     }
 
-    private void cdRoot() {
-        currentTable = null;
-        currentColumnIndex = -1;
-        currentPartitionIndex = -1;
-        cachedColumnInPartition = true;
-        cachedColumnNameTxn = -1;
-        cachedColumnTop = -1;
-        cachedCvState = null;
-        cachedEffectiveRows = -1;
-        cachedMetaState = null;
-        cachedPartitionScan = null;
-        cachedTxnState = null;
+    private static void cmdPwd(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
+        ctx.getNav().pwd(out);
     }
 
-    private void cdUp() {
-        if (currentColumnIndex >= 0) {
-            currentColumnIndex = -1;
-            cachedColumnInPartition = true;
-            cachedColumnNameTxn = -1;
-            cachedColumnTop = -1;
-            cachedEffectiveRows = -1;
-        } else if (currentPartitionIndex >= 0) {
-            currentPartitionIndex = -1;
-        } else if (currentTable != null) {
-            cdRoot();
-        }
-    }
+    private static void cmdShow(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
+        NavigationContext nav = ctx.getNav();
 
-    private void computeColumnCache() {
-        PartitionScanEntry entry = cachedPartitionScan.getQuick(currentPartitionIndex);
-        TxnPartitionState txnPart = entry.getTxnPartition();
-        long partitionRowCount = txnPart != null
-                ? entry.getRowCount()
-                : 0;
-        long partitionTimestamp = txnPart != null ? txnPart.getTimestampLo() : 0;
-
-        ColumnVersionState cvState = cachedCvState != null && !hasCvIssues(cachedCvState) ? cachedCvState : null;
-        cachedColumnTop = cvState != null ? cvState.getColumnTop(partitionTimestamp, currentColumnIndex) : 0;
-        cachedColumnNameTxn = cvState != null ? cvState.getColumnNameTxn(partitionTimestamp, currentColumnIndex) : -1;
-
-        if (cachedColumnTop == -1) {
-            cachedColumnInPartition = false;
-            cachedColumnTop = 0;
-            cachedEffectiveRows = 0;
+        if (arg.isEmpty()) {
+            if (nav.isAtColumn()) {
+                showColumn(ctx, out, err);
+            } else if (nav.getCurrentTable() != null) {
+                TxnState state = nav.getCachedTxnState() != null
+                        ? nav.getCachedTxnState()
+                        : nav.getTxnReader().readForTable(nav.getDbRoot(), nav.getCurrentTable());
+                ctx.getRenderer().printShow(nav.getCurrentTable(), state, out);
+            } else {
+                err.println("show requires a table name or index (or cd into a table first)");
+            }
             return;
         }
-        cachedColumnInPartition = true;
-        cachedEffectiveRows = Math.max(0, partitionRowCount - cachedColumnTop);
-    }
 
-    private long[] computeAllColumnTops() {
-        ObjList<MetaColumnState> columns = cachedMetaState.getColumns();
-        long[] tops = new long[columns.size()];
-        PartitionScanEntry entry = cachedPartitionScan.getQuick(currentPartitionIndex);
-        TxnPartitionState txnPart = entry.getTxnPartition();
-        long partitionTimestamp = txnPart != null ? txnPart.getTimestampLo() : 0;
-        ColumnVersionState cvState = cachedCvState != null && !hasCvIssues(cachedCvState) ? cachedCvState : null;
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            tops[i] = cvState != null ? cvState.getColumnTop(partitionTimestamp, i) : 0;
+        if (nav.getLastDiscoveredTables().size() == 0) {
+            nav.discoverTables();
         }
-        return tops;
+
+        DiscoveredTable table = nav.findTable(arg);
+        if (table == null) {
+            err.println("table not found: " + arg);
+            return;
+        }
+
+        TxnState state = nav.getTxnReader().readForTable(nav.getDbRoot(), table);
+        ctx.getRenderer().printShow(table, state, out);
     }
 
-    private void checkAllPartitions(
+    private static void cmdTables(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
+        NavigationContext nav = ctx.getNav();
+        nav.discoverTables();
+        RegistryState registryState = nav.readRegistryState();
+        nav.getTableDiscoveryService().crossReferenceRegistry(nav.getLastDiscoveredTables(), registryState);
+        ctx.getRenderer().printTables(nav.getLastDiscoveredTables(), registryState, out);
+    }
+
+    // -- helpers ---------------------------------------------------------------
+
+    private static void checkAllPartitions(
             String tableName,
             String tableDir,
             ObjList<PartitionScanEntry> partitionScan,
             MetaState metaState,
             ColumnVersionState cvState,
+            CommandContext ctx,
             PrintStream out
     ) {
+        ConsoleRenderer renderer = ctx.getRenderer();
+        ColumnCheckService columnCheckService = ctx.getColumnCheckService();
         int checked = 0;
         int errors = 0;
         int warnings = 0;
@@ -459,17 +371,12 @@ public class RecoverySession {
         renderer.printCheckSummary(checked, errors, warnings, skipped, out);
     }
 
-    private void checkColumns(PrintStream out, PrintStream err) {
-        if (currentTable == null) {
-            checkColumnsFromRoot(out, err);
-        } else if (currentPartitionIndex < 0) {
-            checkColumnsForTable(currentTable, out, err);
-        } else {
-            checkColumnsForPartition(out, err);
-        }
-    }
+    private static void checkColumnsForPartition(CommandContext ctx, PrintStream out, PrintStream err) {
+        NavigationContext nav = ctx.getNav();
+        MetaState cachedMetaState = nav.getCachedMetaState();
+        ObjList<PartitionScanEntry> cachedPartitionScan = nav.getCachedPartitionScan();
+        int currentPartitionIndex = nav.getCurrentPartitionIndex();
 
-    private void checkColumnsForPartition(PrintStream out, PrintStream err) {
         if (cachedMetaState == null || cachedMetaState.getColumns().size() == 0) {
             err.println("no meta state available for current table");
             return;
@@ -486,16 +393,16 @@ public class RecoverySession {
             return;
         }
         if (txnPart.isParquetFormat()) {
-            renderer.printCheckSkipped(entry.getPartitionName(), "parquet", out);
+            ctx.getRenderer().printCheckSkipped(entry.getPartitionName(), "parquet", out);
             return;
         }
 
         long rowCount = entry.getRowCount();
 
         try (Path path = new Path()) {
-            path.of(dbRoot).concat(currentTable.getDirName()).$();
-            ColumnVersionState cvState = hasCvIssues(cachedCvState) ? null : cachedCvState;
-            ColumnCheckResult result = columnCheckService.checkPartition(
+            path.of(nav.getDbRoot()).concat(nav.getCurrentTable().getDirName()).$();
+            ColumnVersionState cvState = NavigationContext.hasCvIssues(nav.getCachedCvState()) ? null : nav.getCachedCvState();
+            ColumnCheckResult result = ctx.getColumnCheckService().checkPartition(
                     path.toString(),
                     entry.getDirName(),
                     txnPart.getTimestampLo(),
@@ -503,7 +410,7 @@ public class RecoverySession {
                     cachedMetaState,
                     cvState
             );
-            renderer.printCheckResult(result, currentTable.getTableName(), rowCount, out);
+            ctx.getRenderer().printCheckResult(result, nav.getCurrentTable().getTableName(), rowCount, out);
 
             int errors = 0, warnings = 0;
             for (int j = 0, m = result.getEntries().size(); j < m; j++) {
@@ -513,197 +420,87 @@ public class RecoverySession {
                     case WARNING -> warnings++;
                 }
             }
-            renderer.printCheckSummary(1, errors, warnings, 0, out);
+            ctx.getRenderer().printCheckSummary(1, errors, warnings, 0, out);
         }
     }
 
-    private void checkColumnsForTable(DiscoveredTable table, PrintStream out, PrintStream err) {
-        MetaState metaState = cachedMetaState != null ? cachedMetaState : metaStateService.readMetaState(dbRoot, table);
+    private static void checkColumnsForTable(DiscoveredTable table, CommandContext ctx, PrintStream out, PrintStream err) {
+        NavigationContext nav = ctx.getNav();
+        MetaState metaState = nav.getCachedMetaState() != null
+                ? nav.getCachedMetaState()
+                : nav.getMetaReader().readForTable(nav.getDbRoot(), table);
         if (metaState.getColumns().size() == 0) {
             err.println("no columns found for table: " + table.getTableName());
             return;
         }
 
-        TxnState txnState = cachedTxnState != null ? cachedTxnState : txnStateService.readTxnState(dbRoot, table);
-        ColumnVersionState cvState = cachedCvState != null ? cachedCvState : columnVersionStateService.readColumnVersionState(dbRoot, table);
-        ObjList<PartitionScanEntry> partitionScan = cachedPartitionScan;
+        TxnState txnState = nav.getCachedTxnState() != null
+                ? nav.getCachedTxnState()
+                : nav.getTxnReader().readForTable(nav.getDbRoot(), table);
+        ColumnVersionState cvState = nav.getCachedCvState() != null
+                ? nav.getCachedCvState()
+                : nav.getColumnVersionReader().readForTable(nav.getDbRoot(), table);
+        ObjList<PartitionScanEntry> partitionScan = nav.getCachedPartitionScan();
         if (partitionScan == null) {
             try (Path path = new Path()) {
-                path.of(dbRoot).concat(table.getDirName()).$();
-                partitionScan = partitionScanService.scan(path.toString(), txnState, metaState);
+                path.of(nav.getDbRoot()).concat(table.getDirName()).$();
+                partitionScan = ctx.getPartitionScanService().scan(path.toString(), txnState, metaState);
             }
         }
 
         try (Path path = new Path()) {
-            path.of(dbRoot).concat(table.getDirName()).$();
+            path.of(nav.getDbRoot()).concat(table.getDirName()).$();
             checkAllPartitions(
                     table.getTableName(),
                     path.toString(),
                     partitionScan,
                     metaState,
-                    hasCvIssues(cvState) ? null : cvState,
+                    NavigationContext.hasCvIssues(cvState) ? null : cvState,
+                    ctx,
                     out
             );
         }
     }
 
-    private void checkColumnsFromRoot(PrintStream out, PrintStream err) {
-        if (lastDiscoveredTables.size() == 0) {
-            lastDiscoveredTables = tableDiscoveryService.discoverTables(dbRoot);
+    private static void checkColumnsFromRoot(CommandContext ctx, PrintStream out, PrintStream err) {
+        NavigationContext nav = ctx.getNav();
+        ObjList<DiscoveredTable> tables = nav.getLastDiscoveredTables();
+        if (tables.size() == 0) {
+            nav.discoverTables();
+            tables = nav.getLastDiscoveredTables();
         }
 
-        for (int i = 0, n = lastDiscoveredTables.size(); i < n; i++) {
-            DiscoveredTable table = lastDiscoveredTables.getQuick(i);
+        for (int i = 0, n = tables.size(); i < n; i++) {
+            DiscoveredTable table = tables.getQuick(i);
             out.println();
-            out.println(color.bold("=== " + table.getTableName() + " ==="));
-            checkColumnsForTable(table, out, err);
+            out.println(ctx.getColor().bold("=== " + table.getTableName() + " ==="));
+            checkColumnsForTable(table, ctx, out, err);
         }
     }
 
-    private DiscoveredTable findTable(String target) {
-        try {
-            final int index = Numbers.parseInt(target);
-            if (index >= 1 && index <= lastDiscoveredTables.size()) {
-                return lastDiscoveredTables.getQuick(index - 1);
-            }
-            return null;
-        } catch (NumericException ignore) {
-            for (int i = 0, n = lastDiscoveredTables.size(); i < n; i++) {
-                DiscoveredTable table = lastDiscoveredTables.getQuick(i);
-                if (target.equals(table.getTableName()) || target.equals(table.getDirName())) {
-                    return table;
-                }
-            }
-            return null;
-        }
-    }
+    private static void showColumn(CommandContext ctx, PrintStream out, PrintStream err) {
+        NavigationContext nav = ctx.getNav();
+        FilesFacade ff = ctx.getFf();
+        MetaState cachedMetaState = nav.getCachedMetaState();
+        int currentColumnIndex = nav.getCurrentColumnIndex();
 
-    private String formatColumnName(int columnIndex) {
-        if (cachedMetaState == null || columnIndex < 0 || columnIndex >= cachedMetaState.getColumns().size()) {
-            return "?";
-        }
-        return cachedMetaState.getColumns().getQuick(columnIndex).getName();
-    }
-
-    private String formatPartitionName(int partitionIndex) {
-        if (cachedPartitionScan == null || partitionIndex < 0 || partitionIndex >= cachedPartitionScan.size()) {
-            return "?";
-        }
-        return cachedPartitionScan.getQuick(partitionIndex).getPartitionName();
-    }
-
-    private static boolean hasCvIssues(ColumnVersionState cvState) {
-        if (cvState == null) {
-            return true;
-        }
-        for (int i = 0, n = cvState.getIssues().size(); i < n; i++) {
-            if (cvState.getIssues().getQuick(i).getSeverity() == RecoveryIssueSeverity.ERROR) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private void ls(PrintStream out, PrintStream err) {
-        if (currentTable == null) {
-            lastDiscoveredTables = tableDiscoveryService.discoverTables(dbRoot);
-            cachedRegistryState = registryStateService.readRegistryState(dbRoot);
-            tableDiscoveryService.crossReferenceRegistry(lastDiscoveredTables, cachedRegistryState);
-            renderer.printTables(lastDiscoveredTables, cachedRegistryState, out);
-        } else if (currentPartitionIndex < 0) {
-            renderer.printPartitionScan(cachedPartitionScan, cachedTxnState, cachedMetaState, out);
-        } else if (currentColumnIndex < 0) {
-            if (cachedMetaState == null) {
-                err.println("no meta state cached for current table");
-                return;
-            }
-            long[] columnTops = computeAllColumnTops();
-            renderer.printColumns(cachedMetaState, columnTops, out);
-        } else {
-            showColumn(out, err);
-        }
-    }
-
-    private void printValue(String rowArg, PrintStream out, PrintStream err) {
-        if (currentColumnIndex < 0) {
-            err.println("print is only valid at column level");
-            return;
-        }
-
-        if (!cachedColumnInPartition) {
-            err.println("column not in this partition (added later)");
-            return;
-        }
-
-        long rowNo;
-        try {
-            rowNo = Numbers.parseLong(rowArg);
-        } catch (NumericException e) {
-            err.println("invalid row number: " + rowArg);
-            return;
-        }
-
-        long partitionRowCount = cachedEffectiveRows + cachedColumnTop;
-        if (rowNo < 0 || rowNo >= partitionRowCount) {
-            err.println("row out of range [0, " + partitionRowCount + ")");
-            return;
-        }
-
-        if (rowNo < cachedColumnTop) {
-            out.println("[" + rowNo + "] = null (column top)");
-            return;
-        }
-
-        MetaColumnState col = cachedMetaState.getColumns().getQuick(currentColumnIndex);
-        PartitionScanEntry entry = cachedPartitionScan.getQuick(currentPartitionIndex);
-        long fileRowNo = rowNo - cachedColumnTop;
-
-        try (Path path = new Path()) {
-            path.of(dbRoot).concat(currentTable.getDirName()).$();
-            String value = columnValueReader.readValue(
-                    path.toString(),
-                    entry.getDirName(),
-                    col.getName(),
-                    cachedColumnNameTxn,
-                    col.getType(),
-                    fileRowNo,
-                    cachedEffectiveRows
-            );
-            out.println("[" + rowNo + "] = " + value);
-        }
-    }
-
-    private void pwd(PrintStream out) {
-        StringBuilder sb = new StringBuilder("/");
-        if (currentTable != null) {
-            sb.append(currentTable.getTableName());
-            if (currentPartitionIndex >= 0) {
-                sb.append("/").append(formatPartitionName(currentPartitionIndex));
-                if (currentColumnIndex >= 0) {
-                    sb.append("/").append(formatColumnName(currentColumnIndex));
-                }
-            }
-        }
-        out.println(sb);
-    }
-
-
-    private void showColumn(PrintStream out, PrintStream err) {
         if (cachedMetaState == null || currentColumnIndex < 0) {
             err.println("no column selected");
             return;
         }
 
         MetaColumnState col = cachedMetaState.getColumns().getQuick(currentColumnIndex);
+        long cachedColumnNameTxn = nav.getCachedColumnNameTxn();
+        long cachedEffectiveRows = nav.getCachedEffectiveRows();
 
-        if (!cachedColumnInPartition) {
-            renderer.printColumnDetail(col, currentColumnIndex,
+        if (!nav.getCachedColumnInPartition()) {
+            ctx.getRenderer().printColumnDetail(col, currentColumnIndex,
                     0, cachedColumnNameTxn, 0,
                     -1, -1, -1, -1, false, out);
             return;
         }
 
-        PartitionScanEntry entry = cachedPartitionScan.getQuick(currentPartitionIndex);
+        PartitionScanEntry entry = nav.getCachedPartitionScan().getQuick(nav.getCurrentPartitionIndex());
         int colType = col.getType();
 
         long expectedDataSize;
@@ -712,7 +509,7 @@ public class RecoverySession {
         long actualAuxSize = -1;
 
         try (Path path = new Path()) {
-            path.of(dbRoot).concat(currentTable.getDirName()).slash().concat(entry.getDirName()).slash();
+            path.of(nav.getDbRoot()).concat(nav.getCurrentTable().getDirName()).slash().concat(entry.getDirName()).slash();
             int pathLen = path.size();
 
             if (ColumnType.isVarSize(colType)) {
@@ -758,36 +555,21 @@ public class RecoverySession {
             }
         }
 
-        renderer.printColumnDetail(
+        ctx.getRenderer().printColumnDetail(
                 col, currentColumnIndex,
-                cachedColumnTop, cachedColumnNameTxn, cachedEffectiveRows,
+                nav.getCachedColumnTop(), cachedColumnNameTxn, cachedEffectiveRows,
                 expectedDataSize, actualDataSize,
                 expectedAuxSize, actualAuxSize, true, out
         );
     }
 
-    private void show(String target, PrintStream out, PrintStream err) {
-        if (target.isEmpty()) {
-            if (currentTable != null) {
-                TxnState state = cachedTxnState != null ? cachedTxnState : txnStateService.readTxnState(dbRoot, currentTable);
-                renderer.printShow(currentTable, state, out);
-            } else {
-                err.println("show requires a table name or index (or cd into a table first)");
-            }
-            return;
-        }
+    private static class ParsedCommand {
+        final String arg;
+        final RecoveryCommand command;
 
-        if (lastDiscoveredTables.size() == 0) {
-            lastDiscoveredTables = tableDiscoveryService.discoverTables(dbRoot);
+        ParsedCommand(RecoveryCommand command, String arg) {
+            this.arg = arg;
+            this.command = command;
         }
-
-        DiscoveredTable table = findTable(target);
-        if (table == null) {
-            err.println("table not found: " + target);
-            return;
-        }
-
-        TxnState state = txnStateService.readTxnState(dbRoot, table);
-        renderer.printShow(table, state, out);
     }
 }

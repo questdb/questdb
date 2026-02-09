@@ -32,20 +32,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.SqlException;
-import io.questdb.recovery.BoundedColumnVersionReader;
-import io.questdb.recovery.BoundedMetaReader;
-import io.questdb.recovery.BoundedRegistryReader;
-import io.questdb.recovery.BoundedTxnReader;
-import io.questdb.recovery.ColumnCheckService;
-import io.questdb.recovery.ColumnValueReader;
-import io.questdb.recovery.ColumnVersionStateService;
 import io.questdb.recovery.ConsoleRenderer;
-import io.questdb.recovery.MetaStateService;
-import io.questdb.recovery.PartitionScanService;
 import io.questdb.recovery.RecoverySession;
-import io.questdb.recovery.RegistryStateService;
-import io.questdb.recovery.TableDiscoveryService;
-import io.questdb.recovery.TxnStateService;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.microtime.Micros;
@@ -2266,17 +2254,9 @@ public void testLsShowsTransientRowCountForLastPartition() throws Exception {
     }
 
     private static String[] runSession(String commands) throws Exception {
-        RecoverySession session = new RecoverySession(
+        RecoverySession session = RecoverySession.create(
                 configuration.getDbRoot(),
-                new ColumnCheckService(FF),
-                new ColumnValueReader(FF),
-                new ColumnVersionStateService(new BoundedColumnVersionReader(FF)),
                 FF,
-                new MetaStateService(new BoundedMetaReader(FF)),
-                new PartitionScanService(FF),
-                new RegistryStateService(new BoundedRegistryReader(FF)),
-                new TableDiscoveryService(FF),
-                new TxnStateService(new BoundedTxnReader(FF)),
                 new ConsoleRenderer()
         );
 

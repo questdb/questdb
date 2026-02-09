@@ -24,20 +24,9 @@
 
 package io.questdb.recovery;
 
-import io.questdb.cairo.TableUtils;
-import io.questdb.std.str.Path;
+import java.io.PrintStream;
 
-public class TxnStateService {
-    private final BoundedTxnReader boundedTxnReader;
-
-    public TxnStateService(BoundedTxnReader boundedTxnReader) {
-        this.boundedTxnReader = boundedTxnReader;
-    }
-
-    public TxnState readTxnState(CharSequence dbRoot, DiscoveredTable table) {
-        try (Path path = new Path()) {
-            return boundedTxnReader.read(path.of(dbRoot).concat(table.getDirName()).concat(TableUtils.TXN_FILE_NAME).$());
-        }
-    }
+@FunctionalInterface
+public interface RecoveryCommand {
+    void execute(String arg, CommandContext ctx, PrintStream out, PrintStream err);
 }
-

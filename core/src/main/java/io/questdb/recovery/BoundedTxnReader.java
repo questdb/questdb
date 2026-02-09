@@ -27,17 +27,18 @@ package io.questdb.recovery;
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 
-public class BoundedTxnReader {
+public class BoundedTxnReader extends AbstractBoundedReader {
     public static final int DEFAULT_MAX_PARTITIONS = 100_000;
     public static final int DEFAULT_MAX_SYMBOLS = 10_000;
     private static final int PARTITION_FLAG_PARQUET_BIT_OFFSET = 61;
     private static final int PARTITION_FLAG_READ_ONLY_BIT_OFFSET = 62;
     private static final int PARTITION_SIZE_BIT_WIDTH = 44;
     private static final long PARTITION_SIZE_MASK = (1L << PARTITION_SIZE_BIT_WIDTH) - 1;
-    private final FilesFacade ff;
     private final int maxPartitions;
     private final int maxSymbols;
 
@@ -46,7 +47,7 @@ public class BoundedTxnReader {
     }
 
     public BoundedTxnReader(FilesFacade ff, int maxSymbols, int maxPartitions) {
-        this.ff = ff;
+        super(ff);
         this.maxSymbols = Math.max(1, maxSymbols);
         this.maxPartitions = Math.max(1, maxPartitions);
     }
@@ -58,7 +59,7 @@ public class BoundedTxnReader {
 
         final long fd = ff.openRO(txnPath);
         if (fd < 0) {
-            addFileOpenFailure(txnPath, txnPathStr, txnState);
+            addFileOpenFailure(ff, txnPath, txnPathStr, "_txn", txnState.getIssues());
             return txnState;
         }
 
@@ -88,43 +89,109 @@ public class BoundedTxnReader {
         return txnState;
     }
 
+    public TxnState readForTable(CharSequence dbRoot, DiscoveredTable table) {
+        try (Path path = new Path()) {
+            return read(path.of(dbRoot).concat(table.getDirName()).concat(TableUtils.TXN_FILE_NAME).$());
+        }
+    }
+
     private static boolean isBitSet(long value, int bit) {
         return ((value >>> bit) & 1L) == 1L;
     }
 
-    private void addFileOpenFailure(LPSZ txnPath, String txnPathStr, TxnState txnState) {
-        if (ff.exists(txnPath)) {
+    private boolean readHeader(long fd, long fileSize, long scratch, TxnState txnState, int baseOffset) {
+        final ObjList<ReadIssue> issues = txnState.getIssues();
+        int issuesBefore = issues.size();
+
+        txnState.setTxn(readLongValue(fd, fileSize, scratch, issues, baseOffset + TableUtils.TX_OFFSET_TXN_64, "txn"));
+        if (issues.size() > issuesBefore) {
+            return false;
+        }
+
+        txnState.setTransientRowCount(readLongValue(fd, fileSize, scratch, issues, baseOffset + TableUtils.TX_OFFSET_TRANSIENT_ROW_COUNT_64, "transientRowCount"));
+        if (issues.size() > issuesBefore) {
+            return false;
+        }
+
+        txnState.setFixedRowCount(readLongValue(fd, fileSize, scratch, issues, baseOffset + TableUtils.TX_OFFSET_FIXED_ROW_COUNT_64, "fixedRowCount"));
+        if (issues.size() > issuesBefore) {
+            return false;
+        }
+
+        txnState.setMinTimestamp(readLongValue(fd, fileSize, scratch, issues, baseOffset + TableUtils.TX_OFFSET_MIN_TIMESTAMP_64, "minTimestamp"));
+        if (issues.size() > issuesBefore) {
+            return false;
+        }
+
+        txnState.setMaxTimestamp(readLongValue(fd, fileSize, scratch, issues, baseOffset + TableUtils.TX_OFFSET_MAX_TIMESTAMP_64, "maxTimestamp"));
+        if (issues.size() > issuesBefore) {
+            return false;
+        }
+
+        txnState.setStructureVersion(readLongValue(fd, fileSize, scratch, issues, baseOffset + TableUtils.TX_OFFSET_STRUCT_VERSION_64, "structureVersion"));
+        if (issues.size() > issuesBefore) {
+            return false;
+        }
+
+        txnState.setDataVersion(readLongValue(fd, fileSize, scratch, issues, baseOffset + TableUtils.TX_OFFSET_DATA_VERSION_64, "dataVersion"));
+        if (issues.size() > issuesBefore) {
+            return false;
+        }
+
+        txnState.setPartitionTableVersion(readLongValue(fd, fileSize, scratch, issues, baseOffset + TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION_64, "partitionTableVersion"));
+        if (issues.size() > issuesBefore) {
+            return false;
+        }
+
+        txnState.setColumnVersion(readLongValue(fd, fileSize, scratch, issues, baseOffset + TableUtils.TX_OFFSET_COLUMN_VERSION_64, "columnVersion"));
+        if (issues.size() > issuesBefore) {
+            return false;
+        }
+
+        txnState.setTruncateVersion(readLongValue(fd, fileSize, scratch, issues, baseOffset + TableUtils.TX_OFFSET_TRUNCATE_VERSION_64, "truncateVersion"));
+        if (issues.size() > issuesBefore) {
+            return false;
+        }
+
+        txnState.setSeqTxn(readLongValue(fd, fileSize, scratch, issues, baseOffset + TableUtils.TX_OFFSET_SEQ_TXN_64, "seqTxn"));
+        if (issues.size() > issuesBefore) {
+            return false;
+        }
+
+        txnState.setLagTxnCount(readIntValue(fd, fileSize, scratch, issues, baseOffset + TableUtils.TX_OFFSET_LAG_TXN_COUNT_32, "lagTxnCount"));
+        if (issues.size() > issuesBefore) {
+            return false;
+        }
+
+        txnState.setLagRowCount(readIntValue(fd, fileSize, scratch, issues, baseOffset + TableUtils.TX_OFFSET_LAG_ROW_COUNT_32, "lagRowCount"));
+        if (issues.size() > issuesBefore) {
+            return false;
+        }
+
+        txnState.setLagMinTimestamp(readLongValue(fd, fileSize, scratch, issues, baseOffset + TableUtils.TX_OFFSET_LAG_MIN_TIMESTAMP_64, "lagMinTimestamp"));
+        if (issues.size() > issuesBefore) {
+            return false;
+        }
+
+        txnState.setLagMaxTimestamp(readLongValue(fd, fileSize, scratch, issues, baseOffset + TableUtils.TX_OFFSET_LAG_MAX_TIMESTAMP_64, "lagMaxTimestamp"));
+        if (issues.size() > issuesBefore) {
+            return false;
+        }
+
+        final int mapWriterCount = readIntValue(fd, fileSize, scratch, issues, baseOffset + TableUtils.TX_OFFSET_MAP_WRITER_COUNT_32, "mapWriterCount");
+        if (issues.size() > issuesBefore) {
+            return false;
+        }
+        txnState.setMapWriterCount(mapWriterCount);
+        if (mapWriterCount < 0) {
             txnState.addIssue(
                     RecoveryIssueSeverity.ERROR,
-                    RecoveryIssueCode.IO_ERROR,
-                    "cannot open _txn file [path=" + txnPathStr + ", errno=" + ff.errno() + ']'
-            );
-        } else {
-            txnState.addIssue(
-                    RecoveryIssueSeverity.ERROR,
-                    RecoveryIssueCode.MISSING_FILE,
-                    "_txn file does not exist [path=" + txnPathStr + ']'
+                    RecoveryIssueCode.INVALID_COUNT,
+                    "map writer count is negative [value=" + mapWriterCount + ']'
             );
         }
-    }
 
-    private void addShortReadIssue(
-            TxnState txnState,
-            RecoveryIssueCode code,
-            String detail,
-            long offset,
-            int width,
-            long fileSize
-    ) {
-        txnState.addIssue(
-                RecoveryIssueSeverity.ERROR,
-                code,
-                detail + " [offset=" + offset + ", width=" + width + ", fileSize=" + fileSize + ']'
-        );
-    }
-
-    private boolean isRangeReadable(long offset, int width, long fileSize) {
-        return offset >= 0 && width >= 0 && fileSize >= 0 && offset <= fileSize - width;
+        return true;
     }
 
     private void readPartitions(
@@ -176,6 +243,7 @@ public class BoundedTxnReader {
             partitionCount = maxPartitions;
         }
 
+        final ObjList<ReadIssue> issues = txnState.getIssues();
         final long partitionDataOffset = baseOffset + TableUtils.getPartitionTableIndexOffset(
                 TableUtils.getPartitionTableSizeOffset(symbolsSegmentCount),
                 0
@@ -185,7 +253,7 @@ public class BoundedTxnReader {
             final long entryOffset = partitionDataOffset + (long) i * TableUtils.LONGS_PER_TX_ATTACHED_PARTITION * Long.BYTES;
             if (!isRangeReadable(entryOffset, TableUtils.LONGS_PER_TX_ATTACHED_PARTITION * Long.BYTES, fileSize)) {
                 addShortReadIssue(
-                        txnState,
+                        issues,
                         RecoveryIssueCode.PARTIAL_READ,
                         "partition entry points outside file",
                         entryOffset,
@@ -195,21 +263,21 @@ public class BoundedTxnReader {
                 return;
             }
 
-            int issuesBefore = txnState.getIssues().size();
-            long timestampLo = readLongValue(fd, fileSize, scratch, txnState, entryOffset, "partition.ts");
-            if (txnState.getIssues().size() > issuesBefore) {
+            int issuesBefore = issues.size();
+            long timestampLo = readLongValue(fd, fileSize, scratch, issues, entryOffset, "partition.ts");
+            if (issues.size() > issuesBefore) {
                 return;
             }
-            long maskedSize = readLongValue(fd, fileSize, scratch, txnState, entryOffset + Long.BYTES, "partition.maskedSize");
-            if (txnState.getIssues().size() > issuesBefore) {
+            long maskedSize = readLongValue(fd, fileSize, scratch, issues, entryOffset + Long.BYTES, "partition.maskedSize");
+            if (issues.size() > issuesBefore) {
                 return;
             }
-            long nameTxn = readLongValue(fd, fileSize, scratch, txnState, entryOffset + 2L * Long.BYTES, "partition.nameTxn");
-            if (txnState.getIssues().size() > issuesBefore) {
+            long nameTxn = readLongValue(fd, fileSize, scratch, issues, entryOffset + 2L * Long.BYTES, "partition.nameTxn");
+            if (issues.size() > issuesBefore) {
                 return;
             }
-            long parquetFileSize = readLongValue(fd, fileSize, scratch, txnState, entryOffset + 3L * Long.BYTES, "partition.parquetFileSize");
-            if (txnState.getIssues().size() > issuesBefore) {
+            long parquetFileSize = readLongValue(fd, fileSize, scratch, issues, entryOffset + 3L * Long.BYTES, "partition.parquetFileSize");
+            if (issues.size() > issuesBefore) {
                 return;
             }
 
@@ -218,7 +286,6 @@ public class BoundedTxnReader {
                     new TxnPartitionState(
                             i,
                             timestampLo,
-                            maskedSize,
                             rowCount,
                             nameTxn,
                             parquetFileSize,
@@ -268,12 +335,13 @@ public class BoundedTxnReader {
             symbolCount = maxSymbols;
         }
 
+        final ObjList<ReadIssue> issues = txnState.getIssues();
         final long symbolDataOffset = baseOffset + TableUtils.getSymbolWriterIndexOffset(0);
         for (int i = 0; i < symbolCount; i++) {
             final long symbolOffset = symbolDataOffset + (long) i * Long.BYTES;
             if (!isRangeReadable(symbolOffset, Long.BYTES, fileSize)) {
                 addShortReadIssue(
-                        txnState,
+                        issues,
                         RecoveryIssueCode.PARTIAL_READ,
                         "symbol entry points outside file",
                         symbolOffset,
@@ -283,13 +351,13 @@ public class BoundedTxnReader {
                 return;
             }
 
-            int issuesBefore = txnState.getIssues().size();
-            int count = readIntValue(fd, fileSize, scratch, txnState, symbolOffset, "symbol.count");
-            if (txnState.getIssues().size() > issuesBefore) {
+            int issuesBefore = issues.size();
+            int count = readIntValue(fd, fileSize, scratch, issues, symbolOffset, "symbol.count");
+            if (issues.size() > issuesBefore) {
                 return;
             }
-            int transientCount = readIntValue(fd, fileSize, scratch, txnState, symbolOffset + Integer.BYTES, "symbol.transientCount");
-            if (txnState.getIssues().size() > issuesBefore) {
+            int transientCount = readIntValue(fd, fileSize, scratch, issues, symbolOffset + Integer.BYTES, "symbol.transientCount");
+            if (issues.size() > issuesBefore) {
                 return;
             }
             txnState.getSymbols().add(new TxnSymbolState(i, count, transientCount));
@@ -297,10 +365,11 @@ public class BoundedTxnReader {
     }
 
     private void readTxn(long fd, long fileSize, long scratch, TxnState txnState) {
-        int issuesBefore = txnState.getIssues().size();
+        final ObjList<ReadIssue> issues = txnState.getIssues();
+        int issuesBefore = issues.size();
 
-        final long baseVersion = readLongValue(fd, fileSize, scratch, txnState, TableUtils.TX_BASE_OFFSET_VERSION_64, "base.version");
-        if (txnState.getIssues().size() > issuesBefore) {
+        final long baseVersion = readLongValue(fd, fileSize, scratch, issues, TableUtils.TX_BASE_OFFSET_VERSION_64, "base.version");
+        if (issues.size() > issuesBefore) {
             return;
         }
         txnState.setBaseVersion(baseVersion);
@@ -310,11 +379,11 @@ public class BoundedTxnReader {
                 fd,
                 fileSize,
                 scratch,
-                txnState,
+                issues,
                 isA ? TableUtils.TX_BASE_OFFSET_A_32 : TableUtils.TX_BASE_OFFSET_B_32,
                 "base.offset"
         );
-        if (txnState.getIssues().size() > issuesBefore) {
+        if (issues.size() > issuesBefore) {
             return;
         }
         txnState.setRecordBaseOffset(baseOffset);
@@ -323,28 +392,24 @@ public class BoundedTxnReader {
                 fd,
                 fileSize,
                 scratch,
-                txnState,
+                issues,
                 isA ? TableUtils.TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 : TableUtils.TX_BASE_OFFSET_SYMBOLS_SIZE_B_32,
                 "base.symbolsSegmentSize"
         );
-        if (txnState.getIssues().size() > issuesBefore) {
+        if (issues.size() > issuesBefore) {
             return;
         }
-        txnState.setSymbolsSegmentSize(symbolsSegmentSize);
-
         final int partitionSegmentSize = readIntValue(
                 fd,
                 fileSize,
                 scratch,
-                txnState,
+                issues,
                 isA ? TableUtils.TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TableUtils.TX_BASE_OFFSET_PARTITIONS_SIZE_B_32,
                 "base.partitionSegmentSize"
         );
-        if (txnState.getIssues().size() > issuesBefore) {
+        if (issues.size() > issuesBefore) {
             return;
         }
-        txnState.setPartitionSegmentSize(partitionSegmentSize);
-
         if (baseOffset < TableUtils.TX_BASE_HEADER_SIZE) {
             txnState.addIssue(
                     RecoveryIssueSeverity.ERROR,
@@ -357,7 +422,7 @@ public class BoundedTxnReader {
         final int recordSize = TableUtils.calculateTxRecordSize(Math.max(0, symbolsSegmentSize), Math.max(0, partitionSegmentSize));
         if (!isRangeReadable(baseOffset, recordSize, fileSize)) {
             addShortReadIssue(
-                    txnState,
+                    issues,
                     RecoveryIssueCode.PARTIAL_READ,
                     "record area points outside file",
                     baseOffset,
@@ -389,157 +454,4 @@ public class BoundedTxnReader {
         readSymbols(fd, fileSize, scratch, txnState, baseOffset, symbolsSegmentSize);
         readPartitions(fd, fileSize, scratch, txnState, baseOffset, symbolsSegmentCount, partitionSegmentSize);
     }
-
-    private boolean readHeader(long fd, long fileSize, long scratch, TxnState txnState, int baseOffset) {
-        int issuesBefore = txnState.getIssues().size();
-
-        txnState.setTxn(readLongValue(fd, fileSize, scratch, txnState, baseOffset + TableUtils.TX_OFFSET_TXN_64, "txn"));
-        if (txnState.getIssues().size() > issuesBefore) {
-            return false;
-        }
-
-        txnState.setTransientRowCount(readLongValue(fd, fileSize, scratch, txnState, baseOffset + TableUtils.TX_OFFSET_TRANSIENT_ROW_COUNT_64, "transientRowCount"));
-        if (txnState.getIssues().size() > issuesBefore) {
-            return false;
-        }
-
-        txnState.setFixedRowCount(readLongValue(fd, fileSize, scratch, txnState, baseOffset + TableUtils.TX_OFFSET_FIXED_ROW_COUNT_64, "fixedRowCount"));
-        if (txnState.getIssues().size() > issuesBefore) {
-            return false;
-        }
-
-        txnState.setMinTimestamp(readLongValue(fd, fileSize, scratch, txnState, baseOffset + TableUtils.TX_OFFSET_MIN_TIMESTAMP_64, "minTimestamp"));
-        if (txnState.getIssues().size() > issuesBefore) {
-            return false;
-        }
-
-        txnState.setMaxTimestamp(readLongValue(fd, fileSize, scratch, txnState, baseOffset + TableUtils.TX_OFFSET_MAX_TIMESTAMP_64, "maxTimestamp"));
-        if (txnState.getIssues().size() > issuesBefore) {
-            return false;
-        }
-
-        txnState.setStructureVersion(readLongValue(fd, fileSize, scratch, txnState, baseOffset + TableUtils.TX_OFFSET_STRUCT_VERSION_64, "structureVersion"));
-        if (txnState.getIssues().size() > issuesBefore) {
-            return false;
-        }
-
-        txnState.setDataVersion(readLongValue(fd, fileSize, scratch, txnState, baseOffset + TableUtils.TX_OFFSET_DATA_VERSION_64, "dataVersion"));
-        if (txnState.getIssues().size() > issuesBefore) {
-            return false;
-        }
-
-        txnState.setPartitionTableVersion(readLongValue(fd, fileSize, scratch, txnState, baseOffset + TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION_64, "partitionTableVersion"));
-        if (txnState.getIssues().size() > issuesBefore) {
-            return false;
-        }
-
-        txnState.setColumnVersion(readLongValue(fd, fileSize, scratch, txnState, baseOffset + TableUtils.TX_OFFSET_COLUMN_VERSION_64, "columnVersion"));
-        if (txnState.getIssues().size() > issuesBefore) {
-            return false;
-        }
-
-        txnState.setTruncateVersion(readLongValue(fd, fileSize, scratch, txnState, baseOffset + TableUtils.TX_OFFSET_TRUNCATE_VERSION_64, "truncateVersion"));
-        if (txnState.getIssues().size() > issuesBefore) {
-            return false;
-        }
-
-        txnState.setSeqTxn(readLongValue(fd, fileSize, scratch, txnState, baseOffset + TableUtils.TX_OFFSET_SEQ_TXN_64, "seqTxn"));
-        if (txnState.getIssues().size() > issuesBefore) {
-            return false;
-        }
-
-        txnState.setLagTxnCount(readIntValue(fd, fileSize, scratch, txnState, baseOffset + TableUtils.TX_OFFSET_LAG_TXN_COUNT_32, "lagTxnCount"));
-        if (txnState.getIssues().size() > issuesBefore) {
-            return false;
-        }
-
-        txnState.setLagRowCount(readIntValue(fd, fileSize, scratch, txnState, baseOffset + TableUtils.TX_OFFSET_LAG_ROW_COUNT_32, "lagRowCount"));
-        if (txnState.getIssues().size() > issuesBefore) {
-            return false;
-        }
-
-        txnState.setLagMinTimestamp(readLongValue(fd, fileSize, scratch, txnState, baseOffset + TableUtils.TX_OFFSET_LAG_MIN_TIMESTAMP_64, "lagMinTimestamp"));
-        if (txnState.getIssues().size() > issuesBefore) {
-            return false;
-        }
-
-        txnState.setLagMaxTimestamp(readLongValue(fd, fileSize, scratch, txnState, baseOffset + TableUtils.TX_OFFSET_LAG_MAX_TIMESTAMP_64, "lagMaxTimestamp"));
-        if (txnState.getIssues().size() > issuesBefore) {
-            return false;
-        }
-
-        final int mapWriterCount = readIntValue(fd, fileSize, scratch, txnState, baseOffset + TableUtils.TX_OFFSET_MAP_WRITER_COUNT_32, "mapWriterCount");
-        if (txnState.getIssues().size() > issuesBefore) {
-            return false;
-        }
-        txnState.setMapWriterCount(mapWriterCount);
-        if (mapWriterCount < 0) {
-            txnState.addIssue(
-                    RecoveryIssueSeverity.ERROR,
-                    RecoveryIssueCode.INVALID_COUNT,
-                    "map writer count is negative [value=" + mapWriterCount + ']'
-            );
-        }
-
-        return true;
-    }
-
-    private int readIntValue(long fd, long fileSize, long scratch, TxnState txnState, long offset, String fieldName) {
-        if (!isRangeReadable(offset, Integer.BYTES, fileSize)) {
-            addShortReadIssue(
-                    txnState,
-                    RecoveryIssueCode.OUT_OF_RANGE,
-                    "field is outside file: " + fieldName,
-                    offset,
-                    Integer.BYTES,
-                    fileSize
-            );
-            return TxnState.UNSET_INT;
-        }
-
-        final long bytesRead = ff.read(fd, scratch, Integer.BYTES, offset);
-        if (bytesRead != Integer.BYTES) {
-            addShortReadIssue(
-                    txnState,
-                    bytesRead < 0 ? RecoveryIssueCode.IO_ERROR : RecoveryIssueCode.SHORT_FILE,
-                    "cannot read int field: " + fieldName,
-                    offset,
-                    Integer.BYTES,
-                    fileSize
-            );
-            return TxnState.UNSET_INT;
-        }
-
-        return Unsafe.getUnsafe().getInt(scratch);
-    }
-
-    private long readLongValue(long fd, long fileSize, long scratch, TxnState txnState, long offset, String fieldName) {
-        if (!isRangeReadable(offset, Long.BYTES, fileSize)) {
-            addShortReadIssue(
-                    txnState,
-                    RecoveryIssueCode.OUT_OF_RANGE,
-                    "field is outside file: " + fieldName,
-                    offset,
-                    Long.BYTES,
-                    fileSize
-            );
-            return TxnState.UNSET_LONG;
-        }
-
-        final long bytesRead = ff.read(fd, scratch, Long.BYTES, offset);
-        if (bytesRead != Long.BYTES) {
-            addShortReadIssue(
-                    txnState,
-                    bytesRead < 0 ? RecoveryIssueCode.IO_ERROR : RecoveryIssueCode.SHORT_FILE,
-                    "cannot read long field: " + fieldName,
-                    offset,
-                    Long.BYTES,
-                    fileSize
-            );
-            return TxnState.UNSET_LONG;
-        }
-
-        return Unsafe.getUnsafe().getLong(scratch);
-    }
 }
-

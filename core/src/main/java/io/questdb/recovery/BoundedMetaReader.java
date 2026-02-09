@@ -30,11 +30,11 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 
-public class BoundedMetaReader {
+public class BoundedMetaReader extends AbstractBoundedReader {
     public static final int DEFAULT_MAX_COLUMNS = 10_000;
     private static final int META_FLAG_BIT_INDEXED = 1;
-    private final FilesFacade ff;
     private final int maxColumns;
 
     public BoundedMetaReader(FilesFacade ff) {
@@ -42,7 +42,7 @@ public class BoundedMetaReader {
     }
 
     public BoundedMetaReader(FilesFacade ff, int maxColumns) {
-        this.ff = ff;
+        super(ff);
         this.maxColumns = Math.max(1, maxColumns);
     }
 
@@ -53,7 +53,7 @@ public class BoundedMetaReader {
 
         final long fd = ff.openRO(metaPath);
         if (fd < 0) {
-            addFileOpenFailure(metaPath, metaPathStr, metaState);
+            addFileOpenFailure(ff, metaPath, metaPathStr, "_meta", metaState.getIssues());
             return metaState;
         }
 
@@ -84,39 +84,10 @@ public class BoundedMetaReader {
         return metaState;
     }
 
-    private void addFileOpenFailure(LPSZ metaPath, String metaPathStr, MetaState metaState) {
-        if (ff.exists(metaPath)) {
-            metaState.addIssue(
-                    RecoveryIssueSeverity.ERROR,
-                    RecoveryIssueCode.IO_ERROR,
-                    "cannot open _meta file [path=" + metaPathStr + ", errno=" + ff.errno() + ']'
-            );
-        } else {
-            metaState.addIssue(
-                    RecoveryIssueSeverity.ERROR,
-                    RecoveryIssueCode.MISSING_FILE,
-                    "_meta file does not exist [path=" + metaPathStr + ']'
-            );
+    public MetaState readForTable(CharSequence dbRoot, DiscoveredTable table) {
+        try (Path path = new Path()) {
+            return read(path.of(dbRoot).concat(table.getDirName()).concat(TableUtils.META_FILE_NAME).$());
         }
-    }
-
-    private void addShortReadIssue(
-            MetaState metaState,
-            RecoveryIssueCode code,
-            String detail,
-            long offset,
-            int width,
-            long fileSize
-    ) {
-        metaState.addIssue(
-                RecoveryIssueSeverity.ERROR,
-                code,
-                detail + " [offset=" + offset + ", width=" + width + ", fileSize=" + fileSize + ']'
-        );
-    }
-
-    private boolean isRangeReadable(long offset, long width, long fileSize) {
-        return offset >= 0 && width >= 0 && fileSize >= 0 && offset <= fileSize - width;
     }
 
     private void readColumnNames(long fd, long fileSize, long scratch, MetaState metaState, int columnCount, int onDiskColumnCount) {
@@ -128,7 +99,7 @@ public class BoundedMetaReader {
             // read the 4-byte length prefix
             if (!isRangeReadable(offset, Integer.BYTES, fileSize)) {
                 addShortReadIssue(
-                        metaState,
+                        metaState.getIssues(),
                         RecoveryIssueCode.PARTIAL_READ,
                         "column name length outside file [column=" + i + ']',
                         offset,
@@ -138,7 +109,7 @@ public class BoundedMetaReader {
                 return;
             }
 
-            int nameLen = readIntValue(fd, fileSize, scratch, metaState, offset, "column[" + i + "].nameLength");
+            int nameLen = readIntValue(fd, fileSize, scratch, metaState.getIssues(), offset, "column[" + i + "].nameLength");
             if (metaState.getIssues().size() > issuesBefore) {
                 return;
             }
@@ -157,7 +128,7 @@ public class BoundedMetaReader {
 
             if (!isRangeReadable(nameDataOffset, nameDataSize, fileSize)) {
                 addShortReadIssue(
-                        metaState,
+                        metaState.getIssues(),
                         RecoveryIssueCode.PARTIAL_READ,
                         "column name data outside file [column=" + i + ']',
                         nameDataOffset,
@@ -201,13 +172,13 @@ public class BoundedMetaReader {
             long typeOffset = TableUtils.META_OFFSET_COLUMN_TYPES + (long) i * TableUtils.META_COLUMN_DATA_SIZE;
             int issuesBefore = metaState.getIssues().size();
 
-            int type = readIntValue(fd, fileSize, scratch, metaState, typeOffset, "column[" + i + "].type");
+            int type = readIntValue(fd, fileSize, scratch, metaState.getIssues(), typeOffset, "column[" + i + "].type");
             if (metaState.getIssues().size() > issuesBefore) {
                 return;
             }
 
             long flagsOffset = typeOffset + Integer.BYTES;
-            long flags = readLongValue(fd, fileSize, scratch, metaState, flagsOffset, "column[" + i + "].flags");
+            long flags = readLongValue(fd, fileSize, scratch, metaState.getIssues(), flagsOffset, "column[" + i + "].flags");
             if (metaState.getIssues().size() > issuesBefore) {
                 return;
             }
@@ -223,19 +194,19 @@ public class BoundedMetaReader {
     private void readMeta(long fd, long fileSize, long scratch, MetaState metaState) {
         int issuesBefore = metaState.getIssues().size();
 
-        int columnCount = readIntValue(fd, fileSize, scratch, metaState, TableUtils.META_OFFSET_COUNT, "columnCount");
+        int columnCount = readIntValue(fd, fileSize, scratch, metaState.getIssues(), TableUtils.META_OFFSET_COUNT, "columnCount");
         if (metaState.getIssues().size() > issuesBefore) {
             return;
         }
         metaState.setColumnCount(columnCount);
 
-        int partitionBy = readIntValue(fd, fileSize, scratch, metaState, TableUtils.META_OFFSET_PARTITION_BY, "partitionBy");
+        int partitionBy = readIntValue(fd, fileSize, scratch, metaState.getIssues(), TableUtils.META_OFFSET_PARTITION_BY, "partitionBy");
         if (metaState.getIssues().size() > issuesBefore) {
             return;
         }
         metaState.setPartitionBy(partitionBy);
 
-        int timestampIndex = readIntValue(fd, fileSize, scratch, metaState, TableUtils.META_OFFSET_TIMESTAMP_INDEX, "timestampIndex");
+        int timestampIndex = readIntValue(fd, fileSize, scratch, metaState.getIssues(), TableUtils.META_OFFSET_TIMESTAMP_INDEX, "timestampIndex");
         if (metaState.getIssues().size() > issuesBefore) {
             return;
         }
@@ -270,63 +241,5 @@ public class BoundedMetaReader {
         }
 
         readColumnNames(fd, fileSize, scratch, metaState, effectiveColumnCount, columnCount);
-    }
-
-    private int readIntValue(long fd, long fileSize, long scratch, MetaState metaState, long offset, String fieldName) {
-        if (!isRangeReadable(offset, Integer.BYTES, fileSize)) {
-            addShortReadIssue(
-                    metaState,
-                    RecoveryIssueCode.OUT_OF_RANGE,
-                    "field is outside file: " + fieldName,
-                    offset,
-                    Integer.BYTES,
-                    fileSize
-            );
-            return TxnState.UNSET_INT;
-        }
-
-        final long bytesRead = ff.read(fd, scratch, Integer.BYTES, offset);
-        if (bytesRead != Integer.BYTES) {
-            addShortReadIssue(
-                    metaState,
-                    bytesRead < 0 ? RecoveryIssueCode.IO_ERROR : RecoveryIssueCode.SHORT_FILE,
-                    "cannot read int field: " + fieldName,
-                    offset,
-                    Integer.BYTES,
-                    fileSize
-            );
-            return TxnState.UNSET_INT;
-        }
-
-        return Unsafe.getUnsafe().getInt(scratch);
-    }
-
-    private long readLongValue(long fd, long fileSize, long scratch, MetaState metaState, long offset, String fieldName) {
-        if (!isRangeReadable(offset, Long.BYTES, fileSize)) {
-            addShortReadIssue(
-                    metaState,
-                    RecoveryIssueCode.OUT_OF_RANGE,
-                    "field is outside file: " + fieldName,
-                    offset,
-                    Long.BYTES,
-                    fileSize
-            );
-            return TxnState.UNSET_LONG;
-        }
-
-        final long bytesRead = ff.read(fd, scratch, Long.BYTES, offset);
-        if (bytesRead != Long.BYTES) {
-            addShortReadIssue(
-                    metaState,
-                    bytesRead < 0 ? RecoveryIssueCode.IO_ERROR : RecoveryIssueCode.SHORT_FILE,
-                    "cannot read long field: " + fieldName,
-                    offset,
-                    Long.BYTES,
-                    fileSize
-            );
-            return TxnState.UNSET_LONG;
-        }
-
-        return Unsafe.getUnsafe().getLong(scratch);
     }
 }

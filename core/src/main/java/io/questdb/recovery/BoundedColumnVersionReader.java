@@ -29,10 +29,10 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 
-public class BoundedColumnVersionReader {
+public class BoundedColumnVersionReader extends AbstractBoundedReader {
     public static final int DEFAULT_MAX_RECORDS = 100_000;
-    private final FilesFacade ff;
     private final int maxRecords;
 
     public BoundedColumnVersionReader(FilesFacade ff) {
@@ -40,7 +40,7 @@ public class BoundedColumnVersionReader {
     }
 
     public BoundedColumnVersionReader(FilesFacade ff, int maxRecords) {
-        this.ff = ff;
+        super(ff);
         this.maxRecords = Math.max(1, maxRecords);
     }
 
@@ -51,7 +51,7 @@ public class BoundedColumnVersionReader {
 
         final long fd = ff.openRO(cvPath);
         if (fd < 0) {
-            addFileOpenFailure(cvPath, cvPathStr, state);
+            addFileOpenFailure(ff, cvPath, cvPathStr, "_cv", state.getIssues());
             return state;
         }
 
@@ -80,19 +80,9 @@ public class BoundedColumnVersionReader {
         return state;
     }
 
-    private void addFileOpenFailure(LPSZ cvPath, String cvPathStr, ColumnVersionState state) {
-        if (ff.exists(cvPath)) {
-            state.addIssue(
-                    RecoveryIssueSeverity.ERROR,
-                    RecoveryIssueCode.IO_ERROR,
-                    "cannot open _cv file [path=" + cvPathStr + ", errno=" + ff.errno() + ']'
-            );
-        } else {
-            state.addIssue(
-                    RecoveryIssueSeverity.ERROR,
-                    RecoveryIssueCode.MISSING_FILE,
-                    "_cv file does not exist [path=" + cvPathStr + ']'
-            );
+    public ColumnVersionState readForTable(CharSequence dbRoot, DiscoveredTable table) {
+        try (Path path = new Path()) {
+            return read(path.of(dbRoot).concat(table.getDirName()).concat("_cv").$());
         }
     }
 

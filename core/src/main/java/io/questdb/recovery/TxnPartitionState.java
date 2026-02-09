@@ -29,7 +29,6 @@ public final class TxnPartitionState {
     private final long nameTxn;
     private final long parquetFileSize;
     private final boolean parquetFormat;
-    private final long rawMaskedSize;
     private final boolean readOnly;
     private final long rowCount;
     private final long timestampLo;
@@ -37,7 +36,6 @@ public final class TxnPartitionState {
     public TxnPartitionState(
             int index,
             long timestampLo,
-            long rawMaskedSize,
             long rowCount,
             long nameTxn,
             long parquetFileSize,
@@ -46,7 +44,6 @@ public final class TxnPartitionState {
     ) {
         this.index = index;
         this.timestampLo = timestampLo;
-        this.rawMaskedSize = rawMaskedSize;
         this.rowCount = rowCount;
         this.nameTxn = nameTxn;
         this.parquetFileSize = parquetFileSize;

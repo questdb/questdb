@@ -30,9 +30,7 @@ public final class RegistryState {
     private final ObjList<RegistryEntry> entries = new ObjList<>();
     private final ObjList<ReadIssue> issues = new ObjList<>();
     private long appendOffset;
-    private int entryCount;
     private long fileSize;
-    private String registryPath;
     private int version;
 
     public void addIssue(RecoveryIssueSeverity severity, RecoveryIssueCode code, String message) {
@@ -63,16 +61,8 @@ public final class RegistryState {
         this.appendOffset = appendOffset;
     }
 
-    void setEntryCount(int entryCount) {
-        this.entryCount = entryCount;
-    }
-
     void setFileSize(long fileSize) {
         this.fileSize = fileSize;
-    }
-
-    void setRegistryPath(String registryPath) {
-        this.registryPath = registryPath;
     }
 
     void setVersion(int version) {

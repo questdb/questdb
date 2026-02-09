@@ -71,144 +71,76 @@ public class ColumnValueReader {
     }
 
     private String readArray(CharSequence tableDir, String partitionDirName, String columnName, long columnNameTxn, long rowNo) {
-        try (Path path = new Path()) {
-            path.of(tableDir).slash().concat(partitionDirName).slash();
-            int pathLen = path.size();
+        return withAuxAndData(tableDir, partitionDirName, columnName, columnNameTxn, 16, rowNo * 16, (auxBuf, auxFd, dataFd) -> {
+            long rawOffset = Unsafe.getUnsafe().getLong(auxBuf);
+            long offset = rawOffset & ((1L << 48) - 1);
+            int size = Unsafe.getUnsafe().getInt(auxBuf + Long.BYTES);
 
-            // read 16-byte aux entry
-            path.trimTo(pathLen);
-            TableUtils.iFile(path, columnName, columnNameTxn);
-            long auxFd = ff.openRO(path.$());
-            if (auxFd < 0) {
-                return "ERROR: aux file missing";
+            if (size == 0) {
+                return "null";
+            }
+            if (size < 0) {
+                return "ERROR: invalid array size " + size;
             }
 
-            long scratch = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+            int displaySize = Math.min(size, 128);
+            long dataBuf = Unsafe.malloc(displaySize, MemoryTag.NATIVE_DEFAULT);
             try {
-                long bytesRead = ff.read(auxFd, scratch, 16, rowNo * 16);
-                if (bytesRead < 16) {
-                    return "ERROR: read failed at aux offset " + (rowNo * 16);
+                long dataRead = ff.read(dataFd, dataBuf, displaySize, offset);
+                if (dataRead < displaySize) {
+                    return "ERROR: read failed at data offset " + offset;
                 }
-
-                long rawOffset = Unsafe.getUnsafe().getLong(scratch);
-                long offset = rawOffset & ((1L << 48) - 1);
-                int size = Unsafe.getUnsafe().getInt(scratch + Long.BYTES);
-
-                if (size == 0) {
-                    return "null";
+                StringBuilder sb = new StringBuilder();
+                hexDump(dataBuf, displaySize, sb);
+                if (size > displaySize) {
+                    sb.append("... (").append(size).append(" bytes total)");
                 }
-                if (size < 0) {
-                    return "ERROR: invalid array size " + size;
-                }
-
-                // read from .d file
-                path.trimTo(pathLen);
-                TableUtils.dFile(path, columnName, columnNameTxn);
-                long dataFd = ff.openRO(path.$());
-                if (dataFd < 0) {
-                    return "ERROR: data file missing";
-                }
-
-                try {
-                    int displaySize = Math.min(size, 128);
-                    long dataBuf = Unsafe.malloc(displaySize, MemoryTag.NATIVE_DEFAULT);
-                    try {
-                        long dataRead = ff.read(dataFd, dataBuf, displaySize, offset);
-                        if (dataRead < displaySize) {
-                            return "ERROR: read failed at data offset " + offset;
-                        }
-                        StringBuilder sb = new StringBuilder();
-                        hexDump(dataBuf, displaySize, sb);
-                        if (size > displaySize) {
-                            sb.append("... (").append(size).append(" bytes total)");
-                        }
-                        return sb.toString();
-                    } finally {
-                        Unsafe.free(dataBuf, displaySize, MemoryTag.NATIVE_DEFAULT);
-                    }
-                } finally {
-                    ff.close(dataFd);
-                }
+                return sb.toString();
             } finally {
-                Unsafe.free(scratch, 16, MemoryTag.NATIVE_DEFAULT);
-                ff.close(auxFd);
+                Unsafe.free(dataBuf, displaySize, MemoryTag.NATIVE_DEFAULT);
             }
-        }
+        });
     }
 
     private String readBinary(CharSequence tableDir, String partitionDirName, String columnName, long columnNameTxn, long rowNo) {
-        try (Path path = new Path()) {
-            path.of(tableDir).slash().concat(partitionDirName).slash();
-            int pathLen = path.size();
+        return withAuxAndData(tableDir, partitionDirName, columnName, columnNameTxn, 16, rowNo * 8, (auxBuf, auxFd, dataFd) -> {
+            long dataOffset = Unsafe.getUnsafe().getLong(auxBuf);
 
-            // read offsets from .i file (N+1 model, 8 bytes per entry)
-            path.trimTo(pathLen);
-            TableUtils.iFile(path, columnName, columnNameTxn);
-            long auxFd = ff.openRO(path.$());
-            if (auxFd < 0) {
-                return "ERROR: aux file missing";
-            }
-
-            long scratch = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+            // read length prefix (8 bytes)
+            long lenBuf = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
             try {
-                // read offset[rowNo] and offset[rowNo+1]
-                long bytesRead = ff.read(auxFd, scratch, 16, rowNo * 8);
-                if (bytesRead < 16) {
-                    return "ERROR: read failed at aux offset " + (rowNo * 8);
+                long lenRead = ff.read(dataFd, lenBuf, 8, dataOffset);
+                if (lenRead < 8) {
+                    return "ERROR: read failed at data offset " + dataOffset;
+                }
+                long blobLen = Unsafe.getUnsafe().getLong(lenBuf);
+                if (blobLen == -1) {
+                    return "null";
+                }
+                if (blobLen < 0) {
+                    return "ERROR: invalid binary length " + blobLen;
                 }
 
-                long dataOffset = Unsafe.getUnsafe().getLong(scratch);
-                // read from .d file: 8-byte long length prefix
-                path.trimTo(pathLen);
-                TableUtils.dFile(path, columnName, columnNameTxn);
-                long dataFd = ff.openRO(path.$());
-                if (dataFd < 0) {
-                    return "ERROR: data file missing";
-                }
-
+                int displaySize = (int) Math.min(blobLen, 64);
+                long dataBuf = Unsafe.malloc(displaySize, MemoryTag.NATIVE_DEFAULT);
                 try {
-                    // read length prefix (8 bytes)
-                    long lenBuf = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
-                    try {
-                        long lenRead = ff.read(dataFd, lenBuf, 8, dataOffset);
-                        if (lenRead < 8) {
-                            return "ERROR: read failed at data offset " + dataOffset;
-                        }
-                        long blobLen = Unsafe.getUnsafe().getLong(lenBuf);
-                        if (blobLen == -1) {
-                            return "null";
-                        }
-                        if (blobLen < 0) {
-                            return "ERROR: invalid binary length " + blobLen;
-                        }
-
-                        int displaySize = (int) Math.min(blobLen, 64);
-                        long dataBuf = Unsafe.malloc(displaySize, MemoryTag.NATIVE_DEFAULT);
-                        try {
-                            long dataRead = ff.read(dataFd, dataBuf, displaySize, dataOffset + 8);
-                            if (dataRead < displaySize) {
-                                return "ERROR: read failed at data offset " + (dataOffset + 8);
-                            }
-                            StringBuilder sb = new StringBuilder();
-                            hexDump(dataBuf, displaySize, sb);
-                            if (blobLen > 64) {
-                                sb.append("... (").append(blobLen).append(" bytes total)");
-                            }
-                            return sb.toString();
-                        } finally {
-                            Unsafe.free(dataBuf, displaySize, MemoryTag.NATIVE_DEFAULT);
-                        }
-                    } finally {
-                        Unsafe.free(lenBuf, 8, MemoryTag.NATIVE_DEFAULT);
+                    long dataRead = ff.read(dataFd, dataBuf, displaySize, dataOffset + 8);
+                    if (dataRead < displaySize) {
+                        return "ERROR: read failed at data offset " + (dataOffset + 8);
                     }
+                    StringBuilder sb = new StringBuilder();
+                    hexDump(dataBuf, displaySize, sb);
+                    if (blobLen > 64) {
+                        sb.append("... (").append(blobLen).append(" bytes total)");
+                    }
+                    return sb.toString();
                 } finally {
-                    ff.close(dataFd);
+                    Unsafe.free(dataBuf, displaySize, MemoryTag.NATIVE_DEFAULT);
                 }
             } finally {
-                Unsafe.free(scratch, 16, MemoryTag.NATIVE_DEFAULT);
-                ff.close(auxFd);
+                Unsafe.free(lenBuf, 8, MemoryTag.NATIVE_DEFAULT);
             }
-        }
+        });
     }
 
     private String readFixedSize(
@@ -249,91 +181,129 @@ public class ColumnValueReader {
     }
 
     private String readString(CharSequence tableDir, String partitionDirName, String columnName, long columnNameTxn, long rowNo) {
-        try (Path path = new Path()) {
-            path.of(tableDir).slash().concat(partitionDirName).slash();
-            int pathLen = path.size();
+        return withAuxAndData(tableDir, partitionDirName, columnName, columnNameTxn, 16, rowNo * 8, (auxBuf, auxFd, dataFd) -> {
+            long startOffset = Unsafe.getUnsafe().getLong(auxBuf);
 
-            // read offsets from .i file (N+1 model, 8 bytes per entry)
-            path.trimTo(pathLen);
-            TableUtils.iFile(path, columnName, columnNameTxn);
-            long auxFd = ff.openRO(path.$());
-            if (auxFd < 0) {
-                return "ERROR: aux file missing";
-            }
-
-            long scratch = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+            // read length prefix (4 bytes)
+            long lenBuf = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
             try {
-                // read offset[rowNo] and offset[rowNo+1]
-                long bytesRead = ff.read(auxFd, scratch, 16, rowNo * 8);
-                if (bytesRead < 16) {
-                    return "ERROR: read failed at aux offset " + (rowNo * 8);
+                long lenRead = ff.read(dataFd, lenBuf, 4, startOffset);
+                if (lenRead < 4) {
+                    return "ERROR: read failed at data offset " + startOffset;
+                }
+                int strLen = Unsafe.getUnsafe().getInt(lenBuf);
+                if (strLen == -1) {
+                    return "null";
+                }
+                if (strLen < 0) {
+                    return "ERROR: invalid string length " + strLen;
                 }
 
-                long startOffset = Unsafe.getUnsafe().getLong(scratch);
-                // read from .d file: 4-byte int length prefix, then UTF-16 chars
-                path.trimTo(pathLen);
-                TableUtils.dFile(path, columnName, columnNameTxn);
-                long dataFd = ff.openRO(path.$());
-                if (dataFd < 0) {
-                    return "ERROR: data file missing";
-                }
-
+                // string data is UTF-16, strLen chars = strLen * 2 bytes
+                int displayChars = Math.min(strLen, MAX_DISPLAY_BYTES / 2);
+                long dataBytes = (long) displayChars * 2;
+                long dataBuf = Unsafe.malloc(dataBytes, MemoryTag.NATIVE_DEFAULT);
                 try {
-                    // read length prefix (4 bytes)
-                    long lenBuf = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
-                    try {
-                        long lenRead = ff.read(dataFd, lenBuf, 4, startOffset);
-                        if (lenRead < 4) {
-                            return "ERROR: read failed at data offset " + startOffset;
-                        }
-                        int strLen = Unsafe.getUnsafe().getInt(lenBuf);
-                        if (strLen == -1) {
-                            return "null";
-                        }
-                        if (strLen < 0) {
-                            return "ERROR: invalid string length " + strLen;
-                        }
-
-                        // string data is UTF-16, strLen chars = strLen * 2 bytes
-                        int displayChars = Math.min(strLen, MAX_DISPLAY_BYTES / 2);
-                        long dataBytes = (long) displayChars * 2;
-                        long dataBuf = Unsafe.malloc(dataBytes, MemoryTag.NATIVE_DEFAULT);
-                        try {
-                            long dataRead = ff.read(dataFd, dataBuf, dataBytes, startOffset + 4);
-                            if (dataRead < dataBytes) {
-                                return "ERROR: read failed at data offset " + (startOffset + 4);
-                            }
-                            char[] chars = new char[displayChars];
-                            for (int i = 0; i < displayChars; i++) {
-                                chars[i] = Unsafe.getUnsafe().getChar(dataBuf + (long) i * 2);
-                            }
-                            String result = new String(chars);
-                            if (strLen > displayChars) {
-                                return result + "... (" + strLen + " chars total)";
-                            }
-                            return result;
-                        } finally {
-                            Unsafe.free(dataBuf, dataBytes, MemoryTag.NATIVE_DEFAULT);
-                        }
-                    } finally {
-                        Unsafe.free(lenBuf, 4, MemoryTag.NATIVE_DEFAULT);
+                    long dataRead = ff.read(dataFd, dataBuf, dataBytes, startOffset + 4);
+                    if (dataRead < dataBytes) {
+                        return "ERROR: read failed at data offset " + (startOffset + 4);
                     }
+                    char[] chars = new char[displayChars];
+                    for (int i = 0; i < displayChars; i++) {
+                        chars[i] = Unsafe.getUnsafe().getChar(dataBuf + (long) i * 2);
+                    }
+                    String result = new String(chars);
+                    if (strLen > displayChars) {
+                        return result + "... (" + strLen + " chars total)";
+                    }
+                    return result;
                 } finally {
-                    ff.close(dataFd);
+                    Unsafe.free(dataBuf, dataBytes, MemoryTag.NATIVE_DEFAULT);
                 }
             } finally {
-                Unsafe.free(scratch, 16, MemoryTag.NATIVE_DEFAULT);
-                ff.close(auxFd);
+                Unsafe.free(lenBuf, 4, MemoryTag.NATIVE_DEFAULT);
             }
-        }
+        });
     }
 
     private String readVarchar(CharSequence tableDir, String partitionDirName, String columnName, long columnNameTxn, long rowNo) {
+        return withAuxAndData(tableDir, partitionDirName, columnName, columnNameTxn, 16, rowNo * 16, (auxBuf, auxFd, dataFd) -> {
+            int header = Unsafe.getUnsafe().getInt(auxBuf);
+
+            // NULL: bit 2 set
+            if ((header & 4) != 0) {
+                return "null";
+            }
+
+            // INLINED: bit 0 set
+            if ((header & 1) != 0) {
+                int length = (header >>> 4) & 0x0F;
+                if (length == 0) {
+                    return "";
+                }
+                byte[] bytes = new byte[length];
+                for (int i = 0; i < length; i++) {
+                    bytes[i] = Unsafe.getUnsafe().getByte(auxBuf + 1 + i);
+                }
+                try {
+                    return new String(bytes, StandardCharsets.UTF_8);
+                } catch (Exception e) {
+                    StringBuilder sb = new StringBuilder();
+                    hexDump(auxBuf + 1, length, sb);
+                    return sb.toString();
+                }
+            }
+
+            // Non-inlined
+            int size = (header >>> 4) & 0x0FFFFFFF;
+            long dataOffsetRaw = Unsafe.getUnsafe().getLong(auxBuf + Long.BYTES);
+            long dataOffset = dataOffsetRaw >>> 16;
+
+            int displaySize = Math.min(size, MAX_DISPLAY_BYTES);
+            long dataBuf = Unsafe.malloc(displaySize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                long dataRead = ff.read(dataFd, dataBuf, displaySize, dataOffset);
+                if (dataRead < displaySize) {
+                    return "ERROR: read failed at data offset " + dataOffset;
+                }
+                byte[] bytes = new byte[displaySize];
+                for (int i = 0; i < displaySize; i++) {
+                    bytes[i] = Unsafe.getUnsafe().getByte(dataBuf + i);
+                }
+                try {
+                    String result = new String(bytes, StandardCharsets.UTF_8);
+                    if (size > displaySize) {
+                        return result + "... (" + size + " bytes total)";
+                    }
+                    return result;
+                } catch (Exception e) {
+                    StringBuilder sb = new StringBuilder();
+                    hexDump(dataBuf, displaySize, sb);
+                    if (size > displaySize) {
+                        sb.append("... (").append(size).append(" bytes total)");
+                    }
+                    return sb.toString();
+                }
+            } finally {
+                Unsafe.free(dataBuf, displaySize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    private String withAuxAndData(
+            CharSequence tableDir,
+            String partitionDirName,
+            String columnName,
+            long columnNameTxn,
+            int auxReadSize,
+            long auxOffset,
+            VarSizeReader reader
+    ) {
         try (Path path = new Path()) {
             path.of(tableDir).slash().concat(partitionDirName).slash();
             int pathLen = path.size();
 
-            // read 16-byte aux entry from .i file
+            // open .i (aux) file
             path.trimTo(pathLen);
             TableUtils.iFile(path, columnName, columnNameTxn);
             long auxFd = ff.openRO(path.$());
@@ -341,45 +311,14 @@ public class ColumnValueReader {
                 return "ERROR: aux file missing";
             }
 
-            long scratch = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+            long auxBuf = Unsafe.malloc(auxReadSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                long bytesRead = ff.read(auxFd, scratch, 16, rowNo * 16);
-                if (bytesRead < 16) {
-                    return "ERROR: read failed at aux offset " + (rowNo * 16);
+                long bytesRead = ff.read(auxFd, auxBuf, auxReadSize, auxOffset);
+                if (bytesRead < auxReadSize) {
+                    return "ERROR: read failed at aux offset " + auxOffset;
                 }
 
-                int header = Unsafe.getUnsafe().getInt(scratch);
-
-                // NULL: bit 2 set
-                if ((header & 4) != 0) {
-                    return "null";
-                }
-
-                // INLINED: bit 0 set
-                if ((header & 1) != 0) {
-                    int length = (header >>> 4) & 0x0F;
-                    if (length == 0) {
-                        return "";
-                    }
-                    byte[] bytes = new byte[length];
-                    for (int i = 0; i < length; i++) {
-                        bytes[i] = Unsafe.getUnsafe().getByte(scratch + 1 + i);
-                    }
-                    try {
-                        return new String(bytes, StandardCharsets.UTF_8);
-                    } catch (Exception e) {
-                        StringBuilder sb = new StringBuilder();
-                        hexDump(scratch + 1, length, sb);
-                        return sb.toString();
-                    }
-                }
-
-                // Non-inlined
-                int size = (header >>> 4) & 0x0FFFFFFF;
-                long dataOffsetRaw = Unsafe.getUnsafe().getLong(scratch + Long.BYTES);
-                long dataOffset = dataOffsetRaw >>> 16;
-
-                // read from .d file
+                // open .d (data) file
                 path.trimTo(pathLen);
                 TableUtils.dFile(path, columnName, columnNameTxn);
                 long dataFd = ff.openRO(path.$());
@@ -388,39 +327,12 @@ public class ColumnValueReader {
                 }
 
                 try {
-                    int displaySize = Math.min(size, MAX_DISPLAY_BYTES);
-                    long dataBuf = Unsafe.malloc(displaySize, MemoryTag.NATIVE_DEFAULT);
-                    try {
-                        long dataRead = ff.read(dataFd, dataBuf, displaySize, dataOffset);
-                        if (dataRead < displaySize) {
-                            return "ERROR: read failed at data offset " + dataOffset;
-                        }
-                        byte[] bytes = new byte[displaySize];
-                        for (int i = 0; i < displaySize; i++) {
-                            bytes[i] = Unsafe.getUnsafe().getByte(dataBuf + i);
-                        }
-                        try {
-                            String result = new String(bytes, StandardCharsets.UTF_8);
-                            if (size > displaySize) {
-                                return result + "... (" + size + " bytes total)";
-                            }
-                            return result;
-                        } catch (Exception e) {
-                            StringBuilder sb = new StringBuilder();
-                            hexDump(dataBuf, displaySize, sb);
-                            if (size > displaySize) {
-                                sb.append("... (").append(size).append(" bytes total)");
-                            }
-                            return sb.toString();
-                        }
-                    } finally {
-                        Unsafe.free(dataBuf, displaySize, MemoryTag.NATIVE_DEFAULT);
-                    }
+                    return reader.read(auxBuf, auxFd, dataFd);
                 } finally {
                     ff.close(dataFd);
                 }
             } finally {
-                Unsafe.free(scratch, 16, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(auxBuf, auxReadSize, MemoryTag.NATIVE_DEFAULT);
                 ff.close(auxFd);
             }
         }
@@ -597,5 +509,10 @@ public class ColumnValueReader {
             sb.append(Character.forDigit(b >> 4, 16));
             sb.append(Character.forDigit(b & 0xF, 16));
         }
+    }
+
+    @FunctionalInterface
+    private interface VarSizeReader {
+        String read(long auxBuf, long auxFd, long dataFd);
     }
 }

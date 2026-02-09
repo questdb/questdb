@@ -35,9 +35,7 @@ public final class TxnState {
     private int lagRowCount = UNSET_INT;
     private int lagTxnCount = UNSET_INT;
     private int mapWriterCount = UNSET_INT;
-    private int partitionSegmentSize = UNSET_INT;
     private int recordBaseOffset = UNSET_INT;
-    private int symbolsSegmentSize = UNSET_INT;
     private long baseVersion = UNSET_LONG;
     private long columnVersion = UNSET_LONG;
     private long dataVersion = UNSET_LONG;
@@ -206,10 +204,6 @@ public final class TxnState {
         this.minTimestamp = minTimestamp;
     }
 
-    void setPartitionSegmentSize(int partitionSegmentSize) {
-        this.partitionSegmentSize = partitionSegmentSize;
-    }
-
     void setPartitionTableVersion(long partitionTableVersion) {
         this.partitionTableVersion = partitionTableVersion;
     }
@@ -224,10 +218,6 @@ public final class TxnState {
 
     void setStructureVersion(long structureVersion) {
         this.structureVersion = structureVersion;
-    }
-
-    void setSymbolsSegmentSize(int symbolsSegmentSize) {
-        this.symbolsSegmentSize = symbolsSegmentSize;
     }
 
     void setTransientRowCount(long transientRowCount) {

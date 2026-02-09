@@ -26,21 +26,9 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.recovery.BoundedColumnVersionReader;
-import io.questdb.recovery.BoundedMetaReader;
-import io.questdb.recovery.BoundedRegistryReader;
-import io.questdb.recovery.BoundedTxnReader;
-import io.questdb.recovery.ColumnCheckService;
-import io.questdb.recovery.ColumnValueReader;
-import io.questdb.recovery.ColumnVersionStateService;
 import io.questdb.recovery.AnsiColor;
 import io.questdb.recovery.ConsoleRenderer;
-import io.questdb.recovery.MetaStateService;
-import io.questdb.recovery.PartitionScanService;
 import io.questdb.recovery.RecoverySession;
-import io.questdb.recovery.RegistryStateService;
-import io.questdb.recovery.TableDiscoveryService;
-import io.questdb.recovery.TxnStateService;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.Path;
@@ -96,19 +84,7 @@ public class RecoveryMain {
 
             boolean colorEnabled = !cliConfig.noColor && System.console() != null;
             AnsiColor ansiColor = new AnsiColor(colorEnabled);
-            RecoverySession session = new RecoverySession(
-                    dbRoot,
-                    new ColumnCheckService(ff),
-                    new ColumnValueReader(ff),
-                    new ColumnVersionStateService(new BoundedColumnVersionReader(ff)),
-                    ff,
-                    new MetaStateService(new BoundedMetaReader(ff)),
-                    new PartitionScanService(ff),
-                    new RegistryStateService(new BoundedRegistryReader(ff)),
-                    new TableDiscoveryService(ff),
-                    new TxnStateService(new BoundedTxnReader(ff)),
-                    new ConsoleRenderer(ansiColor)
-            );
+            RecoverySession session = RecoverySession.create(dbRoot, ff, new ConsoleRenderer(ansiColor));
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(in))) {
                 return session.run(reader, out, err);
             }
