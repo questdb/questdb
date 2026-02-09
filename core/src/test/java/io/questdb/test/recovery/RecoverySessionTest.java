@@ -1903,6 +1903,47 @@ public void testLsShowsTransientRowCountForLastPartition() throws Exception {
             String outText = result[0];
             Assert.assertTrue(outText.contains("column: v"));
             Assert.assertTrue(outText.contains("type: VARCHAR"));
+            Assert.assertTrue(outText.contains("expected aux size: 16 B"));
+            Assert.assertTrue(outText.contains("actual aux size:"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testShowAtColumnLevelVarcharInlinedExpectedDataSize() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table nav_col_show_vc_inline (v varchar, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into nav_col_show_vc_inline values ('a', '1970-01-01T00:00:00.000000Z')");
+            execute("insert into nav_col_show_vc_inline values ('bb', '1970-01-01T00:00:01.000000Z')");
+            waitForAppliedRows("nav_col_show_vc_inline", 2);
+
+            String[] result = runSession("cd nav_col_show_vc_inline\ncd 0\ncd v\nshow\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("column: v"));
+            Assert.assertTrue(outText.contains("type: VARCHAR"));
+            Assert.assertTrue(outText.contains("effectiveRows: 2"));
+            Assert.assertTrue(outText.contains("expected data size: 0 B"));
+            Assert.assertTrue(outText.contains("expected aux size: 32 B"));
+            Assert.assertTrue(outText.contains("actual data size:"));
+            Assert.assertTrue(outText.contains("actual aux size:"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testShowAtColumnLevelStringExpectedAuxSize() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table nav_col_show_str_aux (s string, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into nav_col_show_str_aux values ('x', '1970-01-01T00:00:00.000000Z')");
+            execute("insert into nav_col_show_str_aux values ('yy', '1970-01-01T00:00:01.000000Z')");
+            waitForAppliedRows("nav_col_show_str_aux", 2);
+
+            String[] result = runSession("cd nav_col_show_str_aux\ncd 0\ncd s\nshow\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("column: s"));
+            Assert.assertTrue(outText.contains("type: STRING"));
+            Assert.assertTrue(outText.contains("effectiveRows: 2"));
+            Assert.assertTrue(outText.contains("expected aux size: 24 B"));
             Assert.assertTrue(outText.contains("actual aux size:"));
             Assert.assertEquals("", result[1]);
         });

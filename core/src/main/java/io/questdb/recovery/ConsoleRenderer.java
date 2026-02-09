@@ -51,7 +51,7 @@ public class ConsoleRenderer {
             MetaColumnState col, int columnIndex,
             long columnTop, long columnNameTxn, long effectiveRows,
             long expectedDataSize, long actualDataSize,
-            long actualAuxSize, boolean inPartition,
+            long expectedAuxSize, long actualAuxSize, boolean inPartition,
             PrintStream out
     ) {
         out.println("column: " + col.getName());
@@ -67,6 +67,9 @@ public class ConsoleRenderer {
         out.println("effectiveRows: " + effectiveRows);
         out.println("expected data size: " + formatBytes(expectedDataSize));
         out.println("actual data size: " + formatBytes(actualDataSize));
+        if (expectedAuxSize >= 0) {
+            out.println("expected aux size: " + formatBytes(expectedAuxSize));
+        }
         if (actualAuxSize >= 0) {
             out.println("actual aux size: " + formatBytes(actualAuxSize));
         }

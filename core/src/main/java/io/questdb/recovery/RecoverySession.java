@@ -695,7 +695,7 @@ public class RecoverySession {
         if (!cachedColumnInPartition) {
             renderer.printColumnDetail(col, currentColumnIndex,
                     0, cachedColumnNameTxn, 0,
-                    -1, -1, -1, false, out);
+                    -1, -1, -1, -1, false, out);
             return;
         }
 
@@ -703,6 +703,7 @@ public class RecoverySession {
         int colType = col.getType();
 
         long expectedDataSize;
+        long expectedAuxSize = -1;
         long actualDataSize;
         long actualAuxSize = -1;
 
@@ -711,6 +712,7 @@ public class RecoverySession {
             int pathLen = path.size();
 
             if (ColumnType.isVarSize(colType)) {
+                expectedAuxSize = cachedEffectiveRows >= 0 ? ColumnType.getDriver(colType).getAuxVectorSize(cachedEffectiveRows) : -1;
                 // .d file
                 path.trimTo(pathLen);
                 TableUtils.dFile(path, col.getName(), cachedColumnNameTxn);
@@ -725,7 +727,21 @@ public class RecoverySession {
                 if (actualAuxSize < 0) {
                     actualAuxSize = -1;
                 }
-                expectedDataSize = actualAuxSize; // use aux size as expected for var-size
+                expectedDataSize = -1;
+                if (cachedEffectiveRows == 0) {
+                    expectedDataSize = 0;
+                } else if (actualAuxSize >= 0) {
+                    long auxFd = ff.openRO(path.$());
+                    if (auxFd >= 0) {
+                        try {
+                            expectedDataSize = ColumnType.getDriver(colType).getDataVectorSizeAtFromFd(ff, auxFd, cachedEffectiveRows - 1);
+                        } catch (Exception ignore) {
+                            expectedDataSize = -1;
+                        } finally {
+                            ff.close(auxFd);
+                        }
+                    }
+                }
             } else {
                 int typeSize = ColumnType.sizeOf(colType);
                 expectedDataSize = cachedEffectiveRows * typeSize;
@@ -742,7 +758,7 @@ public class RecoverySession {
                 col, currentColumnIndex,
                 cachedColumnTop, cachedColumnNameTxn, cachedEffectiveRows,
                 expectedDataSize, actualDataSize,
-                actualAuxSize, true, out
+                expectedAuxSize, actualAuxSize, true, out
         );
     }
 
