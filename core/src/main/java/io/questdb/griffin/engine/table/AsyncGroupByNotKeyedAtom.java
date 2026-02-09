@@ -83,7 +83,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
         assert perWorkerGroupByFunctions == null || perWorkerGroupByFunctions.size() == workerCount;
 
-        final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
+        final int slotCount = workerCount;
         try {
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
 
