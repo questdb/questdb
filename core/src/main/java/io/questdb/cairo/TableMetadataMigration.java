@@ -306,7 +306,6 @@ public class TableMetadataMigration {
                     legacy.tableId,
                     legacy.partitionBy,
                     legacy.timestampIndex,
-                    legacy.metadataVersion,
                     legacy.walEnabled,
                     legacy.maxUncommittedRows,
                     legacy.o3MaxLag,

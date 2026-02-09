@@ -205,7 +205,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                     structVersion = writer.getMetadataVersion();
                 }
 
-                Assert.assertTrue(ogMeta.prepareTransition(structVersion));
+                Assert.assertEquals(TableReaderMetadata.TransitionResult.SUCCESS, ogMeta.prepareTransition(structVersion));
                 ogMeta.applyTransition();
                 copyMeta.applyTransitionFrom(ogMeta);
 
@@ -309,7 +309,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 assertEquals(ogMeta, copyMeta);
 
                 // Transition should also be possible.
-                Assert.assertTrue(copyMeta.prepareTransition(ogMeta.getMetadataVersion()));
+                Assert.assertEquals(TableReaderMetadata.TransitionResult.SUCCESS, copyMeta.prepareTransition(ogMeta.getMetadataVersion()));
                 copyMeta.applyTransition();
                 assertEquals(ogMeta, copyMeta);
             }

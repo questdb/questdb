@@ -653,7 +653,8 @@ public final class TableUtils {
 
             // Create TXN file last, it is used to determine if table exists
             mem.smallFile(ff, path.trimTo(rootLen).concat(txnFileName).$(), MemoryTag.MMAP_DEFAULT);
-            createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
+            // metadata version starts at 1 (matching BlockFile header)
+            createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 1, 0L, 0L);
             mem.sync(false);
         } finally {
             if (dirFd > 0) {
@@ -669,10 +670,13 @@ public final class TableUtils {
             long seqTxn,
             long dataVersion,
             long partitionTableVersion,
-            long structureVersion,
+            int metadataVersion,
             long columnVersion,
             long truncateVersion
     ) {
+        // Encode structure version: low int = metadata version, high int = column structure version
+        // Column structure version starts at 0, encoded as NONE_COL_STRUCTURE_VERSION (Integer.MIN_VALUE)
+        long encodedStructureVersion = Numbers.encodeLowHighInts(metadataVersion, Integer.MIN_VALUE);
         txMem.putInt(TX_BASE_OFFSET_A_32, TX_BASE_HEADER_SIZE);
         txMem.putInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32, symbolMapCount * 8);
         txMem.putInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32, 0);
@@ -684,7 +688,7 @@ public final class TableUtils {
                 seqTxn,
                 dataVersion,
                 partitionTableVersion,
-                structureVersion,
+                encodedStructureVersion,
                 columnVersion,
                 truncateVersion
         );
@@ -931,29 +935,6 @@ public final class TableUtils {
             return ColumnType.NULL;
         }
         return structure.getColumnType(timestampIndex);
-    }
-
-    public static void handleMetadataLoadException(
-            TableToken tableToken,
-            long deadline,
-            CairoException ex,
-            MillisecondClock millisecondClock,
-            long spinLockTimeout
-    ) {
-        // This is temporary solution until we can get multiple version of metadata not overwriting each other
-        if (ex.isFileCannotRead()) {
-            if (millisecondClock.getTicks() < deadline) {
-                LOG.info().$("error reloading metadata [table=").$(tableToken)
-                        .$(", msg=").$safe(ex.getFlyweightMessage())
-                        .$(", errno=").$(ex.getErrno())
-                        .I$();
-                Os.pause();
-            } else {
-                throw CairoException.critical(ex.getErrno()).put("Metadata read timeout [src=writer, timeout=").put(spinLockTimeout).put("ms, err=").put(ex.getFlyweightMessage()).put(']');
-            }
-        } else {
-            throw ex;
-        }
     }
 
     public static LPSZ iFile(Path path, CharSequence columnName, long columnTxn) {
@@ -2077,7 +2058,6 @@ public final class TableUtils {
                     tableId,
                     structure.getPartitionBy(),
                     structure.getTimestampIndex(),
-                    0, // metadataVersion starts at 0
                     structure.isWalEnabled(),
                     structure.getMaxUncommittedRows(),
                     structure.getO3MaxLag(),

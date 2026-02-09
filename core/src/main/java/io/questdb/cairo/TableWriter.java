@@ -28,7 +28,6 @@ import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.Frame;
@@ -47,13 +46,10 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMAR;
-import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMAT;
-import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.vm.api.NullMemory;
 import io.questdb.cairo.wal.MetadataService;
@@ -190,7 +186,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static final int ROW_ACTION_O3 = 3;
     private static final int ROW_ACTION_OPEN_PARTITION = 0;
     private static final int ROW_ACTION_SWITCH_PARTITION = 4;
-    private static final int TODO_META_INDEX_OFFSET = 48;
     final ObjList<MemoryMA> columns;
     // Latest command sequence per command source.
     // Publisher source is identified by a long value
@@ -247,7 +242,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Path path;
     private final int pathRootSize;
     private final int pathSize;
-    private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     private final LongAdder physicallyWrittenRowsSinceLastCommit = new LongAdder();
     private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
@@ -259,7 +253,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final TimestampDriver timestampDriver;
     private final int timestampType;
     private final DirectUtf8StringZ tmpDirectUtf8StringZ = new DirectUtf8StringZ();
-    private final MemoryMARW todoMem = Vm.getCMARWInstance();
     private final TxWriter txWriter;
     private final TxnScoreboard txnScoreboard;
     private final StringSink utf16Sink = new StringSink();
@@ -280,6 +273,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long avgRecordSize;
     private boolean avoidIndexOnCommit = false;
     private BlockFileReader blockFileReader;
+    private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     private BlockFileWriter blockFileWriter;
     private int columnCount;
     private long commitRowCount;
@@ -303,9 +297,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // A flag that during WAL processing o3MemColumns1 or o3MemColumns2 were
     // set to a "shifted" state and the state has to be cleaned.
     private boolean memColumnShifted;
-    private int metaPrevIndex;
-    private final FragileCode RECOVER_FROM_TODO_WRITE_FAILURE = this::recoverFromTodoWriteFailure;
-    private int metaSwapIndex;
     private long minSplitPartitionTimestamp;
     private long noOpRowCount;
     private ReadOnlyObjList<? extends MemoryCR> o3Columns;
@@ -337,9 +328,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private DirectLongList tempDirectMemList;
     private long tempMem16b = Unsafe.malloc(16, MemoryTag.NATIVE_TABLE_WRITER);
     private LongConsumer timestampSetter;
-    private long todoTxn;
-    private final FragileCode RECOVER_FROM_SWAP_RENAME_FAILURE = this::recoverFromSwapRenameFailure;
-    private final FragileCode RECOVER_FROM_COLUMN_OPEN_FAILURE = this::recoverOpenColumnFailure;
     private UpdateOperatorImpl updateOperatorImpl;
     private long walRowsProcessed;
     private WalTxnDetails walTxnDetails;
@@ -429,12 +417,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 throw ex;
             }
-            int todo = readTodo(txWriter.txn);
-            if (todo == TODO_RESTORE_META) {
-                repairMetaRename(todoMem);
-            }
             this.metadata = new TableWriterMetadata(this.tableToken);
-            openMetaFile(ff, path, pathSize, ddlMem, metadata);
+            openMetaFile(path, pathSize, metadata);
             this.timestampType = metadata.getTimestampType();
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
             this.partitionBy = metadata.getPartitionBy();
@@ -442,27 +426,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // Validate metadata version matches txWriter
             // If metadata is ahead, it means a DDL operation wrote to BlockFile but txWriter wasn't committed
-            // We sync txWriter to match metadata so the table can be opened
+            // We rollback the metadata file to match txWriter
             long txMetadataVersion = txWriter.getMetadataVersion();
             long fileMetadataVersion = metadata.getMetadataVersion();
             if (fileMetadataVersion != txMetadataVersion) {
                 if (fileMetadataVersion == txMetadataVersion + 1) {
-                    // Metadata file is ahead by 1 - sync txWriter to match
-                    // Note: This may leave table in inconsistent state if DDL failed after metadata write
-                    LOG.info().$("syncing metadata version [table=").$(tableToken)
+                    // Metadata file is ahead by 1 - rollback to previous version
+                    LOG.info().$("rolling back metadata version to match _txn file [table=").$(tableToken)
                             .$(", txnVersion=").$(txMetadataVersion)
                             .$(", fileVersion=").$(fileMetadataVersion)
                             .I$();
-                    txWriter.bumpMetadataVersion(null);
+                    rollbackMetaFile(ff, path, pathSize);
+                    openMetaFile(path, pathSize, metadata);
                 } else if (fileMetadataVersion > txMetadataVersion) {
-                    // Multiple versions ahead - try to sync
-                    LOG.critical().$("metadata version significantly ahead, syncing [table=").$(tableToken)
-                            .$(", txnVersion=").$(txMetadataVersion)
-                            .$(", fileVersion=").$(fileMetadataVersion)
-                            .I$();
-                    while (txWriter.getMetadataVersion() < fileMetadataVersion) {
-                        txWriter.bumpMetadataVersion(null);
-                    }
+                    // Metadata version behind txWriter - this shouldn't happen
+                    throw CairoException.critical(0).put("Unrecoverable storage corruption detected: metadata version mismatch [table=").put(tableToken)
+                            .put(", txnVersion=").put(txMetadataVersion)
+                            .put(", fileVersion=").put(fileMetadataVersion)
+                            .put(']');
                 } else {
                     // Metadata version behind txWriter - this shouldn't happen
                     throw CairoException.critical(0).put("metadata version behind txWriter [table=").put(tableToken)
@@ -513,19 +494,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
 
-            // we have to do truncate repair at this stage of constructor
-            // because this operation requires metadata
-            switch (todo) {
-                case TODO_TRUNCATE:
-                    repairTruncate();
-                    break;
-                case TODO_RESTORE_META:
-                case -1:
-                    break;
-                default:
-                    LOG.error().$("ignoring unknown *todo* [code=").$(todo).I$();
-                    break;
-            }
             this.columnCount = metadata.getColumnCount();
             if (metadata.getTimestampIndex() > -1) {
                 this.designatedTimestampColumnName = metadata.getColumnName(metadata.getTimestampIndex());
@@ -556,7 +524,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             configureAppendPosition();
             purgeUnusedPartitions();
             minSplitPartitionTimestamp = findMinSplitPartitionTimestamp();
-            clearTodoLog();
             this.slaveTxReader = new TxReader(ff);
             commandQueue = new RingQueue<>(
                     TableWriterTask::new,
@@ -724,14 +691,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // create column files
         if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
-            try {
-                openNewColumnFiles(columnName, columnType, isIndexed, indexValueBlockCapacity);
-            } catch (CairoException e) {
-                runFragile(RECOVER_FROM_COLUMN_OPEN_FAILURE, e);
-            }
+            openNewColumnFiles(columnName, columnType, isIndexed, indexValueBlockCapacity);
         }
 
-        clearTodoAndCommitMetaStructureVersion();
+        // Atomic metadata update using BlockFile dual-region approach.
+        // No swap files, no prev files, no todo recovery needed.
+        // The BlockFile version counter provides atomic visibility switching.
+        saveMetadata(metadata);
+        commitMetadataAndColumnStructureChange();
 
         try {
             if (!Os.isWindows()) {
@@ -800,9 +767,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnMetadata.setSymbolIndexFlag(true);
         columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
-        // set the index flag in metadata and create new _meta.swp
-        rewriteAndSwapMetadata(metadata);
-        clearTodoAndCommitMeta();
+        commitMetadataChange();
 
         indexers.extendAndSet(columnIndex, indexer);
         populateDenseIndexerList();
@@ -1141,7 +1106,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 populateDenseIndexerList();
             }
 
-            clearTodoAndCommitMetaStructureVersion();
+            commitMetadataAndColumnStructureChange();
         } catch (Throwable th) {
             LOG.critical().$("could not change column type [table=").$(tableToken).$(", column=").$safe(columnName)
                     .$(", error=").$(th).I$();
@@ -1220,7 +1185,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             metadata.updateColumnSymbolCapacity(columnIndex, newSymbolCapacity);
 
             try {
-                rewriteAndSwapMetadata(metadata);
+                // Atomic metadata update using BlockFile dual-region approach.
+                // No swap files, no prev files, no todo recovery needed.
+                // The BlockFile version counter provides atomic visibility switching.
                 hardLinkAndPurgeSymbolTableFiles(
                         columnName,
                         columnIndex,
@@ -1236,14 +1203,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         symbolCacheFlag
                 );
 
-                bumpMetadataVersion();
+                saveMetadata(metadata);
+                commitMetadataChange();
             } catch (CairoException e) {
                 throwDistressException(e);
             }
-
-            // remove _todo as last step, after the commit.
-            // if anything fails before the commit, meta file will be reverted
-            clearTodoLog();
 
             try {
 
@@ -1277,10 +1241,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             partitionRemoveCandidates.clear();
             // clear temp resources
             path.trimTo(pathSize);
-        }
-
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable(metadata);
         }
     }
 
@@ -2018,11 +1978,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0; i < columnCount; i++) {
             metadata.getColumnMetadata(i).setDedupKeyFlag(false);
         }
-        rewriteAndSwapMetadata(metadata);
-        clearTodoAndCommitMetaStructureVersion();
+        // Atomic metadata update using BlockFile dual-region approach.
+        // No swap files, no prev files, no todo recovery needed.
+        // The BlockFile version counter provides atomic visibility switching.
         if (dedupColumnCommitAddresses != null) {
             dedupColumnCommitAddresses.setDedupColumnCount(0);
         }
+        saveMetadata(metadata);
+        commitMetadataAndColumnStructureChange();
 
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
@@ -2071,8 +2034,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // refresh metadata
             columnMetadata.setSymbolIndexFlag(false);
             columnMetadata.setIndexValueBlockCapacity(defaultIndexValueBlockSize);
-            rewriteAndSwapMetadata(metadata);
-            clearTodoAndCommitMeta();
+            // Atomic metadata update using BlockFile dual-region approach.
+            // No swap files, no prev files, no todo recovery needed.
+            // The BlockFile version counter provides atomic visibility switching.
+            saveMetadata(metadata);
+            commitMetadataChange();
 
             // remove indexer
             ColumnIndexer columnIndexer = indexers.getQuick(columnIndex);
@@ -2163,8 +2129,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 j++;
             }
         }
-        rewriteAndSwapMetadata(metadata);
-        clearTodoAndCommitMetaStructureVersion();
+        // Atomic metadata update using BlockFile dual-region approach.
+        // No swap files, no prev files, no todo recovery needed.
+        // The BlockFile version counter provides atomic visibility switching.
+        saveMetadata(metadata);
+        commitMetadataAndColumnStructureChange();
 
         if (dedupColumnCommitAddresses == null) {
             dedupColumnCommitAddresses = new DedupColumnCommitAddresses();
@@ -2732,7 +2701,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (timestamp) {
             metadata.clearTimestampIndex();
         }
-        rewriteAndSwapMetadata(metadata);
 
         try {
             // remove column objects
@@ -2748,9 +2716,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 };
             }
 
-            // remove column files
-            removeColumnFiles(index, columnName, type, isIndexed);
-            clearTodoAndCommitMetaStructureVersion();
+            // schedule to remove column files after the commit
+            scheduleColumnPurge(index, columnName, type, isIndexed);
+            // Atomic metadata update using BlockFile dual-region approach.
+            // No swap files, no prev files, no todo recovery needed.
+            // The BlockFile version counter provides atomic visibility switching.
+            saveMetadata(metadata);
+            commitMetadataAndColumnStructureChange();
 
             finishColumnPurge();
 
@@ -2828,20 +2800,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             metadata.renameColumn(columnName, newName);
             newColumnName = metadata.getColumnName(index);
-            rewriteAndSwapMetadata(metadata);
 
             // rename column files has to be done before _todo is removed
             hardLinkAndPurgeColumnFiles(columnName, index, isIndexed, newColumnName, type);
 
+            // Save metadata changes using block writer to A/B section
+            saveMetadata(metadata);
             // commit to _txn file
-            bumpMetadataAndColumnStructureVersion();
+            commitMetadataAndColumnStructureChange();
         } catch (CairoException e) {
             throwDistressException(e);
         }
-
-        // remove _todo as last step, after the commit.
-        // if anything fails before the commit, meta file will be reverted
-        clearTodoLog();
 
         try {
 
@@ -2877,7 +2846,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(pathSize);
         }
         // Record column structure version bump in txn file for WAL sequencer structure version to match the writer structure version.
-        bumpColumnStructureVersion();
+        commitMetadataAndColumnStructureChange();
     }
 
     @Override
@@ -3331,25 +3300,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void openMetaFile(FilesFacade ff, Path path, int rootLen, MemoryMR ddlMem, TableWriterMetadata metadata) {
-        path.concat(META_FILE_NAME);
-        try {
-            // Read metadata from BlockFile format
-            if (blockFileReader == null) {
-                blockFileReader = new BlockFileReader(configuration);
-            }
-            blockFileReader.of(path.$());
-
-            TableMetadataFileBlock.MetadataHolder holder = new TableMetadataFileBlock.MetadataHolder();
-            TableMetadataFileBlock.read(blockFileReader, holder, path.$());
-            metadata.reloadFromBlockFile(holder);
-        } finally {
-            // Close reader after reading - we have all data in holder/metadata
-            Misc.free(blockFileReader);
-            path.trimTo(rootLen);
-        }
-    }
-
     private static void removeFileOrLog(FilesFacade ff, LPSZ name) {
         if (!ff.removeQuiet(name)) {
             LOG.error()
@@ -3389,8 +3339,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 replaceColumnIndex,
                 symbolCacheFlag
         );
-
-        rewriteAndSwapMetadata(metadata);
 
         // don't create a symbol writer when column conversion happens, it should be created before the conversion
         if (replaceColumnIndex < 0) {
@@ -3915,33 +3863,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void bumpColumnStructureVersion() {
-        columnVersionWriter.commit();
-        txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        txWriter.bumpColumnStructureVersion(this.denseSymbolMapWriters);
-        assert txWriter.getMetadataVersion() == metadata.getMetadataVersion();
-    }
-
     private void bumpMasterRef() {
         if ((masterRef & 1) == 0) {
             masterRef++;
         } else {
             cancelRowAndBump();
         }
-    }
-
-    private void bumpMetadataAndColumnStructureVersion() {
-        columnVersionWriter.commit();
-        txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        txWriter.bumpMetadataAndColumnStructureVersion(denseSymbolMapWriters);
-        assert txWriter.getMetadataVersion() == metadata.getMetadataVersion();
-    }
-
-    private void bumpMetadataVersion() {
-        columnVersionWriter.commit();
-        txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        txWriter.bumpMetadataVersion(denseSymbolMapWriters);
-        assert txWriter.getMetadataVersion() == metadata.getMetadataVersion();
     }
 
     private int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl) {
@@ -4021,48 +3948,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // transaction log is either not required or pending
         activeColumns = columns;
         activeNullSetters = nullSetters;
-    }
-
-    private void clearTodoAndCommitMeta() {
-        try {
-            bumpMetadataVersion();
-        } catch (CairoException e) {
-            throwDistressException(e);
-        }
-
-        clearTodoLog();
-    }
-
-    private void clearTodoAndCommitMetaStructureVersion() {
-        try {
-            bumpMetadataAndColumnStructureVersion();
-        } catch (CairoException e) {
-            throwDistressException(e);
-        }
-
-        clearTodoLog();
-    }
-
-    private void clearTodoLog() {
-        try {
-            todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
-            Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
-            todoMem.putLong(8, 0); // write out our instance hashes
-            todoMem.putLong(16, 0);
-            Unsafe.getUnsafe().storeFence();
-            todoMem.putLong(32, 0);
-            Unsafe.getUnsafe().storeFence();
-            todoMem.putLong(24, todoTxn);
-            // ensure the file is closed with the correct length
-            todoMem.jumpTo(40);
-            todoMem.sync(false);
-        } catch (Throwable th) {
-            // if we failed to clear _todo_, it's ok, it will be ignored
-            // because the txn inside _todo_ is out of date.
-            handleHousekeepingException(th);
-        } finally {
-            path.trimTo(pathSize);
-        }
     }
 
     private void closeAppendMemoryTruncate(boolean truncate) {
@@ -4154,6 +4039,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.commit(denseSymbolMapWriters);
         // Bookmark masterRef to track how many rows is in uncommitted state
         this.committedMasterRef = masterRef;
+    }
+
+    private void commitMetadataAndColumnStructureChange() {
+        try {
+            columnVersionWriter.commit();
+            txWriter.setColumnVersion(columnVersionWriter.getVersion());
+            txWriter.commitMetadataChange(metadata.getMetadataVersion(), true, denseSymbolMapWriters);
+        } catch (CairoException e) {
+            throwDistressException(e);
+        }
+    }
+
+    private void commitMetadataChange() {
+        try {
+            columnVersionWriter.commit();
+            txWriter.setColumnVersion(columnVersionWriter.getVersion());
+            txWriter.commitMetadataChange(metadata.getMetadataVersion(), false, denseSymbolMapWriters);
+        } catch (CairoException e) {
+            throwDistressException(e);
+        }
     }
 
     private void commitRemovePartitionOperation() {
@@ -5279,7 +5184,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(txWriter);
         Misc.free(ddlMem);
         Misc.free(other);
-        Misc.free(todoMem);
         Misc.free(attachColumnVersionReader);
         Misc.free(attachIndexBuilder);
         Misc.free(columnVersionWriter);
@@ -6983,6 +6887,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         setAppendPosition(txWriter.getTransientRowCount() + txWriter.getLagRowCount(), false);
     }
 
+    private void openMetaFile(Path path, int rootLen, TableWriterMetadata metadata) {
+        path.concat(META_FILE_NAME);
+        try {
+            // Read metadata from BlockFile format
+            if (blockFileReader == null) {
+                blockFileReader = new BlockFileReader(configuration);
+            }
+            blockFileReader.of(path.$());
+
+            TableMetadataFileBlock.MetadataHolder holder = new TableMetadataFileBlock.MetadataHolder();
+            TableMetadataFileBlock.read(blockFileReader, holder, path.$());
+            metadata.reloadFromBlockFile(holder);
+        } finally {
+            // Close reader after reading - we have all data in holder/metadata
+            Misc.free(blockFileReader);
+            path.trimTo(rootLen);
+        }
+    }
+
     private void openNewColumnFiles(CharSequence name, int columnType, boolean indexFlag, int indexValueBlockCapacity) {
         try {
             // open column files
@@ -7071,38 +6994,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (Throwable e) {
             distressed = true;
             throw e;
-        } finally {
-            path.trimTo(pathSize);
-        }
-    }
-
-    private long openTodoMem(long tableTxn) {
-        path.concat(TODO_FILE_NAME);
-        try {
-            if (ff.exists(path.$())) {
-                long fileLen = ff.length(path.$());
-                if (fileLen < 32) {
-                    throw CairoException.critical(0).put("corrupt ").put(path);
-                }
-
-                todoMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
-                this.todoTxn = todoMem.getLong(0);
-                // check if _todo_ file is consistent, if not, we just ignore its contents and reset hash
-                // also check that the _todo_ file belongs to the latest transaction in _txn, otherwise ignore it
-                if (todoTxn != tableTxn || todoMem.getLong(24) != todoTxn) {
-                    todoMem.putLong(8, configuration.getDatabaseIdLo());
-                    todoMem.putLong(16, configuration.getDatabaseIdHi());
-                    Unsafe.getUnsafe().storeFence();
-                    todoMem.putLong(24, todoTxn);
-                    return 0;
-                }
-
-                return todoMem.getLong(32);
-            } else {
-                resetTodoLog(ff, path, pathSize, todoMem);
-                todoTxn = 0;
-                return 0;
-            }
         } finally {
             path.trimTo(pathSize);
         }
@@ -9100,19 +8991,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private int readTodo(long tableTxn) {
-        long todoCount;
-        todoCount = openTodoMem(tableTxn);
-
-        int todo;
-        if (todoCount > 0) {
-            todo = (int) todoMem.getLong(40);
-        } else {
-            todo = -1;
-        }
-        return todo;
-    }
-
     private void rebuildAttachedPartitionColumnIndex(long partitionTimestamp, long partitionSize, CharSequence columnName) {
         if (attachIndexBuilder == null) {
             attachIndexBuilder = new IndexBuilder(configuration);
@@ -9153,24 +9031,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void recoverFromMetaRenameFailure() {
-        openMetaFile(ff, path, pathSize, ddlMem, metadata);
-    }
-
-    private void recoverFromSwapRenameFailure() {
-        recoverFromTodoWriteFailure();
-        clearTodoLog();
+        openMetaFile(path, pathSize, metadata);
     }
 
     private void recoverFromSymbolMapWriterFailure(CharSequence columnName) {
         removeSymbolMapFilesQuiet(columnName, getTxn());
         // With BlockFile format, we don't delete meta file - the previous version is in the inactive region.
         // The caller should mark as distressed and the next writer open will handle recovery.
-    }
-
-    private void recoverFromTodoWriteFailure() {
-        restoreMetaFrom(META_PREV_FILE_NAME, metaPrevIndex);
-        openMetaFile(ff, path, pathSize, ddlMem, metadata);
-        columnCount = metadata.getColumnCount();
     }
 
     private void recoverOpenColumnFailure() {
@@ -9281,49 +9148,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return o3ColumnOverrides;
     }
 
-    private void removeColumnFiles(int columnIndex, String columnName, int columnType, boolean isIndexed) {
-        PurgingOperator purgingOperator = getPurgingOperator();
-        if (PartitionBy.isPartitioned(partitionBy)) {
-            for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
-                long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
-                if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
-                    long partitionNameTxn = txWriter.getPartitionNameTxn(i);
-                    long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                    purgingOperator.add(
-                            columnIndex,
-                            columnName,
-                            columnType,
-                            isIndexed,
-                            columnNameTxn,
-                            partitionTimestamp,
-                            partitionNameTxn
-                    );
-                }
-            }
-        } else {
-            purgingOperator.add(
-                    columnIndex,
-                    columnName,
-                    columnType,
-                    isIndexed,
-                    columnVersionWriter.getDefaultColumnNameTxn(columnIndex),
-                    txWriter.getLastPartitionTimestamp(),
-                    -1
-            );
-        }
-        if (ColumnType.isSymbol(columnType)) {
-            purgingOperator.add(
-                    columnIndex,
-                    columnName,
-                    columnType,
-                    isIndexed,
-                    columnVersionWriter.getSymbolTableNameTxn(columnIndex),
-                    PurgingOperator.TABLE_ROOT_PARTITION,
-                    -1
-            );
-        }
-    }
-
     private void removeColumnFilesInPartition(CharSequence columnName, int columnIndex, long partitionTimestamp) {
         if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
             setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, -1);
@@ -9350,27 +9174,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         removeFileOrLog(ff, keyFileName(path.trimTo(plen), columnName, columnNameTxn));
         removeFileOrLog(ff, valueFileName(path.trimTo(plen), columnName, columnNameTxn));
         path.trimTo(pathSize);
-    }
-
-    private void removeMetaFile() {
-        try {
-            path.concat(META_FILE_NAME);
-            if (!ff.removeQuiet(path.$())) {
-                // On Windows opened file cannot be removed
-                // but can be renamed
-                other.concat(META_FILE_NAME).put('.').put(configuration.getMicrosecondClock().getTicks());
-                if (ff.rename(path.$(), other.$()) != FILES_RENAME_OK) {
-                    LOG.error()
-                            .$("could not rename [from=").$(path)
-                            .$(", to=").$(other)
-                            .I$();
-                    throw CairoException.critical(ff.errno()).put("Recovery failed. Could not rename: ").put(path);
-                }
-            }
-        } finally {
-            path.trimTo(pathSize);
-            other.trimTo(pathSize);
-        }
     }
 
     private void removeNonAttachedPartitions() {
@@ -9481,23 +9284,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void renameMetaToMetaPrev() {
-        try {
-            this.metaPrevIndex = rename(fileOperationRetryCount);
-        } catch (CairoException e) {
-            runFragile(RECOVER_FROM_META_RENAME_FAILURE, e);
-        }
-    }
-
-    private void renameSwapMetaToMeta() {
-        // rename _meta.swp to _meta
-        try {
-            restoreMetaFrom(META_SWAP_FILE_NAME, metaSwapIndex);
-        } catch (CairoException e) {
-            runFragile(RECOVER_FROM_SWAP_RENAME_FAILURE, e);
-        }
-    }
-
     private long repairDataGaps(final long timestamp) {
         if (txWriter.getMaxTimestamp() != Numbers.LONG_NULL && PartitionBy.isPartitioned(partitionBy)) {
             long fixedRowCount = 0;
@@ -9592,42 +9378,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return timestamp;
     }
 
-    private void repairMetaRename(MemoryMARW todoMem) {
-        try {
-            if (todoMem.size() < TODO_META_INDEX_OFFSET + Long.BYTES) {
-                throw CairoException.critical(0).put("cannot restore metadata, todo file is too short, may be corrupt at ").put(path.concat(TODO_FILE_NAME));
-            }
-            int index = (int) todoMem.getLong(TODO_META_INDEX_OFFSET);
-
-            path.concat(META_PREV_FILE_NAME);
-            if (index > 0) {
-                path.put('.').put(index);
-            }
-
-            if (ff.exists(path.$())) {
-                LOG.info().$("Repairing metadata from: ").$substr(pathRootSize, path).$();
-                ff.remove(other.concat(META_FILE_NAME).$());
-
-                if (ff.rename(path.$(), other.$()) != FILES_RENAME_OK) {
-                    throw CairoException.critical(ff.errno()).put("Repair failed. Cannot rename ").put(path).put(" -> ").put(other);
-                }
-            }
-        } finally {
-            path.trimTo(pathSize);
-            other.trimTo(pathSize);
-        }
-
-        clearTodoLog();
-    }
-
-    private void repairTruncate() {
-        LOG.info().$("repairing abnormally terminated truncate on ").$substr(pathRootSize, path).$();
-        scheduleRemoveAllPartitions();
-        txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
-        clearTodoLog();
-        processPartitionRemoveCandidates();
-    }
-
     private void resizePartitionUpdateSink() {
         if (o3PartitionUpdateSink == null) {
             o3PartitionUpdateSink = new PagedDirectLongList(MemoryTag.NATIVE_O3);
@@ -9648,75 +9398,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
-        }
-    }
-
-    private void rewriteAndSwapMetadata(TableWriterMetadata metadata) {
-        // Atomic metadata update using BlockFile dual-region approach.
-        // No swap files, no prev files, no todo recovery needed.
-        // The BlockFile version counter provides atomic visibility switching.
-        updateMetadataAtomic(metadata);
-    }
-
-    /**
-     * Atomically updates metadata using BlockFile dual-region versioning.
-     * <p>
-     * This replaces the legacy approach of:
-     * 1. Write _meta.swp
-     * 2. Rename _meta to _meta.prev
-     * 3. Write _todo for recovery
-     * 4. Rename _meta.swp to _meta
-     * <p>
-     * With BlockFile:
-     * 1. Write to inactive region (A or B)
-     * 2. Atomic version bump switches readers to new data
-     * <p>
-     * No race conditions, no recovery files needed.
-     */
-    private void updateMetadataAtomic(TableWriterMetadata metadata) {
-        // Increment metadata version
-        int version = txWriter.getMetadataVersion() + 1;
-        metadata.setMetadataVersion(version);
-
-        // Ensure BlockFileWriter is initialized
-        if (blockFileWriter == null) {
-            blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
-        }
-
-        try {
-            path.concat(META_FILE_NAME).$();
-            blockFileWriter.of(path.$());
-
-            // Collect ALL column metadata (including deleted/tombstone columns) in slot order
-            // Deleted columns act as tombstones - they maintain position for columns that replace them
-            // The columnMetadata list is already in writerIndex/slot order
-            int totalColumns = metadata.getColumnCount();
-            ObjList<TableColumnMetadata> columns = new ObjList<>(totalColumns);
-            for (int i = 0; i < totalColumns; i++) {
-                columns.add(metadata.getColumnMetadata(i));
-            }
-
-            // Write all blocks atomically
-            TableMetadataFileBlock.write(
-                    blockFileWriter,
-                    ColumnType.VERSION,
-                    metadata.getTableId(),
-                    metadata.getPartitionBy(),
-                    metadata.getTimestampIndex(),
-                    metadata.getMetadataVersion(),
-                    metadata.isWalEnabled(),
-                    metadata.getMaxUncommittedRows(),
-                    metadata.getO3MaxLag(),
-                    metadata.getTtlHoursOrMonths(),
-                    columns
-            );
-            // BlockFileWriter.commit() is called inside TableMetadataFileBlock.write()
-            // which atomically switches readers to the new data
-        } catch (Throwable th) {
-            LOG.critical().$("could not write metadata to BlockFile [path=").$(path).$(']').$();
-            throw th;
-        } finally {
-            path.trimTo(pathSize);
         }
     }
 
@@ -9782,7 +9463,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.critical().$("could not write to metadata file, rolling back DDL [path=").$(path).$(']').$();
             try {
                 // Revert metadata
-                openMetaFile(ff, path, pathSize, ddlMem, metadata);
+                openMetaFile(path, pathSize, metadata);
             } catch (Throwable th2) {
                 LOG.critical().$("could not revert metadata, writer distressed [path=").$(path).$(']').$();
                 throwDistressException(th2);
@@ -9804,6 +9485,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 LOG.info().$("recovering index [fd=").$(fd).I$();
                 indexer.rollback(maxRow);
             }
+        }
+    }
+
+    private void rollbackMetaFile(FilesFacade ff, Path path, int rootLen) {
+        if (blockFileWriter == null) {
+            blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
+        }
+        path.concat(META_FILE_NAME);
+        try {
+            blockFileWriter.of(path.$());
+            blockFileWriter.rollback();
+        } finally {
+            path.trimTo(rootLen);
         }
     }
 
@@ -9853,21 +9547,68 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void runFragile(FragileCode fragile, CairoException e) {
-        try {
-            fragile.run();
-        } catch (CairoException e2) {
-            LOG.error().$("DOUBLE ERROR: 1st: {").$((Sinkable) e).$('}').$();
-            throwDistressException(e2);
-        }
-        throw e;
-    }
-
     private void safeDeletePartitionDir(long timestamp, long partitionNameTxn) {
         // Call O3 methods to remove check TxnScoreboard and remove partition directly
         partitionRemoveCandidates.clear();
         partitionRemoveCandidates.add(timestamp, partitionNameTxn);
         processPartitionRemoveCandidates();
+    }
+
+    /**
+     * Atomically updates metadata using BlockFile dual-region versioning.
+     * <p>
+     * This replaces the legacy approach of:
+     * 1. Write _meta.swp
+     * 2. Rename _meta to _meta.prev
+     * 3. Write _todo for recovery
+     * 4. Rename _meta.swp to _meta
+     * <p>
+     * With BlockFile:
+     * 1. Write to inactive region (A or B)
+     * 2. Atomic version bump switches readers to new data
+     * <p>
+     * No race conditions, no recovery files needed.
+     */
+    private void saveMetadata(TableWriterMetadata metadata) {
+        // Ensure BlockFileWriter is initialized
+        if (blockFileWriter == null) {
+            blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
+        }
+
+        try {
+            path.concat(META_FILE_NAME).$();
+            blockFileWriter.of(path.$());
+
+            // Collect ALL column metadata (including deleted/tombstone columns) in slot order
+            // Deleted columns act as tombstones - they maintain position for columns that replace them
+            // The columnMetadata list is already in writerIndex/slot order
+            int totalColumns = metadata.getColumnCount();
+            ObjList<TableColumnMetadata> columns = new ObjList<>(totalColumns);
+            for (int i = 0; i < totalColumns; i++) {
+                columns.add(metadata.getColumnMetadata(i));
+            }
+
+            // Write all blocks atomically
+            // The metadata version is the BlockFile header version after commit
+            long newVersion = TableMetadataFileBlock.write(
+                    blockFileWriter,
+                    ColumnType.VERSION,
+                    metadata.getTableId(),
+                    metadata.getPartitionBy(),
+                    metadata.getTimestampIndex(),
+                    metadata.isWalEnabled(),
+                    metadata.getMaxUncommittedRows(),
+                    metadata.getO3MaxLag(),
+                    metadata.getTtlHoursOrMonths(),
+                    columns
+            );
+            metadata.setMetadataVersion(newVersion);
+        } catch (Throwable th) {
+            LOG.critical().$("could not write metadata to BlockFile [path=").$(path).$(']').$();
+            throw th;
+        } finally {
+            path.trimTo(pathSize);
+        }
     }
 
     private void scaleSymbolCapacities() {
@@ -9890,6 +9631,49 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
             }
+        }
+    }
+
+    private void scheduleColumnPurge(int columnIndex, String columnName, int columnType, boolean isIndexed) {
+        PurgingOperator purgingOperator = getPurgingOperator();
+        if (PartitionBy.isPartitioned(partitionBy)) {
+            for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
+                long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
+                if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
+                    long partitionNameTxn = txWriter.getPartitionNameTxn(i);
+                    long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+                    purgingOperator.add(
+                            columnIndex,
+                            columnName,
+                            columnType,
+                            isIndexed,
+                            columnNameTxn,
+                            partitionTimestamp,
+                            partitionNameTxn
+                    );
+                }
+            }
+        } else {
+            purgingOperator.add(
+                    columnIndex,
+                    columnName,
+                    columnType,
+                    isIndexed,
+                    columnVersionWriter.getDefaultColumnNameTxn(columnIndex),
+                    txWriter.getLastPartitionTimestamp(),
+                    -1
+            );
+        }
+        if (ColumnType.isSymbol(columnType)) {
+            purgingOperator.add(
+                    columnIndex,
+                    columnName,
+                    columnType,
+                    isIndexed,
+                    columnVersionWriter.getSymbolTableNameTxn(columnIndex),
+                    PurgingOperator.TABLE_ROOT_PARTITION,
+                    -1
+            );
         }
     }
 
@@ -10384,18 +10168,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
-        // this is a crude block to test things for now
-        todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
-        Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
-        todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
-        todoMem.putLong(16, configuration.getDatabaseIdHi());
-        Unsafe.getUnsafe().storeFence();
-        todoMem.putLong(24, todoTxn);
-        todoMem.putLong(32, 1);
-        todoMem.putLong(40, TODO_TRUNCATE);
-        // ensure file is closed with correct length
-        todoMem.jumpTo(48);
-
         if (partitionBy != PartitionBy.NONE) {
             freeColumns(false);
             releaseIndexerWriters();
@@ -10410,7 +10182,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.resetTimestamp();
         columnVersionWriter.truncate();
         txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
-        clearTodoLog();
         this.minSplitPartitionTimestamp = Long.MAX_VALUE;
         processPartitionRemoveCandidates();
 
@@ -10615,31 +10386,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void validateSwapMeta() {
-        try {
-            try {
-                path.concat(META_SWAP_FILE_NAME);
-                if (metaSwapIndex > 0) {
-                    path.put('.').put(metaSwapIndex);
-                }
-                // Map meta-swap file for verification to exact length.
-                long len = ff.length(path.$());
-                // Check that file length is ok, do not allow you to map to default page size if it's returned as -1.
-                if (len < 1) {
-                    throw CairoException.critical(ff.errno()).put("cannot swap metadata file, invalid size: ").put(path);
-                }
-                ddlMem.of(ff, path.$(), ff.getPageSize(), len, MemoryTag.MMAP_TABLE_WRITER, CairoConfiguration.O_NONE, POSIX_MADV_RANDOM);
-                validationMap.clear();
-                validateMeta(path, ddlMem, validationMap, ColumnType.VERSION);
-            } finally {
-                ddlMem.close(false);
-                path.trimTo(pathSize);
-            }
-        } catch (CairoException e) {
-            runFragile(RECOVER_FROM_META_RENAME_FAILURE, e);
-        }
-    }
-
     private void writeIndex(@NotNull CharSequence columnName, int indexValueBlockSize, int columnIndex, SymbolColumnIndexer indexer) {
         // create indexer
         final long columnNameTxn = columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(), columnIndex);
@@ -10678,29 +10424,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void writeMetadataToDisk() {
-        rewriteAndSwapMetadata(metadata);
-        clearTodoAndCommitMeta();
+        // Atomic metadata update using BlockFile dual-region approach.
+        saveMetadata(metadata);
+        commitMetadataChange();
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
-        }
-    }
-
-    private void writeRestoreMetaTodo() {
-        try {
-            todoMem.putLong(0, txWriter.txn); // write txn, reader will first read txn at offset 24 and then at offset 0
-            Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
-            todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
-            todoMem.putLong(16, configuration.getDatabaseIdHi());
-            Unsafe.getUnsafe().storeFence();
-            todoMem.putLong(32, 1);
-            todoMem.putLong(40, TODO_RESTORE_META);
-            todoMem.putLong(48, metaPrevIndex);
-            Unsafe.getUnsafe().storeFence();
-            todoMem.putLong(24, txWriter.txn);
-            todoMem.jumpTo(56);
-            todoMem.sync(false);
-        } catch (CairoException e) {
-            runFragile(RECOVER_FROM_TODO_WRITE_FAILURE, e);
         }
     }
 

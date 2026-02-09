@@ -64,26 +64,26 @@ public class TableMetadataFileBlock {
 
     /**
      * Writes table metadata to a BlockFileWriter.
+     * The metadata version is derived from the BlockFile header version after commit.
      *
      * @param writer          the BlockFileWriter to write to (must already be opened)
      * @param formatVersion   metadata format version (ColumnType.VERSION)
      * @param tableId         unique table identifier
      * @param partitionBy     partition mode (e.g., PartitionBy.DAY)
      * @param timestampIndex  index of the designated timestamp column (-1 if none)
-     * @param metadataVersion metadata modification counter
      * @param walEnabled      whether WAL is enabled for this table
      * @param maxUncommittedRows maximum rows before auto-commit
      * @param o3MaxLag        out-of-order maximum lag in microseconds
      * @param ttlHoursOrMonths TTL setting (positive=hours, negative=months)
      * @param columns         list of column metadata
+     * @return the new metadata version (BlockFile header version after commit)
      */
-    public static void write(
+    public static long write(
             @NotNull BlockFileWriter writer,
             int formatVersion,
             int tableId,
             int partitionBy,
             int timestampIndex,
-            long metadataVersion,
             boolean walEnabled,
             int maxUncommittedRows,
             long o3MaxLag,
@@ -92,7 +92,7 @@ public class TableMetadataFileBlock {
     ) {
         // Block 0: CORE metadata
         AppendableBlock block = writer.append();
-        writeCoreBlock(block, formatVersion, tableId, partitionBy, timestampIndex, columns.size(), metadataVersion, walEnabled);
+        writeCoreBlock(block, formatVersion, tableId, partitionBy, timestampIndex, columns.size(), walEnabled);
         block.commit(BLOCK_TYPE_CORE);
 
         // Block 1: COLUMNS
@@ -106,6 +106,7 @@ public class TableMetadataFileBlock {
         block.commit(BLOCK_TYPE_SETTINGS);
 
         writer.commit();
+        return writer.getVersion();
     }
 
     /**
@@ -120,27 +121,56 @@ public class TableMetadataFileBlock {
             @NotNull MetadataHolder holder,
             @NotNull LPSZ path
     ) {
+        read(reader, holder, path, -1);
+    }
+
+    /**
+     * Reads table metadata from a BlockFileReader into the provided holder.
+     *
+     * @param reader  the BlockFileReader to read from (must already be opened with of())
+     * @param holder  the holder to populate with metadata
+     * @param path    path for error messages
+     * @param version the version to read, or -1 for current version
+     * @return TransitionResult indicating success or the type of failure
+     */
+    public static TableReaderMetadata.TransitionResult read(
+            @NotNull BlockFileReader reader,
+            @NotNull MetadataHolder holder,
+            @NotNull LPSZ path,
+            long version
+    ) {
         holder.clear();
+
+        BlockFileReader.BlockCursor cursor = reader.getCursor(version);
+        if (cursor == null) {
+            // Check why: is the requested version out of range or was it a race?
+            if (version >= 0) {
+                // Requested version is not current or current-1, it's out of date
+                return TableReaderMetadata.TransitionResult.VERSION_MISMATCH;
+            }
+            // Race condition or other read error
+            return TableReaderMetadata.TransitionResult.READ_ERROR;
+        }
+
+        // Metadata version is the BlockFile region version
+        holder.metadataVersion = cursor.getRegionVersion();
 
         boolean coreFound = false;
         boolean columnsFound = false;
 
-        BlockFileReader.BlockCursor cursor = reader.getCursor();
         while (cursor.hasNext()) {
             ReadableBlock block = cursor.next();
             switch (block.type()) {
-                case BLOCK_TYPE_CORE:
+                case BLOCK_TYPE_CORE -> {
                     readCoreBlock(block, holder);
                     coreFound = true;
-                    break;
-                case BLOCK_TYPE_COLUMNS:
+                }
+                case BLOCK_TYPE_COLUMNS -> {
                     readColumnsBlock(block, holder);
                     columnsFound = true;
-                    break;
-                case BLOCK_TYPE_SETTINGS:
-                    readSettingsBlock(block, holder);
-                    break;
-                default:
+                }
+                case BLOCK_TYPE_SETTINGS -> readSettingsBlock(block, holder);
+                default ->
                     // Unknown block type - skip for forward compatibility
                     LOG.info().$("skipping unknown metadata block type [type=").$(block.type())
                             .$(", path=").$(path).I$();
@@ -155,6 +185,7 @@ public class TableMetadataFileBlock {
             throw CairoException.critical(CairoException.METADATA_VALIDATION)
                     .put("metadata columns block not found [path=").put(path).put(']');
         }
+        return TableReaderMetadata.TransitionResult.SUCCESS;
     }
 
     private static void writeCoreBlock(
@@ -164,7 +195,6 @@ public class TableMetadataFileBlock {
             int partitionBy,
             int timestampIndex,
             int columnCount,
-            long metadataVersion,
             boolean walEnabled
     ) {
         block.putInt(formatVersion);
@@ -172,7 +202,7 @@ public class TableMetadataFileBlock {
         block.putInt(partitionBy);
         block.putInt(timestampIndex);
         block.putInt(columnCount);
-        block.putLong(metadataVersion);
+        block.putLong(0); // placeholder for compatibility; actual version comes from BlockFile header
         block.putBool(walEnabled);
     }
 
@@ -188,7 +218,7 @@ public class TableMetadataFileBlock {
         offset += Integer.BYTES;
         holder.columnCount = block.getInt(offset);
         offset += Integer.BYTES;
-        holder.metadataVersion = block.getLong(offset);
+        // skip metadataVersion field (8 bytes) - actual version comes from BlockFile header
         offset += Long.BYTES;
         holder.walEnabled = block.getBool(offset);
     }

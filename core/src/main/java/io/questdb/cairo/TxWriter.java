@@ -102,6 +102,26 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         commit(denseSymbolMapWriters);
     }
 
+    /**
+     * Commits version changes with explicit metadata version from BlockFile header.
+     *
+     * @param metadataVersion       the metadata version from BlockFile header
+     * @param bumpColumnStructure   true if column structure version should be bumped
+     * @param denseSymbolMapWriters symbol map writers for commit
+     */
+    public void commitMetadataChange(long metadataVersion, boolean bumpColumnStructure, ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
+        recordStructureVersion++;
+        int colStructVersion = getColumnStructureVersion();
+        if (bumpColumnStructure) {
+            colStructVersion++;
+        }
+        if (colStructVersion == 0) {
+            colStructVersion = NONE_COL_STRUCTURE_VERSION;
+        }
+        structureVersion = Numbers.encodeLowHighInts((int) metadataVersion, colStructVersion);
+        commit(denseSymbolMapWriters);
+    }
+
     public void bumpPartitionTableVersion() {
         recordStructureVersion++;
         partitionTableVersion++;

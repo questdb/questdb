@@ -160,7 +160,6 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
                     holder.tableId,
                     holder.partitionBy,
                     holder.timestampIndex,
-                    holder.metadataVersion,
                     holder.walEnabled,
                     holder.maxUncommittedRows,
                     holder.o3MaxLag,

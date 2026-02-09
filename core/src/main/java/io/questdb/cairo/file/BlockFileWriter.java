@@ -126,8 +126,28 @@ public class BlockFileWriter implements Closeable {
         return file.getLong(getRegionOffsetOffset(version));
     }
 
+    public long getVersion() {
+        return getVersionVolatile();
+    }
+
     public long getVersionVolatile() {
         return Unsafe.getUnsafe().getLongVolatile(null, file.getPageAddress(0) + HEADER_VERSION_OFFSET);
+    }
+
+    /**
+     * Rollback to the previous version that is stored before the current version in the file.
+     * This function decrements the version number, causing readers to use the previous region.
+     * This function cannot be called multiple times in a row without commit() in between because
+     * only one previous version is stored.
+     */
+    public void rollback() {
+        long currentVersion = getVersionVolatile();
+        if (currentVersion > 1) {
+            setVersionVolatile(currentVersion - 1);
+            if (commitMode != CommitMode.NOSYNC) {
+                file.sync(commitMode == CommitMode.ASYNC);
+            }
+        }
     }
 
     public void of(@Transient final LPSZ path) {

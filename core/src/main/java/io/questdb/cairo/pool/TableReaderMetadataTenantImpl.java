@@ -222,17 +222,20 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
         }
 
         while (true) {
-            try {
-                if (!prepareTransition(txnMetadataVersion)) {
-                    if (clock.getTicks() < deadline) {
-                        return false;
+            TransitionResult result = prepareTransition(txnMetadataVersion);
+            switch (result) {
+                case SUCCESS:
+                    break;
+                case READ_ERROR:
+                    // Retry with same version
+                    if (clock.getTicks() > deadline) {
+                        throw CairoException.critical(0).put("Metadata read timeout [src=metadata, timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
                     }
-                    throw CairoException.critical(0).put("Metadata read timeout [src=metadata, timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
-                }
-            } catch (CairoException ex) {
-                // This is temporary solution until we can get multiple version of metadata not overwriting each other
-                TableUtils.handleMetadataLoadException(getTableToken(), deadline, ex, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
-                continue;
+                    Os.pause();
+                    continue;
+                case VERSION_MISMATCH:
+                    // Version mismatch - caller should re-read txn
+                    return false;
             }
 
             applyTransition();

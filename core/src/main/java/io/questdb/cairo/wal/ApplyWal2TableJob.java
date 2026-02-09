@@ -398,7 +398,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 final long newStructureVersion = transactionLogCursor.getStructureVersion();
                                 if (writer.getColumnStructureVersion() != newStructureVersion - 1) {
                                     throw CairoException.critical(0)
-                                            .put("unexpected new WAL structure version [walStructure=").put(newStructureVersion)
+                                            .put("unexpected new WAL structure version [newWalStructure=").put(newStructureVersion)
                                             .put(", tableStructureVersion=").put(writer.getColumnStructureVersion())
                                             .put(']');
                                 }

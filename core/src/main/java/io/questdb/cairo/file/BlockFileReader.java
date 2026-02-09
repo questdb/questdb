@@ -69,14 +69,36 @@ public class BlockFileReader implements Closeable {
     }
 
     public BlockCursor getCursor() {
-        long regionLength;
+        return getCursor(-1);
+    }
+
+    /**
+     * Gets a cursor for reading blocks from the file.
+     *
+     * @param version the version to read, or -1 to read the current version.
+     *                Must be current or current-1, otherwise returns null.
+     *                If version changes during read, returns null.
+     * @return BlockCursor for reading blocks, or null on failure
+     */
+    public BlockCursor getCursor(long version) {
         long deadline = clock.getTicks() + spinLockTimeoutMs;
         long currentVersion;
+        long regionLength;
         while (true) {
             currentVersion = getVersionVolatile();
-            final long regionOffset = HEADER_SIZE + file.getLong(getRegionOffsetOffset(currentVersion));
-            regionLength = file.getLong(getRegionLengthOffset(currentVersion));
+
+            // Specific version must be current or current-1
+            if (version >= 0 && version != currentVersion && version != currentVersion - 1) {
+                return null;
+            }
+            long readVersion = version < 0 ? currentVersion : version;
+
+            final long regionOffset = HEADER_SIZE + file.getLong(getRegionOffsetOffset(readVersion));
+            regionLength = file.getLong(getRegionLengthOffset(readVersion));
             if (regionOffset + regionLength > file.size()) {
+                if (version >= 0) {
+                    return null;
+                }
                 file.extend(regionOffset + regionLength);
             }
 
@@ -87,7 +109,9 @@ public class BlockFileReader implements Closeable {
             if (currentVersion == getVersionVolatile()) {
                 break;
             }
-
+            if (version >= 0) {
+                return null;
+            }
             if (clock.getTicks() > deadline) {
                 throw CairoException.critical(0)
                         .put("block file read timeout [timeout=")
@@ -105,8 +129,10 @@ public class BlockFileReader implements Closeable {
         final int checksum = checksum(checksumAddress, checksumSize);
         final int expectedChecksum = memory.getInt(REGION_CHECKSUM_OFFSET);
 
-        // Compare actual checksum with the one from the region header to detect file corruption on reads.
         if (checksum != expectedChecksum) {
+            if (version >= 0) {
+                return null;
+            }
             throw CairoException.critical(0)
                     .put("block file checksum mismatch [expected=")
                     .put(expectedChecksum)
@@ -120,7 +146,7 @@ public class BlockFileReader implements Closeable {
         final int blockCount = memory.getInt(REGION_BLOCK_COUNT_OFFSET);
         assert blockCount > 0;
         final long blocksLength = regionLength - REGION_HEADER_SIZE;
-        blockCursor.of(currentVersion, blockCount, REGION_HEADER_SIZE, blocksLength);
+        blockCursor.of(version < 0 ? currentVersion : version, blockCount, REGION_HEADER_SIZE, blocksLength);
         return blockCursor;
     }
 
@@ -158,6 +184,10 @@ public class BlockFileReader implements Closeable {
         if (memory == null) {
             memory = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    public long getVersion() {
+        return getVersionVolatile();
     }
 
     private long getVersionVolatile() {

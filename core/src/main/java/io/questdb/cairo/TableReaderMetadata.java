@@ -27,24 +27,21 @@ package io.questdb.cairo;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
-import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 public class TableReaderMetadata extends AbstractRecordMetadata implements TableMetadata, Mutable {
-    private static final Log LOG = LogFactory.getLog(TableReaderMetadata.class);
+
     protected final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final TableMetadataFileBlock.MetadataHolder holder = new TableMetadataFileBlock.MetadataHolder();
@@ -245,6 +242,19 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return walEnabled;
     }
 
+    public void loadFrom(TableReaderMetadata srcMeta) {
+        assert tableToken.equals(srcMeta.tableToken);
+        // Copy src meta holder.
+        copyHolderFrom(srcMeta.holder);
+        // Now, read it.
+        try {
+            readFromHolder(holder);
+        } catch (Throwable e) {
+            clear();
+            throw e;
+        }
+    }
+
     public void loadMetadata(LPSZ path) {
         try {
             blockFileReader.of(path);
@@ -259,163 +269,26 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     public void loadMetadata() {
-        final long spinLockTimeout = configuration.getSpinLockTimeout();
-        final MillisecondClock millisecondClock = configuration.getMillisecondClock();
-        long deadline = configuration.getMillisecondClock().getTicks() + spinLockTimeout;
         path.trimTo(plen).concat(TableUtils.META_FILE_NAME);
-        boolean existenceChecked = false;
-        while (true) {
-            try {
-                loadMetadata(path.$());
-                return;
-            } catch (CairoException ex) {
-                if (!existenceChecked) {
-                    path.trimTo(plen).slash();
-                    if (!ff.exists(path.$())) {
-                        throw CairoException.tableDoesNotExist(tableToken.getTableName());
-                    }
-                    path.trimTo(plen).concat(TableUtils.META_FILE_NAME).$();
-                }
-                existenceChecked = true;
-                TableUtils.handleMetadataLoadException(tableToken, deadline, ex, millisecondClock, spinLockTimeout);
-            }
-        }
-    }
-
-    public void loadFrom(TableReaderMetadata srcMeta) {
-        assert tableToken.equals(srcMeta.tableToken);
-        // Copy src meta holder.
-        copyHolderFrom(srcMeta.holder);
-        // Now, read it.
         try {
-            readFromHolder(holder);
-        } catch (Throwable e) {
-            clear();
-            throw e;
+            loadMetadata(path.$());
+        } catch (CairoException ex) {
+            path.trimTo(plen).slash();
+            if (!ff.exists(path.$())) {
+                throw CairoException.tableDoesNotExist(tableToken.getTableName());
+            }
+            throw ex;
         }
     }
 
-    public boolean prepareTransition(long txnMetadataVersion) {
+    public TransitionResult prepareTransition(long txnMetadataVersion) {
         path.trimTo(plen).concat(TableUtils.META_FILE_NAME);
         blockFileReader.of(path.$());
-        TableMetadataFileBlock.read(blockFileReader, transitionHolder, path.$());
-        // Close reader after reading - we have all data in transitionHolder
+
+        TransitionResult result = TableMetadataFileBlock.read(blockFileReader, transitionHolder, path.$(), txnMetadataVersion);
         blockFileReader.close();
 
-        // Check if version matches
-        if (txnMetadataVersion != transitionHolder.metadataVersion) {
-            // Version mismatch - BlockFile might be ahead if a DDL failed after writing metadata
-            // Accept if BlockFile is ahead (use its version), reject if behind
-            if (transitionHolder.metadataVersion > txnMetadataVersion) {
-                // BlockFile is ahead - accept it (DDL may have partially completed)
-                LOG.info().$("metadata version ahead of txn, accepting [table=").$(tableToken)
-                        .$(", txnVersion=").$(txnMetadataVersion)
-                        .$(", fileVersion=").$(transitionHolder.metadataVersion)
-                        .I$();
-                return true;
-            }
-            // BlockFile is behind txn - this shouldn't happen, retry
-            return false;
-        }
-        return true;
-    }
-
-    /**
-     * Reads metadata fields from a MetadataHolder into this instance.
-     */
-    private void readFromHolder(TableMetadataFileBlock.MetadataHolder h) {
-        this.writerColumnCount = h.columnCount;
-        int timestampWriterIndex = h.timestampIndex;
-        this.partitionBy = h.partitionBy;
-        this.tableId = h.tableId;
-        this.maxUncommittedRows = h.maxUncommittedRows;
-        this.o3MaxLag = h.o3MaxLag;
-        this.metadataVersion = h.metadataVersion;
-        this.walEnabled = h.walEnabled;
-        this.ttlHoursOrMonths = h.ttlHoursOrMonths;
-        this.columnMetadata.clear();
-        this.timestampIndex = -1;
-        this.columnNameIndexMap.clear();
-
-        // Build column list using replacingIndex for positioning, similar to legacy format.
-        // Columns with replacingIndex >= 0 "take over" the position of the column they replace.
-        // This maintains logical column order after column type changes.
-        int n = h.columns.size();
-
-        // Pre-size the list and use a temporary array to track positions
-        // Entry format: [col, symbolIndex, stableIndex] for each position
-        ObjList<TableColumnMetadata> tempColumns = new ObjList<>(n);
-        IntList symbolIndices = new IntList(n);
-        IntList stableIndices = new IntList(n);
-
-        // Initialize with nulls
-        for (int i = 0; i < n; i++) {
-            tempColumns.add(null);
-            symbolIndices.add(-1);
-            stableIndices.add(-1);
-        }
-
-        int denseSymbolIndex = 0;
-        for (int i = 0; i < n; i++) {
-            TableColumnMetadata col = h.columns.getQuick(i);
-            int columnType = col.getColumnType();
-
-            if (columnType > -1) {
-                int replacingIndex = col.getReplacingIndex();
-                int targetPos;
-
-                if (replacingIndex >= 0 && replacingIndex < n) {
-                    // This column replaces another - use the replaced column's position
-                    targetPos = replacingIndex;
-                } else {
-                    // No replacement - use current slot position
-                    targetPos = i;
-                }
-
-                int symbolIndex = ColumnType.isSymbol(columnType) ? denseSymbolIndex++ : -1;
-                tempColumns.setQuick(targetPos, col);
-                symbolIndices.setQuick(targetPos, symbolIndex);
-                stableIndices.setQuick(targetPos, i);
-            }
-        }
-
-        // Now build the final column list, skipping null entries (tombstone positions)
-        for (int i = 0; i < n; i++) {
-            TableColumnMetadata col = tempColumns.getQuick(i);
-            if (col != null) {
-                int columnType = col.getColumnType();
-                int writerIndex = col.getWriterIndex();
-                String colName = col.getColumnName();
-                int symbolIndex = symbolIndices.getQuick(i);
-                int stableIndex = stableIndices.getQuick(i);
-
-                columnMetadata.add(
-                        new TableReaderMetadataColumn(
-                                colName,
-                                columnType,
-                                col.isSymbolIndexFlag(),
-                                col.getIndexValueBlockCapacity(),
-                                true,
-                                null,
-                                writerIndex,
-                                col.isDedupKeyFlag(),
-                                symbolIndex,
-                                stableIndex,
-                                col.isSymbolCacheFlag(),
-                                col.getSymbolCapacity()
-                        )
-                );
-                int denseIndex = columnMetadata.size() - 1;
-                if (!columnNameIndexMap.put(colName, denseIndex)) {
-                    throw CairoException.critical(CairoException.METADATA_VALIDATION)
-                            .put("Duplicate column [name=").put(colName).put("] at ").put(i);
-                }
-                if (writerIndex == timestampWriterIndex) {
-                    this.timestampIndex = denseIndex;
-                }
-            }
-        }
-        this.columnCount = columnMetadata.size();
+        return result;
     }
 
     public void updateTableToken(TableToken tableToken) {
@@ -573,5 +446,109 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         for (int i = 0, n = src.columns.size(); i < n; i++) {
             holder.columnNameIndexMap.put(src.columns.getQuick(i).getColumnName(), i);
         }
+    }
+
+    /**
+     * Reads metadata fields from a MetadataHolder into this instance.
+     */
+    private void readFromHolder(TableMetadataFileBlock.MetadataHolder h) {
+        this.writerColumnCount = h.columnCount;
+        int timestampWriterIndex = h.timestampIndex;
+        this.partitionBy = h.partitionBy;
+        this.tableId = h.tableId;
+        this.maxUncommittedRows = h.maxUncommittedRows;
+        this.o3MaxLag = h.o3MaxLag;
+        this.metadataVersion = h.metadataVersion;
+        this.walEnabled = h.walEnabled;
+        this.ttlHoursOrMonths = h.ttlHoursOrMonths;
+        this.columnMetadata.clear();
+        this.timestampIndex = -1;
+        this.columnNameIndexMap.clear();
+
+        // Build column list using replacingIndex for positioning, similar to legacy format.
+        // Columns with replacingIndex >= 0 "take over" the position of the column they replace.
+        // This maintains logical column order after column type changes.
+        int n = h.columns.size();
+
+        // Pre-size the list and use a temporary array to track positions
+        // Entry format: [col, symbolIndex, stableIndex] for each position
+        ObjList<TableColumnMetadata> tempColumns = new ObjList<>(n);
+        IntList symbolIndices = new IntList(n);
+        IntList stableIndices = new IntList(n);
+
+        // Initialize with nulls
+        for (int i = 0; i < n; i++) {
+            tempColumns.add(null);
+            symbolIndices.add(-1);
+            stableIndices.add(-1);
+        }
+
+        int denseSymbolIndex = 0;
+        for (int i = 0; i < n; i++) {
+            TableColumnMetadata col = h.columns.getQuick(i);
+            int columnType = col.getColumnType();
+
+            if (columnType > -1) {
+                int replacingIndex = col.getReplacingIndex();
+                int targetPos;
+
+                if (replacingIndex >= 0 && replacingIndex < n) {
+                    // This column replaces another - use the replaced column's position
+                    targetPos = replacingIndex;
+                } else {
+                    // No replacement - use current slot position
+                    targetPos = i;
+                }
+
+                int symbolIndex = ColumnType.isSymbol(columnType) ? denseSymbolIndex++ : -1;
+                tempColumns.setQuick(targetPos, col);
+                symbolIndices.setQuick(targetPos, symbolIndex);
+                stableIndices.setQuick(targetPos, i);
+            }
+        }
+
+        // Now build the final column list, skipping null entries (tombstone positions)
+        for (int i = 0; i < n; i++) {
+            TableColumnMetadata col = tempColumns.getQuick(i);
+            if (col != null) {
+                int columnType = col.getColumnType();
+                int writerIndex = col.getWriterIndex();
+                String colName = col.getColumnName();
+                int symbolIndex = symbolIndices.getQuick(i);
+                int stableIndex = stableIndices.getQuick(i);
+
+                columnMetadata.add(
+                        new TableReaderMetadataColumn(
+                                colName,
+                                columnType,
+                                col.isSymbolIndexFlag(),
+                                col.getIndexValueBlockCapacity(),
+                                true,
+                                null,
+                                writerIndex,
+                                col.isDedupKeyFlag(),
+                                symbolIndex,
+                                stableIndex,
+                                col.isSymbolCacheFlag(),
+                                col.getSymbolCapacity()
+                        )
+                );
+                int denseIndex = columnMetadata.size() - 1;
+                if (!columnNameIndexMap.put(colName, denseIndex)) {
+                    throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                            .put("Duplicate column [name=").put(colName).put("] at ").put(i);
+                }
+                if (writerIndex == timestampWriterIndex) {
+                    this.timestampIndex = denseIndex;
+                }
+            }
+        }
+        this.columnCount = columnMetadata.size();
+    }
+
+    public enum TransitionResult {
+        SUCCESS,          // version matched
+        READ_ERROR,       // error reading, retry with same version
+        VERSION_MISMATCH, // the version cannot be read
     }
 }

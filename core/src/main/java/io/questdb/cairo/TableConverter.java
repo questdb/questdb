@@ -153,7 +153,6 @@ public class TableConverter {
                                         holder.tableId,
                                         holder.partitionBy,
                                         holder.timestampIndex,
-                                        holder.metadataVersion,
                                         holder.walEnabled,
                                         holder.maxUncommittedRows,
                                         holder.o3MaxLag,

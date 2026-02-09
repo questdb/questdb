@@ -1665,17 +1665,20 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
 
         while (true) {
-            try {
-                if (!metadata.prepareTransition(txnMetadataVersion)) {
-                    if (clock.getTicks() < deadline) {
-                        return false;
+            TableReaderMetadata.TransitionResult result = metadata.prepareTransition(txnMetadataVersion);
+            switch (result) {
+                case SUCCESS:
+                    break;
+                case READ_ERROR:
+                    // Retry with same version
+                    if (clock.getTicks() > deadline) {
+                        throw CairoException.critical(0).put("Metadata read timeout [src=reader, timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
                     }
-                    throw CairoException.critical(0).put("Metadata read timeout [src=reader, timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
-                }
-            } catch (CairoException ex) {
-                // This is a temporary solution until we can get multiple versions of metadata not overwriting each other
-                TableUtils.handleMetadataLoadException(tableToken, deadline, ex, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
-                continue;
+                    Os.pause();
+                    continue;
+                case VERSION_MISMATCH:
+                    // Version mismatch - caller should re-read txn
+                    return false;
             }
 
             assert !reshuffleColumns || metadata.getColumnCount() == this.columnCount;
