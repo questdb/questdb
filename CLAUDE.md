@@ -12,23 +12,17 @@ time-series SQL extensions.
 
 ## Coding guidelines
 
-Java class members are grouped by kind and sorted alphabetically. When adding
-new methods or fields, insert them in the correct alphabetical position among
-existing members of the same kind. Don't insert comments as "section headings"
-because methods won't stay together after auto-sorting.
+Java class members are grouped by kind (static vs. instance) and visibility, and
+sorted alphabetically. When adding new methods or fields, insert them in the
+correct alphabetical position among existing members of the same kind. Don't
+insert comments as "section headings" because methods won't stay together after
+auto-sorting.
 
 Use modern Java features:
 
 - enhanced switch
 - multiline string literal
-
-Java class members are grouped by kind (static vs. instance) and visibility, and
-sorted alphabetically. When adding new methods (especially tests), always insert
-them in the correct alphabetical position.
-
-`Numbers.parseInt()` / `parseLong()` in `io.questdb.std.Numbers` already support
-underscore separators (e.g., `10_000`). When scanning digit boundaries
-elsewhere, remember to include `_` so the full token reaches these methods.
+- pattern variables in instanceof checks
 
 ### QuestDB's SQL dialect
 
@@ -64,10 +58,10 @@ offending character, not the start of the expression.
   (e.g., `fix(sql): fix ...` not `fix(sql): DECIMAL comparison ...`).
 - PR title descriptions must speak to the end-user about the positive impact,
   not about internal implementation details.
-- PR descriptions must use a level-headed, analytical tone. Present both positive
-  and negative effects of the PR with equal weight — don't cherry-pick good
-  results, don't sell it, don't use superlatives or bold emphasis on numbers.
-  Point out regressions and tradeoffs as prominently as improvements.
+- PR descriptions must use a level-headed, analytical tone. Present both
+  positive and negative effects of the PR with equal weight — don't cherry-pick
+  good results, don't sell it, don't use superlatives or bold emphasis on
+  numbers. Point out regressions and tradeoffs as prominently as improvements.
 - PRs that fix a GitHub issue must reference it with `Fixes #NNN` at the top of
   the PR body.
 - Commit titles do NOT use Conventional Commits prefixes. Keep them short (up to
