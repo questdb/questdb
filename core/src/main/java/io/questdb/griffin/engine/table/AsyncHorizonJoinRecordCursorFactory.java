@@ -80,8 +80,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncHorizonJoinRecordCursor cursor;
     private final PageFrameSequence<AsyncHorizonJoinAtom> frameSequence;
-    // Combined metadata (master + sequence + slave) used for GROUP BY function column references in toPlan
-    private final RecordMetadata markoutMetadata;
+    // Combined metadata (master + offsets pseudo-table + slave) used for GROUP BY function column references in toPlan
+    private final RecordMetadata horizonJoinMetadata;
     private final RecordCursorFactory masterFactory;
     // Pre-computed offset values (in microseconds)
     private final LongList offsets;
@@ -94,7 +94,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             @NotNull CairoEngine engine,
             @NotNull MessageBus messageBus,
             @NotNull RecordMetadata metadata,
-            @NotNull RecordMetadata markoutMetadata,
+            @NotNull RecordMetadata horizonJoinMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull RecordCursorFactory slaveFactory,
             @NotNull LongList offsets,
@@ -126,7 +126,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
     ) {
         super(metadata);
         try {
-            this.markoutMetadata = markoutMetadata;
+            this.horizonJoinMetadata = horizonJoinMetadata;
             this.masterFactory = masterFactory;
             this.slaveFactory = slaveFactory;
             this.offsets = offsets;
@@ -146,7 +146,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             final AsyncHorizonJoinAtom atom = new AsyncHorizonJoinAtom(
                     asm,
                     configuration,
-                    markoutMetadata,
+                    horizonJoinMetadata,
                     slaveFactory,
                     masterTimestampColumnIndex,
                     offsets,
@@ -228,7 +228,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         sink.meta("offsets").val(offsets.size());
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         // GroupByFunctions reference columns from the combined markout metadata (master + sequence + slave)
-        sink.setMetadata(markoutMetadata);
+        sink.setMetadata(horizonJoinMetadata);
         sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions());
         sink.setMetadata(null);
         sink.child(masterFactory);
@@ -553,6 +553,6 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
         Misc.freeObjList(recordFunctions);
-        Misc.freeIfCloseable(markoutMetadata);
+        Misc.freeIfCloseable(horizonJoinMetadata);
     }
 }
