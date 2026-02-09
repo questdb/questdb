@@ -27,12 +27,10 @@ package io.questdb.test.recovery;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.view.ViewDefinition;
-import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.recovery.BoundedColumnVersionReader;
 import io.questdb.recovery.BoundedMetaReader;
@@ -723,7 +721,7 @@ public class RecoverySessionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table nav_empty (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
             // Don't insert any rows
-            waitForEmptyTable("nav_empty");
+            waitForEmptyTable();
 
             String[] result = runSession("cd nav_empty\nls\nquit\n");
             Assert.assertTrue(result[0].contains("No partitions"));
@@ -1355,7 +1353,7 @@ public void testLsShowsTransientRowCountForLastPartition() throws Exception {
     public void testCheckColumnsEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table chk_empty (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
-            waitForEmptyTable("chk_empty");
+            waitForEmptyTable();
 
             String[] result = runSession("cd chk_empty\ncheck columns\nquit\n");
             String outText = result[0];
@@ -2301,7 +2299,7 @@ public void testLsShowsTransientRowCountForLastPartition() throws Exception {
         Assert.assertEquals(expectedRows, getRowCount(tableName));
     }
 
-    private static void waitForEmptyTable(String tableName) throws SqlException {
+    private static void waitForEmptyTable() {
         for (int i = 0; i < 20; i++) {
             engine.releaseAllWriters();
             engine.releaseAllReaders();

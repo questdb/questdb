@@ -92,11 +92,6 @@ public class DiscoveredTable {
         };
     }
 
-    @Nullable
-    public Boolean getWalEnabledOrNull() {
-        return walEnabledKnown ? walEnabled : null;
-    }
-
     public void setRegistryEntry(RegistryEntry registryEntry) {
         this.registryEntry = registryEntry;
     }

@@ -98,7 +98,6 @@ public class ColumnCheckService {
 
     private String checkArrayColumn(long auxFd, long dataSize, long effectiveRows) {
         final int entrySize = 16;
-        final long totalBytes = effectiveRows * entrySize;
         final long scratchSize = (long) CHUNK_ENTRIES * entrySize;
         final long scratch = Unsafe.malloc(scratchSize, MemoryTag.NATIVE_DEFAULT);
         try {

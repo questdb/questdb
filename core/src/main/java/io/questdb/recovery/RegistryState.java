@@ -25,7 +25,6 @@
 package io.questdb.recovery;
 
 import io.questdb.std.ObjList;
-import org.jetbrains.annotations.Nullable;
 
 public final class RegistryState {
     private final ObjList<RegistryEntry> entries = new ObjList<>();
@@ -40,17 +39,6 @@ public final class RegistryState {
         issues.add(new ReadIssue(severity, code, message));
     }
 
-    @Nullable
-    public RegistryEntry findByDirName(String dirName) {
-        for (int i = 0, n = entries.size(); i < n; i++) {
-            RegistryEntry entry = entries.getQuick(i);
-            if (!entry.isRemoved() && dirName.equals(entry.getDirName())) {
-                return entry;
-            }
-        }
-        return null;
-    }
-
     public long getAppendOffset() {
         return appendOffset;
     }
@@ -59,20 +47,12 @@ public final class RegistryState {
         return entries;
     }
 
-    public int getEntryCount() {
-        return entryCount;
-    }
-
     public long getFileSize() {
         return fileSize;
     }
 
     public ObjList<ReadIssue> getIssues() {
         return issues;
-    }
-
-    public String getRegistryPath() {
-        return registryPath;
     }
 
     public int getVersion() {

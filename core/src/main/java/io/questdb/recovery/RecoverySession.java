@@ -400,7 +400,6 @@ public class RecoverySession {
             ObjList<PartitionScanEntry> partitionScan,
             MetaState metaState,
             ColumnVersionState cvState,
-            TxnState txnState,
             PrintStream out
     ) {
         int checked = 0;
@@ -451,7 +450,7 @@ public class RecoverySession {
             }
         }
 
-        renderer.printCheckSummary(tableName, checked, errors, warnings, skipped, out);
+        renderer.printCheckSummary(checked, errors, warnings, skipped, out);
     }
 
     private void checkColumns(PrintStream out, PrintStream err) {
@@ -508,7 +507,7 @@ public class RecoverySession {
                     case WARNING -> warnings++;
                 }
             }
-            renderer.printCheckSummary(currentTable.getTableName(), 1, errors, warnings, 0, out);
+            renderer.printCheckSummary(1, errors, warnings, 0, out);
         }
     }
 
@@ -537,7 +536,6 @@ public class RecoverySession {
                     partitionScan,
                     metaState,
                     hasCvIssues(cvState) ? null : cvState,
-                    txnState,
                     out
             );
         }
@@ -736,7 +734,7 @@ public class RecoverySession {
                         try {
                             expectedDataSize = ColumnType.getDriver(colType).getDataVectorSizeAtFromFd(ff, auxFd, cachedEffectiveRows - 1);
                         } catch (Exception ignore) {
-                            expectedDataSize = -1;
+                            // expectedDataSize is already -1 from assignment above
                         } finally {
                             ff.close(auxFd);
                         }

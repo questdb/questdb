@@ -115,10 +115,6 @@ public final class TxnState {
         return partitions;
     }
 
-    public int getPartitionSegmentSize() {
-        return partitionSegmentSize;
-    }
-
     public long getPartitionTableVersion() {
         return partitionTableVersion;
     }
@@ -144,10 +140,6 @@ public final class TxnState {
 
     public ObjList<TxnSymbolState> getSymbols() {
         return symbols;
-    }
-
-    public int getSymbolsSegmentSize() {
-        return symbolsSegmentSize;
     }
 
     public long getTransientRowCount() {

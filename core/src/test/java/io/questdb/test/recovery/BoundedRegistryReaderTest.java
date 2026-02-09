@@ -27,7 +27,6 @@ package io.questdb.test.recovery;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.griffin.SqlException;
 import io.questdb.recovery.BoundedRegistryReader;
 import io.questdb.recovery.RecoveryIssueCode;
 import io.questdb.recovery.RegistryEntry;

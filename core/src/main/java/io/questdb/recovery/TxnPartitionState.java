@@ -66,10 +66,6 @@ public final class TxnPartitionState {
         return parquetFileSize;
     }
 
-    public long getRawMaskedSize() {
-        return rawMaskedSize;
-    }
-
     public long getRowCount() {
         return rowCount;
     }

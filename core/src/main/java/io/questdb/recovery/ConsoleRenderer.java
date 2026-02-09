@@ -115,7 +115,7 @@ public class ConsoleRenderer {
         out.println(color.cyan("skipping partition " + partitionName + ": " + reason));
     }
 
-    public void printCheckSummary(String tableName, int checked, int errors, int warnings, int skipped, PrintStream out) {
+    public void printCheckSummary(int checked, int errors, int warnings, int skipped, PrintStream out) {
         String errorsStr = errors > 0 ? color.red(errors + " errors") : errors + " errors";
         String warningsStr = warnings > 0 ? color.yellow(warnings + " warnings") : warnings + " warnings";
         out.println("check complete: " + checked + " partitions checked, "
