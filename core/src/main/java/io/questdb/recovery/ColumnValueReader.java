@@ -26,6 +26,7 @@ package io.questdb.recovery;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
+import io.questdb.std.Decimals;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
@@ -239,7 +240,7 @@ public class ColumnValueReader {
                 if (bytesRead < size) {
                     return "ERROR: read failed at offset " + offset;
                 }
-                return formatFixedValue(scratch, tag, size);
+                return formatFixedValue(scratch, tag, size, columnType);
             } finally {
                 Unsafe.free(scratch, size, MemoryTag.NATIVE_DEFAULT);
                 ff.close(fd);
@@ -425,7 +426,7 @@ public class ColumnValueReader {
         }
     }
 
-    private static String formatFixedValue(long addr, short tag, int size) {
+    private static String formatFixedValue(long addr, short tag, int size, int columnType) {
         return switch (tag) {
             case ColumnType.BOOLEAN -> {
                 byte v = Unsafe.getUnsafe().getByte(addr);
@@ -490,6 +491,55 @@ public class ColumnValueReader {
                 }
                 StringSink sink = new StringSink();
                 Numbers.intToIPv4Sink(sink, v);
+                yield sink.toString();
+            }
+            case ColumnType.DECIMAL8 -> {
+                byte v = Unsafe.getUnsafe().getByte(addr);
+                if (v == Decimals.DECIMAL8_NULL) {
+                    yield "null";
+                }
+                StringSink sink = new StringSink();
+                Decimals.append(v, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                yield sink.toString();
+            }
+            case ColumnType.DECIMAL16 -> {
+                short v = Unsafe.getUnsafe().getShort(addr);
+                if (v == Decimals.DECIMAL16_NULL) {
+                    yield "null";
+                }
+                StringSink sink = new StringSink();
+                Decimals.append(v, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                yield sink.toString();
+            }
+            case ColumnType.DECIMAL32 -> {
+                int v = Unsafe.getUnsafe().getInt(addr);
+                if (v == Decimals.DECIMAL32_NULL) {
+                    yield "null";
+                }
+                StringSink sink = new StringSink();
+                Decimals.append(v, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                yield sink.toString();
+            }
+            case ColumnType.DECIMAL64 -> {
+                long v = Unsafe.getUnsafe().getLong(addr);
+                StringSink sink = new StringSink();
+                Decimals.append(v, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                yield sink.toString();
+            }
+            case ColumnType.DECIMAL128 -> {
+                long hi = Unsafe.getUnsafe().getLong(addr);
+                long lo = Unsafe.getUnsafe().getLong(addr + Long.BYTES);
+                StringSink sink = new StringSink();
+                Decimals.append(hi, lo, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                yield sink.toString();
+            }
+            case ColumnType.DECIMAL256 -> {
+                long hh = Unsafe.getUnsafe().getLong(addr);
+                long hl = Unsafe.getUnsafe().getLong(addr + Long.BYTES);
+                long lh = Unsafe.getUnsafe().getLong(addr + 2L * Long.BYTES);
+                long ll = Unsafe.getUnsafe().getLong(addr + 3L * Long.BYTES);
+                StringSink sink = new StringSink();
+                Decimals.append(hh, hl, lh, ll, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
                 yield sink.toString();
             }
             case ColumnType.LONG256 -> {

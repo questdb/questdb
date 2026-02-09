@@ -1861,6 +1861,58 @@ public void testLsShowsTransientRowCountForLastPartition() throws Exception {
     }
 
     @Test
+    public void testPrintDecimalValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table print_dec (d decimal(10,2), ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into print_dec values (1234.56m, '1970-01-01T00:00:00.000000Z')");
+            waitForAppliedRows("print_dec", 1);
+
+            String[] result = runSession("cd print_dec\ncd 0\ncd d\nprint 0\nquit\n");
+            Assert.assertTrue(result[0].contains("[0] = 1234.56"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testPrintDecimalNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table print_dec_null (d decimal(10,2), ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into print_dec_null values (null, '1970-01-01T00:00:00.000000Z')");
+            waitForAppliedRows("print_dec_null", 1);
+
+            String[] result = runSession("cd print_dec_null\ncd 0\ncd d\nprint 0\nquit\n");
+            Assert.assertTrue(result[0].contains("[0] = null"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testPrintDecimal128Value() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table print_dec128 (d decimal(30,6), ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into print_dec128 values (12345678901234567890.123456m, '1970-01-01T00:00:00.000000Z')");
+            waitForAppliedRows("print_dec128", 1);
+
+            String[] result = runSession("cd print_dec128\ncd 0\ncd d\nprint 0\nquit\n");
+            Assert.assertTrue(result[0].contains("[0] = 12345678901234567890.123456"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testPrintDecimal256Value() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table print_dec256 (d decimal(50,8), ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into print_dec256 values (1234567890123456789012345678901234567890.12345678m, '1970-01-01T00:00:00.000000Z')");
+            waitForAppliedRows("print_dec256", 1);
+
+            String[] result = runSession("cd print_dec256\ncd 0\ncd d\nprint 0\nquit\n");
+            Assert.assertTrue(result[0].contains("[0] = 1234567890123456789012345678901234567890.12345678"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
     public void testPromptAtColumnLevel() throws Exception {
         assertMemoryLeak(() -> {
             createTableWithRows("nav_col_prompt", 2);
