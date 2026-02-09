@@ -1282,6 +1282,38 @@ public class RecoverySessionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckColumnsCorruptLastPartitionWithOrphanDir() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a non-WAL table with 2 rows in 2 partitions (1970-01-01, 1970-01-02).
+            // The last partition (1970-01-02) is the active/transient partition whose row count
+            // is stored as transientRowCount in the _txn header, not in the partition entry
+            // (which stores 0).
+            createNonWalTableWithRows("chk_orphan_rc", 2);
+
+            // Add an orphan dir so that partitionScan has 3 entries:
+            //   [1970-01-01(MATCHED), 1970-01-02(MATCHED), zzz-orphan(ORPHAN)]
+            // resolvePartitionRowCount must use the _txn index (not the scan list index)
+            // to correctly identify the last _txn partition and return transientRowCount.
+            createOrphanDir("chk_orphan_rc", "zzz-orphan");
+
+            // Corrupt sym.d in the last partition so the check detects an error —
+            // but only if the row count is resolved correctly (1, not 0).
+            truncateColumnFileTo("chk_orphan_rc", "1970-01-02", "sym.d", 1);
+
+            String[] result = runSession("cd chk_orphan_rc\ncheck columns\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(
+                    "last partition corruption should be detected even with orphan dir present",
+                    outText.contains("ERROR")
+            );
+            Assert.assertFalse(
+                    "last partition should not have rows=0 (transientRowCount must be used)",
+                    outText.contains("(rows=0)")
+            );
+        });
+    }
+
+    @Test
     public void testCheckColumnsDroppedColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table chk_drop (val int, sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
