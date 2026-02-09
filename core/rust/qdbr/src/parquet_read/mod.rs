@@ -4,11 +4,11 @@ use nonmax::NonMaxU32;
 use parquet2::metadata::FileMetaData;
 use qdb_core::col_type::ColumnType;
 
-mod column_sink;
-mod decode;
-mod jni;
-mod meta;
-mod slicer;
+pub mod column_sink;
+pub mod decode;
+pub mod jni;
+pub mod meta;
+pub mod slicer;
 
 // The metadata fields are accessed from Java.
 // This struct contains only immutable metadata.
@@ -25,16 +25,16 @@ pub struct ParquetDecoder {
     pub timestamp_index: Option<NonMaxU32>,
     pub columns_ptr: *const ColumnMeta,
     pub columns: AcVec<ColumnMeta>,
-    pub(crate) metadata: FileMetaData,
-    pub(crate) qdb_meta: Option<QdbMeta>,
-    pub(crate) row_group_sizes_acc: AcVec<usize>,
+    pub metadata: FileMetaData,
+    pub qdb_meta: Option<QdbMeta>,
+    pub row_group_sizes_acc: AcVec<usize>,
 }
 
 #[repr(C)]
 pub struct DecodeContext {
-    pub(crate) file_ptr: *const u8,
-    pub(crate) file_size: u64,
-    pub(crate) decompress_buffer: Vec<u8>,
+    pub file_ptr: *const u8,
+    pub file_size: u64,
+    pub decompress_buffer: Vec<u8>,
 }
 
 impl DecodeContext {
