@@ -30,12 +30,12 @@ import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpKeywords;
@@ -43,8 +43,6 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -112,7 +110,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
     private final long statementTimeout;
     private byte apiVersion = DEFAULT_API_VERSION;
-    private SqlExecutionCircuitBreaker circuitBreaker;
     private int columnCount;
     private int columnIndex;
     // indicates to the state machine that the column value was fully sent to
@@ -143,7 +140,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private RecordCursorFactory recordCursorFactory;
     private Rnd rnd;
     private long skip;
-    private SqlExecutionContext sqlExecutionContext;
     private long stop;
     private boolean timings = false;
     private long updateRecords;
@@ -184,8 +180,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         columnNames.clear();
         queryTimestampIndex = -1;
         cursor = Misc.free(cursor);
-        circuitBreaker = null;
-        sqlExecutionContext = null;
         record = null;
         if (recordCursorFactory != null) {
             if (queryCacheable) {
@@ -228,8 +222,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     public void close() {
         cursor = Misc.free(cursor);
         clearFactory();
-        circuitBreaker = null;
-        sqlExecutionContext = null;
         freeAsyncOperation();
     }
 
@@ -931,7 +923,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             long size = cursor.size();
             counter.clear();
             if (size < 0) {
-                cursor.calculateSize(circuitBreaker, counter);
+                cursor.calculateSize(httpConnectionContext.getCircuitBreaker(), counter);
                 this.count += counter.get() + 1;
             } else {
                 this.count = size;
@@ -1082,7 +1074,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private void putDecimal128Value(HttpChunkedResponse response, Record rec, int col, int type) {
-        var decimal128 = sqlExecutionContext.getDecimal128();
+        var decimal128 = httpConnectionContext.getSqlExecutionContext().getDecimal128();
         rec.getDecimal128(col, decimal128);
         if (decimal128.isNull()) {
             response.putAscii("null");
@@ -1094,7 +1086,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private void putDecimal256Value(HttpChunkedResponse response, Record rec, int col, int type) {
-        var decimal256 = sqlExecutionContext.getDecimal256();
+        var decimal256 = httpConnectionContext.getSqlExecutionContext().getDecimal256();
         rec.getDecimal256(col, decimal256);
         if (decimal256.isNull()) {
             response.putAscii("null");
@@ -1148,13 +1140,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         cursorHasRows = true;
     }
 
-    boolean of(RecordCursorFactory factory, boolean queryCacheable, SqlExecutionContextImpl sqlExecutionContext)
+    boolean of(RecordCursorFactory factory, boolean queryCacheable)
             throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         this.recordCursorFactory = factory;
         this.queryCacheable = queryCacheable;
         this.queryJitCompiled = factory.usesCompiledFilter();
-        this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
-        this.sqlExecutionContext = sqlExecutionContext;
         final RecordMetadata metadata = factory.getMetadata();
         this.queryTimestampIndex = metadata.getTimestampIndex();
         HttpRequestHeader header = httpConnectionContext.getRequestHeader();
@@ -1258,7 +1248,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         // closing cursor here guarantees that by the time an http client finished reading response, the table
         // is released
         cursor = Misc.free(cursor);
-        circuitBreaker = null;
+        NetworkSqlExecutionCircuitBreaker cb = httpConnectionContext.getCircuitBreaker();
+        if (cb != null) {
+            cb.clear();
+        }
         queryState = QUERY_SUFFIX;
         if (count > -1) {
             logTimings();

@@ -86,12 +86,11 @@ public class DateExpressionEvaluator {
         // Find end of variable name (until space, '+', '-', or end)
         // This supports both "$today + 5d" (with spaces) and "$today+5d" (compact)
         int varEnd = lo + 1;
-        while (varEnd < hi) {
+        for (; varEnd < hi; varEnd++) {
             char c = expression.charAt(varEnd);
             if (c == ' ' || c == '+' || c == '-') {
                 break;
             }
-            varEnd++;
         }
 
         // Resolve base variable
@@ -110,7 +109,7 @@ public class DateExpressionEvaluator {
 
         char op = expression.charAt(opPos);
         if (op != '+' && op != '-') {
-            throw SqlException.$(errorPos, "Expected '+' or '-' operator");
+            throw SqlException.$(errorPos + opPos - lo, "Expected '+' or '-' operator");
         }
 
         // Parse the offset value (skip any spaces after operator)
@@ -120,24 +119,27 @@ public class DateExpressionEvaluator {
         }
 
         if (offsetStart >= hi) {
-            throw SqlException.$(errorPos, "Expected number after operator");
+            throw SqlException.$(errorPos + opPos - lo, "Expected number after operator");
         }
 
-        // Find end of number
+        // Find end of number (underscores are allowed as separators, e.g. 10_000)
         int numEnd = offsetStart;
-        while (numEnd < hi && Character.isDigit(expression.charAt(numEnd))) {
-            numEnd++;
+        for (; numEnd < hi; numEnd++) {
+            char c = expression.charAt(numEnd);
+            if (c != '_' && !Character.isDigit(c)) {
+                break;
+            }
         }
 
         if (numEnd == offsetStart) {
-            throw SqlException.$(errorPos, "Expected number after operator");
+            throw SqlException.$(errorPos + offsetStart - lo, "Expected number after operator");
         }
 
         int offsetValue;
         try {
             offsetValue = Numbers.parseInt(expression, offsetStart, numEnd);
         } catch (NumericException e) {
-            throw SqlException.$(errorPos, "Invalid number in date expression");
+            throw SqlException.$(errorPos + offsetStart - lo, "Invalid number in date expression");
         }
 
         if (op == '-') {
@@ -151,7 +153,7 @@ public class DateExpressionEvaluator {
         }
 
         if (unitStart >= hi) {
-            throw SqlException.$(errorPos, "Expected time unit after number");
+            throw SqlException.$(errorPos + numEnd - lo, "Expected time unit after number");
         }
 
         // Check for 'bd' (business days) first, then single-character units
@@ -162,14 +164,14 @@ public class DateExpressionEvaluator {
         if (remaining >= 2 && (unitChar | 32) == 'b' && (expression.charAt(unitStart + 1) | 32) == 'd') {
             // Check for unexpected trailing characters
             if (unitStart + 2 != hi) {
-                throw SqlException.$(errorPos, "Unexpected characters after unit");
+                throw SqlException.$(errorPos + unitStart + 2 - lo, "Unexpected characters after unit");
             }
             return addBusinessDays(timestampDriver, baseTimestamp, offsetValue);
         }
 
         // Single-character units - check for trailing characters
         if (unitStart + 1 != hi) {
-            throw SqlException.$(errorPos, "Unexpected characters after unit");
+            throw SqlException.$(errorPos + unitStart + 1 - lo, "Unexpected characters after unit");
         }
 
         // Handle single-character units using timestampDriver.add()
@@ -179,7 +181,7 @@ public class DateExpressionEvaluator {
         char normalizedUnit = (unitChar == 'D') ? 'd' : unitChar;
         long result = timestampDriver.add(baseTimestamp, normalizedUnit, offsetValue);
         if (result == Numbers.LONG_NULL) {
-            throw SqlException.$(errorPos, "Invalid time unit: ").put(unitChar);
+            throw SqlException.$(errorPos + unitStart - lo, "Invalid time unit: ").put(unitChar);
         }
         return result;
     }
