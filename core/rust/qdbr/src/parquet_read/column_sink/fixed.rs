@@ -6,6 +6,8 @@ use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::DataPageSlicer;
 use crate::parquet_read::ColumnChunkBuffers;
+use std::any::TypeId;
+use std::mem::size_of;
 use std::ptr;
 
 /// A sink for fixed length columns
@@ -69,7 +71,7 @@ where
     fn push(&mut self) -> ParquetResult<()> {
         unsafe {
             *self.buffers_ptr.add(self.buffers_offset) =
-                (*self.values.add(self.values_offset)).as_();
+                self.values.add(self.values_offset).read_unaligned().as_();
             self.buffers_offset += 1;
             self.values_offset += 1;
         }
@@ -96,12 +98,25 @@ where
     }
 
     fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
-        let out = unsafe { self.buffers_ptr.add(self.buffers_offset) };
-        for i in 0..count {
+        if size_of::<T>() == size_of::<U>() && TypeId::of::<T>() == TypeId::of::<U>() {
+            // Same type, same layout: bulk copy (also handles unaligned source)
             unsafe {
-                let v = *self.values.add(self.values_offset + i);
-                let v = v.as_();
-                *out.add(i) = v;
+                ptr::copy_nonoverlapping(
+                    self.values.add(self.values_offset) as *const u8,
+                    self.buffers_ptr.add(self.buffers_offset) as *mut u8,
+                    count * size_of::<T>(),
+                );
+            }
+        } else {
+            let out = unsafe { self.buffers_ptr.add(self.buffers_offset) };
+            for i in 0..count {
+                unsafe {
+                    *out.add(i) = self
+                        .values
+                        .add(self.values_offset + i)
+                        .read_unaligned()
+                        .as_();
+                }
             }
         }
         self.buffers_offset += count;
@@ -222,12 +237,34 @@ where
 
     fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
         let out = unsafe { self.buffers_ptr.add(self.buffers_offset) };
-        for i in 0..count {
-            unsafe {
-                *out.add(i) = self.next();
+        let mut remaining = count;
+        let mut offset = 0;
+
+        // Batch decode: decode i64 values in chunks, then convert to T
+        let mut i64_buf = [0i64; 128];
+        while remaining > 0 {
+            let batch = remaining.min(128);
+            match self.decoder.decode_batch(&mut i64_buf[..batch]) {
+                Ok(decoded) => {
+                    if decoded == 0 {
+                        self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
+                        break;
+                    }
+                    unsafe {
+                        for i in 0..decoded {
+                            *out.add(offset + i) = i64_buf[i].as_();
+                        }
+                    }
+                    offset += decoded;
+                    remaining -= decoded;
+                }
+                Err(_) => {
+                    self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
+                    break;
+                }
             }
         }
-        self.buffers_offset += count;
+        self.buffers_offset += offset;
         Ok(())
     }
 
@@ -390,10 +427,8 @@ impl<const N: usize, T: DataPageSlicer> Pushable for ReverseFixedColumnSink<'_, 
         debug_assert!(base + N <= self.buffers.data_vec.capacity());
 
         unsafe {
-            let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
-            for i in 0..N {
-                *ptr.add(i) = slice[N - i - 1];
-            }
+            let dest = self.buffers.data_vec.as_mut_ptr().add(base);
+            reverse_bytes::<N>(slice.as_ptr(), dest);
             self.buffers.data_vec.set_len(base + N);
         }
         Ok(())
@@ -401,43 +436,24 @@ impl<const N: usize, T: DataPageSlicer> Pushable for ReverseFixedColumnSink<'_, 
 
     #[inline]
     fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
-        match count {
-            0 => Ok(()),
-            1 => self.push(),
-            2 => {
-                self.push()?;
-                self.push()
-            }
-            3 => {
-                self.push()?;
-                self.push()?;
-                self.push()
-            }
-            4 => {
-                self.push()?;
-                self.push()?;
-                self.push()?;
-                self.push()
-            }
-            _ => {
-                let base = self.buffers.data_vec.len();
-                let total_bytes = count * N;
-                debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
+        if count == 0 {
+            return Ok(());
+        }
+        let base = self.buffers.data_vec.len();
+        let total_bytes = count * N;
+        debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
 
-                unsafe {
-                    let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
-                    for c in 0..count {
-                        let slice = self.slicer.next();
-                        let dest = ptr.add(c * N);
-                        for i in 0..N {
-                            *dest.add(i) = slice[N - i - 1];
-                        }
-                    }
-                    self.buffers.data_vec.set_len(base + total_bytes);
-                }
-                Ok(())
+        // Bulk copy from slicer, then reverse each chunk in-place.
+        self.slicer
+            .next_slice_into(count, &mut self.buffers.data_vec)?;
+
+        unsafe {
+            let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+            for c in 0..count {
+                reverse_bytes_inplace::<N>(ptr.add(c * N));
             }
         }
+        Ok(())
     }
 
     #[inline]
@@ -448,39 +464,21 @@ impl<const N: usize, T: DataPageSlicer> Pushable for ReverseFixedColumnSink<'_, 
 
     #[inline]
     fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        match count {
-            0 => Ok(()),
-            1 => self.push_null(),
-            2 => {
-                self.push_null()?;
-                self.push_null()
-            }
-            3 => {
-                self.push_null()?;
-                self.push_null()?;
-                self.push_null()
-            }
-            4 => {
-                self.push_null()?;
-                self.push_null()?;
-                self.push_null()?;
-                self.push_null()
-            }
-            _ => {
-                let base = self.buffers.data_vec.len();
-                let total_bytes = count * N;
-                debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
-
-                unsafe {
-                    let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
-                    for i in 0..count {
-                        ptr::copy_nonoverlapping(self.null_value.as_ptr(), ptr.add(i * N), N);
-                    }
-                    self.buffers.data_vec.set_len(base + total_bytes);
-                }
-                Ok(())
-            }
+        if count == 0 {
+            return Ok(());
         }
+        let base = self.buffers.data_vec.len();
+        let total_bytes = count * N;
+        debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
+
+        unsafe {
+            let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+            for i in 0..count {
+                ptr::copy_nonoverlapping(self.null_value.as_ptr(), ptr.add(i * N), N);
+            }
+            self.buffers.data_vec.set_len(base + total_bytes);
+        }
+        Ok(())
     }
 
     #[inline]
@@ -490,6 +488,41 @@ impl<const N: usize, T: DataPageSlicer> Pushable for ReverseFixedColumnSink<'_, 
 
     fn result(&self) -> ParquetResult<()> {
         self.slicer.result().clone()
+    }
+}
+
+/// Reverse N bytes from src to dest (out-of-place).
+#[inline(always)]
+unsafe fn reverse_bytes<const N: usize>(src: *const u8, dest: *mut u8) {
+    if N == 16 {
+        // UUID fast path: use u64 swap_bytes
+        let lo = (src as *const u64).read_unaligned();
+        let hi = (src.add(8) as *const u64).read_unaligned();
+        (dest as *mut u64).write_unaligned(hi.swap_bytes());
+        (dest.add(8) as *mut u64).write_unaligned(lo.swap_bytes());
+    } else {
+        for i in 0..N {
+            *dest.add(i) = *src.add(N - i - 1);
+        }
+    }
+}
+
+/// Reverse N bytes in-place.
+#[inline(always)]
+unsafe fn reverse_bytes_inplace<const N: usize>(ptr: *mut u8) {
+    if N == 16 {
+        // UUID fast path: read two u64s, swap and write in reverse order
+        let lo = (ptr as *const u64).read_unaligned();
+        let hi = (ptr.add(8) as *const u64).read_unaligned();
+        (ptr as *mut u64).write_unaligned(hi.swap_bytes());
+        (ptr.add(8) as *mut u64).write_unaligned(lo.swap_bytes());
+    } else {
+        for i in 0..N / 2 {
+            let a = *ptr.add(i);
+            let b = *ptr.add(N - 1 - i);
+            *ptr.add(i) = b;
+            *ptr.add(N - 1 - i) = a;
+        }
     }
 }
 
