@@ -88,40 +88,45 @@ public class AsyncFilterContext implements Closeable {
         this.filterUsedColumnIndexes = filterUsedColumnIndexes;
         this.perWorkerFilters = perWorkerFilters;
 
-        ownerMemoryPool = new PageFrameMemoryPool(ownerMemoryPoolCapacity);
-        ownerFilteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD);
-        if (compiledFilter != null) {
-            ownerDataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
-            ownerAuxAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
-        } else {
-            ownerDataAddresses = null;
-            ownerAuxAddresses = null;
-        }
-
-        perWorkerMemoryPools = new ObjList<>(slotCount);
-        perWorkerFilteredRows = new ObjList<>(slotCount);
-        perWorkerDataAddresses = new ObjList<>(slotCount);
-        perWorkerAuxAddresses = new ObjList<>(slotCount);
-        perWorkerSelectivityStats = new ObjList<>(slotCount);
-        for (int i = 0; i < slotCount; i++) {
-            perWorkerMemoryPools.extendAndSet(i, new PageFrameMemoryPool(perWorkerMemoryPoolCapacity));
-            perWorkerFilteredRows.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD));
+        try {
+            ownerMemoryPool = new PageFrameMemoryPool(ownerMemoryPoolCapacity);
+            ownerFilteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD);
             if (compiledFilter != null) {
-                perWorkerDataAddresses.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD));
-                perWorkerAuxAddresses.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD));
+                ownerDataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
+                ownerAuxAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
+            } else {
+                ownerDataAddresses = null;
+                ownerAuxAddresses = null;
             }
-            perWorkerSelectivityStats.extendAndSet(i, new SelectivityStats());
-        }
 
-        if (filteredMemoryRecordCount > 0) {
-            ownerPageFrameFilteredNoRandomAccessMemoryRecord = new PageFrameFilteredNoRandomAccessMemoryRecord();
-            frameFilteredMemoryRecords = new ObjList<>(filteredMemoryRecordCount);
-            for (int i = 0; i < filteredMemoryRecordCount; i++) {
-                frameFilteredMemoryRecords.extendAndSet(i, new PageFrameFilteredNoRandomAccessMemoryRecord());
+            perWorkerMemoryPools = new ObjList<>(slotCount);
+            perWorkerFilteredRows = new ObjList<>(slotCount);
+            perWorkerDataAddresses = new ObjList<>(slotCount);
+            perWorkerAuxAddresses = new ObjList<>(slotCount);
+            perWorkerSelectivityStats = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
+                perWorkerMemoryPools.extendAndSet(i, new PageFrameMemoryPool(perWorkerMemoryPoolCapacity));
+                perWorkerFilteredRows.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD));
+                if (compiledFilter != null) {
+                    perWorkerDataAddresses.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD));
+                    perWorkerAuxAddresses.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD));
+                }
+                perWorkerSelectivityStats.extendAndSet(i, new SelectivityStats());
             }
-        } else {
-            ownerPageFrameFilteredNoRandomAccessMemoryRecord = null;
-            frameFilteredMemoryRecords = null;
+
+            if (filteredMemoryRecordCount > 0) {
+                ownerPageFrameFilteredNoRandomAccessMemoryRecord = new PageFrameFilteredNoRandomAccessMemoryRecord();
+                frameFilteredMemoryRecords = new ObjList<>(filteredMemoryRecordCount);
+                for (int i = 0; i < filteredMemoryRecordCount; i++) {
+                    frameFilteredMemoryRecords.extendAndSet(i, new PageFrameFilteredNoRandomAccessMemoryRecord());
+                }
+            } else {
+                ownerPageFrameFilteredNoRandomAccessMemoryRecord = null;
+                frameFilteredMemoryRecords = null;
+            }
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
     }
 
