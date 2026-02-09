@@ -209,6 +209,14 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             Os.pause();
         }
 
+        // If we exited early due to cancellation, still wait for in-flight tasks
+        // to complete to avoid data races with setError().
+        while (!doneLatch.done(queued)) {
+            stealWork();
+            workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+            Os.pause();
+        }
+
         // Phase 3: Check for errors.
         if (hasError()) {
             if (isOutOfMemory) {
