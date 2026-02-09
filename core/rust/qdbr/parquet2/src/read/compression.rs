@@ -64,14 +64,16 @@ pub fn decompress_buffer(
         if read_size > buffer.capacity() {
             // dealloc and ignore region, replacing it by a new region.
             // This won't reallocate - it frees and calls `alloc_zeroed`
-            *buffer = vec![0; read_size];
-        } else if read_size > buffer.len() {
-            // fill what we need with zeros so that we can use them in `Read`.
-            // This won't reallocate
-            buffer.resize(read_size, 0);
-        } else {
-            buffer.truncate(read_size);
+            buffer.reserve(read_size - buffer.capacity());
         }
+
+        // SAFETY:
+        // 1. we just reserved enough space
+        // 2. the buffer doesn't need to be initialized for the decompression
+        unsafe {
+            buffer.set_len(read_size);
+        }
+
         match compressed_page {
             CompressedPage::Data(compressed_page) => match compressed_page.header() {
                 DataPageHeader::V1(_) => {
