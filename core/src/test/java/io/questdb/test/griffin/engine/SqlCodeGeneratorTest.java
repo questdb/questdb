@@ -8902,6 +8902,23 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionAllSampleByAssertionError() throws Exception {
+        execute("create table trades (price double, timestamp timestamp) timestamp(timestamp) partition by day");
+        execute("create table trades_agg (high double, timestamp timestamp)");
+        assertQuery(
+                "high\n",
+                "select high from (" +
+                        "select timestamp, max(price) as high from trades sample by 1m " +
+                        "union all " +
+                        "select timestamp, high from trades_agg" +
+                        ")",
+                null,
+                false,
+                false
+        );
+    }
+
+    @Test
     public void testUnionCastMatrix() {
         final int[][] expected = SqlCodeGenerator.expectedUnionCastMatrix();
         printExpectedUnionCastMatrix(expected);

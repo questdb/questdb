@@ -5369,6 +5369,24 @@ public class SqlOptimiser implements Mutable {
                     model.addTopDownColumn(qc, qc.getAlias());
                 }
             }
+            // Propagate the same key columns to union siblings that already have
+            // top-down column pruning, so their column counts stay in sync.
+            // UNION columns are positionally aligned, so index i in bottomUpColumns
+            // corresponds to the same position in each union member.
+            QueryModel um = model.getUnionModel();
+            while (um != null) {
+                if (um.getTopDownColumns().size() > 0) {
+                    ObjList<QueryColumn> umCols = um.getBottomUpColumns();
+                    for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
+                        QueryColumn qc = bottomUpColumns.getQuick(i);
+                        if (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
+                            QueryColumn uqc = umCols.getQuick(i);
+                            um.addTopDownColumn(uqc, uqc.getAlias());
+                        }
+                    }
+                }
+                um = um.getUnionModel();
+            }
         }
 
         // latest on
