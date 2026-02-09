@@ -283,7 +283,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         return workStealingStrategy;
     }
 
-    public boolean hasError() {
+    private boolean hasError() {
         return !errorMsg.isEmpty();
     }
 
