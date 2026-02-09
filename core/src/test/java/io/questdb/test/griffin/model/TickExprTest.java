@@ -53,8 +53,8 @@ import java.util.Collection;
 import static io.questdb.test.griffin.GriffinParserTestUtils.intervalToString;
 
 @RunWith(Parameterized.class)
-public class IntrinsicModelTest {
-    private static final Log LOG = LogFactory.getLog(IntrinsicModelTest.class);
+public class TickExprTest {
+    private static final Log LOG = LogFactory.getLog(TickExprTest.class);
     private static final CairoConfiguration configuration = new DefaultCairoConfiguration(".");
     private static final StringSink sink = new StringSink();
     private final LongList a = new LongList();
@@ -62,7 +62,7 @@ public class IntrinsicModelTest {
     private final LongList out = new LongList();
     private final TestTimestampType timestampType;
 
-    public IntrinsicModelTest(TestTimestampType timestampType) {
+    public TickExprTest(TestTimestampType timestampType) {
         this.timestampType = timestampType;
     }
 
@@ -339,7 +339,7 @@ public class IntrinsicModelTest {
 
     @Test
     public void testBracketExpansionHourWithSpaceSeparator() throws SqlException {
-        // Tests bracket in hour position with space separator
+        // Tests bracket in hour position with space separator.
         // Space separator produces point timestamps (lo=hi)
         assertBracketInterval(
                 "[{lo=2018-01-10T08:30:00.000000Z, hi=2018-01-10T08:30:00.000000Z},{lo=2018-01-10T14:30:00.000000Z, hi=2018-01-10T14:30:00.000000Z}]",
@@ -495,7 +495,7 @@ public class IntrinsicModelTest {
     public void testBracketExpansionWithDuration() throws SqlException {
         // 10:30 is minute-level, so hi = 10:30:59.999999, then +1h = 11:30:59.999999
         assertBracketInterval(
-                "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T11:30:59.999999Z},{lo=2018-01-15T10:30:00.000000Z, hi=2018-01-15T11:30:59.999999Z}]",
+                "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T11:29:59.999999Z},{lo=2018-01-15T10:30:00.000000Z, hi=2018-01-15T11:29:59.999999Z}]",
                 "2018-01-[10,15]T10:30;1h"
         );
     }
@@ -505,7 +505,7 @@ public class IntrinsicModelTest {
         // Multi-unit duration: 1h30m = 1 hour 30 minutes
         // 10:00 + 1h30m = 11:30:59.999999
         assertBracketInterval(
-                "[{lo=2024-01-15T10:00:00.000000Z, hi=2024-01-15T11:30:59.999999Z}]",
+                "[{lo=2024-01-15T10:00:00.000000Z, hi=2024-01-15T11:29:59.999999Z}]",
                 "2024-01-15T10:00;1h30m"
         );
     }
@@ -515,7 +515,7 @@ public class IntrinsicModelTest {
         // Complex multi-unit duration: 2h15m30s
         // 10:00:00 + 2h15m30s = 12:15:30.999999
         assertBracketInterval(
-                "[{lo=2024-01-15T10:00:00.000000Z, hi=2024-01-15T12:15:30.999999Z}]",
+                "[{lo=2024-01-15T10:00:00.000000Z, hi=2024-01-15T12:15:29.999999Z}]",
                 "2024-01-15T10:00:00;2h15m30s"
         );
     }
@@ -524,7 +524,7 @@ public class IntrinsicModelTest {
     public void testBracketExpansionWithMultiUnitDurationDaysHours() throws SqlException {
         // Days and hours: 1d12h = 1 day 12 hours = 36 hours
         assertBracketInterval(
-                "[{lo=2024-01-15T00:00:00.000000Z, hi=2024-01-16T12:00:59.999999Z}]",
+                "[{lo=2024-01-15T00:00:00.000000Z, hi=2024-01-16T11:59:59.999999Z}]",
                 "2024-01-15T00:00;1d12h"
         );
     }
@@ -539,19 +539,27 @@ public class IntrinsicModelTest {
         // the sub-precision range (e.g., all 999 nanoseconds within that microsecond).
         String input = "2024-01-15T10:00:00.000000;1s500T";
         if (ColumnType.isTimestampNano(timestampType.getTimestampType())) {
-            LongList out1 = new LongList();
             final TimestampDriver timestampDriver = timestampType.getDriver();
-            parseTickExpr(timestampDriver, input, 0, input.length(), 0, out1, IntervalOperation.INTERSECT);
+            parseTickExpr(timestampDriver, input, 0, input.length(), 0, out, IntervalOperation.INTERSECT);
             TestUtils.assertEquals(
-                    "[{lo=2024-01-15T10:00:00.000000000Z, hi=2024-01-15T10:00:01.500000999Z}]",
-                    intervalToString(timestampDriver, out1)
+                    "[{lo=2024-01-15T10:00:00.000000000Z, hi=2024-01-15T10:00:01.499999999Z}]",
+                    intervalToString(timestampDriver, out)
             );
         } else {
             assertBracketInterval(
-                    "[{lo=2024-01-15T10:00:00.000000Z, hi=2024-01-15T10:00:01.500000Z}]",
+                    "[{lo=2024-01-15T10:00:00.000000Z, hi=2024-01-15T10:00:01.499999Z}]",
                     input
             );
         }
+    }
+
+    @Test
+    public void testBracketExpansionWithMultiUnitDurationUnderscoreNumber() throws SqlException {
+        // Duration with underscore number separator: 1_500T = 1500 millis = 1.5 seconds
+        assertBracketInterval(
+                "[{lo=2024-01-15T10:00:00.000000Z, hi=2024-01-15T10:00:01.499999Z}]",
+                "2024-01-15T10:00:00.000000;1_500T"
+        );
     }
 
     @Test
@@ -577,7 +585,7 @@ public class IntrinsicModelTest {
         // 2018-01-[10,15]T10:30;30m;2d;2 means 10:30-11:00:59 every second day for each expanded date
         // 10:30 is minute-level, so hi = 10:30:59.999999, then +30m = 11:00:59.999999
         assertBracketInterval(
-                "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T11:00:59.999999Z},{lo=2018-01-12T10:30:00.000000Z, hi=2018-01-12T11:00:59.999999Z},{lo=2018-01-15T10:30:00.000000Z, hi=2018-01-15T11:00:59.999999Z},{lo=2018-01-17T10:30:00.000000Z, hi=2018-01-17T11:00:59.999999Z}]",
+                "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T10:59:59.999999Z},{lo=2018-01-12T10:30:00.000000Z, hi=2018-01-12T10:59:59.999999Z},{lo=2018-01-15T10:30:00.000000Z, hi=2018-01-15T10:59:59.999999Z},{lo=2018-01-17T10:30:00.000000Z, hi=2018-01-17T10:59:59.999999Z}]",
                 "2018-01-[10,15]T10:30;30m;2d;2"
         );
     }
@@ -801,7 +809,7 @@ public class IntrinsicModelTest {
         // Duration from suffix applies to both elements
         // 2026-01-01T09:30 keeps 09:30 + 1h duration, 2026-01-02 gets T10:00 + 1h duration
         assertBracketInterval(
-                "[{lo=2026-01-01T09:30:00.000000Z, hi=2026-01-01T10:30:59.999999Z},{lo=2026-01-02T10:00:00.000000Z, hi=2026-01-02T11:00:59.999999Z}]",
+                "[{lo=2026-01-01T09:30:00.000000Z, hi=2026-01-01T10:29:59.999999Z},{lo=2026-01-02T10:00:00.000000Z, hi=2026-01-02T10:59:59.999999Z}]",
                 "[2026-01-01T09:30, 2026-01-02]T10:00;1h"
         );
     }
@@ -949,7 +957,7 @@ public class IntrinsicModelTest {
         // Per-element day filter with duration suffix
         // [2024-01-01#Mon,2024-01-06#Sat];1h
         assertBracketInterval(
-                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-02T00:59:59.999999Z},{lo=2024-01-06T00:00:00.000000Z, hi=2024-01-07T00:59:59.999999Z}]",
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T00:59:59.999999Z},{lo=2024-01-06T00:00:00.000000Z, hi=2024-01-06T00:59:59.999999Z}]",
                 "[2024-01-01#Mon,2024-01-06#Sat];1h"
         );
     }
@@ -1026,6 +1034,19 @@ public class IntrinsicModelTest {
     }
 
     @Test
+    public void testDateListUnsortedDatesWithDayFilter() throws SqlException {
+        // Dates out of chronological order WITH day filter
+        // [2024-01-15,2024-01-01,2024-01-08]#Mon - all three are Mondays, out of order
+        // Should be sorted to: Jan 1, Jan 8, Jan 15
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}," +
+                        "{lo=2024-01-08T00:00:00.000000Z, hi=2024-01-08T23:59:59.999999Z}," +
+                        "{lo=2024-01-15T00:00:00.000000Z, hi=2024-01-15T23:59:59.999999Z}]",
+                "[2024-01-15,2024-01-01,2024-01-08]#Mon"
+        );
+    }
+
+    @Test
     public void testDateListWithApplyEncodedFalse() throws SqlException {
         // Test date list path with applyEncoded=false (exercises line 455 branch)
         // When applyEncoded=false, intervals stay in 4-long encoded format and union is skipped
@@ -1095,18 +1116,18 @@ public class IntrinsicModelTest {
         // Date list with simple duration suffix (no repeating)
         // For a date without time, hi starts at end-of-day (23:59:59.999999), then +1h is added
         assertBracketInterval(
-                "[{lo=2025-01-01T00:00:00.000000Z, hi=2025-01-02T00:59:59.999999Z},{lo=2025-01-05T00:00:00.000000Z, hi=2025-01-06T00:59:59.999999Z}]",
+                "[{lo=2025-01-01T00:00:00.000000Z, hi=2025-01-01T00:59:59.999999Z},{lo=2025-01-05T00:00:00.000000Z, hi=2025-01-05T00:59:59.999999Z}]",
                 "[2025-01-01,2025-01-05];1h"
         );
     }
 
     @Test
     public void testDateListWithDurationSuffix() throws SqlException {
-        // '[2025-01-15,2025-01-20]T09:30;389m' produces 2 trading-hours intervals
-        // 09:30 + 389 minutes = 09:30 + 6h29m = 15:59
+        // '[2025-01-15,2025-01-20]T09:30;390m' produces 2 trading-hours intervals
+        // 09:30 + 390 minutes = 09:30 + 6h30m = 16:00
         assertBracketInterval(
                 "[{lo=2025-01-15T09:30:00.000000Z, hi=2025-01-15T15:59:59.999999Z},{lo=2025-01-20T09:30:00.000000Z, hi=2025-01-20T15:59:59.999999Z}]",
-                "[2025-01-15,2025-01-20]T09:30;389m"
+                "[2025-01-15,2025-01-20]T09:30;390m"
         );
     }
 
@@ -1141,7 +1162,7 @@ public class IntrinsicModelTest {
     public void testDateListWithTimeExpansion() throws SqlException {
         // '[2025-01-15,2025-01-20]T[09,14]:30;1h' produces 4 intervals (date × time expansion)
         assertBracketInterval(
-                "[{lo=2025-01-15T09:30:00.000000Z, hi=2025-01-15T10:30:59.999999Z},{lo=2025-01-15T14:30:00.000000Z, hi=2025-01-15T15:30:59.999999Z},{lo=2025-01-20T09:30:00.000000Z, hi=2025-01-20T10:30:59.999999Z},{lo=2025-01-20T14:30:00.000000Z, hi=2025-01-20T15:30:59.999999Z}]",
+                "[{lo=2025-01-15T09:30:00.000000Z, hi=2025-01-15T10:29:59.999999Z},{lo=2025-01-15T14:30:00.000000Z, hi=2025-01-15T15:29:59.999999Z},{lo=2025-01-20T09:30:00.000000Z, hi=2025-01-20T10:29:59.999999Z},{lo=2025-01-20T14:30:00.000000Z, hi=2025-01-20T15:29:59.999999Z}]",
                 "[2025-01-15,2025-01-20]T[09,14]:30;1h"
         );
     }
@@ -1448,7 +1469,7 @@ public class IntrinsicModelTest {
     public void testDateVariableBareWithDuration() throws SqlException {
         // $now - 1h with duration suffix ;30m without brackets
         assertBracketIntervalWithNow(
-                "[{lo=2026-01-22T09:30:00.000000Z, hi=2026-01-22T10:00:00.000000Z}]",
+                "[{lo=2026-01-22T09:30:00.000000Z, hi=2026-01-22T09:59:59.999999Z}]",
                 "$now - 1h;30m",
                 "2026-01-22T10:30:00.000000Z"
         );
@@ -1529,7 +1550,7 @@ public class IntrinsicModelTest {
         // Date variable business day arithmetic + time suffix
         // $today (Wednesday 2025-04-09) + 2bd = Friday 2025-04-11
         assertBracketIntervalWithNow(
-                "[{lo=2025-04-11T09:30:00.000000Z, hi=2025-04-11T10:30:59.999999Z}]",
+                "[{lo=2025-04-11T09:30:00.000000Z, hi=2025-04-11T10:29:59.999999Z}]",
                 "[$today + 2bd]T09:30;1h",
                 "2025-04-09T14:45:00.000000Z"
         );
@@ -2204,10 +2225,10 @@ public class IntrinsicModelTest {
         // [$today..$today+1d]T[09:00,14:00];30m - time list with duration (exercises L2287)
         // 2 days * 2 times = 4 intervals, each with 30m duration
         assertBracketIntervalWithNow(
-                "[{lo=2026-01-22T09:00:00.000000Z, hi=2026-01-22T09:30:59.999999Z}," +
-                        "{lo=2026-01-22T14:00:00.000000Z, hi=2026-01-22T14:30:59.999999Z}," +
-                        "{lo=2026-01-23T09:00:00.000000Z, hi=2026-01-23T09:30:59.999999Z}," +
-                        "{lo=2026-01-23T14:00:00.000000Z, hi=2026-01-23T14:30:59.999999Z}]",
+                "[{lo=2026-01-22T09:00:00.000000Z, hi=2026-01-22T09:29:59.999999Z}," +
+                        "{lo=2026-01-22T14:00:00.000000Z, hi=2026-01-22T14:29:59.999999Z}," +
+                        "{lo=2026-01-23T09:00:00.000000Z, hi=2026-01-23T09:29:59.999999Z}," +
+                        "{lo=2026-01-23T14:00:00.000000Z, hi=2026-01-23T14:29:59.999999Z}]",
                 "[$today..$today+1d]T[09:00,14:00];30m",
                 "2026-01-22T10:30:00.000000Z"
         );
@@ -2227,10 +2248,10 @@ public class IntrinsicModelTest {
     public void testDateVariableRangeWithTimeSuffix() throws SqlException {
         // [$today..$today+3d]T09:00;1h should produce 4 intervals with time
         assertBracketIntervalWithNow(
-                "[{lo=2026-01-22T09:00:00.000000Z, hi=2026-01-22T10:00:59.999999Z}," +
-                        "{lo=2026-01-23T09:00:00.000000Z, hi=2026-01-23T10:00:59.999999Z}," +
-                        "{lo=2026-01-24T09:00:00.000000Z, hi=2026-01-24T10:00:59.999999Z}," +
-                        "{lo=2026-01-25T09:00:00.000000Z, hi=2026-01-25T10:00:59.999999Z}]",
+                "[{lo=2026-01-22T09:00:00.000000Z, hi=2026-01-22T09:59:59.999999Z}," +
+                        "{lo=2026-01-23T09:00:00.000000Z, hi=2026-01-23T09:59:59.999999Z}," +
+                        "{lo=2026-01-24T09:00:00.000000Z, hi=2026-01-24T09:59:59.999999Z}," +
+                        "{lo=2026-01-25T09:00:00.000000Z, hi=2026-01-25T09:59:59.999999Z}]",
                 "[$today..$today+3d]T09:00;1h",
                 "2026-01-22T10:30:00.000000Z"
         );
@@ -2256,7 +2277,7 @@ public class IntrinsicModelTest {
         // Full range: Jan 22 00:00 to Jan 24 23:59:59 NY, with 1h duration = Jan 22 00:00 to Jan 25 00:59:59 NY
         // Converted to UTC (EST = UTC-5): Jan 22 05:00 to Jan 25 05:59:59 UTC
         assertBracketIntervalWithNow(
-                "[{lo=2026-01-22T05:00:00.000000Z, hi=2026-01-25T05:59:59.999999Z}]",
+                "[{lo=2026-01-22T05:00:00.000000Z, hi=2026-01-22T05:59:59.999999Z},{lo=2026-01-23T05:00:00.000000Z, hi=2026-01-23T05:59:59.999999Z},{lo=2026-01-24T05:00:00.000000Z, hi=2026-01-24T05:59:59.999999Z}]",
                 "[$today..$today+2d]@America/New_York;1h",
                 "2026-01-22T10:30:00.000000Z"
         );
@@ -2321,7 +2342,7 @@ public class IntrinsicModelTest {
         // [$today]T09:30;1h should resolve to 2026-01-22T09:30 to 10:30
         // Duration is added to end of the minute (09:30:59), so end is 10:30:59
         assertBracketIntervalWithNow(
-                "[{lo=2026-01-22T09:30:00.000000Z, hi=2026-01-22T10:30:59.999999Z}]",
+                "[{lo=2026-01-22T09:30:00.000000Z, hi=2026-01-22T10:29:59.999999Z}]",
                 "[$today]T09:30;1h",
                 "2026-01-22T10:30:00.000000Z"
         );
@@ -2357,6 +2378,64 @@ public class IntrinsicModelTest {
     public void testDateVariableTrailingCharactersAfterUnit() {
         // "$today + 3dabc" should fail - trailing characters after 'd' unit
         assertBracketIntervalError("[$today + 3dabc]", "Unexpected characters after unit");
+    }
+
+    @Test
+    public void testDateVariableUnderscoreConsecutiveInvalid() {
+        // Consecutive underscores should fail
+        assertBracketIntervalError("[$now - 1__000T]", "Invalid number in date expression");
+    }
+
+    @Test
+    public void testDateVariableUnderscoreInNumber() throws SqlException {
+        // $now - 10_000T should work the same as $now - 10000T
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T10:29:50.000000Z, hi=2026-01-22T10:29:50.000000Z}]",
+                "[$now - 10_000T]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableUnderscoreInNumberBusinessDays() throws SqlException {
+        // $today + 1_0bd should work as 10 business days
+        assertBracketIntervalWithNow(
+                "[{lo=2026-02-05T00:00:00.000000Z, hi=2026-02-05T23:59:59.999999Z}]",
+                "[$today + 1_0bd]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableUnderscoreInNumberCompact() throws SqlException {
+        // $now-10_000T compact form (no spaces)
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T10:29:50.000000Z, hi=2026-01-22T10:29:50.000000Z}]",
+                "[$now-10_000T]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableUnderscoreInNumberRange() throws SqlException {
+        // $now-10_000T..$now-9_900T range with underscores
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-22T10:29:50.000000Z, hi=2026-01-22T10:29:50.100000Z}]",
+                "$now-10_000T..$now-9_900T",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableUnderscoreLeadingInvalid() {
+        // Leading underscore should fail
+        assertBracketIntervalError("[$now - _100T]", "[7] Invalid number in date expression");
+    }
+
+    @Test
+    public void testDateVariableUnderscoreTrailingInvalid() {
+        // Trailing underscore: number is "100_", parseInt will reject it
+        assertBracketIntervalError("[$now - 100_T]", "Invalid number in date expression");
     }
 
     @Test
@@ -2428,7 +2507,7 @@ public class IntrinsicModelTest {
         assertDateVariableInterval(
                 (now, driver, tsType) -> {
                     String date = formatDate(driver.startOfDay(now, 0), driver);
-                    return "[{lo=" + date + "T09:30:00.000000Z, hi=" + date + "T10:30:59.999999Z}]";
+                    return "[{lo=" + date + "T09:30:00.000000Z, hi=" + date + "T10:29:59.999999Z}]";
                 },
                 "[$today]T09:30;1h"
         );
@@ -2663,7 +2742,7 @@ public class IntrinsicModelTest {
         // Date list with duration + day filter
         // 2024-01-01 is Monday, 2024-01-02 is Tuesday
         assertBracketInterval(
-                "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T10:00:59.999999Z}]",
+                "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T09:59:59.999999Z}]",
                 "[2024-01-01,2024-01-02]T09:00#Mon;1h"
         );
     }
@@ -2674,7 +2753,7 @@ public class IntrinsicModelTest {
         // 2024-01-01 is Monday in +05:30
         // 2024-01-01 09:00 +05:30 = 2024-01-01 03:30 UTC
         assertBracketInterval(
-                "[{lo=2024-01-01T03:30:00.000000Z, hi=2024-01-01T04:30:59.999999Z}]",
+                "[{lo=2024-01-01T03:30:00.000000Z, hi=2024-01-01T04:29:59.999999Z}]",
                 "[2024-01-01,2024-01-02]T09:00@+05:30#Mon;1h"
         );
     }
@@ -3004,7 +3083,7 @@ public class IntrinsicModelTest {
         // 2024-01-01 is Monday, 2024-01-07 is Sunday
         // #workday should keep Mon-Fri (01..05) with 1h duration
         assertBracketInterval(
-                "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T10:00:59.999999Z},{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T10:00:59.999999Z},{lo=2024-01-03T09:00:00.000000Z, hi=2024-01-03T10:00:59.999999Z},{lo=2024-01-04T09:00:00.000000Z, hi=2024-01-04T10:00:59.999999Z},{lo=2024-01-05T09:00:00.000000Z, hi=2024-01-05T10:00:59.999999Z}]",
+                "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T09:59:59.999999Z},{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T09:59:59.999999Z},{lo=2024-01-03T09:00:00.000000Z, hi=2024-01-03T09:59:59.999999Z},{lo=2024-01-04T09:00:00.000000Z, hi=2024-01-04T09:59:59.999999Z},{lo=2024-01-05T09:00:00.000000Z, hi=2024-01-05T09:59:59.999999Z}]",
                 "2024-01-[01..07]T09:00#workday;1h"
         );
     }
@@ -3017,7 +3096,7 @@ public class IntrinsicModelTest {
         // 2024-01-01 is Monday. With ;3d duration, interval spans Jan 1-4
         // Day filter #Mon should keep the ENTIRE interval, not expand
         assertBracketInterval(
-                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-04T23:59:59.999999Z}]",
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-03T23:59:59.999999Z}]",
                 "[2024-01-01#Mon];3d"
         );
     }
@@ -3029,7 +3108,7 @@ public class IntrinsicModelTest {
         // Day filter #Mon should check if Jan 1 is Monday (yes) and keep the ENTIRE 2-day interval
         // Should NOT expand into individual days
         assertBracketInterval(
-                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-02T23:59:59.999999Z}]",
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}]",
                 "[2024-01-01#Mon];1d"
         );
     }
@@ -3051,7 +3130,7 @@ public class IntrinsicModelTest {
         // Filter workdays, then convert to UTC
         // 09:00 local (+02:00) = 07:00 UTC
         assertBracketInterval(
-                "[{lo=2024-01-01T07:00:00.000000Z, hi=2024-01-01T08:00:59.999999Z},{lo=2024-01-02T07:00:00.000000Z, hi=2024-01-02T08:00:59.999999Z},{lo=2024-01-03T07:00:00.000000Z, hi=2024-01-03T08:00:59.999999Z},{lo=2024-01-04T07:00:00.000000Z, hi=2024-01-04T08:00:59.999999Z},{lo=2024-01-05T07:00:00.000000Z, hi=2024-01-05T08:00:59.999999Z}]",
+                "[{lo=2024-01-01T07:00:00.000000Z, hi=2024-01-01T07:59:59.999999Z},{lo=2024-01-02T07:00:00.000000Z, hi=2024-01-02T07:59:59.999999Z},{lo=2024-01-03T07:00:00.000000Z, hi=2024-01-03T07:59:59.999999Z},{lo=2024-01-04T07:00:00.000000Z, hi=2024-01-04T07:59:59.999999Z},{lo=2024-01-05T07:00:00.000000Z, hi=2024-01-05T07:59:59.999999Z}]",
                 "2024-01-[01..07]T09:00@+02:00#workday;1h"
         );
     }
@@ -3233,7 +3312,7 @@ public class IntrinsicModelTest {
         parseTickExpr(timestampDriver, intervalStr, 0, intervalStr.length(), 0, out, IntervalOperation.INTERSECT);
         IntervalUtils.invert(out);
         TestUtils.assertEquals(
-                "[{lo=, hi=2018-01-10T10:29:59.999999Z},{lo=2018-01-10T11:00:00.000001Z, hi=2018-01-12T10:29:59.999999Z},{lo=2018-01-12T11:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]",
+                "[{lo=, hi=2018-01-10T10:29:59.999999Z},{lo=2018-01-10T11:00:00.000000Z, hi=2018-01-12T10:29:59.999999Z},{lo=2018-01-12T11:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]",
                 intervalToString(timestampDriver, out)
         );
     }
@@ -3403,7 +3482,7 @@ public class IntrinsicModelTest {
         // 2024-W01-1T09:00;1h - Monday 9am + 1h duration
         // Duration is added to the end: 09:00:59.999999 + 1h = 10:00:59.999999
         assertBracketInterval(
-                "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T10:00:59.999999Z}]",
+                "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T09:59:59.999999Z}]",
                 "2024-W01-1T09:00;1h"
         );
     }
@@ -3474,14 +3553,14 @@ public class IntrinsicModelTest {
     @Test
     public void testParseLongInterval22() throws Exception {
         assertShortInterval(
-                "[{lo=2015-03-12T10:00:00.000000Z, hi=2015-03-12T10:05:00.999999Z},{lo=2015-03-12T10:30:00.000000Z, hi=2015-03-12T10:35:00.999999Z},{lo=2015-03-12T11:00:00.000000Z, hi=2015-03-12T11:05:00.999999Z},{lo=2015-03-12T11:30:00.000000Z, hi=2015-03-12T11:35:00.999999Z},{lo=2015-03-12T12:00:00.000000Z, hi=2015-03-12T12:05:00.999999Z},{lo=2015-03-12T12:30:00.000000Z, hi=2015-03-12T12:35:00.999999Z},{lo=2015-03-12T13:00:00.000000Z, hi=2015-03-12T13:05:00.999999Z},{lo=2015-03-12T13:30:00.000000Z, hi=2015-03-12T13:35:00.999999Z},{lo=2015-03-12T14:00:00.000000Z, hi=2015-03-12T14:05:00.999999Z},{lo=2015-03-12T14:30:00.000000Z, hi=2015-03-12T14:35:00.999999Z}]",
+                "[{lo=2015-03-12T10:00:00.000000Z, hi=2015-03-12T10:04:59.999999Z},{lo=2015-03-12T10:30:00.000000Z, hi=2015-03-12T10:34:59.999999Z},{lo=2015-03-12T11:00:00.000000Z, hi=2015-03-12T11:04:59.999999Z},{lo=2015-03-12T11:30:00.000000Z, hi=2015-03-12T11:34:59.999999Z},{lo=2015-03-12T12:00:00.000000Z, hi=2015-03-12T12:04:59.999999Z},{lo=2015-03-12T12:30:00.000000Z, hi=2015-03-12T12:34:59.999999Z},{lo=2015-03-12T13:00:00.000000Z, hi=2015-03-12T13:04:59.999999Z},{lo=2015-03-12T13:30:00.000000Z, hi=2015-03-12T13:34:59.999999Z},{lo=2015-03-12T14:00:00.000000Z, hi=2015-03-12T14:04:59.999999Z},{lo=2015-03-12T14:30:00.000000Z, hi=2015-03-12T14:34:59.999999Z}]",
                 "2015-03-12T10:00:00;5m;30m;10"
         );
     }
 
     @Test
     public void testParseLongInterval32() throws Exception {
-        assertShortInterval("[{lo=2016-03-21T00:00:00.000000Z, hi=2021-03-21T23:59:59.999999Z}]", "2016-03-21;3y;6M;5");
+        assertShortInterval("[{lo=2016-03-21T00:00:00.000000Z, hi=2021-03-20T23:59:59.999999Z}]", "2016-03-21;3y;6M;5");
     }
 
     @Test
@@ -3489,7 +3568,7 @@ public class IntrinsicModelTest {
         // Test positive year period (exercises period >= 0 branch in addYearIntervals, line 675)
         // 2015-03-12T11:00:00;5m;1y;3 means: start at 2015, duration 5m, repeat every 1 year, 3 times
         assertShortInterval(
-                "[{lo=2015-03-12T11:00:00.000000Z, hi=2015-03-12T11:05:00.999999Z},{lo=2016-03-12T11:00:00.000000Z, hi=2016-03-12T11:05:00.999999Z},{lo=2017-03-12T11:00:00.000000Z, hi=2017-03-12T11:05:00.999999Z}]",
+                "[{lo=2015-03-12T11:00:00.000000Z, hi=2015-03-12T11:04:59.999999Z},{lo=2016-03-12T11:00:00.000000Z, hi=2016-03-12T11:04:59.999999Z},{lo=2017-03-12T11:00:00.000000Z, hi=2017-03-12T11:04:59.999999Z}]",
                 "2015-03-12T11:00:00;5m;1y;3"
         );
     }
@@ -3497,15 +3576,15 @@ public class IntrinsicModelTest {
     @Test
     public void testParseLongMinusInterval() throws Exception {
         assertShortInterval(
-                "[{lo=2015-03-12T10:00:00.000000Z, hi=2015-03-12T10:05:00.999999Z},{lo=2015-03-12T10:30:00.000000Z, hi=2015-03-12T10:35:00.999999Z},{lo=2015-03-12T11:00:00.000000Z, hi=2015-03-12T11:05:00.999999Z}]",
+                "[{lo=2015-03-12T10:00:00.000000Z, hi=2015-03-12T10:04:59.999999Z},{lo=2015-03-12T10:30:00.000000Z, hi=2015-03-12T10:34:59.999999Z},{lo=2015-03-12T11:00:00.000000Z, hi=2015-03-12T11:04:59.999999Z}]",
                 "2015-03-12T11:00:00;5m;-30m;3"
         );
         assertShortInterval(
-                "[{lo=2014-11-12T11:00:00.000000Z, hi=2014-11-12T11:05:00.999999Z},{lo=2015-01-12T11:00:00.000000Z, hi=2015-01-12T11:05:00.999999Z},{lo=2015-03-12T11:00:00.000000Z, hi=2015-03-12T11:05:00.999999Z}]",
+                "[{lo=2014-11-12T11:00:00.000000Z, hi=2014-11-12T11:04:59.999999Z},{lo=2015-01-12T11:00:00.000000Z, hi=2015-01-12T11:04:59.999999Z},{lo=2015-03-12T11:00:00.000000Z, hi=2015-03-12T11:04:59.999999Z}]",
                 "2015-03-12T11:00:00;5m;-2M;3"
         );
         assertShortInterval(
-                "[{lo=2013-03-12T11:00:00.000000Z, hi=2013-03-12T11:05:00.999999Z},{lo=2014-03-12T11:00:00.000000Z, hi=2014-03-12T11:05:00.999999Z},{lo=2015-03-12T11:00:00.000000Z, hi=2015-03-12T11:05:00.999999Z}]",
+                "[{lo=2013-03-12T11:00:00.000000Z, hi=2013-03-12T11:04:59.999999Z},{lo=2014-03-12T11:00:00.000000Z, hi=2014-03-12T11:04:59.999999Z},{lo=2015-03-12T11:00:00.000000Z, hi=2015-03-12T11:04:59.999999Z}]",
                 "2015-03-12T11:00:00;5m;-1y;3"
         );
     }
@@ -3652,7 +3731,7 @@ public class IntrinsicModelTest {
         // Count=1 with period - the period is parsed but only one interval is generated
         // This tests the `if (count > 1)` branch being false
         assertBracketInterval(
-                "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T11:00:59.999999Z}]",
+                "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T10:59:59.999999Z}]",
                 "2018-01-10T10:30;30m;2h;1"
         );
     }
@@ -3661,7 +3740,7 @@ public class IntrinsicModelTest {
     public void testRepeatingIntervalWithHourPeriod() throws SqlException {
         // 2018-01-10T10:30;30m;2h;3 means 30min window starting at 10:30, then 12:30, then 14:30
         assertBracketInterval(
-                "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T11:00:59.999999Z},{lo=2018-01-10T12:30:00.000000Z, hi=2018-01-10T13:00:59.999999Z},{lo=2018-01-10T14:30:00.000000Z, hi=2018-01-10T15:00:59.999999Z}]",
+                "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T10:59:59.999999Z},{lo=2018-01-10T12:30:00.000000Z, hi=2018-01-10T12:59:59.999999Z},{lo=2018-01-10T14:30:00.000000Z, hi=2018-01-10T14:59:59.999999Z}]",
                 "2018-01-10T10:30;30m;2h;3"
         );
     }
@@ -3670,7 +3749,7 @@ public class IntrinsicModelTest {
     public void testRepeatingIntervalWithSecondPeriod() throws SqlException {
         // 2018-01-10T10:30:00;5s;10s;3 means 5sec window starting at 10:30:00, then 10:30:10, then 10:30:20
         assertBracketInterval(
-                "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T10:30:05.999999Z},{lo=2018-01-10T10:30:10.000000Z, hi=2018-01-10T10:30:15.999999Z},{lo=2018-01-10T10:30:20.000000Z, hi=2018-01-10T10:30:25.999999Z}]",
+                "[{lo=2018-01-10T10:30:00.000000Z, hi=2018-01-10T10:30:04.999999Z},{lo=2018-01-10T10:30:10.000000Z, hi=2018-01-10T10:30:14.999999Z},{lo=2018-01-10T10:30:20.000000Z, hi=2018-01-10T10:30:24.999999Z}]",
                 "2018-01-10T10:30:00;5s;10s;3"
         );
     }
@@ -3733,7 +3812,7 @@ public class IntrinsicModelTest {
         // T[09:00@UTC,14:30]@+02:00;1h
         // 09:00@UTC = 09:00 UTC, 14:30@+02:00 = 12:30 UTC
         assertBracketInterval(
-                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T10:00:59.999999Z},{lo=2024-01-15T12:30:00.000000Z, hi=2024-01-15T13:30:59.999999Z}]",
+                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T09:59:59.999999Z},{lo=2024-01-15T12:30:00.000000Z, hi=2024-01-15T13:29:59.999999Z}]",
                 "2024-01-15T[09:00@UTC,14:30]@+02:00;1h"
         );
     }
@@ -3751,7 +3830,7 @@ public class IntrinsicModelTest {
         // T[09:00,10:30];2h creates intervals 09:00-11:00 and 10:30-12:30 which overlap
         // These get merged into a single interval 09:00-12:30
         assertBracketInterval(
-                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T12:30:59.999999Z}]",
+                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T12:29:59.999999Z}]",
                 "2024-01-15T[09:00,10:30];2h"
         );
     }
@@ -3762,7 +3841,7 @@ public class IntrinsicModelTest {
         // T[09:00@+05:00,08:00@+02:00];1h
         // 09:00 in +05:00 = 04:00 UTC, 08:00 in +02:00 = 06:00 UTC
         assertBracketInterval(
-                "[{lo=2024-01-15T04:00:00.000000Z, hi=2024-01-15T05:00:59.999999Z},{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T07:00:59.999999Z}]",
+                "[{lo=2024-01-15T04:00:00.000000Z, hi=2024-01-15T04:59:59.999999Z},{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T06:59:59.999999Z}]",
                 "2024-01-15T[09:00@+05:00,08:00@+02:00];1h"
         );
     }
@@ -3772,7 +3851,7 @@ public class IntrinsicModelTest {
         // Simple time list: T[09:00,18:00];1h (non-overlapping intervals)
         // Creates intervals at 09:00-10:00 and 18:00-19:00
         assertBracketInterval(
-                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T10:00:59.999999Z},{lo=2024-01-15T18:00:00.000000Z, hi=2024-01-15T19:00:59.999999Z}]",
+                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T09:59:59.999999Z},{lo=2024-01-15T18:00:00.000000Z, hi=2024-01-15T18:59:59.999999Z}]",
                 "2024-01-15T[09:00,18:00];1h"
         );
     }
@@ -3781,7 +3860,7 @@ public class IntrinsicModelTest {
     public void testTimeListBracketSingleTime() throws SqlException {
         // Single time in time list bracket (edge case)
         assertBracketInterval(
-                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T10:00:59.999999Z}]",
+                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T09:59:59.999999Z}]",
                 "2024-01-15T[09:00];1h"
         );
     }
@@ -3790,7 +3869,7 @@ public class IntrinsicModelTest {
     public void testTimeListBracketThreeTimes() throws SqlException {
         // Three time values (non-overlapping)
         assertBracketInterval(
-                "[{lo=2024-01-15T08:00:00.000000Z, hi=2024-01-15T09:00:59.999999Z},{lo=2024-01-15T12:00:00.000000Z, hi=2024-01-15T13:00:59.999999Z},{lo=2024-01-15T18:00:00.000000Z, hi=2024-01-15T19:00:59.999999Z}]",
+                "[{lo=2024-01-15T08:00:00.000000Z, hi=2024-01-15T08:59:59.999999Z},{lo=2024-01-15T12:00:00.000000Z, hi=2024-01-15T12:59:59.999999Z},{lo=2024-01-15T18:00:00.000000Z, hi=2024-01-15T18:59:59.999999Z}]",
                 "2024-01-15T[08:00,12:00,18:00];1h"
         );
     }
@@ -3801,7 +3880,7 @@ public class IntrinsicModelTest {
         // 2024-01-[15,16]T[09:00,18:00]@+02:00;1h = 4 intervals
         // Times in +02:00: 09:00 = 07:00 UTC, 18:00 = 16:00 UTC
         assertBracketInterval(
-                "[{lo=2024-01-15T07:00:00.000000Z, hi=2024-01-15T08:00:59.999999Z},{lo=2024-01-15T16:00:00.000000Z, hi=2024-01-15T17:00:59.999999Z},{lo=2024-01-16T07:00:00.000000Z, hi=2024-01-16T08:00:59.999999Z},{lo=2024-01-16T16:00:00.000000Z, hi=2024-01-16T17:00:59.999999Z}]",
+                "[{lo=2024-01-15T07:00:00.000000Z, hi=2024-01-15T07:59:59.999999Z},{lo=2024-01-15T16:00:00.000000Z, hi=2024-01-15T16:59:59.999999Z},{lo=2024-01-16T07:00:00.000000Z, hi=2024-01-16T07:59:59.999999Z},{lo=2024-01-16T16:00:00.000000Z, hi=2024-01-16T16:59:59.999999Z}]",
                 "2024-01-[15,16]T[09:00,18:00]@+02:00;1h"
         );
     }
@@ -3811,7 +3890,7 @@ public class IntrinsicModelTest {
         // Combination: day expansion + time list
         // 2024-01-[15,16]T[09:00,18:00];1h = 4 intervals (2 days × 2 times, non-overlapping)
         assertBracketInterval(
-                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T10:00:59.999999Z},{lo=2024-01-15T18:00:00.000000Z, hi=2024-01-15T19:00:59.999999Z},{lo=2024-01-16T09:00:00.000000Z, hi=2024-01-16T10:00:59.999999Z},{lo=2024-01-16T18:00:00.000000Z, hi=2024-01-16T19:00:59.999999Z}]",
+                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T09:59:59.999999Z},{lo=2024-01-15T18:00:00.000000Z, hi=2024-01-15T18:59:59.999999Z},{lo=2024-01-16T09:00:00.000000Z, hi=2024-01-16T09:59:59.999999Z},{lo=2024-01-16T18:00:00.000000Z, hi=2024-01-16T18:59:59.999999Z}]",
                 "2024-01-[15,16]T[09:00,18:00];1h"
         );
     }
@@ -3822,7 +3901,7 @@ public class IntrinsicModelTest {
         // T[09:00,18:00]@+02:00;1h (non-overlapping)
         // Both times in +02:00 offset: 09:00 = 07:00 UTC, 18:00 = 16:00 UTC
         assertBracketInterval(
-                "[{lo=2024-01-15T07:00:00.000000Z, hi=2024-01-15T08:00:59.999999Z},{lo=2024-01-15T16:00:00.000000Z, hi=2024-01-15T17:00:59.999999Z}]",
+                "[{lo=2024-01-15T07:00:00.000000Z, hi=2024-01-15T07:59:59.999999Z},{lo=2024-01-15T16:00:00.000000Z, hi=2024-01-15T16:59:59.999999Z}]",
                 "2024-01-15T[09:00,18:00]@+02:00;1h"
         );
     }
@@ -3853,7 +3932,7 @@ public class IntrinsicModelTest {
         // T[09:00,14:30]:[00,30];1h - time list + seconds expansion + duration
         // Creates: 09:00:00+1h, 09:00:30+1h, 14:30:00+1h, 14:30:30+1h - overlapping intervals merge
         assertBracketInterval(
-                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T10:00:30.999999Z},{lo=2024-01-15T14:30:00.000000Z, hi=2024-01-15T15:30:30.999999Z}]",
+                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T10:00:29.999999Z},{lo=2024-01-15T14:30:00.000000Z, hi=2024-01-15T15:30:29.999999Z}]",
                 "2024-01-15T[09:00,14:30]:[00,30];1h"
         );
     }
@@ -3892,7 +3971,7 @@ public class IntrinsicModelTest {
     public void testTimeListBracketWithWhitespace() throws SqlException {
         // Time list with whitespace around values
         assertBracketInterval(
-                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T10:00:59.999999Z},{lo=2024-01-15T18:00:00.000000Z, hi=2024-01-15T19:00:59.999999Z}]",
+                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T09:59:59.999999Z},{lo=2024-01-15T18:00:00.000000Z, hi=2024-01-15T18:59:59.999999Z}]",
                 "2024-01-15T[ 09:00 , 18:00 ];1h"
         );
     }
@@ -3929,7 +4008,7 @@ public class IntrinsicModelTest {
         // 2024-01-[15,16]T08:00@+02:00;1h
         // For each date: 08:00 in +02:00 = 06:00 UTC, duration extends hi by 1h
         assertBracketInterval(
-                "[{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T07:00:59.999999Z},{lo=2024-01-16T06:00:00.000000Z, hi=2024-01-16T07:00:59.999999Z}]",
+                "[{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T06:59:59.999999Z},{lo=2024-01-16T06:00:00.000000Z, hi=2024-01-16T06:59:59.999999Z}]",
                 "2024-01-[15,16]T08:00@+02:00;1h"
         );
     }
@@ -3950,7 +4029,7 @@ public class IntrinsicModelTest {
         // [2024-01-15,2024-01-16]T08:00@+02:00;1h
         // 08:00 in +02:00 = 06:00 UTC, ;1h extends hi by 1 hour to 07:00:59 UTC
         assertBracketInterval(
-                "[{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T07:00:59.999999Z},{lo=2024-01-16T06:00:00.000000Z, hi=2024-01-16T07:00:59.999999Z}]",
+                "[{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T06:59:59.999999Z},{lo=2024-01-16T06:00:00.000000Z, hi=2024-01-16T06:59:59.999999Z}]",
                 "[2024-01-15,2024-01-16]T08:00@+02:00;1h"
         );
     }
@@ -4039,8 +4118,8 @@ public class IntrinsicModelTest {
         String interval = "2024-03-10T01:59@America/New_York;2m";
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-03-10T06:59:00.000000000Z, hi=2024-03-10T07:03:59.999999998Z}]"
-                : "[{lo=2024-03-10T06:59:00.000000Z, hi=2024-03-10T07:03:59.999998Z}]";
+                ? "[{lo=2024-03-10T06:59:00.000000000Z, hi=2024-03-10T07:01:59.999999998Z}]"
+                : "[{lo=2024-03-10T06:59:00.000000Z, hi=2024-03-10T07:01:59.999998Z}]";
         TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
     }
 
@@ -4204,7 +4283,7 @@ public class IntrinsicModelTest {
     public void testTimezoneWithBracketExpansionAndDuration() throws SqlException {
         // 08:00+1h in +02:00 = 06:00-07:00:59 UTC for each day
         assertBracketInterval(
-                "[{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T07:00:59.999999Z},{lo=2024-01-16T06:00:00.000000Z, hi=2024-01-16T07:00:59.999999Z}]",
+                "[{lo=2024-01-15T06:00:00.000000Z, hi=2024-01-15T06:59:59.999999Z},{lo=2024-01-16T06:00:00.000000Z, hi=2024-01-16T06:59:59.999999Z}]",
                 "2024-01-[15,16]T08:00@+02:00;1h"
         );
     }
@@ -4216,7 +4295,7 @@ public class IntrinsicModelTest {
         // 08:00 is minute-level, so hi = 08:00:59, then +1h = 09:00:59
         // Convert to UTC: lo = 08:00 - 3h = 05:00, hi = 09:00:59 - 3h = 06:00:59
         assertBracketInterval(
-                "[{lo=2024-01-15T05:00:00.000000Z, hi=2024-01-15T06:00:59.999999Z}]",
+                "[{lo=2024-01-15T05:00:00.000000Z, hi=2024-01-15T05:59:59.999999Z}]",
                 "2024-01-15T08:00@+03:00;1h"
         );
     }
@@ -4258,7 +4337,7 @@ public class IntrinsicModelTest {
      * Converts encoded intervals (4-long format) to a readable string for assertions.
      * Format: [{lo=..., hi=..., dayFilter=Mon,Tue,...}]
      */
-    private static CharSequence encodedIntervalToString(TimestampDriver driver, LongList intervals) {
+    private static CharSequence encodedIntervalToSink(TimestampDriver driver, LongList intervals) {
         sink.clear();
         sink.put('[');
         for (int i = 0, n = intervals.size(); i < n; i += 4) {
@@ -4400,7 +4479,7 @@ public class IntrinsicModelTest {
                 ColumnType.isTimestampNano(timestampType.getTimestampType())
                         ? expected.replaceAll("00Z", "00000Z").replaceAll("99Z", "99999Z")
                         : expected,
-                encodedIntervalToString(timestampDriver, out)
+                encodedIntervalToSink(timestampDriver, out)
         );
     }
 
@@ -4417,7 +4496,7 @@ public class IntrinsicModelTest {
                 ColumnType.isTimestampNano(timestampType.getTimestampType())
                         ? expected.replaceAll("00Z", "00000Z").replaceAll("99Z", "99999Z")
                         : expected,
-                encodedIntervalToString(timestampDriver, out)
+                encodedIntervalToSink(timestampDriver, out)
         );
     }
 

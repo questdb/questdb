@@ -520,8 +520,126 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
         execute("alter table x add column a int");
         execute("alter table x add column if not exists a int");
 
-        assertException("alter table x add column if not exists a hohoho", 41, "unrecognized column type: hohoho");
+        assertException("alter table x add column if not exists a hohoho", 41, "unsupported column type: hohoho");
         assertException("alter table x add column if not exists a long", 41, "column already exists with a different column type [current type=INT, requested type=LONG]");
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsArray() throws Exception {
+        createX();
+        execute("alter table x add column arr_col double[]");
+        // same type — should be a no-op
+        execute("alter table x add column if not exists arr_col double[]");
+
+        // different dimensionality — should fail
+        assertException(
+                "alter table x add column if not exists arr_col double[][]",
+                47,
+                "column already exists with a different column type"
+        );
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsArrayUnsupportedElement() throws Exception {
+        createX();
+        execute("alter table x add column int_col int");
+        // INT[] is not a supported array type — should fail with the same error as normal ADD COLUMN
+        assertException(
+                "alter table x add column if not exists int_col int[]",
+                47,
+                "unsupported array element type [type=INT]"
+        );
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsDecimal() throws Exception {
+        createX();
+        execute("alter table x add column dec_col decimal(48, 18)");
+        // same type — should be a no-op
+        execute("alter table x add column if not exists dec_col decimal(48, 18)");
+
+        // different precision/scale — should fail
+        assertException(
+                "alter table x add column if not exists dec_col decimal(18, 3)",
+                47,
+                "column already exists with a different column type"
+        );
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsDecimalDefault() throws Exception {
+        createX();
+        // bare DECIMAL defaults to (18,3)
+        execute("alter table x add column dec_col decimal");
+        execute("alter table x add column if not exists dec_col decimal");
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsGeohash() throws Exception {
+        createX();
+        execute("alter table x add column geo_col geohash(5c)");
+        // same type — should be a no-op
+        execute("alter table x add column if not exists geo_col geohash(5c)");
+
+        // different precision — should fail
+        assertException(
+                "alter table x add column if not exists geo_col geohash(3c)",
+                47,
+                "column already exists with a different column type"
+        );
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsUnmatchedBracket() throws Exception {
+        createX();
+        execute("alter table x add column d_col double");
+        assertException(
+                "alter table x add column if not exists d_col double]",
+                45,
+                "has an unmatched `]` - were you trying to define an array?"
+        );
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsMultiColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            execute("alter table x add column a_col int");
+            // 'a_col' already exists — should be skipped; 'b_col' should be added
+            execute("alter table x add column if not exists a_col int, b_col long");
+            drainWalQueue();
+            assertSql(
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
+                            b_col\tLONG\tfalse\t256\tfalse\t0\t0\tfalse\tfalse
+                            """,
+                    "table_columns('x') where column = 'b_col'"
+            );
+        });
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            execute("alter table x add column sym_col symbol capacity 512 cache index");
+            // same column with trailing SYMBOL options — should succeed silently
+            execute("alter table x add column if not exists sym_col symbol capacity 512 cache index");
+        });
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsTrailingGarbage() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            execute("alter table x add column a_col int");
+            // trailing garbage after the type should be rejected, not silently consumed
+            assertExceptionNoLeakCheck(
+                    "alter table x add column if not exists a_col int FOOBAR",
+                    49,
+                    "',' expected"
+            );
+        });
     }
 
     @Test

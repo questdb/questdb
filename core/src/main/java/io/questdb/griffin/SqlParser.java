@@ -282,6 +282,39 @@ public class SqlParser {
     }
 
     /**
+     * Parses a GEOHASH(precision) type from the lexer.
+     * The precision is specified as a number followed by 'b' (bits) or 'c' (chars),
+     * e.g. GEOHASH(5c) or GEOHASH(30b).
+     *
+     * @return the concrete GEOHASH type with the specified precision.
+     */
+    public static int parseGeoHashColumnType(GenericLexer lexer) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || tok.charAt(0) != '(') {
+            throw SqlException.position(lexer.getPosition()).put("missing GEOHASH precision");
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && tok.charAt(0) != ')') {
+            int geoHashBits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, tok);
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || tok.charAt(0) != ')') {
+                if (tok != null) {
+                    throw SqlException.position(lexer.lastTokenPosition())
+                            .put("invalid GEOHASH type literal, expected ')'")
+                            .put(" found='").put(tok.charAt(0)).put("'");
+                }
+                throw SqlException.position(lexer.getPosition())
+                        .put("invalid GEOHASH type literal, expected ')'");
+            }
+            return ColumnType.getGeoHashTypeWithBits(geoHashBits);
+        } else {
+            throw SqlException.position(lexer.lastTokenPosition())
+                    .put("missing GEOHASH precision");
+        }
+    }
+
+    /**
      * Parses a value and time unit into a TTL value. If the returned value is positive, the time unit
      * is hours. If it's negative, the time unit is months (and the actual value is positive).
      */
