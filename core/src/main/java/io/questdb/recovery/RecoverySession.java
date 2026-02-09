@@ -268,6 +268,12 @@ public class RecoverySession {
             return;
         }
 
+        PartitionScanEntry partEntry = cachedPartitionScan.getQuick(currentPartitionIndex);
+        if (partEntry.getTxnPartition() != null && partEntry.getTxnPartition().isParquetFormat()) {
+            err.println("cannot enter columns of a parquet partition");
+            return;
+        }
+
         ObjList<MetaColumnState> columns = cachedMetaState.getColumns();
         int colIndex = -1;
 

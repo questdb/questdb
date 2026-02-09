@@ -86,6 +86,19 @@ public class RecoverySessionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCdDeniedForParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("nav_parquet", 3);
+            execute("ALTER TABLE nav_parquet CONVERT PARTITION TO PARQUET WHERE ts = '1970-01-01'");
+            drainWalQueue(engine);
+
+            // cd into the parquet partition, then try to cd into a column
+            String[] result = runSession("cd nav_parquet\ncd 0\ncd sym\nquit\n");
+            Assert.assertTrue(result[1].contains("cannot enter columns of a parquet partition"));
+        });
+    }
+
+    @Test
     public void testCdDotDotAtRoot() throws Exception {
         assertMemoryLeak(() -> {
             createTableWithRows("nav_dotdot_root", 1);
