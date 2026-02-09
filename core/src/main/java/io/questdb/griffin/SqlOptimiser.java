@@ -4133,14 +4133,9 @@ public class SqlOptimiser implements Mutable {
                 && model.getTimestampOffsetAlias() == null;
     }
 
-    private ExpressionNode makeJoinAlias() {
-        CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
-        characterStoreEntry.put(SUB_QUERY_ALIAS_PREFIX).put(defaultAliasCount++);
-        return nextLiteral(characterStoreEntry.toImmutable());
-    }
-
     // Walks only the nested-model chain (not join models) because named windows are defined
     // on the masterModel and propagated through nesting, never on join models.
+    // Stops at subquery boundaries to prevent resolving names from inner scopes.
     private WindowExpression lookupNamedWindow(QueryModel model, CharSequence windowName) {
         QueryModel current = model;
         while (current != null) {
@@ -4148,9 +4143,18 @@ public class SqlOptimiser implements Mutable {
             if (namedWindow != null) {
                 return namedWindow;
             }
+            if (current.isNestedModelIsSubQuery()) {
+                break;
+            }
             current = current.getNestedModel();
         }
         return null;
+    }
+
+    private ExpressionNode makeJoinAlias() {
+        CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
+        characterStoreEntry.put(SUB_QUERY_ALIAS_PREFIX).put(defaultAliasCount++);
+        return nextLiteral(characterStoreEntry.toImmutable());
     }
 
     private ExpressionNode makeModelAlias(CharSequence modelAlias, ExpressionNode node) {
@@ -6183,6 +6187,15 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void resolveNamedWindowReference(WindowExpression ac, QueryModel model) throws SqlException {
+        CharSequence windowName = ac.getWindowName();
+        WindowExpression namedWindow = lookupNamedWindow(model, windowName);
+        if (namedWindow == null) {
+            throw SqlException.$(ac.getWindowNamePosition(), "window '").put(windowName).put("' is not defined");
+        }
+        ac.copySpecFrom(namedWindow);
+    }
+
     /**
      * Resolves all named window references in the model tree by copying the spec
      * from the named window definition into each referencing WindowExpression.
@@ -6218,15 +6231,6 @@ public class SqlOptimiser implements Mutable {
         if (union != null) {
             resolveNamedWindows(union);
         }
-    }
-
-    private void resolveNamedWindowReference(WindowExpression ac, QueryModel model) throws SqlException {
-        CharSequence windowName = ac.getWindowName();
-        WindowExpression namedWindow = lookupNamedWindow(model, windowName);
-        if (namedWindow == null) {
-            throw SqlException.$(ac.getWindowNamePosition(), "window '").put(windowName).put("' is not defined");
-        }
-        ac.copySpecFrom(namedWindow);
     }
 
     private void resolveNamedWindowsInExpr(ExpressionNode node, QueryModel model) throws SqlException {

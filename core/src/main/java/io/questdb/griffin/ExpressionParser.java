@@ -787,7 +787,8 @@ public class ExpressionParser {
                     || SqlKeywords.isOrderKeyword(nextTok)
                     || SqlKeywords.isRowsKeyword(nextTok)
                     || SqlKeywords.isRangeKeyword(nextTok)
-                    || SqlKeywords.isGroupsKeyword(nextTok))) {
+                    || SqlKeywords.isGroupsKeyword(nextTok)
+                    || SqlKeywords.isCumulativeKeyword(nextTok))) {
                 throw SqlException.$(inheritPos, "window inheritance is not supported");
             }
             // Not inheritance - restore both tokens and let downstream parsing handle the error

@@ -10976,17 +10976,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNamedWindowWithSubqueryAndJoin() throws Exception {
-        // Test that WINDOW clause works when subquery is joined with another table
+    public void testNamedWindowWithSubqueryProjection() throws Exception {
+        // Test that WINDOW clause works with a subquery projection
         assertMemoryLeak(() -> {
             execute("create table t1 (x int, ts timestamp) timestamp(ts)");
-            execute("create table t2 (y int, ts timestamp) timestamp(ts)");
             execute("insert into t1 values (10, 0)");
             execute("insert into t1 values (20, 1000000)");
-            execute("insert into t2 values (100, 0)");
-            execute("insert into t2 values (200, 1000000)");
 
-            // Named window with a subquery that we then use - the window is on the outer query
             assertQueryNoLeakCheck(
                     "x\tsum_x\n" +
                             "10\t10.0\n" +

@@ -4701,9 +4701,10 @@ public class SqlParser {
                 if (wc.isNamedWindowReference() && namedWindows.keyIndex(wc.getWindowName()) > -1) {
                     throw SqlException.$(wc.getWindowNamePosition(), "window '").put(wc.getWindowName()).put("' is not defined");
                 }
-                // Also check nested expression trees (e.g., sum(row_number() OVER w) OVER ())
-                validateNamedWindowReferencesInExpr(qc.getAst(), namedWindows);
             }
+            // Check nested expression trees for all columns, not just window expressions,
+            // to catch cases like: row_number() OVER w + 1 (where top-level column is +)
+            validateNamedWindowReferencesInExpr(qc.getAst(), namedWindows);
         }
     }
 
