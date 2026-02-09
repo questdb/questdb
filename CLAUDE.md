@@ -64,6 +64,10 @@ offending character, not the start of the expression.
   (e.g., `fix(sql): fix ...` not `fix(sql): DECIMAL comparison ...`).
 - PR title descriptions must speak to the end-user about the positive impact,
   not about internal implementation details.
+- PR descriptions must use a level-headed, analytical tone. Present both positive
+  and negative effects of the PR with equal weight — don't cherry-pick good
+  results, don't sell it, don't use superlatives or bold emphasis on numbers.
+  Point out regressions and tradeoffs as prominently as improvements.
 - PRs that fix a GitHub issue must reference it with `Fixes #NNN` at the top of
   the PR body.
 - Commit titles do NOT use Conventional Commits prefixes. Keep them short (up to
