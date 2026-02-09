@@ -8,7 +8,7 @@ mod tests;
 use crate::allocator::{AcVec, AllocFailure};
 use crate::parquet::error::{fmt_err, ParquetResult};
 use parquet2::encoding::delta_bitpacked;
-use parquet2::encoding::hybrid_rle::BitmapIter;
+
 use std::mem::size_of;
 use std::ptr;
 
@@ -425,8 +425,31 @@ impl<'a> PlainVarSlicer<'a> {
     }
 }
 
+/// Lookup table: maps each byte to 8 expanded bits (LSB-first order).
+const BITMAP_LUT: [[u8; 8]; 256] = {
+    let mut lut = [[0u8; 8]; 256];
+    let mut i = 0u16;
+    while i < 256 {
+        let b = i as u8;
+        lut[i as usize] = [
+            b & 1,
+            (b >> 1) & 1,
+            (b >> 2) & 1,
+            (b >> 3) & 1,
+            (b >> 4) & 1,
+            (b >> 5) & 1,
+            (b >> 6) & 1,
+            (b >> 7) & 1,
+        ];
+        i += 1;
+    }
+    lut
+};
+
 pub struct BooleanBitmapSlicer<'a> {
-    bitmap_iter: BitmapIter<'a>,
+    data: &'a [u8],
+    bit_offset: usize,
+    total_bits: usize,
     sliced_row_count: usize,
     error: ParquetResult<()>,
 }
@@ -437,26 +460,34 @@ const BOOL_FALSE: [u8; 1] = [0];
 impl DataPageSlicer for BooleanBitmapSlicer<'_> {
     #[inline]
     fn next(&mut self) -> &[u8] {
-        if let Some(val) = self.bitmap_iter.next() {
-            if val {
-                return &BOOL_TRUE;
-            }
+        if self.bit_offset >= self.total_bits {
+            self.error = Err(fmt_err!(Layout, "not enough bitmap values to iterate"));
             return &BOOL_FALSE;
         }
-        self.error = Err(fmt_err!(Layout, "not enough bitmap values to iterate"));
-        &BOOL_FALSE
+        let byte_idx = self.bit_offset >> 3;
+        let bit_idx = self.bit_offset & 7;
+        self.bit_offset += 1;
+        if (self.data[byte_idx] >> bit_idx) & 1 == 1 {
+            &BOOL_TRUE
+        } else {
+            &BOOL_FALSE
+        }
     }
 
     #[inline]
     fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()> {
-        if let Some(val) = self.bitmap_iter.next() {
-            if val {
-                return dest.extend_from_slice(&BOOL_TRUE);
-            }
+        if self.bit_offset >= self.total_bits {
+            self.error = Err(fmt_err!(Layout, "not enough bitmap values to iterate"));
             return dest.extend_from_slice(&BOOL_FALSE);
         }
-        self.error = Err(fmt_err!(Layout, "not enough bitmap values to iterate"));
-        dest.extend_from_slice(&BOOL_FALSE)
+        let byte_idx = self.bit_offset >> 3;
+        let bit_idx = self.bit_offset & 7;
+        self.bit_offset += 1;
+        if (self.data[byte_idx] >> bit_idx) & 1 == 1 {
+            dest.extend_from_slice(&BOOL_TRUE)
+        } else {
+            dest.extend_from_slice(&BOOL_FALSE)
+        }
     }
 
     fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
@@ -464,28 +495,49 @@ impl DataPageSlicer for BooleanBitmapSlicer<'_> {
             return Ok(());
         }
 
-        const BATCH: usize = 1024;
-        let mut buf = [0u8; BATCH];
+        if self.bit_offset + count > self.total_bits {
+            self.error = Err(fmt_err!(Layout, "not enough bitmap values to iterate"));
+            return Ok(());
+        }
+
         let mut remaining = count;
 
-        while remaining > 0 {
-            let n = remaining.min(BATCH);
-            for slot in buf.iter_mut().take(n) {
-                *slot = if let Some(val) = self.bitmap_iter.next() {
-                    val as u8
-                } else {
-                    self.error = Err(fmt_err!(Layout, "not enough bitmap values to iterate"));
-                    0
-                };
+        // Handle unaligned start bits
+        let bit_idx = self.bit_offset & 7;
+        if bit_idx != 0 {
+            let bits_in_first_byte = (8 - bit_idx).min(remaining);
+            let byte = self.data[self.bit_offset >> 3] >> bit_idx;
+            let mut buf = [0u8; 8];
+            for i in 0..bits_in_first_byte {
+                buf[i] = (byte >> i) & 1;
             }
-            dest.extend_from_slice(&buf[..n])?;
-            remaining -= n;
+            dest.extend_from_slice(&buf[..bits_in_first_byte])?;
+            self.bit_offset += bits_in_first_byte;
+            remaining -= bits_in_first_byte;
         }
+
+        // Process full bytes using lookup table (8 bits -> 8 bytes at a time)
+        let start_byte = self.bit_offset >> 3;
+        let full_bytes = remaining >> 3;
+        for i in 0..full_bytes {
+            dest.extend_from_slice(&BITMAP_LUT[self.data[start_byte + i] as usize])?;
+        }
+        self.bit_offset += full_bytes << 3;
+        remaining -= full_bytes << 3;
+
+        // Handle remaining bits
+        if remaining > 0 {
+            let byte = self.data[self.bit_offset >> 3];
+            let expanded = &BITMAP_LUT[byte as usize];
+            dest.extend_from_slice(&expanded[..remaining])?;
+            self.bit_offset += remaining;
+        }
+
         Ok(())
     }
 
     fn skip(&mut self, count: usize) {
-        self.bitmap_iter.advance(count);
+        self.bit_offset += count;
     }
 
     fn count(&self) -> usize {
@@ -503,7 +555,12 @@ impl DataPageSlicer for BooleanBitmapSlicer<'_> {
 
 impl<'a> BooleanBitmapSlicer<'a> {
     pub fn new(data: &'a [u8], row_count: usize, sliced_row_count: usize) -> Self {
-        let bitmap_iter = BitmapIter::new(data, 0, row_count);
-        Self { bitmap_iter, sliced_row_count, error: Ok(()) }
+        Self {
+            data,
+            bit_offset: 0,
+            total_bits: row_count,
+            sliced_row_count,
+            error: Ok(()),
+        }
     }
 }
