@@ -393,6 +393,12 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         txMemBase.putLong(readBaseOffset + TX_OFFSET_STRUCT_VERSION_64, 0);
     }
 
+    public void setStructureVersionUnsafe(long metadataVersion) {
+        // Column structure version = 0, encoded as NONE_COL_STRUCTURE_VERSION
+        long structVer = Numbers.encodeLowHighInts((int) metadataVersion, NONE_COL_STRUCTURE_VERSION);
+        txMemBase.putLong(readBaseOffset + TX_OFFSET_STRUCT_VERSION_64, structVer);
+    }
+
     public void resetTimestamp() {
         recordStructureVersion++;
         prevMaxTimestamp = Long.MIN_VALUE;

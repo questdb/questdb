@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.griffin.PurgingOperator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -45,6 +46,7 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class ColumnPurgeOperator implements Closeable {
     private static final Log LOG = LogFactory.getLog(ColumnPurgeOperator.class);
+    private final BlockFileReader blockFileReader;
     private final LongList completedRowIds = new LongList();
     private final CairoEngine engine;
     private final FilesFacade ff;
@@ -77,6 +79,7 @@ public class ColumnPurgeOperator implements Closeable {
             microClock = configuration.getMicrosecondClock();
             longBytes = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_SQL_COMPILER);
             this.scoreboardUseMode = scoreboardUseMode;
+            this.blockFileReader = new BlockFileReader(configuration);
         } catch (Throwable th) {
             close();
             throw th;
@@ -99,6 +102,7 @@ public class ColumnPurgeOperator implements Closeable {
             microClock = configuration.getMicrosecondClock();
             longBytes = 0;
             scoreboardUseMode = ScoreboardUseMode.VACUUM_TABLE;
+            this.blockFileReader = new BlockFileReader(configuration);
         } catch (Throwable th) {
             close();
             throw th;
@@ -113,6 +117,7 @@ public class ColumnPurgeOperator implements Closeable {
         }
         closePurgeLogCompleteFile();
         Misc.free(path);
+        Misc.free(blockFileReader);
         txnScoreboard = Misc.free(txnScoreboard);
     }
 
@@ -384,17 +389,16 @@ public class ColumnPurgeOperator implements Closeable {
 
     private int readTableId(Path path) {
         final int INVALID_TABLE_ID = Integer.MIN_VALUE;
-        long fd = ff.openRO(path.trimTo(pathTableLen).concat(TableUtils.META_FILE_NAME).$());
-        if (fd < 0) {
-            return INVALID_TABLE_ID;
-        }
         try {
-            if (ff.read(fd, longBytes, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) != Integer.BYTES) {
+            blockFileReader.of(path.trimTo(pathTableLen).concat(TableUtils.META_FILE_NAME).$());
+            BlockFileReader.BlockCursor cursor = blockFileReader.getCursor();
+            if (!cursor.hasNext()) {
                 return INVALID_TABLE_ID;
             }
-            return Unsafe.getUnsafe().getInt(longBytes);
-        } finally {
-            ff.close(fd);
+            // First block is the CORE block, tableId is at offset 4 (after formatVersion)
+            return cursor.next().getInt(Integer.BYTES); // skip formatVersion (4 bytes), read tableId
+        } catch (CairoException e) {
+            return INVALID_TABLE_ID;
         }
     }
 

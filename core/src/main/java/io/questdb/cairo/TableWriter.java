@@ -98,7 +98,6 @@ import io.questdb.std.FindVisitor;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.LongList;
-import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -205,7 +204,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final int detachedMkDirMode;
     private final CairoEngine engine;
     private final FilesFacade ff;
-    private final int fileOperationRetryCount;
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     private final LongList indexSequences = new LongList();
     private final ObjList<ColumnIndexer> indexers;
@@ -259,7 +257,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final Uuid uuid = new Uuid();
-    private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
     private ObjList<? extends MemoryA> activeColumns;
     private ObjList<Runnable> activeNullSetters;
     private ColumnVersionReader attachColumnVersionReader;
@@ -273,7 +270,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long avgRecordSize;
     private boolean avoidIndexOnCommit = false;
     private BlockFileReader blockFileReader;
-    private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     private BlockFileWriter blockFileWriter;
     private int columnCount;
     private long commitRowCount;
@@ -383,7 +379,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.ff = configuration.getFilesFacade();
         this.mkDirMode = configuration.getMkDirMode();
         this.detachedMkDirMode = configuration.getDetachedMkDirMode();
-        this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableToken = tableToken;
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
         this.engine = cairoEngine;
@@ -9001,23 +8996,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return false;
     }
 
-    private void recoverFromMetaRenameFailure() {
-        openMetaFile(path, pathSize, metadata);
-    }
-
     private void recoverFromSymbolMapWriterFailure(CharSequence columnName) {
         removeSymbolMapFilesQuiet(columnName, getTxn());
         // With BlockFile format, we don't delete meta file - the previous version is in the inactive region.
         // The caller should mark as distressed and the next writer open will handle recovery.
-    }
-
-    private void recoverOpenColumnFailure() {
-        // With BlockFile format, the previous metadata is still in the inactive region.
-        // We don't delete the meta file - just mark as distressed.
-        // The next writer open will handle any version mismatch.
-        // Some writer in-memory state will be still dirty, and it's not easy to roll everything back
-        // for all the failure points. It's safer to re-open the writer object after a column-add failure.
-        distressed = true;
     }
 
     private void releaseIndexerWriters() {
@@ -9216,45 +9198,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private int rename(int retries) {
-        try {
-            int index = 0;
-            other.concat(META_PREV_FILE_NAME).$();
-            path.concat(META_FILE_NAME).$();
-            int l = other.size();
-
-            do {
-                if (index > 0) {
-                    other.trimTo(l);
-                    other.put('.').put(index);
-                }
-
-                if (!ff.removeQuiet(other.$())) {
-                    LOG.info().$("could not remove target of rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).I$();
-                    index++;
-                    continue;
-                }
-
-                if (ff.rename(path.$(), other.$()) != FILES_RENAME_OK) {
-                    LOG.info().$("could not rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).I$();
-                    index++;
-                    continue;
-                }
-
-                return index;
-
-            } while (index < retries);
-
-            throw CairoException.critical(0)
-                    .put("could not rename ").put(path)
-                    .put(". Max number of attempts reached [").put(index)
-                    .put("]. Last target was: ").put(other);
-        } finally {
-            path.trimTo(pathSize);
-            other.trimTo(pathSize);
-        }
-    }
-
     private long repairDataGaps(final long timestamp) {
         if (txWriter.getMaxTimestamp() != Numbers.LONG_NULL && PartitionBy.isPartitioned(partitionBy)) {
             long fixedRowCount = 0;
@@ -9355,96 +9298,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         o3PartitionUpdateSink.clear();
         o3PartitionUpdateSink.setBlockSize(PARTITION_SINK_SIZE_LONGS + metadata.getColumnCount());
-    }
-
-    private void restoreMetaFrom(CharSequence fromBase, int fromIndex) {
-        try {
-            path.concat(fromBase);
-            if (fromIndex > 0) {
-                path.put('.').put(fromIndex);
-            }
-            path.$();
-
-            renameOrFail(ff, path.$(), other.concat(META_FILE_NAME).$());
-        } finally {
-            path.trimTo(pathSize);
-            other.trimTo(pathSize);
-        }
-    }
-
-    private int rewriteMetadata(TableWriterMetadata metadata) {
-        try {
-            int columnCount = metadata.getColumnCount();
-            int index = openMetaSwapFile(ff, ddlMem, path, pathSize, configuration.getMaxSwapFileCount());
-
-            ddlMem.putInt(metadata.getColumnCount());
-            ddlMem.putInt(metadata.getPartitionBy());
-            ddlMem.putInt(metadata.getTimestampIndex());
-            ddlMem.putInt(ColumnType.VERSION);
-            ddlMem.putInt(metadata.getTableId());
-            ddlMem.putInt(metadata.getMaxUncommittedRows());
-            ddlMem.putLong(metadata.getO3MaxLag());
-
-            int version = txWriter.getMetadataVersion() + 1;
-            metadata.setMetadataVersion(version);
-            ddlMem.putLong(metadata.getMetadataVersion());
-            ddlMem.putBool(metadata.isWalEnabled());
-            ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount));
-            ddlMem.putInt(metadata.getTtlHoursOrMonths());
-
-            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
-            for (int i = 0; i < columnCount; i++) {
-                int columnType = metadata.getColumnType(i);
-                ddlMem.putInt(columnType);
-
-                long flags = 0;
-                if (metadata.isIndexed(i)) {
-                    flags |= META_FLAG_BIT_INDEXED;
-                }
-
-                if (metadata.isDedupKey(i)) {
-                    flags |= META_FLAG_BIT_DEDUP_KEY;
-                }
-
-                if (metadata.getSymbolCacheFlag(i)) {
-                    flags |= META_FLAG_BIT_SYMBOL_CACHE;
-                }
-
-                ddlMem.putLong(flags);
-
-                ddlMem.putInt(metadata.getIndexBlockCapacity(i));
-                ddlMem.putInt(metadata.getSymbolCapacity(i));
-                ddlMem.skip(4);
-                int replaceColumnIndex = metadata.getReplacingColumnIndex(i);
-                ddlMem.putInt(replaceColumnIndex > -1 ? replaceColumnIndex + 1 : 0);
-                ddlMem.skip(4);
-            }
-
-            long nameOffset = getColumnNameOffset(columnCount);
-            ddlMem.jumpTo(nameOffset);
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metadata.getColumnName(i);
-                ddlMem.putStr(columnName);
-                nameOffset += Vm.getStorageLength(columnName);
-            }
-
-            ddlMem.sync(false);
-            return index;
-        } catch (Throwable th) {
-            LOG.critical().$("could not write to metadata file, rolling back DDL [path=").$(path).$(']').$();
-            try {
-                // Revert metadata
-                openMetaFile(path, pathSize, metadata);
-            } catch (Throwable th2) {
-                LOG.critical().$("could not revert metadata, writer distressed [path=").$(path).$(']').$();
-                throwDistressException(th2);
-            }
-            throw th;
-        } finally {
-            // truncate _meta file exactly, the file size never changes.
-            // Metadata updates are written to a new file and then swapped by renaming.
-            ddlMem.close(true, Vm.TRUNCATE_TO_POINTER);
-        }
     }
 
     private void rollbackIndexes() {
@@ -10702,11 +10555,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @FunctionalInterface
     public interface ExtensionListener {
         void onTableExtended(long timestamp);
-    }
-
-    @FunctionalInterface
-    private interface FragileCode {
-        void run();
     }
 
     public interface Row {

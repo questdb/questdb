@@ -358,9 +358,6 @@ public class TableSnapshotRestore implements QuietCloseable {
             // Copy metadata files from source to the destination table location
             copyMetadataFiles(srcPath, dstPath, recoveredMetaFiles);
 
-            // Reset _todo_ file to prevent metadata restoration on table open
-            TableUtils.resetTodoLog(ff, dstPath, dstPathLen, memFile);
-
             // Rebuild symbol files and other table-specific processing
             rebuildTableFiles(dstPath.trimTo(dstPathLen), symbolFilesCount, rebuildPartitionColumnIndexes);
         }

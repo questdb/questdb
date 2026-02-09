@@ -121,8 +121,6 @@ public final class TableUtils {
     public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
     public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
-    public static final String META_PREV_FILE_NAME = "_meta.prev";
-    public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(2);
     // 24-byte header left empty for possible future use
     // in case we decide to support ALTER MAT VIEW, and modify mat view metadata
@@ -145,7 +143,7 @@ public final class TableUtils {
     public static final int TABLE_TYPE_VIEW = 3;
     public static final int TABLE_TYPE_WAL = 1;
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
-    public static final String TODO_FILE_NAME = "_todo_";
+//    public static final String TODO_FILE_NAME = "_todo_";
     /**
      * TXN file structure
      * struct {
@@ -164,7 +162,6 @@ public final class TableUtils {
      */
     public static final String TXN_FILE_NAME = "_txn";
     public static final String CHECKPOINT_SEQ_TXN_FILE_NAME = "_txn";
-    public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
     // transaction file structure
     // @formatter:off
     public static final int TX_BASE_HEADER_SECTION_PADDING = 12; // Add some free space into header for future use
@@ -627,10 +624,6 @@ public final class TableUtils {
                 createColumnVersionFile(mem);
                 mem.sync(false);
                 mem.close();
-
-                resetTodoLog(ff, path, rootLen, mem);
-                // allocate txn scoreboard
-                path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
             }
 
             mem.smallFile(ff, path.trimTo(rootLen).concat(TABLE_NAME_FILE).$(), MemoryTag.MMAP_DEFAULT);
@@ -1542,19 +1535,19 @@ public final class TableUtils {
         }
     }
 
-    public static void resetTodoLog(FilesFacade ff, Path path, int rootLen, MemoryMARW mem) {
-        mem.smallFile(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-        mem.jumpTo(0);
-        mem.putLong(24, 0); // txn check
-        Unsafe.getUnsafe().storeFence();
-        mem.putLong(8, 0); // hashLo
-        mem.putLong(16, 0); // hashHi
-        Unsafe.getUnsafe().storeFence();
-        mem.putLong(0, 0); // txn
-        mem.putLong(32, 0); // count
-        mem.jumpTo(40);
-        mem.sync(false);
-    }
+//    public static void resetTodoLog(FilesFacade ff, Path path, int rootLen, MemoryMARW mem) {
+//        mem.smallFile(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+//        mem.jumpTo(0);
+//        mem.putLong(24, 0); // txn check
+//        Unsafe.getUnsafe().storeFence();
+//        mem.putLong(8, 0); // hashLo
+//        mem.putLong(16, 0); // hashHi
+//        Unsafe.getUnsafe().storeFence();
+//        mem.putLong(0, 0); // txn
+//        mem.putLong(32, 0); // count
+//        mem.jumpTo(40);
+//        mem.sync(false);
+//    }
 
     public static void resetTxn(
             MemoryMW txMem,
@@ -2190,43 +2183,6 @@ public final class TableUtils {
 
     static boolean isColumnIndexed(MemoryR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_INDEXED) != 0;
-    }
-
-    static int openMetaSwapFile(FilesFacade ff, MemoryMA mem, Path path, int rootLen, int retryCount) {
-        try {
-            path.concat(META_SWAP_FILE_NAME).$();
-            int l = path.size();
-            int index = 0;
-            do {
-                if (index > 0) {
-                    path.trimTo(l).put('.').put(index);
-                }
-
-                LPSZ lpsz = path.$();
-                if (ff.removeQuiet(lpsz)) {
-                    try {
-                        mem.smallFile(ff, lpsz, MemoryTag.MMAP_DEFAULT);
-                        mem.jumpTo(0);
-                        return index;
-                    } catch (CairoException e) {
-                        // right, cannot open file for some reason?
-                        LOG.error()
-                                .$("could not open swap [file=").$(path)
-                                .$(", msg=").$safe(e.getFlyweightMessage())
-                                .$(", errno=").$(e.getErrno())
-                                .I$();
-                    }
-                } else {
-                    LOG.error()
-                            .$("could not remove swap [file=").$(path)
-                            .$(", errno=").$(ff.errno())
-                            .I$();
-                }
-            } while (++index < retryCount);
-            throw CairoException.critical(0).put("Cannot open indexed file. Max number of attempts reached [").put(index).put("]. Last file tried: ").put(path);
-        } finally {
-            path.trimTo(rootLen);
-        }
     }
 
     public interface FailureCloseable {

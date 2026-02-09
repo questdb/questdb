@@ -88,7 +88,7 @@ public class BlockFileReader implements Closeable {
             currentVersion = getVersionVolatile();
 
             // Specific version must be current or current-1
-            if (version >= 0 && version != currentVersion && version != currentVersion - 1) {
+            if (version >= 0 && version != currentVersion) {
                 return null;
             }
             long readVersion = version < 0 ? currentVersion : version;

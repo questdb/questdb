@@ -127,11 +127,7 @@ public class TableConverter {
                                     metadata.reloadFromBlockFile(holder);
                                     tableSequencerAPI.registerTable(tableId, metadata, token);
                                 }
-
-                                // Reset structure version
-                                holder.metadataVersion = 0;
                                 path.trimTo(rootLen).concat(dirNameSink);
-                                txWriter.resetStructureVersionUnsafe();
                             } else {
                                 // Converting from WAL to non-WAL
                                 if (!tableNameRegistry.isWalTableDropped(dirName) && tableSequencerAPI.prepareToConvertToNonWal(token)) {
@@ -145,6 +141,7 @@ public class TableConverter {
                             // Update walEnabled flag and write back using BlockFile
                             holder.walEnabled = walEnabled;
                             metaPath.trimTo(rootLen).concat(dirNameSink).concat(META_FILE_NAME).$();
+                            long newMetadataVersion;
                             try (BlockFileWriter blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode())) {
                                 blockFileWriter.of(metaPath.$());
                                 TableMetadataFileBlock.write(
@@ -159,6 +156,13 @@ public class TableConverter {
                                         holder.ttlHoursOrMonths,
                                         holder.columns
                                 );
+                                newMetadataVersion = blockFileWriter.getVersion();
+                            }
+
+                            if (walEnabled) {
+                                // Set structure version to match the new BlockFile version
+                                // with column structure version = 0
+                                txWriter.setStructureVersionUnsafe(newMetadataVersion);
                             }
                             convertedTables.add(token);
 
