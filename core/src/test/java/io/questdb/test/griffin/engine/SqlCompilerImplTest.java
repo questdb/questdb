@@ -7179,12 +7179,32 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCloseMissingArgRejected() throws Exception {
+        assertException("CLOSE", 5, "argument expected");
+    }
+
+    @Test
+    public void testDiscardMissingArgRejected() throws Exception {
+        assertException("DISCARD", 7, "argument expected");
+    }
+
+    @Test
+    public void testResetMissingArgRejected() throws Exception {
+        assertException("RESET", 5, "argument expected");
+    }
+
+    @Test
     public void testTrailingContentAfterNoOpRejected() throws Exception {
         assertException(
                 "RESET ALL extra",
                 10,
                 "unexpected token [extra]"
         );
+    }
+
+    @Test
+    public void testUnlistenMissingArgRejected() throws Exception {
+        assertException("UNLISTEN", 8, "argument expected");
     }
 
     @Test
