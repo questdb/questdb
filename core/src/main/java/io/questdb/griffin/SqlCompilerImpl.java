@@ -3322,7 +3322,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         // skip optional SESSION / LOCAL prefix
         if (Chars.equalsLowerCaseAscii("session", tok) || Chars.equalsLowerCaseAscii("local", tok)) {
-            tok = expectToken(lexer, "parameter name");
+            expectToken(lexer, "parameter name");
         }
 
         tok = expectToken(lexer, "'=' or 'TO'");
@@ -3330,12 +3330,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "'=' or 'TO' expected");
         }
 
-        expectToken(lexer, "value");
-
         // consume optional [, value]*
-        while ((tok = SqlUtil.fetchNext(lexer)) != null && !isSemicolon(tok) && Chars.equals(tok, ',')) {
+        do {
             expectToken(lexer, "value");
-        }
+        } while ((tok = SqlUtil.fetchNext(lexer)) != null && !isSemicolon(tok) && Chars.equals(tok, ','));
+
         if (tok != null) {
             lexer.unparseLast();
         }
