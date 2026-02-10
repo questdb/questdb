@@ -63,8 +63,8 @@ public class BoundedMetaReaderTest extends AbstractCairoTest {
             Assert.assertTrue(hasIssue(state, RecoveryIssueCode.TRUNCATED_OUTPUT));
             // Bug #1: column names must be correct even when capped.
             // The on-disk name offset depends on the real column count (6), not the cap (2).
-            Assert.assertEquals("i", state.getColumns().getQuick(0).getName());
-            Assert.assertEquals("l", state.getColumns().getQuick(1).getName());
+            Assert.assertEquals("i", state.getColumns().getQuick(0).name());
+            Assert.assertEquals("l", state.getColumns().getQuick(1).name());
         });
     }
 
@@ -75,12 +75,12 @@ public class BoundedMetaReaderTest extends AbstractCairoTest {
 
             MetaState state = readMetaState("meta_names", new BoundedMetaReader(FF));
             Assert.assertTrue(state.getColumns().size() >= 6);
-            Assert.assertEquals("i", state.getColumns().getQuick(0).getName());
-            Assert.assertEquals("l", state.getColumns().getQuick(1).getName());
-            Assert.assertEquals("d", state.getColumns().getQuick(2).getName());
-            Assert.assertEquals("s", state.getColumns().getQuick(3).getName());
-            Assert.assertEquals("sym", state.getColumns().getQuick(4).getName());
-            Assert.assertEquals("ts", state.getColumns().getQuick(5).getName());
+            Assert.assertEquals("i", state.getColumns().getQuick(0).name());
+            Assert.assertEquals("l", state.getColumns().getQuick(1).name());
+            Assert.assertEquals("d", state.getColumns().getQuick(2).name());
+            Assert.assertEquals("s", state.getColumns().getQuick(3).name());
+            Assert.assertEquals("sym", state.getColumns().getQuick(4).name());
+            Assert.assertEquals("ts", state.getColumns().getQuick(5).name());
         });
     }
 
@@ -225,11 +225,11 @@ public class BoundedMetaReaderTest extends AbstractCairoTest {
             boolean foundNonIndexed = false;
             for (int i = 0, n = state.getColumns().size(); i < n; i++) {
                 MetaColumnState col = state.getColumns().getQuick(i);
-                if ("sym".equals(col.getName())) {
-                    Assert.assertTrue("sym should be indexed", col.isIndexed());
+                if ("sym".equals(col.name())) {
+                    Assert.assertTrue("sym should be indexed", col.indexed());
                     foundIndexed = true;
                 } else {
-                    Assert.assertFalse(col.getName() + " should not be indexed", col.isIndexed());
+                    Assert.assertFalse(col.name() + " should not be indexed", col.indexed());
                     foundNonIndexed = true;
                 }
             }
@@ -246,23 +246,23 @@ public class BoundedMetaReaderTest extends AbstractCairoTest {
             MetaState state = readMetaState("meta_types", new BoundedMetaReader(FF));
             Assert.assertTrue(state.getColumns().size() >= 6);
 
-            Assert.assertEquals(ColumnType.INT, state.getColumns().getQuick(0).getType());
-            Assert.assertEquals("INT", state.getColumns().getQuick(0).getTypeName());
+            Assert.assertEquals(ColumnType.INT, state.getColumns().getQuick(0).type());
+            Assert.assertEquals("INT", state.getColumns().getQuick(0).typeName());
 
-            Assert.assertEquals(ColumnType.LONG, state.getColumns().getQuick(1).getType());
-            Assert.assertEquals("LONG", state.getColumns().getQuick(1).getTypeName());
+            Assert.assertEquals(ColumnType.LONG, state.getColumns().getQuick(1).type());
+            Assert.assertEquals("LONG", state.getColumns().getQuick(1).typeName());
 
-            Assert.assertEquals(ColumnType.DOUBLE, state.getColumns().getQuick(2).getType());
-            Assert.assertEquals("DOUBLE", state.getColumns().getQuick(2).getTypeName());
+            Assert.assertEquals(ColumnType.DOUBLE, state.getColumns().getQuick(2).type());
+            Assert.assertEquals("DOUBLE", state.getColumns().getQuick(2).typeName());
 
-            Assert.assertEquals(ColumnType.STRING, state.getColumns().getQuick(3).getType());
-            Assert.assertEquals("STRING", state.getColumns().getQuick(3).getTypeName());
+            Assert.assertEquals(ColumnType.STRING, state.getColumns().getQuick(3).type());
+            Assert.assertEquals("STRING", state.getColumns().getQuick(3).typeName());
 
-            Assert.assertEquals(ColumnType.SYMBOL, state.getColumns().getQuick(4).getType());
-            Assert.assertEquals("SYMBOL", state.getColumns().getQuick(4).getTypeName());
+            Assert.assertEquals(ColumnType.SYMBOL, state.getColumns().getQuick(4).type());
+            Assert.assertEquals("SYMBOL", state.getColumns().getQuick(4).typeName());
 
-            Assert.assertEquals(ColumnType.TIMESTAMP, state.getColumns().getQuick(5).getType());
-            Assert.assertEquals("TIMESTAMP", state.getColumns().getQuick(5).getTypeName());
+            Assert.assertEquals(ColumnType.TIMESTAMP, state.getColumns().getQuick(5).type());
+            Assert.assertEquals("TIMESTAMP", state.getColumns().getQuick(5).typeName());
         });
     }
 
@@ -488,7 +488,7 @@ public class BoundedMetaReaderTest extends AbstractCairoTest {
             boolean foundDropped = false;
             for (int i = 0, n = state.getColumns().size(); i < n; i++) {
                 MetaColumnState col = state.getColumns().getQuick(i);
-                if (col.getType() < 0) {
+                if (col.type() < 0) {
                     foundDropped = true;
                     break;
                 }
@@ -538,7 +538,7 @@ public class BoundedMetaReaderTest extends AbstractCairoTest {
     private static int countIssuesWithCode(MetaState state, RecoveryIssueCode issueCode) {
         int count = 0;
         for (int i = 0, n = state.getIssues().size(); i < n; i++) {
-            if (state.getIssues().getQuick(i).getCode() == issueCode) {
+            if (state.getIssues().getQuick(i).code() == issueCode) {
                 count++;
             }
         }
@@ -597,7 +597,7 @@ public class BoundedMetaReaderTest extends AbstractCairoTest {
 
     private static boolean hasIssue(MetaState state, RecoveryIssueCode issueCode) {
         for (int i = 0, n = state.getIssues().size(); i < n; i++) {
-            if (state.getIssues().getQuick(i).getCode() == issueCode) {
+            if (state.getIssues().getQuick(i).code() == issueCode) {
                 return true;
             }
         }
@@ -606,7 +606,7 @@ public class BoundedMetaReaderTest extends AbstractCairoTest {
 
     private static boolean hasIssueContaining(MetaState state, String substring) {
         for (int i = 0, n = state.getIssues().size(); i < n; i++) {
-            if (state.getIssues().getQuick(i).getMessage().contains(substring)) {
+            if (state.getIssues().getQuick(i).message().contains(substring)) {
                 return true;
             }
         }

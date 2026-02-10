@@ -29,51 +29,6 @@ package io.questdb.recovery;
  * {@link PartitionScanStatus} and, when matched, to the corresponding
  * {@link TxnPartitionState} and resolved row count.
  */
-public final class PartitionScanEntry {
-    private final String dirName;
-    private final String partitionName;
-    private final long rowCount;
-    private final PartitionScanStatus status;
-    private final int txnIndex;
-    private final TxnPartitionState txnPartition;
-
-    public PartitionScanEntry(
-            String dirName,
-            String partitionName,
-            PartitionScanStatus status,
-            TxnPartitionState txnPartition,
-            int txnIndex,
-            long rowCount
-    ) {
-        this.dirName = dirName;
-        this.partitionName = partitionName;
-        this.status = status;
-        this.txnPartition = txnPartition;
-        this.txnIndex = txnIndex;
-        this.rowCount = rowCount;
-    }
-
-    public String getDirName() {
-        return dirName;
-    }
-
-    public String getPartitionName() {
-        return partitionName;
-    }
-
-    public long getRowCount() {
-        return rowCount;
-    }
-
-    public PartitionScanStatus getStatus() {
-        return status;
-    }
-
-    public int getTxnIndex() {
-        return txnIndex;
-    }
-
-    public TxnPartitionState getTxnPartition() {
-        return txnPartition;
-    }
+public record PartitionScanEntry(String dirName, String partitionName, PartitionScanStatus status,
+                                 TxnPartitionState txnPartition, int txnIndex, long rowCount) {
 }

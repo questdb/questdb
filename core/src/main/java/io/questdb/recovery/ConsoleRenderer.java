@@ -85,10 +85,10 @@ public class ConsoleRenderer {
             long expectedAuxSize, long actualAuxSize, boolean inPartition,
             PrintStream out
     ) {
-        out.println("column: " + col.getName());
+        out.println("column: " + col.name());
         out.println("index: " + columnIndex);
-        out.println("type: " + col.getTypeName());
-        out.println("indexed: " + (col.isIndexed() ? "yes" : "no"));
+        out.println("type: " + col.typeName());
+        out.println("indexed: " + (col.indexed() ? "yes" : "no"));
         if (!inPartition) {
             out.println("status: not in partition (column added later)");
             return;
@@ -107,7 +107,7 @@ public class ConsoleRenderer {
     }
 
     public void printCheckResult(ColumnCheckResult result, String tableName, long rowCount, PrintStream out) {
-        out.printf("checking %s, partition %s (rows=%d):%n", tableName, result.getPartitionDirName(), rowCount);
+        out.printf("checking %s, partition %s (rows=%d):%n", tableName, result.partitionDirName(), rowCount);
         out.printf("  %s %s %s %s %s %s %s%n",
                 color.bold(String.format("%-5s", "idx")),
                 color.bold(String.format("%-30s", "column")),
@@ -117,26 +117,26 @@ public class ConsoleRenderer {
                 color.bold(String.format("%-15s", "expected")),
                 color.bold(String.format("%-15s", "actual")));
 
-        ObjList<ColumnCheckEntry> entries = result.getEntries();
+        ObjList<ColumnCheckEntry> entries = result.entries();
         for (int i = 0, n = entries.size(); i < n; i++) {
             ColumnCheckEntry entry = entries.getQuick(i);
-            String colTopStr = entry.getColumnTop() >= 0 ? Long.toString(entry.getColumnTop()) : "-";
-            String expectedStr = entry.getExpectedSize() >= 0 ? formatBytes(entry.getExpectedSize()) : "-";
-            String actualStr = entry.getActualSize() >= 0 ? formatBytes(entry.getActualSize()) : "-";
-            String statusStr = colorCheckStatus(entry.getStatus());
+            String colTopStr = entry.columnTop() >= 0 ? Long.toString(entry.columnTop()) : "-";
+            String expectedStr = entry.expectedSize() >= 0 ? formatBytes(entry.expectedSize()) : "-";
+            String actualStr = entry.actualSize() >= 0 ? formatBytes(entry.actualSize()) : "-";
+            String statusStr = colorCheckStatus(entry.status());
 
             out.printf("  %-5d %-30s %-15s %s %-10s %-15s %-15s%n",
-                    entry.getColumnIndex(),
-                    entry.getColumnName(),
-                    entry.getColumnTypeName(),
+                    entry.columnIndex(),
+                    entry.columnName(),
+                    entry.columnTypeName(),
                     statusStr,
                     colTopStr,
                     expectedStr,
                     actualStr
             );
 
-            if (entry.getMessage() != null && !entry.getMessage().isEmpty()) {
-                out.println("        " + color.red(entry.getMessage()));
+            if (entry.message() != null && !entry.message().isEmpty()) {
+                out.println("        " + color.red(entry.message()));
             }
         }
         out.println();
@@ -167,7 +167,7 @@ public class ConsoleRenderer {
             for (int i = 0, n = columns.size(); i < n; i++) {
                 MetaColumnState col = columns.getQuick(i);
                 String note = "";
-                if (col.getType() < 0) {
+                if (col.type() < 0) {
                     note = color.cyan("dropped");
                 } else if (columnTops != null && i < columnTops.length && columnTops[i] == -1) {
                     note = color.yellow("not in partition");
@@ -175,9 +175,9 @@ public class ConsoleRenderer {
                 out.printf(
                         "%-5d %-30s %-15s %-8s %s%n",
                         i,
-                        col.getName(),
-                        col.getTypeName(),
-                        col.isIndexed() ? "yes" : "no",
+                        col.name(),
+                        col.typeName(),
+                        col.indexed() ? "yes" : "no",
                         note
                 );
             }
@@ -224,8 +224,8 @@ public class ConsoleRenderer {
                     color.bold(String.format("%-10s", "status")));
             for (int i = 0, n = entries.size(); i < n; i++) {
                 PartitionScanEntry entry = entries.getQuick(i);
-                TxnPartitionState part = entry.getTxnPartition();
-                String statusStr = switch (entry.getStatus()) {
+                TxnPartitionState part = entry.txnPartition();
+                String statusStr = switch (entry.status()) {
                     case MATCHED -> "";
                     case ORPHAN -> color.yellow("ORPHAN");
                     case MISSING -> color.red("MISSING");
@@ -234,17 +234,17 @@ public class ConsoleRenderer {
                     out.printf(
                             "%-5d %-30s %-12d %-10s %-10s %-10s%n",
                             i,
-                            entry.getDirName(),
-                            entry.getRowCount(),
-                            part.isParquetFormat() ? "parquet" : "native",
-                            part.isReadOnly(),
+                            entry.dirName(),
+                            entry.rowCount(),
+                            part.parquetFormat() ? "parquet" : "native",
+                            part.readOnly(),
                             statusStr
                     );
                 } else {
                     out.printf(
                             "%-5d %-30s %-12s %-10s %-10s %-10s%n",
                             i,
-                            entry.getDirName(),
+                            entry.dirName(),
                             "-",
                             "-",
                             "-",
@@ -323,16 +323,16 @@ public class ConsoleRenderer {
     }
 
     public void printWalDirDetail(WalDirEntry walEntry, SeqTxnLogState seqState, PrintStream out) {
-        out.println("walId: " + walEntry.getWalId());
-        out.println("status: " + walEntry.getStatus());
-        out.println("segments: " + walEntry.getSegments().size());
-        out.println("txnlog references: " + walEntry.getTxnlogReferenceCount());
+        out.println("walId: " + walEntry.walId());
+        out.println("status: " + walEntry.status());
+        out.println("segments: " + walEntry.segments().size());
+        out.println("txnlog references: " + walEntry.txnlogReferenceCount());
 
         if (seqState != null) {
             int dataCount = 0;
             ObjList<SeqTxnRecord> records = seqState.getRecords();
             for (int i = 0, n = records.size(); i < n; i++) {
-                if (records.getQuick(i).getWalId() == walEntry.getWalId()) {
+                if (records.getQuick(i).getWalId() == walEntry.walId()) {
                     dataCount++;
                 }
             }
@@ -547,7 +547,7 @@ public class ConsoleRenderer {
         out.println("symbols: " + state.getSymbols().size());
         for (int i = 0, n = state.getSymbols().size(); i < n; i++) {
             TxnSymbolState symbol = state.getSymbols().getQuick(i);
-            out.printf("  [%d] count=%d transient=%d%n", symbol.getIndex(), symbol.getCount(), symbol.getTransientCount());
+            out.printf("  [%d] count=%d transient=%d%n", symbol.index(), symbol.count(), symbol.transientCount());
         }
 
         int partitionCount = state.getPartitions().size();
@@ -558,23 +558,23 @@ public class ConsoleRenderer {
             boolean isLast = (i == partitionCount - 1);
             long rowCount = (isLast && state.getTransientRowCount() != TxnState.UNSET_LONG)
                     ? state.getTransientRowCount()
-                    : partition.getRowCount();
-            if (partition.isParquetFormat()) {
+                    : partition.rowCount();
+            if (partition.parquetFormat()) {
                 out.printf(
                         "  [%d] %s  rows=%d  parquet=true  readOnly=%s  parquetFileSize=%s%n",
-                        partition.getIndex(),
-                        formatTimestamp(partition.getTimestampLo()),
+                        partition.index(),
+                        formatTimestamp(partition.timestampLo()),
                         rowCount,
-                        partition.isReadOnly(),
-                        formatBytes(partition.getParquetFileSize())
+                        partition.readOnly(),
+                        formatBytes(partition.parquetFileSize())
                 );
             } else {
                 out.printf(
                         "  [%d] %s  rows=%d  parquet=false  readOnly=%s%n",
-                        partition.getIndex(),
-                        formatTimestamp(partition.getTimestampLo()),
+                        partition.index(),
+                        formatTimestamp(partition.timestampLo()),
                         rowCount,
-                        partition.isReadOnly()
+                        partition.readOnly()
                 );
             }
         }
@@ -782,10 +782,10 @@ public class ConsoleRenderer {
 
         for (int i = 0, n = entries.size(); i < n; i++) {
             WalDirEntry entry = entries.getQuick(i);
-            String statusStr = switch (entry.getStatus()) {
+            String statusStr = switch (entry.status()) {
                 case REFERENCED -> "";
                 case ORPHAN -> color.cyan("unreferenced");
-                case MISSING -> isWalFullyApplied(entry.getWalId(), seqState, txnState)
+                case MISSING -> isWalFullyApplied(entry.walId(), seqState, txnState)
                         ? "purged"
                         : color.red("MISSING");
             };
@@ -802,7 +802,7 @@ public class ConsoleRenderer {
                 ObjList<SeqTxnRecord> records = seqState.getRecords();
                 for (int j = 0, m = records.size(); j < m; j++) {
                     SeqTxnRecord rec = records.getQuick(j);
-                    if (rec.getWalId() == entry.getWalId()) {
+                    if (rec.getWalId() == entry.walId()) {
                         if (rec.getRowCount() != TxnState.UNSET_LONG) {
                             totalRows += rec.getRowCount();
                             hasRowData = true;
@@ -834,9 +834,9 @@ public class ConsoleRenderer {
 
             out.printf("%-5d %-12s %-10d %-8d %-10s %-20s %s%n",
                     i,
-                    "wal" + entry.getWalId(),
-                    entry.getSegments().size(),
-                    entry.getTxnlogReferenceCount(),
+                    "wal" + entry.walId(),
+                    entry.segments().size(),
+                    entry.txnlogReferenceCount(),
                     rowsStr,
                     partStr,
                     statusStr
@@ -876,7 +876,7 @@ public class ConsoleRenderer {
 
             if (!seg.isComplete()) {
                 out.printf("%-5d %-10d %-10s %-10s %-10s %-10s %-20s %s%n",
-                        i, seg.getSegmentId(),
+                        i, seg.segmentId(),
                         seg.hasEventFile() ? "yes" : color.red("NO"),
                         seg.hasEventIndexFile() ? "yes" : color.red("NO"),
                         seg.hasMetaFile() ? "yes" : color.red("NO"),
@@ -901,7 +901,7 @@ public class ConsoleRenderer {
                 ObjList<SeqTxnRecord> records = seqState.getRecords();
                 for (int j = 0, m = records.size(); j < m; j++) {
                     SeqTxnRecord rec = records.getQuick(j);
-                    if (rec.getWalId() == walId && rec.getSegmentId() == seg.getSegmentId()) {
+                    if (rec.getWalId() == walId && rec.getSegmentId() == seg.segmentId()) {
                         if (rec.getRowCount() != TxnState.UNSET_LONG) {
                             totalRows += rec.getRowCount();
                             hasRowData = true;
@@ -947,7 +947,7 @@ public class ConsoleRenderer {
 
             out.printf("%-5d %-10d %-10s %-10s %-10s %-10s %-20s %s%n",
                     i,
-                    seg.getSegmentId(),
+                    seg.segmentId(),
                     seg.hasEventFile() ? "yes" : color.red("NO"),
                     seg.hasEventIndexFile() ? "yes" : color.red("NO"),
                     seg.hasMetaFile() ? "yes" : color.red("NO"),
@@ -1008,7 +1008,7 @@ public class ConsoleRenderer {
         boolean headerPrinted = false;
         for (int i = 0, n = entries.size(); i < n; i++) {
             RegistryEntry entry = entries.getQuick(i);
-            if (!discoveredDirs.contains(entry.getDirName())) {
+            if (!discoveredDirs.contains(entry.dirName())) {
                 if (!headerPrinted) {
                     out.println("registry entries with missing directories:");
                     out.printf("  %-36s %-36s %-8s %-8s%n", "table_name", "dir_name", "tableId", "type");
@@ -1016,10 +1016,10 @@ public class ConsoleRenderer {
                 }
                 out.printf(
                         "  %-36s %-36s %-8d %-8s%n",
-                        entry.getTableName(),
-                        entry.getDirName(),
-                        entry.getTableId(),
-                        formatTableType(entry.getTableType())
+                        entry.tableName(),
+                        entry.dirName(),
+                        entry.tableId(),
+                        formatTableType(entry.tableType())
                 );
             }
         }
@@ -1034,7 +1034,7 @@ public class ConsoleRenderer {
             }
             return color.yellow("NOT_IN_REG");
         }
-        if (!entry.getTableName().equals(table.getTableName())) {
+        if (!entry.tableName().equals(table.getTableName())) {
             return color.red("MISMATCH");
         }
         return "";
@@ -1257,7 +1257,7 @@ public class ConsoleRenderer {
         out.println(title + ":");
         for (int i = 0, n = issues.size(); i < n; i++) {
             ReadIssue issue = issues.getQuick(i);
-            out.println("  " + colorSeverity(issue.getSeverity()) + " " + issue.getCode() + " " + issue.getMessage());
+            out.println("  " + colorSeverity(issue.severity()) + " " + issue.code() + " " + issue.message());
         }
     }
 }

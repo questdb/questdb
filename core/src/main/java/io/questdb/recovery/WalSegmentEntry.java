@@ -24,35 +24,10 @@
 
 package io.questdb.recovery;
 
-/** Immutable description of a WAL segment directory. */
-public final class WalSegmentEntry {
-    private final boolean hasEventFile;
-    private final boolean hasEventIndexFile;
-    private final boolean hasMetaFile;
-    private final int segmentId;
-
-    public WalSegmentEntry(int segmentId, boolean hasEventFile, boolean hasEventIndexFile, boolean hasMetaFile) {
-        this.segmentId = segmentId;
-        this.hasEventFile = hasEventFile;
-        this.hasEventIndexFile = hasEventIndexFile;
-        this.hasMetaFile = hasMetaFile;
-    }
-
-    public int getSegmentId() {
-        return segmentId;
-    }
-
-    public boolean hasEventFile() {
-        return hasEventFile;
-    }
-
-    public boolean hasEventIndexFile() {
-        return hasEventIndexFile;
-    }
-
-    public boolean hasMetaFile() {
-        return hasMetaFile;
-    }
+/**
+ * Immutable description of a WAL segment directory.
+ */
+public record WalSegmentEntry(int segmentId, boolean hasEventFile, boolean hasEventIndexFile, boolean hasMetaFile) {
 
     public boolean isComplete() {
         return hasEventFile && hasEventIndexFile && hasMetaFile;

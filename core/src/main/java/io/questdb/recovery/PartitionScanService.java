@@ -68,8 +68,8 @@ public class PartitionScanService {
             txnPartitionCount = partitions.size();
             for (int i = 0; i < txnPartitionCount; i++) {
                 TxnPartitionState part = partitions.getQuick(i);
-                String partName = ConsoleRenderer.formatPartitionName(partitionBy, timestampType, part.getTimestampLo());
-                String dirName = ConsoleRenderer.formatPartitionDirName(partName, part.getNameTxn());
+                String partName = ConsoleRenderer.formatPartitionName(partitionBy, timestampType, part.timestampLo());
+                String dirName = ConsoleRenderer.formatPartitionDirName(partName, part.nameTxn());
                 expectedDirNames.put(dirName, i);
                 expectedDirNameList.add(dirName);
                 partitionNameList.add(partName);
@@ -132,7 +132,7 @@ public class PartitionScanService {
         }
 
         // ORPHAN entries sorted alphabetically
-        orphanEntries.sort(Comparator.comparing(PartitionScanEntry::getDirName));
+        orphanEntries.sort(Comparator.comparing(PartitionScanEntry::dirName));
         for (int i = 0, n = orphanEntries.size(); i < n; i++) {
             result.add(orphanEntries.getQuick(i));
         }
@@ -164,7 +164,7 @@ public class PartitionScanService {
                 && txnState.getTransientRowCount() != TxnState.UNSET_LONG) {
             return txnState.getTransientRowCount();
         }
-        return part.getRowCount();
+        return part.rowCount();
     }
 
     static boolean isInternalDir(String name) {

@@ -29,66 +29,7 @@ package io.questdb.recovery;
  * Contains the partition timestamp, row count, name txn, and flags (parquet
  * format, read-only).
  */
-public final class TxnPartitionState {
-    private final int index;
-    private final long nameTxn;
-    private final long parquetFileSize;
-    private final boolean parquetFormat;
-    private final boolean readOnly;
-    private final long rowCount;
-    private final int squashCount;
-    private final long timestampLo;
-
-    public TxnPartitionState(
-            int index,
-            long timestampLo,
-            long rowCount,
-            long nameTxn,
-            long parquetFileSize,
-            boolean parquetFormat,
-            boolean readOnly,
-            int squashCount
-    ) {
-        this.index = index;
-        this.timestampLo = timestampLo;
-        this.rowCount = rowCount;
-        this.nameTxn = nameTxn;
-        this.parquetFileSize = parquetFileSize;
-        this.parquetFormat = parquetFormat;
-        this.readOnly = readOnly;
-        this.squashCount = squashCount;
-    }
-
-    public int getIndex() {
-        return index;
-    }
-
-    public long getNameTxn() {
-        return nameTxn;
-    }
-
-    public long getParquetFileSize() {
-        return parquetFileSize;
-    }
-
-    public long getRowCount() {
-        return rowCount;
-    }
-
-    public int getSquashCount() {
-        return squashCount;
-    }
-
-    public long getTimestampLo() {
-        return timestampLo;
-    }
-
-    public boolean isParquetFormat() {
-        return parquetFormat;
-    }
-
-    public boolean isReadOnly() {
-        return readOnly;
-    }
+public record TxnPartitionState(int index, long timestampLo, long rowCount, long nameTxn, long parquetFileSize,
+                                boolean parquetFormat, boolean readOnly, int squashCount) {
 }
 

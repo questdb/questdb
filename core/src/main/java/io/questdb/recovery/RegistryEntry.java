@@ -24,39 +24,8 @@
 
 package io.questdb.recovery;
 
-/** Immutable entry from the {@code tables.d} registry: table name, directory, ID, and type. */
-public final class RegistryEntry {
-    private final String dirName;
-    private final boolean removed;
-    private final int tableId;
-    private final String tableName;
-    private final int tableType;
-
-    public RegistryEntry(String tableName, String dirName, int tableId, int tableType, boolean removed) {
-        this.tableName = tableName;
-        this.dirName = dirName;
-        this.tableId = tableId;
-        this.tableType = tableType;
-        this.removed = removed;
-    }
-
-    public String getDirName() {
-        return dirName;
-    }
-
-    public int getTableId() {
-        return tableId;
-    }
-
-    public String getTableName() {
-        return tableName;
-    }
-
-    public int getTableType() {
-        return tableType;
-    }
-
-    public boolean isRemoved() {
-        return removed;
-    }
+/**
+ * Immutable entry from the {@code tables.d} registry: table name, directory, ID, and type.
+ */
+public record RegistryEntry(String tableName, String dirName, int tableId, int tableType, boolean removed) {
 }

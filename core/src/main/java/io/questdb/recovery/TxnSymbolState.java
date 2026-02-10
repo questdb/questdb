@@ -28,27 +28,6 @@ package io.questdb.recovery;
  * Immutable symbol entry from the {@code _txn} symbol segment: committed
  * count and transient count for one symbol column.
  */
-public final class TxnSymbolState {
-    private final int count;
-    private final int index;
-    private final int transientCount;
-
-    public TxnSymbolState(int index, int count, int transientCount) {
-        this.index = index;
-        this.count = count;
-        this.transientCount = transientCount;
-    }
-
-    public int getCount() {
-        return count;
-    }
-
-    public int getIndex() {
-        return index;
-    }
-
-    public int getTransientCount() {
-        return transientCount;
-    }
+public record TxnSymbolState(int index, int count, int transientCount) {
 }
 

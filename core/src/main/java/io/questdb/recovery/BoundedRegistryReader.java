@@ -329,7 +329,7 @@ public class BoundedRegistryReader extends AbstractBoundedReader {
 
         // copy final non-removed entries into state
         for (RegistryEntry entry : entryMap.values()) {
-            if (!entry.isRemoved()) {
+            if (!entry.removed()) {
                 state.getEntries().add(entry);
             }
         }

@@ -131,7 +131,7 @@ public class WalDiscoveryService {
         }
 
         // sort by walId
-        entries.sort(Comparator.comparingInt(WalDirEntry::getWalId));
+        entries.sort(Comparator.comparingInt(WalDirEntry::walId));
 
         return new WalScanState(entries, issues);
     }
@@ -166,7 +166,7 @@ public class WalDiscoveryService {
             }
         }
 
-        segments.sort(Comparator.comparingInt(WalSegmentEntry::getSegmentId));
+        segments.sort(Comparator.comparingInt(WalSegmentEntry::segmentId));
         return segments;
     }
 

@@ -67,7 +67,7 @@ public final class MetaState {
 
     public int getTimestampColumnType() {
         if (timestampIndex >= 0 && timestampIndex < columns.size()) {
-            return columns.getQuick(timestampIndex).getType();
+            return columns.getQuick(timestampIndex).type();
         }
         return ColumnType.TIMESTAMP;
     }

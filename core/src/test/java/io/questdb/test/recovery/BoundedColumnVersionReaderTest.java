@@ -34,7 +34,6 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.recovery.BoundedColumnVersionReader;
 import io.questdb.recovery.ColumnVersionState;
-import io.questdb.recovery.ReadIssue;
 import io.questdb.recovery.RecoveryIssueCode;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -455,7 +454,7 @@ public class BoundedColumnVersionReaderTest extends AbstractCairoTest {
 
     private static boolean hasIssue(ColumnVersionState state, RecoveryIssueCode code) {
         for (int i = 0, n = state.getIssues().size(); i < n; i++) {
-            if (state.getIssues().getQuick(i).getCode() == code) {
+            if (state.getIssues().getQuick(i).code() == code) {
                 return true;
             }
         }

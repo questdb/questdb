@@ -264,7 +264,7 @@ public class TableDiscoveryServiceTest extends AbstractCairoTest {
 
     private static boolean hasIssue(DiscoveredTable table, RecoveryIssueCode issueCode) {
         for (int i = 0, n = table.getIssues().size(); i < n; i++) {
-            if (table.getIssues().getQuick(i).getCode() == issueCode) {
+            if (table.getIssues().getQuick(i).code() == issueCode) {
                 return true;
             }
         }

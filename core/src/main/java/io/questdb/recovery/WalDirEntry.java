@@ -26,33 +26,9 @@ package io.questdb.recovery;
 
 import io.questdb.std.ObjList;
 
-/** Immutable description of a WAL directory (e.g., wal1, wal2). */
-public final class WalDirEntry {
-    private final ObjList<WalSegmentEntry> segments;
-    private final WalScanStatus status;
-    private final int txnlogReferenceCount;
-    private final int walId;
-
-    public WalDirEntry(int walId, ObjList<WalSegmentEntry> segments, WalScanStatus status, int txnlogReferenceCount) {
-        this.walId = walId;
-        this.segments = segments;
-        this.status = status;
-        this.txnlogReferenceCount = txnlogReferenceCount;
-    }
-
-    public ObjList<WalSegmentEntry> getSegments() {
-        return segments;
-    }
-
-    public WalScanStatus getStatus() {
-        return status;
-    }
-
-    public int getTxnlogReferenceCount() {
-        return txnlogReferenceCount;
-    }
-
-    public int getWalId() {
-        return walId;
-    }
+/**
+ * Immutable description of a WAL directory (e.g., wal1, wal2).
+ */
+public record WalDirEntry(int walId, ObjList<WalSegmentEntry> segments, WalScanStatus status,
+                          int txnlogReferenceCount) {
 }

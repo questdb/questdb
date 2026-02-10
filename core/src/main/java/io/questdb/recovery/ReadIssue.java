@@ -24,28 +24,9 @@
 
 package io.questdb.recovery;
 
-/** Immutable issue triple accumulated during file reading: severity, code, and human-readable message. */
-public final class ReadIssue {
-    private final RecoveryIssueCode code;
-    private final String message;
-    private final RecoveryIssueSeverity severity;
-
-    public ReadIssue(RecoveryIssueSeverity severity, RecoveryIssueCode code, String message) {
-        this.severity = severity;
-        this.code = code;
-        this.message = message;
-    }
-
-    public RecoveryIssueCode getCode() {
-        return code;
-    }
-
-    public String getMessage() {
-        return message;
-    }
-
-    public RecoveryIssueSeverity getSeverity() {
-        return severity;
-    }
+/**
+ * Immutable issue triple accumulated during file reading: severity, code, and human-readable message.
+ */
+public record ReadIssue(RecoveryIssueSeverity severity, RecoveryIssueCode code, String message) {
 }
 

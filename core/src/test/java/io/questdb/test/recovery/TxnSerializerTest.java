@@ -901,7 +901,7 @@ public class TxnSerializerTest extends AbstractCairoTest {
         for (int i = 0, n = state.getSymbols().size(); i < n; i++) {
             Assert.assertEquals(
                     context + ": symbol[" + i + "].count",
-                    state.getSymbols().getQuick(i).getCount(),
+                    state.getSymbols().getQuick(i).count(),
                     txReader.getSymbolValueCount(i)
             );
         }
@@ -912,14 +912,14 @@ public class TxnSerializerTest extends AbstractCairoTest {
         for (int i = 0; i < partitionCount; i++) {
             TxnPartitionState sp = state.getPartitions().getQuick(i);
             boolean isLast = (i == partitionCount - 1);
-            long expectedRowCount = isLast ? state.getTransientRowCount() : sp.getRowCount();
-            Assert.assertEquals(context + ": partition[" + i + "].timestampLo", sp.getTimestampLo(), txReader.getPartitionTimestampByIndex(i));
+            long expectedRowCount = isLast ? state.getTransientRowCount() : sp.rowCount();
+            Assert.assertEquals(context + ": partition[" + i + "].timestampLo", sp.timestampLo(), txReader.getPartitionTimestampByIndex(i));
             Assert.assertEquals(context + ": partition[" + i + "].rowCount", expectedRowCount, txReader.getPartitionSize(i));
-            Assert.assertEquals(context + ": partition[" + i + "].nameTxn", sp.getNameTxn(), txReader.getPartitionNameTxn(i));
-            Assert.assertEquals(context + ": partition[" + i + "].parquetFileSize", sp.getParquetFileSize(), txReader.getPartitionParquetFileSize(i));
-            Assert.assertEquals(context + ": partition[" + i + "].parquetFormat", sp.isParquetFormat(), txReader.isPartitionParquet(i));
-            Assert.assertEquals(context + ": partition[" + i + "].readOnly", sp.isReadOnly(), txReader.isPartitionReadOnly(i));
-            Assert.assertEquals(context + ": partition[" + i + "].squashCount", sp.getSquashCount(), txReader.getPartitionSquashCount(i));
+            Assert.assertEquals(context + ": partition[" + i + "].nameTxn", sp.nameTxn(), txReader.getPartitionNameTxn(i));
+            Assert.assertEquals(context + ": partition[" + i + "].parquetFileSize", sp.parquetFileSize(), txReader.getPartitionParquetFileSize(i));
+            Assert.assertEquals(context + ": partition[" + i + "].parquetFormat", sp.parquetFormat(), txReader.isPartitionParquet(i));
+            Assert.assertEquals(context + ": partition[" + i + "].readOnly", sp.readOnly(), txReader.isPartitionReadOnly(i));
+            Assert.assertEquals(context + ": partition[" + i + "].squashCount", sp.squashCount(), txReader.getPartitionSquashCount(i));
         }
     }
 
@@ -961,25 +961,25 @@ public class TxnSerializerTest extends AbstractCairoTest {
         for (int i = 0, n = expected.getSymbols().size(); i < n; i++) {
             TxnSymbolState es = expected.getSymbols().getQuick(i);
             TxnSymbolState as = actual.getSymbols().getQuick(i);
-            Assert.assertEquals(context + ": symbol[" + i + "].count", es.getCount(), as.getCount());
-            Assert.assertEquals(context + ": symbol[" + i + "].transientCount", es.getTransientCount(), as.getTransientCount());
+            Assert.assertEquals(context + ": symbol[" + i + "].count", es.count(), as.count());
+            Assert.assertEquals(context + ": symbol[" + i + "].transientCount", es.transientCount(), as.transientCount());
         }
 
         Assert.assertEquals(context + ": partition count", expected.getPartitions().size(), actual.getPartitions().size());
         for (int i = 0, n = expected.getPartitions().size(); i < n; i++) {
             TxnPartitionState ep = expected.getPartitions().getQuick(i);
             TxnPartitionState ap = actual.getPartitions().getQuick(i);
-            Assert.assertEquals(context + ": partition[" + i + "].timestampLo", ep.getTimestampLo(), ap.getTimestampLo());
-            Assert.assertEquals(context + ": partition[" + i + "].rowCount", ep.getRowCount(), ap.getRowCount());
-            Assert.assertEquals(context + ": partition[" + i + "].nameTxn", ep.getNameTxn(), ap.getNameTxn());
-            Assert.assertEquals(context + ": partition[" + i + "].parquetFileSize", ep.getParquetFileSize(), ap.getParquetFileSize());
-            Assert.assertEquals(context + ": partition[" + i + "].parquetFormat", ep.isParquetFormat(), ap.isParquetFormat());
-            Assert.assertEquals(context + ": partition[" + i + "].readOnly", ep.isReadOnly(), ap.isReadOnly());
-            Assert.assertEquals(context + ": partition[" + i + "].squashCount", ep.getSquashCount(), ap.getSquashCount());
+            Assert.assertEquals(context + ": partition[" + i + "].timestampLo", ep.timestampLo(), ap.timestampLo());
+            Assert.assertEquals(context + ": partition[" + i + "].rowCount", ep.rowCount(), ap.rowCount());
+            Assert.assertEquals(context + ": partition[" + i + "].nameTxn", ep.nameTxn(), ap.nameTxn());
+            Assert.assertEquals(context + ": partition[" + i + "].parquetFileSize", ep.parquetFileSize(), ap.parquetFileSize());
+            Assert.assertEquals(context + ": partition[" + i + "].parquetFormat", ep.parquetFormat(), ap.parquetFormat());
+            Assert.assertEquals(context + ": partition[" + i + "].readOnly", ep.readOnly(), ap.readOnly());
+            Assert.assertEquals(context + ": partition[" + i + "].squashCount", ep.squashCount(), ap.squashCount());
         }
 
         for (int i = 0, n = actual.getIssues().size(); i < n; i++) {
-            Assert.fail(context + ": unexpected issue: " + actual.getIssues().getQuick(i).getMessage());
+            Assert.fail(context + ": unexpected issue: " + actual.getIssues().getQuick(i).message());
         }
     }
 
@@ -1005,13 +1005,13 @@ public class TxnSerializerTest extends AbstractCairoTest {
                 .mapWriterCount(src.getMapWriterCount());
         for (int i = 0, n = src.getSymbols().size(); i < n; i++) {
             TxnSymbolState s = src.getSymbols().getQuick(i);
-            b.symbols().add(new TxnSymbolState(s.getIndex(), s.getCount(), s.getTransientCount()));
+            b.symbols().add(new TxnSymbolState(s.index(), s.count(), s.transientCount()));
         }
         for (int i = 0, n = src.getPartitions().size(); i < n; i++) {
             TxnPartitionState p = src.getPartitions().getQuick(i);
             b.partitions().add(new TxnPartitionState(
-                    p.getIndex(), p.getTimestampLo(), p.getRowCount(), p.getNameTxn(),
-                    p.getParquetFileSize(), p.isParquetFormat(), p.isReadOnly(), p.getSquashCount()
+                    p.index(), p.timestampLo(), p.rowCount(), p.nameTxn(),
+                    p.parquetFileSize(), p.parquetFormat(), p.readOnly(), p.squashCount()
             ));
         }
         return b;

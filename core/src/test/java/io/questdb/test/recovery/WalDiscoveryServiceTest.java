@@ -63,8 +63,8 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
             WalScanState result = new WalDiscoveryService(FF).scan(tableDir, seqState);
             ObjList<WalDirEntry> entries = result.getEntries();
             Assert.assertEquals(1, entries.size());
-            Assert.assertEquals(1, entries.getQuick(0).getWalId());
-            Assert.assertEquals(WalScanStatus.REFERENCED, entries.getQuick(0).getStatus());
+            Assert.assertEquals(1, entries.getQuick(0).walId());
+            Assert.assertEquals(WalScanStatus.REFERENCED, entries.getQuick(0).status());
         });
     }
 
@@ -80,8 +80,8 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
             WalScanState result = new WalDiscoveryService(FF).scan(tableDir, seqState);
             ObjList<WalDirEntry> entries = result.getEntries();
             Assert.assertEquals(1, entries.size());
-            Assert.assertEquals(1, entries.getQuick(0).getWalId());
-            Assert.assertEquals(WalScanStatus.REFERENCED, entries.getQuick(0).getStatus());
+            Assert.assertEquals(1, entries.getQuick(0).walId());
+            Assert.assertEquals(WalScanStatus.REFERENCED, entries.getQuick(0).status());
         });
     }
 
@@ -99,7 +99,7 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
             ObjList<WalDirEntry> entries = result.getEntries();
             Assert.assertEquals(2, entries.size());
             for (int i = 0; i < entries.size(); i++) {
-                Assert.assertEquals(WalScanStatus.ORPHAN, entries.getQuick(i).getStatus());
+                Assert.assertEquals(WalScanStatus.ORPHAN, entries.getQuick(i).status());
             }
         });
     }
@@ -128,9 +128,9 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
             WalScanState result = new WalDiscoveryService(FF).scan(tableDir, seqState);
             ObjList<WalDirEntry> entries = result.getEntries();
             Assert.assertEquals(3, entries.size());
-            Assert.assertEquals(1, entries.getQuick(0).getWalId());
-            Assert.assertEquals(3, entries.getQuick(1).getWalId());
-            Assert.assertEquals(5, entries.getQuick(2).getWalId());
+            Assert.assertEquals(1, entries.getQuick(0).walId());
+            Assert.assertEquals(3, entries.getQuick(1).walId());
+            Assert.assertEquals(5, entries.getQuick(2).walId());
         });
     }
 
@@ -145,9 +145,9 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
             WalScanState result = new WalDiscoveryService(FF).scan(tableDir, seqState);
             ObjList<WalDirEntry> entries = result.getEntries();
             Assert.assertEquals(1, entries.size());
-            Assert.assertEquals(2, entries.getQuick(0).getWalId());
-            Assert.assertEquals(WalScanStatus.MISSING, entries.getQuick(0).getStatus());
-            Assert.assertEquals(0, entries.getQuick(0).getSegments().size());
+            Assert.assertEquals(2, entries.getQuick(0).walId());
+            Assert.assertEquals(WalScanStatus.MISSING, entries.getQuick(0).status());
+            Assert.assertEquals(0, entries.getQuick(0).segments().size());
         });
     }
 
@@ -162,9 +162,9 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
             WalScanState result = new WalDiscoveryService(FF).scan(tableDir, seqState);
             ObjList<WalDirEntry> entries = result.getEntries();
             Assert.assertEquals(1, entries.size());
-            Assert.assertEquals(3, entries.getQuick(0).getWalId());
-            Assert.assertEquals(WalScanStatus.MISSING, entries.getQuick(0).getStatus());
-            Assert.assertEquals(4, entries.getQuick(0).getTxnlogReferenceCount());
+            Assert.assertEquals(3, entries.getQuick(0).walId());
+            Assert.assertEquals(WalScanStatus.MISSING, entries.getQuick(0).status());
+            Assert.assertEquals(4, entries.getQuick(0).txnlogReferenceCount());
         });
     }
 
@@ -183,14 +183,14 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
             Assert.assertEquals(3, entries.size());
 
             // sorted by walId: 1, 3, 5
-            Assert.assertEquals(1, entries.getQuick(0).getWalId());
-            Assert.assertEquals(WalScanStatus.REFERENCED, entries.getQuick(0).getStatus());
+            Assert.assertEquals(1, entries.getQuick(0).walId());
+            Assert.assertEquals(WalScanStatus.REFERENCED, entries.getQuick(0).status());
 
-            Assert.assertEquals(3, entries.getQuick(1).getWalId());
-            Assert.assertEquals(WalScanStatus.ORPHAN, entries.getQuick(1).getStatus());
+            Assert.assertEquals(3, entries.getQuick(1).walId());
+            Assert.assertEquals(WalScanStatus.ORPHAN, entries.getQuick(1).status());
 
-            Assert.assertEquals(5, entries.getQuick(2).getWalId());
-            Assert.assertEquals(WalScanStatus.MISSING, entries.getQuick(2).getStatus());
+            Assert.assertEquals(5, entries.getQuick(2).walId());
+            Assert.assertEquals(WalScanStatus.MISSING, entries.getQuick(2).status());
         });
     }
 
@@ -206,9 +206,9 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
             WalScanState result = new WalDiscoveryService(FF).scan(tableDir, seqState);
             ObjList<WalDirEntry> entries = result.getEntries();
             Assert.assertEquals(1, entries.size());
-            Assert.assertEquals(1, entries.getQuick(0).getWalId());
-            Assert.assertEquals(WalScanStatus.REFERENCED, entries.getQuick(0).getStatus());
-            Assert.assertEquals(5, entries.getQuick(0).getTxnlogReferenceCount());
+            Assert.assertEquals(1, entries.getQuick(0).walId());
+            Assert.assertEquals(WalScanStatus.REFERENCED, entries.getQuick(0).status());
+            Assert.assertEquals(5, entries.getQuick(0).txnlogReferenceCount());
         });
     }
 
@@ -226,8 +226,8 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
             ObjList<WalDirEntry> entries = result.getEntries();
             Assert.assertEquals(3, entries.size());
             for (int i = 0; i < 3; i++) {
-                Assert.assertEquals(i + 1, entries.getQuick(i).getWalId());
-                Assert.assertEquals(WalScanStatus.REFERENCED, entries.getQuick(i).getStatus());
+                Assert.assertEquals(i + 1, entries.getQuick(i).walId());
+                Assert.assertEquals(WalScanStatus.REFERENCED, entries.getQuick(i).status());
             }
         });
     }
@@ -255,7 +255,7 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
             WalScanState result = new WalDiscoveryService(FF).scan(tableDir, seqState);
             ObjList<WalDirEntry> entries = result.getEntries();
             Assert.assertEquals(1, entries.size());
-            Assert.assertEquals(1, entries.getQuick(0).getWalId());
+            Assert.assertEquals(1, entries.getQuick(0).walId());
         });
     }
 
@@ -281,8 +281,8 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
             ObjList<WalDirEntry> entries = result.getEntries();
             Assert.assertEquals(2, entries.size());
             for (int i = 0; i < entries.size(); i++) {
-                Assert.assertEquals(WalScanStatus.ORPHAN, entries.getQuick(i).getStatus());
-                Assert.assertEquals(0, entries.getQuick(i).getTxnlogReferenceCount());
+                Assert.assertEquals(WalScanStatus.ORPHAN, entries.getQuick(i).status());
+                Assert.assertEquals(0, entries.getQuick(i).txnlogReferenceCount());
             }
         });
     }
@@ -301,8 +301,8 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
 
             WalDirEntry orphan = findEntryByWalId(entries, 1);
             Assert.assertNotNull(orphan);
-            Assert.assertEquals(WalScanStatus.ORPHAN, orphan.getStatus());
-            Assert.assertEquals(0, orphan.getTxnlogReferenceCount());
+            Assert.assertEquals(WalScanStatus.ORPHAN, orphan.status());
+            Assert.assertEquals(0, orphan.txnlogReferenceCount());
         });
     }
 
@@ -318,8 +318,8 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
             WalScanState result = new WalDiscoveryService(FF).scan(tableDir, seqState);
             ObjList<WalDirEntry> entries = result.getEntries();
             Assert.assertEquals(1, entries.size());
-            Assert.assertEquals(5, entries.getQuick(0).getWalId());
-            Assert.assertEquals(WalScanStatus.ORPHAN, entries.getQuick(0).getStatus());
+            Assert.assertEquals(5, entries.getQuick(0).walId());
+            Assert.assertEquals(WalScanStatus.ORPHAN, entries.getQuick(0).status());
         });
     }
 
@@ -334,8 +334,8 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
             WalScanState result = new WalDiscoveryService(FF).scan(tableDir, seqState);
             ObjList<WalDirEntry> entries = result.getEntries();
             Assert.assertEquals(1, entries.size());
-            Assert.assertEquals(1, entries.getQuick(0).getWalId());
-            Assert.assertEquals(WalScanStatus.REFERENCED, entries.getQuick(0).getStatus());
+            Assert.assertEquals(1, entries.getQuick(0).walId());
+            Assert.assertEquals(WalScanStatus.REFERENCED, entries.getQuick(0).status());
         });
     }
 
@@ -351,7 +351,7 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
             WalScanState result = new WalDiscoveryService(FF).scan(tableDir, seqState);
             ObjList<WalDirEntry> entries = result.getEntries();
             Assert.assertEquals(1, entries.size());
-            Assert.assertEquals(3, entries.getQuick(0).getTxnlogReferenceCount());
+            Assert.assertEquals(3, entries.getQuick(0).txnlogReferenceCount());
         });
     }
 
@@ -367,11 +367,11 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
             WalScanState result = new WalDiscoveryService(FF).scan(tableDir, null);
             ObjList<WalDirEntry> entries = result.getEntries();
             Assert.assertEquals(1, entries.size());
-            ObjList<WalSegmentEntry> segments = entries.getQuick(0).getSegments();
+            ObjList<WalSegmentEntry> segments = entries.getQuick(0).segments();
             Assert.assertEquals(1, segments.size());
 
             WalSegmentEntry seg = segments.getQuick(0);
-            Assert.assertEquals(0, seg.getSegmentId());
+            Assert.assertEquals(0, seg.segmentId());
             Assert.assertFalse(seg.hasEventFile());
             Assert.assertFalse(seg.hasEventIndexFile());
             Assert.assertFalse(seg.hasMetaFile());
@@ -391,10 +391,10 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
             WalScanState result = new WalDiscoveryService(FF).scan(tableDir, null);
             ObjList<WalDirEntry> entries = result.getEntries();
             Assert.assertEquals(1, entries.size());
-            ObjList<WalSegmentEntry> segments = entries.getQuick(0).getSegments();
+            ObjList<WalSegmentEntry> segments = entries.getQuick(0).segments();
             Assert.assertEquals(3, segments.size());
             for (int i = 0; i < 3; i++) {
-                Assert.assertEquals(i, segments.getQuick(i).getSegmentId());
+                Assert.assertEquals(i, segments.getQuick(i).segmentId());
             }
         });
     }
@@ -411,7 +411,7 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
 
             WalScanState result = new WalDiscoveryService(FF).scan(tableDir, null);
             ObjList<WalDirEntry> entries = result.getEntries();
-            WalSegmentEntry seg = entries.getQuick(0).getSegments().getQuick(0);
+            WalSegmentEntry seg = entries.getQuick(0).segments().getQuick(0);
             Assert.assertTrue(seg.hasEventFile());
             Assert.assertTrue(seg.hasEventIndexFile());
             Assert.assertTrue(seg.hasMetaFile());
@@ -430,7 +430,7 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
             createSegmentFile(tableDir, 1, 0, "_meta");
 
             WalScanState result = new WalDiscoveryService(FF).scan(tableDir, null);
-            WalSegmentEntry seg = result.getEntries().getQuick(0).getSegments().getQuick(0);
+            WalSegmentEntry seg = result.getEntries().getQuick(0).segments().getQuick(0);
             Assert.assertFalse(seg.hasEventFile());
             Assert.assertTrue(seg.hasEventIndexFile());
             Assert.assertTrue(seg.hasMetaFile());
@@ -449,7 +449,7 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
             createSegmentFile(tableDir, 1, 0, "_meta");
 
             WalScanState result = new WalDiscoveryService(FF).scan(tableDir, null);
-            WalSegmentEntry seg = result.getEntries().getQuick(0).getSegments().getQuick(0);
+            WalSegmentEntry seg = result.getEntries().getQuick(0).segments().getQuick(0);
             Assert.assertTrue(seg.hasEventFile());
             Assert.assertFalse(seg.hasEventIndexFile());
             Assert.assertTrue(seg.hasMetaFile());
@@ -468,7 +468,7 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
             // missing _meta
 
             WalScanState result = new WalDiscoveryService(FF).scan(tableDir, null);
-            WalSegmentEntry seg = result.getEntries().getQuick(0).getSegments().getQuick(0);
+            WalSegmentEntry seg = result.getEntries().getQuick(0).segments().getQuick(0);
             Assert.assertTrue(seg.hasEventFile());
             Assert.assertTrue(seg.hasEventIndexFile());
             Assert.assertFalse(seg.hasMetaFile());
@@ -494,10 +494,10 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
             }
 
             WalScanState result = new WalDiscoveryService(FF).scan(tableDir, null);
-            ObjList<WalSegmentEntry> segments = result.getEntries().getQuick(0).getSegments();
+            ObjList<WalSegmentEntry> segments = result.getEntries().getQuick(0).segments();
             Assert.assertEquals(2, segments.size());
-            Assert.assertEquals(0, segments.getQuick(0).getSegmentId());
-            Assert.assertEquals(1, segments.getQuick(1).getSegmentId());
+            Assert.assertEquals(0, segments.getQuick(0).segmentId());
+            Assert.assertEquals(1, segments.getQuick(1).segmentId());
         });
     }
 
@@ -510,7 +510,7 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
             WalScanState result = new WalDiscoveryService(FF).scan(tableDir, null);
             ObjList<WalDirEntry> entries = result.getEntries();
             Assert.assertEquals(1, entries.size());
-            Assert.assertEquals(0, entries.getQuick(0).getSegments().size());
+            Assert.assertEquals(0, entries.getQuick(0).segments().size());
         });
     }
 
@@ -608,7 +608,7 @@ public class WalDiscoveryServiceTest extends AbstractCairoTest {
 
     private static WalDirEntry findEntryByWalId(ObjList<WalDirEntry> entries, int walId) {
         for (int i = 0, n = entries.size(); i < n; i++) {
-            if (entries.getQuick(i).getWalId() == walId) {
+            if (entries.getQuick(i).walId() == walId) {
                 return entries.getQuick(i);
             }
         }

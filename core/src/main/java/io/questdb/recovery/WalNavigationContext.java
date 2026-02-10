@@ -85,7 +85,7 @@ public class WalNavigationContext {
         ObjList<WalDirEntry> entries = cachedWalScanState.getEntries();
         for (int i = 0, n = entries.size(); i < n; i++) {
             WalDirEntry entry = entries.getQuick(i);
-            if (entry.getWalId() == walId) {
+            if (entry.walId() == walId) {
                 return entry;
             }
         }
@@ -153,9 +153,9 @@ public class WalNavigationContext {
             return;
         }
 
-        ObjList<WalSegmentEntry> segments = walEntry.getSegments();
+        ObjList<WalSegmentEntry> segments = walEntry.segments();
         for (int i = 0, n = segments.size(); i < n; i++) {
-            if (segments.getQuick(i).getSegmentId() == segmentId) {
+            if (segments.getQuick(i).segmentId() == segmentId) {
                 currentSegmentId = segmentId;
                 cachedWalEventState = null;
                 return;
@@ -203,11 +203,11 @@ public class WalNavigationContext {
             entry = entries.getQuick(idx);
         }
 
-        if (entry.getStatus() == WalScanStatus.MISSING) {
-            err.println("WAL directory is missing from disk: wal" + entry.getWalId());
+        if (entry.status() == WalScanStatus.MISSING) {
+            err.println("WAL directory is missing from disk: wal" + entry.walId());
             return;
         }
 
-        currentWalId = entry.getWalId();
+        currentWalId = entry.walId();
     }
 }

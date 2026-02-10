@@ -168,7 +168,7 @@ public class BoundedMetaReader extends AbstractBoundedReader {
 
             // look up the previously read column type/indexed info
             MetaColumnState existing = metaState.getColumns().getQuick(i);
-            metaState.getColumns().setQuick(i, new MetaColumnState(name, existing.getType(), existing.getTypeName(), existing.isIndexed()));
+            metaState.getColumns().setQuick(i, new MetaColumnState(name, existing.type(), existing.typeName(), existing.indexed()));
 
             offset = nameDataOffset + nameDataSize;
         }

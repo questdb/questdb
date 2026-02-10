@@ -1137,14 +1137,14 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
         for (int i = 0, n = state.getIssues().size(); i < n; i++) {
             if (i > 0) sb.append("; ");
             ReadIssue issue = state.getIssues().getQuick(i);
-            sb.append(issue.getCode()).append(':').append(issue.getMessage());
+            sb.append(issue.code()).append(':').append(issue.message());
         }
         return sb.toString();
     }
 
     private static boolean hasIssue(WalEventState state, RecoveryIssueCode issueCode) {
         for (int i = 0, n = state.getIssues().size(); i < n; i++) {
-            if (state.getIssues().getQuick(i).getCode() == issueCode) {
+            if (state.getIssues().getQuick(i).code() == issueCode) {
                 return true;
             }
         }
@@ -1153,7 +1153,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
 
     private static boolean hasIssueContaining(WalEventState state, String substring) {
         for (int i = 0, n = state.getIssues().size(); i < n; i++) {
-            if (state.getIssues().getQuick(i).getMessage().contains(substring)) {
+            if (state.getIssues().getQuick(i).message().contains(substring)) {
                 return true;
             }
         }

@@ -24,66 +24,9 @@
 
 package io.questdb.recovery;
 
-/** Validation result for a single column within a partition: status, expected/actual sizes, and message. */
-public final class ColumnCheckEntry {
-    private final long actualSize;
-    private final int columnIndex;
-    private final String columnName;
-    private final long columnTop;
-    private final String columnTypeName;
-    private final long expectedSize;
-    private final String message;
-    private final ColumnCheckStatus status;
-
-    public ColumnCheckEntry(
-            int columnIndex,
-            String columnName,
-            String columnTypeName,
-            ColumnCheckStatus status,
-            String message,
-            long columnTop,
-            long expectedSize,
-            long actualSize
-    ) {
-        this.columnIndex = columnIndex;
-        this.columnName = columnName;
-        this.columnTypeName = columnTypeName;
-        this.status = status;
-        this.message = message;
-        this.columnTop = columnTop;
-        this.expectedSize = expectedSize;
-        this.actualSize = actualSize;
-    }
-
-    public long getActualSize() {
-        return actualSize;
-    }
-
-    public int getColumnIndex() {
-        return columnIndex;
-    }
-
-    public String getColumnName() {
-        return columnName;
-    }
-
-    public long getColumnTop() {
-        return columnTop;
-    }
-
-    public String getColumnTypeName() {
-        return columnTypeName;
-    }
-
-    public long getExpectedSize() {
-        return expectedSize;
-    }
-
-    public String getMessage() {
-        return message;
-    }
-
-    public ColumnCheckStatus getStatus() {
-        return status;
-    }
+/**
+ * Validation result for a single column within a partition: status, expected/actual sizes, and message.
+ */
+public record ColumnCheckEntry(int columnIndex, String columnName, String columnTypeName, ColumnCheckStatus status,
+                               String message, long columnTop, long expectedSize, long actualSize) {
 }

@@ -24,33 +24,8 @@
 
 package io.questdb.recovery;
 
-/** Immutable column metadata from {@code _meta}: name, type, and indexed flag. */
-public final class MetaColumnState {
-    private final boolean indexed;
-    private final String name;
-    private final int type;
-    private final String typeName;
-
-    public MetaColumnState(String name, int type, String typeName, boolean indexed) {
-        this.name = name;
-        this.type = type;
-        this.typeName = typeName;
-        this.indexed = indexed;
-    }
-
-    public String getName() {
-        return name;
-    }
-
-    public int getType() {
-        return type;
-    }
-
-    public String getTypeName() {
-        return typeName;
-    }
-
-    public boolean isIndexed() {
-        return indexed;
-    }
+/**
+ * Immutable column metadata from {@code _meta}: name, type, and indexed flag.
+ */
+public record MetaColumnState(String name, int type, String typeName, boolean indexed) {
 }

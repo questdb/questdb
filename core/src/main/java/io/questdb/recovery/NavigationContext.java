@@ -192,8 +192,8 @@ public class NavigationContext {
         ObjList<MetaColumnState> columns = cachedMetaState.getColumns();
         long[] tops = new long[columns.size()];
         PartitionScanEntry entry = cachedPartitionScan.getQuick(currentPartitionIndex);
-        TxnPartitionState txnPart = entry.getTxnPartition();
-        long partitionTimestamp = txnPart != null ? txnPart.getTimestampLo() : 0;
+        TxnPartitionState txnPart = entry.txnPartition();
+        long partitionTimestamp = txnPart != null ? txnPart.timestampLo() : 0;
         ColumnVersionState cvState = cachedCvState != null && !hasCvIssues(cachedCvState) ? cachedCvState : null;
         for (int i = 0, n = columns.size(); i < n; i++) {
             tops[i] = cvState != null ? cvState.getColumnTop(partitionTimestamp, i) : 0;
@@ -227,14 +227,14 @@ public class NavigationContext {
         if (cachedMetaState == null || columnIndex < 0 || columnIndex >= cachedMetaState.getColumns().size()) {
             return "?";
         }
-        return cachedMetaState.getColumns().getQuick(columnIndex).getName();
+        return cachedMetaState.getColumns().getQuick(columnIndex).name();
     }
 
     public String formatPartitionName(int partitionIndex) {
         if (cachedPartitionScan == null || partitionIndex < 0 || partitionIndex >= cachedPartitionScan.size()) {
             return "?";
         }
-        return cachedPartitionScan.getQuick(partitionIndex).getPartitionName();
+        return cachedPartitionScan.getQuick(partitionIndex).partitionName();
     }
 
     public boolean getCachedColumnInPartition() {
@@ -375,7 +375,7 @@ public class NavigationContext {
             return true;
         }
         for (int i = 0, n = cvState.getIssues().size(); i < n; i++) {
-            if (cvState.getIssues().getQuick(i).getSeverity() == RecoveryIssueSeverity.ERROR) {
+            if (cvState.getIssues().getQuick(i).severity() == RecoveryIssueSeverity.ERROR) {
                 return true;
             }
         }
@@ -389,7 +389,7 @@ public class NavigationContext {
         }
 
         PartitionScanEntry partEntry = cachedPartitionScan.getQuick(currentPartitionIndex);
-        if (partEntry.getTxnPartition() != null && partEntry.getTxnPartition().isParquetFormat()) {
+        if (partEntry.txnPartition() != null && partEntry.txnPartition().parquetFormat()) {
             err.println("cannot enter columns of a parquet partition");
             return;
         }
@@ -410,7 +410,7 @@ public class NavigationContext {
         // try by column name
         if (colIndex < 0) {
             for (int i = 0, n = columns.size(); i < n; i++) {
-                if (target.equalsIgnoreCase(columns.getQuick(i).getName())) {
+                if (target.equalsIgnoreCase(columns.getQuick(i).name())) {
                     colIndex = i;
                     break;
                 }
@@ -423,8 +423,8 @@ public class NavigationContext {
         }
 
         MetaColumnState col = columns.getQuick(colIndex);
-        if (col.getType() < 0) {
-            err.println("cannot enter dropped column: " + col.getName());
+        if (col.type() < 0) {
+            err.println("cannot enter dropped column: " + col.name());
             return;
         }
 
@@ -473,14 +473,14 @@ public class NavigationContext {
         // try by partition name, then by raw dir name
         for (int i = 0, n = cachedPartitionScan.size(); i < n; i++) {
             PartitionScanEntry entry = cachedPartitionScan.getQuick(i);
-            if (target.equals(entry.getPartitionName())) {
+            if (target.equals(entry.partitionName())) {
                 currentPartitionIndex = i;
                 return;
             }
         }
         for (int i = 0, n = cachedPartitionScan.size(); i < n; i++) {
             PartitionScanEntry entry = cachedPartitionScan.getQuick(i);
-            if (target.equals(entry.getDirName())) {
+            if (target.equals(entry.dirName())) {
                 currentPartitionIndex = i;
                 return;
             }
@@ -516,11 +516,11 @@ public class NavigationContext {
 
     private void computeColumnCache() {
         PartitionScanEntry entry = cachedPartitionScan.getQuick(currentPartitionIndex);
-        TxnPartitionState txnPart = entry.getTxnPartition();
+        TxnPartitionState txnPart = entry.txnPartition();
         long partitionRowCount = txnPart != null
-                ? entry.getRowCount()
+                ? entry.rowCount()
                 : 0;
-        long partitionTimestamp = txnPart != null ? txnPart.getTimestampLo() : 0;
+        long partitionTimestamp = txnPart != null ? txnPart.timestampLo() : 0;
 
         ColumnVersionState cvState = cachedCvState != null && !hasCvIssues(cachedCvState) ? cachedCvState : null;
         cachedColumnTop = cvState != null ? cvState.getColumnTop(partitionTimestamp, currentColumnIndex) : 0;

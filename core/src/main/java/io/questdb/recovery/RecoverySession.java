@@ -252,7 +252,7 @@ public class RecoverySession {
                         ensureSeqTxnLogState(nav);
                         enrichRecordsFromEvents(ctx, nav);
                         renderer.printWalSegments(
-                                walEntry.getSegments(),
+                                walEntry.segments(),
                                 nav.getCachedSeqTxnLogState(),
                                 nav.getCachedTxnState(),
                                 nav.getCachedMetaState(),
@@ -340,10 +340,10 @@ public class RecoverySession {
             path.of(nav.getDbRoot()).concat(nav.getCurrentTable().getDirName()).$();
             String value = ctx.getColumnValueReader().readValue(
                     path.toString(),
-                    entry.getDirName(),
-                    col.getName(),
+                    entry.dirName(),
+                    col.name(),
                     nav.getCachedColumnNameTxn(),
-                    col.getType(),
+                    col.type(),
                     fileRowNo,
                     cachedEffectiveRows
             );
@@ -482,13 +482,13 @@ public class RecoverySession {
         }
 
         PartitionScanEntry entry = nav.getCachedPartitionScan().getQuick(nav.getCurrentPartitionIndex());
-        TxnPartitionState txnPart = entry.getTxnPartition();
+        TxnPartitionState txnPart = entry.txnPartition();
         if (txnPart == null) {
             err.println("partition has no row count (ORPHAN)");
             return;
         }
 
-        if (txnPart.isParquetFormat()) {
+        if (txnPart.parquetFormat()) {
             err.println("cannot truncate a parquet partition");
             return;
         }
@@ -496,7 +496,7 @@ public class RecoverySession {
         // Use the resolved row count from the scan entry, which handles the last-partition
         // convention: the _txn file stores the last partition's row count in the header's
         // transientRowCount field, not in the partition entry itself.
-        long currentRowCount = entry.getRowCount();
+        long currentRowCount = entry.rowCount();
         if (newRowCount >= currentRowCount) {
             err.println("new row count (" + newRowCount + ") must be less than current (" + currentRowCount + ")");
             return;
@@ -504,7 +504,7 @@ public class RecoverySession {
 
         ObjList<TxnPartitionState> oldPartitions = cachedTxnState.getPartitions();
         int partitionCount = oldPartitions.size();
-        int targetTxnIndex = txnPart.getIndex();
+        int targetTxnIndex = txnPart.index();
         boolean isLastPartition = (targetTxnIndex == partitionCount - 1);
 
         // build modified state
@@ -538,13 +538,13 @@ public class RecoverySession {
             if (i == targetTxnIndex) {
                 modified.getPartitions().add(new TxnPartitionState(
                         i,
-                        p.getTimestampLo(),
+                        p.timestampLo(),
                         newRowCount,
-                        p.getNameTxn(),
-                        p.getParquetFileSize(),
-                        p.isParquetFormat(),
-                        p.isReadOnly(),
-                        p.getSquashCount()
+                        p.nameTxn(),
+                        p.parquetFileSize(),
+                        p.parquetFormat(),
+                        p.readOnly(),
+                        p.squashCount()
                 ));
             } else {
                 modified.getPartitions().add(p);
@@ -559,7 +559,7 @@ public class RecoverySession {
         // transientRowCount (if we're truncating a non-last partition).
         long fixedRowCount = 0;
         for (int i = 0; i < partitionCount - 1; i++) {
-            fixedRowCount += modified.getPartitions().getQuick(i).getRowCount();
+            fixedRowCount += modified.getPartitions().getQuick(i).rowCount();
         }
         modified.setFixedRowCount(fixedRowCount);
         if (isLastPartition) {
@@ -580,7 +580,7 @@ public class RecoverySession {
 
             long tsColumnTop = 0;
             if (cachedCvState != null && !NavigationContext.hasCvIssues(cachedCvState)) {
-                tsColumnTop = cachedCvState.getColumnTop(txnPart.getTimestampLo(), tsIndex);
+                tsColumnTop = cachedCvState.getColumnTop(txnPart.timestampLo(), tsIndex);
             }
 
             if (tsColumnTop >= newRowCount) {
@@ -592,13 +592,13 @@ public class RecoverySession {
             MetaColumnState tsCol = cachedMetaState.getColumns().getQuick(tsIndex);
             long tsNameTxn = -1;
             if (cachedCvState != null && !NavigationContext.hasCvIssues(cachedCvState)) {
-                tsNameTxn = cachedCvState.getColumnNameTxn(txnPart.getTimestampLo(), tsIndex);
+                tsNameTxn = cachedCvState.getColumnNameTxn(txnPart.timestampLo(), tsIndex);
             }
 
             try (Path path = new Path()) {
                 path.of(nav.getDbRoot()).concat(nav.getCurrentTable().getDirName())
-                        .slash().concat(entry.getDirName()).slash();
-                TableUtils.dFile(path, tsCol.getName(), tsNameTxn);
+                        .slash().concat(entry.dirName()).slash();
+                TableUtils.dFile(path, tsCol.name(), tsNameTxn);
 
                 long fd = ff.openRO(path.$());
                 if (fd < 0) {
@@ -655,7 +655,7 @@ public class RecoverySession {
             out.println("backup: " + bakPath);
 
             // print before/after summary
-            out.println("partition: " + entry.getPartitionName());
+            out.println("partition: " + entry.partitionName());
             out.println("  rows: " + currentRowCount + " -> " + newRowCount);
             if (newMaxTimestamp != oldMaxTimestamp) {
                 out.println("  maxTimestamp: " + ConsoleRenderer.formatTimestamp(oldMaxTimestamp)
@@ -676,7 +676,7 @@ public class RecoverySession {
                 valid = false;
             }
             if (readBack.getPartitions().size() > targetTxnIndex) {
-                long readBackRowCount = readBack.getPartitions().getQuick(targetTxnIndex).getRowCount();
+                long readBackRowCount = readBack.getPartitions().getQuick(targetTxnIndex).rowCount();
                 if (readBackRowCount != newRowCount) {
                     err.println("WARNING: row count mismatch after write: expected "
                             + newRowCount + ", got " + readBackRowCount);
@@ -1038,30 +1038,30 @@ public class RecoverySession {
         for (int i = 0, n = partitionScan.size(); i < n; i++) {
             PartitionScanEntry entry = partitionScan.getQuick(i);
 
-            if (entry.getStatus() == PartitionScanStatus.MISSING) {
-                renderer.printCheckSkipped(entry.getPartitionName(), "MISSING", out);
+            if (entry.status() == PartitionScanStatus.MISSING) {
+                renderer.printCheckSkipped(entry.partitionName(), "MISSING", out);
                 skipped++;
                 continue;
             }
 
-            TxnPartitionState txnPart = entry.getTxnPartition();
+            TxnPartitionState txnPart = entry.txnPartition();
             if (txnPart == null) {
-                renderer.printCheckSkipped(entry.getPartitionName(), "ORPHAN (no row count)", out);
+                renderer.printCheckSkipped(entry.partitionName(), "ORPHAN (no row count)", out);
                 skipped++;
                 continue;
             }
 
-            if (txnPart.isParquetFormat()) {
-                renderer.printCheckSkipped(entry.getPartitionName(), "parquet", out);
+            if (txnPart.parquetFormat()) {
+                renderer.printCheckSkipped(entry.partitionName(), "parquet", out);
                 skipped++;
                 continue;
             }
 
-            long rowCount = entry.getRowCount();
+            long rowCount = entry.rowCount();
             ColumnCheckResult result = columnCheckService.checkPartition(
                     tableDir,
-                    entry.getDirName(),
-                    txnPart.getTimestampLo(),
+                    entry.dirName(),
+                    txnPart.timestampLo(),
                     rowCount,
                     metaState,
                     cvState
@@ -1069,9 +1069,9 @@ public class RecoverySession {
             renderer.printCheckResult(result, tableName, rowCount, out);
             checked++;
 
-            for (int j = 0, m = result.getEntries().size(); j < m; j++) {
-                ColumnCheckEntry checkEntry = result.getEntries().getQuick(j);
-                switch (checkEntry.getStatus()) {
+            for (int j = 0, m = result.entries().size(); j < m; j++) {
+                ColumnCheckEntry checkEntry = result.entries().getQuick(j);
+                switch (checkEntry.status()) {
                     case ERROR -> errors++;
                     case WARNING -> warnings++;
                 }
@@ -1097,25 +1097,25 @@ public class RecoverySession {
         }
 
         PartitionScanEntry entry = cachedPartitionScan.getQuick(currentPartitionIndex);
-        TxnPartitionState txnPart = entry.getTxnPartition();
+        TxnPartitionState txnPart = entry.txnPartition();
         if (txnPart == null) {
             err.println("cannot check: partition has no row count (ORPHAN)");
             return;
         }
-        if (txnPart.isParquetFormat()) {
-            ctx.getRenderer().printCheckSkipped(entry.getPartitionName(), "parquet", out);
+        if (txnPart.parquetFormat()) {
+            ctx.getRenderer().printCheckSkipped(entry.partitionName(), "parquet", out);
             return;
         }
 
-        long rowCount = entry.getRowCount();
+        long rowCount = entry.rowCount();
 
         try (Path path = new Path()) {
             path.of(nav.getDbRoot()).concat(nav.getCurrentTable().getDirName()).$();
             ColumnVersionState cvState = NavigationContext.hasCvIssues(nav.getCachedCvState()) ? null : nav.getCachedCvState();
             ColumnCheckResult result = ctx.getColumnCheckService().checkPartition(
                     path.toString(),
-                    entry.getDirName(),
-                    txnPart.getTimestampLo(),
+                    entry.dirName(),
+                    txnPart.timestampLo(),
                     rowCount,
                     cachedMetaState,
                     cvState
@@ -1123,9 +1123,9 @@ public class RecoverySession {
             ctx.getRenderer().printCheckResult(result, nav.getCurrentTable().getTableName(), rowCount, out);
 
             int errors = 0, warnings = 0;
-            for (int j = 0, m = result.getEntries().size(); j < m; j++) {
-                ColumnCheckEntry checkEntry = result.getEntries().getQuick(j);
-                switch (checkEntry.getStatus()) {
+            for (int j = 0, m = result.entries().size(); j < m; j++) {
+                ColumnCheckEntry checkEntry = result.entries().getQuick(j);
+                switch (checkEntry.status()) {
                     case ERROR -> errors++;
                     case WARNING -> warnings++;
                 }
@@ -1211,7 +1211,7 @@ public class RecoverySession {
         }
 
         PartitionScanEntry entry = nav.getCachedPartitionScan().getQuick(nav.getCurrentPartitionIndex());
-        int colType = col.getType();
+        int colType = col.type();
 
         long expectedDataSize;
         long expectedAuxSize = -1;
@@ -1219,21 +1219,21 @@ public class RecoverySession {
         long actualAuxSize = -1;
 
         try (Path path = new Path()) {
-            path.of(nav.getDbRoot()).concat(nav.getCurrentTable().getDirName()).slash().concat(entry.getDirName()).slash();
+            path.of(nav.getDbRoot()).concat(nav.getCurrentTable().getDirName()).slash().concat(entry.dirName()).slash();
             int pathLen = path.size();
 
             if (ColumnType.isVarSize(colType)) {
                 expectedAuxSize = cachedEffectiveRows >= 0 ? ColumnType.getDriver(colType).getAuxVectorSize(cachedEffectiveRows) : -1;
                 // .d file
                 path.trimTo(pathLen);
-                TableUtils.dFile(path, col.getName(), cachedColumnNameTxn);
+                TableUtils.dFile(path, col.name(), cachedColumnNameTxn);
                 actualDataSize = ff.length(path.$());
                 if (actualDataSize < 0) {
                     actualDataSize = -1;
                 }
                 // .i file
                 path.trimTo(pathLen);
-                TableUtils.iFile(path, col.getName(), cachedColumnNameTxn);
+                TableUtils.iFile(path, col.name(), cachedColumnNameTxn);
                 actualAuxSize = ff.length(path.$());
                 if (actualAuxSize < 0) {
                     actualAuxSize = -1;
@@ -1257,7 +1257,7 @@ public class RecoverySession {
                 int typeSize = ColumnType.sizeOf(colType);
                 expectedDataSize = cachedEffectiveRows * typeSize;
                 path.trimTo(pathLen);
-                TableUtils.dFile(path, col.getName(), cachedColumnNameTxn);
+                TableUtils.dFile(path, col.name(), cachedColumnNameTxn);
                 actualDataSize = ff.length(path.$());
                 if (actualDataSize < 0) {
                     actualDataSize = -1;

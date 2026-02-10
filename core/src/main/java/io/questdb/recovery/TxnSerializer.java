@@ -97,8 +97,8 @@ public final class TxnSerializer {
             for (int i = 0, n = symbols.size(); i < n; i++) {
                 TxnSymbolState sym = symbols.getQuick(i);
                 long offset = baseOffset + TableUtils.getSymbolWriterIndexOffset(i);
-                mem.putInt(offset, sym.getCount());
-                mem.putInt(offset + Integer.BYTES, sym.getTransientCount());
+                mem.putInt(offset, sym.count());
+                mem.putInt(offset + Integer.BYTES, sym.transientCount());
             }
 
             // partition segment size (4 bytes) + partition entries
@@ -116,14 +116,14 @@ public final class TxnSerializer {
             for (int i = 0; i < partitionCount; i++) {
                 TxnPartitionState part = partitions.getQuick(i);
                 long entryOffset = partitionDataOffset + (long) i * entryBytes;
-                mem.putLong(entryOffset, part.getTimestampLo());
-                long maskedSize = part.getRowCount()
-                        | ((long) part.getSquashCount() << 44)
-                        | (part.isParquetFormat() ? (1L << 61) : 0)
-                        | (part.isReadOnly() ? (1L << 62) : 0);
+                mem.putLong(entryOffset, part.timestampLo());
+                long maskedSize = part.rowCount()
+                        | ((long) part.squashCount() << 44)
+                        | (part.parquetFormat() ? (1L << 61) : 0)
+                        | (part.readOnly() ? (1L << 62) : 0);
                 mem.putLong(entryOffset + Long.BYTES, maskedSize);
-                mem.putLong(entryOffset + 2L * Long.BYTES, part.getNameTxn());
-                mem.putLong(entryOffset + 3L * Long.BYTES, part.getParquetFileSize());
+                mem.putLong(entryOffset + 2L * Long.BYTES, part.nameTxn());
+                mem.putLong(entryOffset + 3L * Long.BYTES, part.parquetFileSize());
             }
         }
     }

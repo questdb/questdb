@@ -261,10 +261,10 @@ public class BoundedTxnReaderTest extends AbstractCairoTest {
                 TxnState state = new BoundedTxnReader(FF).read(path.$());
                 Assert.assertTrue(state.getPartitions().size() >= 1);
                 TxnPartitionState first = state.getPartitions().getQuick(0);
-                Assert.assertTrue(first.isParquetFormat());
-                Assert.assertTrue(first.isReadOnly());
+                Assert.assertTrue(first.parquetFormat());
+                Assert.assertTrue(first.readOnly());
                 // Row count should be preserved (low 44 bits unchanged)
-                Assert.assertEquals(originalMaskedSize & ((1L << 44) - 1), first.getRowCount());
+                Assert.assertEquals(originalMaskedSize & ((1L << 44) - 1), first.rowCount());
             }
         });
     }
@@ -300,7 +300,7 @@ public class BoundedTxnReaderTest extends AbstractCairoTest {
 
                 // row count should still be correct (low 44 bits unchanged)
                 TxnPartitionState first = state.getPartitions().getQuick(0);
-                Assert.assertEquals(originalMaskedSize & ((1L << 44) - 1), first.getRowCount());
+                Assert.assertEquals(originalMaskedSize & ((1L << 44) - 1), first.rowCount());
             }
         });
     }
@@ -877,7 +877,7 @@ public class BoundedTxnReaderTest extends AbstractCairoTest {
                 // The reader should now use the opposite slot from what was originally active
                 Assert.assertEquals(wasA, (state.getBaseVersion() & 1L) == 1L);
                 for (int i = 0, n = state.getIssues().size(); i < n; i++) {
-                    Assert.fail("unexpected issue: " + state.getIssues().getQuick(i).getMessage());
+                    Assert.fail("unexpected issue: " + state.getIssues().getQuick(i).message());
                 }
                 Assert.assertEquals(2, state.getPartitions().size());
                 Assert.assertEquals(1, state.getSymbols().size());
@@ -1006,7 +1006,7 @@ public class BoundedTxnReaderTest extends AbstractCairoTest {
 
     private static boolean hasIssue(TxnState state, RecoveryIssueCode issueCode) {
         for (int i = 0, n = state.getIssues().size(); i < n; i++) {
-            if (state.getIssues().getQuick(i).getCode() == issueCode) {
+            if (state.getIssues().getQuick(i).code() == issueCode) {
                 return true;
             }
         }
@@ -1015,7 +1015,7 @@ public class BoundedTxnReaderTest extends AbstractCairoTest {
 
     private static boolean hasIssueContaining(TxnState state, String substring) {
         for (int i = 0, n = state.getIssues().size(); i < n; i++) {
-            if (state.getIssues().getQuick(i).getMessage().contains(substring)) {
+            if (state.getIssues().getQuick(i).message().contains(substring)) {
                 return true;
             }
         }

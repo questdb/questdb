@@ -106,7 +106,7 @@ public class BoundedRegistryReaderTest extends AbstractCairoTest {
             RegistryState state = readRegistryState();
             // dropped table should not appear in final entries
             for (int i = 0, n = state.getEntries().size(); i < n; i++) {
-                Assert.assertNotEquals("drop_tbl", state.getEntries().getQuick(i).getTableName());
+                Assert.assertNotEquals("drop_tbl", state.getEntries().getQuick(i).tableName());
             }
             Assert.assertEquals(0, countIssuesWithCode(state, RecoveryIssueCode.CORRUPT_REGISTRY));
         });
@@ -128,13 +128,13 @@ public class BoundedRegistryReaderTest extends AbstractCairoTest {
             // WAL, view, matview should all be present
             RegistryEntry wal = findEntryByTableName(state, "all_wal");
             Assert.assertNotNull("WAL table should be in registry", wal);
-            Assert.assertEquals(TableUtils.TABLE_TYPE_WAL, wal.getTableType());
+            Assert.assertEquals(TableUtils.TABLE_TYPE_WAL, wal.tableType());
             RegistryEntry view = findEntryByTableName(state, "all_view");
             Assert.assertNotNull("view should be in registry", view);
-            Assert.assertEquals(TableUtils.TABLE_TYPE_VIEW, view.getTableType());
+            Assert.assertEquals(TableUtils.TABLE_TYPE_VIEW, view.tableType());
             RegistryEntry mv = findEntryByTableName(state, "all_mv");
             Assert.assertNotNull("matview should be in registry", mv);
-            Assert.assertEquals(TableUtils.TABLE_TYPE_MAT, mv.getTableType());
+            Assert.assertEquals(TableUtils.TABLE_TYPE_MAT, mv.tableType());
         });
     }
 
@@ -150,7 +150,7 @@ public class BoundedRegistryReaderTest extends AbstractCairoTest {
             // after rename: entry should have new tableName, but same dirName
             RegistryEntry entry = findEntryByTableName(state, "rename_dst");
             Assert.assertNotNull("renamed table should be in registry", entry);
-            Assert.assertFalse(entry.isRemoved());
+            Assert.assertFalse(entry.removed());
         });
     }
 
@@ -300,8 +300,8 @@ public class BoundedRegistryReaderTest extends AbstractCairoTest {
             RegistryState state = readRegistryState();
             RegistryEntry entry = findEntryByTableName(state, "mv_single");
             Assert.assertNotNull("matview should be in registry", entry);
-            Assert.assertEquals(TableUtils.TABLE_TYPE_MAT, entry.getTableType());
-            Assert.assertFalse(entry.isRemoved());
+            Assert.assertEquals(TableUtils.TABLE_TYPE_MAT, entry.tableType());
+            Assert.assertFalse(entry.removed());
         });
     }
 
@@ -315,8 +315,8 @@ public class BoundedRegistryReaderTest extends AbstractCairoTest {
             RegistryState state = readRegistryState();
             RegistryEntry entry = findEntryByTableName(state, "view_single");
             Assert.assertNotNull("view should be in registry", entry);
-            Assert.assertEquals(TableUtils.TABLE_TYPE_VIEW, entry.getTableType());
-            Assert.assertFalse(entry.isRemoved());
+            Assert.assertEquals(TableUtils.TABLE_TYPE_VIEW, entry.tableType());
+            Assert.assertFalse(entry.removed());
         });
     }
 
@@ -329,8 +329,8 @@ public class BoundedRegistryReaderTest extends AbstractCairoTest {
             RegistryState state = readRegistryState();
             RegistryEntry entry = findEntryByTableName(state, "wal_tbl");
             Assert.assertNotNull("wal table should be in registry", entry);
-            Assert.assertEquals(TableUtils.TABLE_TYPE_WAL, entry.getTableType());
-            Assert.assertFalse(entry.isRemoved());
+            Assert.assertEquals(TableUtils.TABLE_TYPE_WAL, entry.tableType());
+            Assert.assertFalse(entry.removed());
         });
     }
 
@@ -348,7 +348,7 @@ public class BoundedRegistryReaderTest extends AbstractCairoTest {
             // WAL table should be present
             RegistryEntry wal = findEntryByTableName(state, "type_wal");
             Assert.assertNotNull("wal table should be in registry", wal);
-            Assert.assertEquals(TableUtils.TABLE_TYPE_WAL, wal.getTableType());
+            Assert.assertEquals(TableUtils.TABLE_TYPE_WAL, wal.tableType());
         });
     }
 
@@ -438,7 +438,7 @@ public class BoundedRegistryReaderTest extends AbstractCairoTest {
             RegistryState state = readRegistryState();
             RegistryEntry entry = findEntryByTableName(state, "readd_tbl");
             Assert.assertNotNull("re-added table should be in registry", entry);
-            Assert.assertFalse("re-added table should not be marked as removed", entry.isRemoved());
+            Assert.assertFalse("re-added table should not be marked as removed", entry.removed());
         });
     }
 
@@ -493,7 +493,7 @@ public class BoundedRegistryReaderTest extends AbstractCairoTest {
     private static int countIssuesWithCode(RegistryState state, RecoveryIssueCode code) {
         int count = 0;
         for (int i = 0, n = state.getIssues().size(); i < n; i++) {
-            if (state.getIssues().getQuick(i).getCode() == code) {
+            if (state.getIssues().getQuick(i).code() == code) {
                 count++;
             }
         }
@@ -527,7 +527,7 @@ public class BoundedRegistryReaderTest extends AbstractCairoTest {
         ObjList<RegistryEntry> entries = state.getEntries();
         for (int i = 0, n = entries.size(); i < n; i++) {
             RegistryEntry entry = entries.getQuick(i);
-            if (tableName.equals(entry.getTableName())) {
+            if (tableName.equals(entry.tableName())) {
                 return entry;
             }
         }
@@ -569,7 +569,7 @@ public class BoundedRegistryReaderTest extends AbstractCairoTest {
 
     private static boolean hasIssue(RegistryState state, RecoveryIssueCode code) {
         for (int i = 0, n = state.getIssues().size(); i < n; i++) {
-            if (state.getIssues().getQuick(i).getCode() == code) {
+            if (state.getIssues().getQuick(i).code() == code) {
                 return true;
             }
         }

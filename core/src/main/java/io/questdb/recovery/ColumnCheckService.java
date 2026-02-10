@@ -62,11 +62,11 @@ public class ColumnCheckService {
 
         for (int colIdx = 0, n = columns.size(); colIdx < n; colIdx++) {
             MetaColumnState col = columns.getQuick(colIdx);
-            int type = col.getType();
+            int type = col.type();
 
             if (type < 0) {
                 entries.add(new ColumnCheckEntry(
-                        colIdx, col.getName(), col.getTypeName(),
+                        colIdx, col.name(), col.typeName(),
                         ColumnCheckStatus.SKIPPED, "dropped column",
                         -1, -1, -1
                 ));
@@ -78,7 +78,7 @@ public class ColumnCheckService {
 
             if (columnTop == -1) {
                 entries.add(new ColumnCheckEntry(
-                        colIdx, col.getName(), col.getTypeName(),
+                        colIdx, col.name(), col.typeName(),
                         ColumnCheckStatus.SKIPPED, "not in partition",
                         -1, -1, -1
                 ));
@@ -88,7 +88,7 @@ public class ColumnCheckService {
             long effectiveRows = partitionRowCount - columnTop;
             if (effectiveRows <= 0) {
                 entries.add(new ColumnCheckEntry(
-                        colIdx, col.getName(), col.getTypeName(),
+                        colIdx, col.name(), col.typeName(),
                         ColumnCheckStatus.OK, "no data expected",
                         columnTop, -1, -1
                 ));
@@ -167,12 +167,12 @@ public class ColumnCheckService {
         try (Path path = new Path()) {
             path.of(tableDir).slash().concat(partitionDirName).slash();
 
-            TableUtils.dFile(path, col.getName(), columnNameTxn);
+            TableUtils.dFile(path, col.name(), columnNameTxn);
             long actualSize = ff.length(path.$());
 
             if (actualSize < 0) {
                 entries.add(new ColumnCheckEntry(
-                        colIdx, col.getName(), col.getTypeName(),
+                        colIdx, col.name(), col.typeName(),
                         ColumnCheckStatus.ERROR, "file missing",
                         columnTop, -1, -1
                 ));
@@ -182,14 +182,14 @@ public class ColumnCheckService {
             long expectedSize = effectiveRows * ColumnType.sizeOf(type);
             if (actualSize < expectedSize) {
                 entries.add(new ColumnCheckEntry(
-                        colIdx, col.getName(), col.getTypeName(),
+                        colIdx, col.name(), col.typeName(),
                         ColumnCheckStatus.ERROR,
                         "file too short [expected=" + expectedSize + ", actual=" + actualSize + ']',
                         columnTop, expectedSize, actualSize
                 ));
             } else {
                 entries.add(new ColumnCheckEntry(
-                        colIdx, col.getName(), col.getTypeName(),
+                        colIdx, col.name(), col.typeName(),
                         ColumnCheckStatus.OK, null,
                         columnTop, expectedSize, actualSize
                 ));
@@ -327,12 +327,12 @@ public class ColumnCheckService {
 
             // check .d file exists
             path.trimTo(pathLen);
-            TableUtils.dFile(path, col.getName(), columnNameTxn);
+            TableUtils.dFile(path, col.name(), columnNameTxn);
             long dataSize = ff.length(path.$());
 
             if (dataSize < 0) {
                 entries.add(new ColumnCheckEntry(
-                        colIdx, col.getName(), col.getTypeName(),
+                        colIdx, col.name(), col.typeName(),
                         ColumnCheckStatus.ERROR, "data file missing",
                         columnTop, -1, -1
                 ));
@@ -341,12 +341,12 @@ public class ColumnCheckService {
 
             // check .i file exists
             path.trimTo(pathLen);
-            TableUtils.iFile(path, col.getName(), columnNameTxn);
+            TableUtils.iFile(path, col.name(), columnNameTxn);
             long auxSize = ff.length(path.$());
 
             if (auxSize < 0) {
                 entries.add(new ColumnCheckEntry(
-                        colIdx, col.getName(), col.getTypeName(),
+                        colIdx, col.name(), col.typeName(),
                         ColumnCheckStatus.ERROR, "aux file missing",
                         columnTop, -1, -1
                 ));
@@ -356,7 +356,7 @@ public class ColumnCheckService {
             long expectedAuxSize = computeExpectedAuxSize(type, effectiveRows);
             if (auxSize < expectedAuxSize) {
                 entries.add(new ColumnCheckEntry(
-                        colIdx, col.getName(), col.getTypeName(),
+                        colIdx, col.name(), col.typeName(),
                         ColumnCheckStatus.ERROR,
                         "aux file too short [expected=" + expectedAuxSize + ", actual=" + auxSize + ']',
                         columnTop, expectedAuxSize, auxSize
@@ -368,7 +368,7 @@ public class ColumnCheckService {
             long auxFd = ff.openRO(path.$());
             if (auxFd < 0) {
                 entries.add(new ColumnCheckEntry(
-                        colIdx, col.getName(), col.getTypeName(),
+                        colIdx, col.name(), col.typeName(),
                         ColumnCheckStatus.ERROR, "cannot open aux file",
                         columnTop, -1, -1
                 ));
@@ -386,13 +386,13 @@ public class ColumnCheckService {
 
                 if (error != null) {
                     entries.add(new ColumnCheckEntry(
-                            colIdx, col.getName(), col.getTypeName(),
+                            colIdx, col.name(), col.typeName(),
                             ColumnCheckStatus.ERROR, error,
                             columnTop, -1, dataSize
                     ));
                 } else {
                     entries.add(new ColumnCheckEntry(
-                            colIdx, col.getName(), col.getTypeName(),
+                            colIdx, col.name(), col.typeName(),
                             ColumnCheckStatus.OK, null,
                             columnTop, expectedAuxSize, auxSize
                     ));

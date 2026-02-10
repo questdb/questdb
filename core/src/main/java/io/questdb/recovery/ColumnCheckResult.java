@@ -26,21 +26,8 @@ package io.questdb.recovery;
 
 import io.questdb.std.ObjList;
 
-/** Column check results for one partition: partition directory name and per-column entries. */
-public final class ColumnCheckResult {
-    private final ObjList<ColumnCheckEntry> entries;
-    private final String partitionDirName;
-
-    public ColumnCheckResult(String partitionDirName, ObjList<ColumnCheckEntry> entries) {
-        this.partitionDirName = partitionDirName;
-        this.entries = entries;
-    }
-
-    public ObjList<ColumnCheckEntry> getEntries() {
-        return entries;
-    }
-
-    public String getPartitionDirName() {
-        return partitionDirName;
-    }
+/**
+ * Column check results for one partition: partition directory name and per-column entries.
+ */
+public record ColumnCheckResult(String partitionDirName, ObjList<ColumnCheckEntry> entries) {
 }

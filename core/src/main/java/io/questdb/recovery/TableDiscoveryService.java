@@ -72,17 +72,17 @@ public class TableDiscoveryService {
         ObjList<RegistryEntry> entries = registryState.getEntries();
         for (int i = 0, n = entries.size(); i < n; i++) {
             RegistryEntry entry = entries.getQuick(i);
-            DiscoveredTable table = byDirName.get(entry.getDirName());
+            DiscoveredTable table = byDirName.get(entry.dirName());
             if (table != null) {
                 table.setRegistryEntry(entry);
                 if (table.getTableType() < 0) {
-                    table.setTableType(entry.getTableType());
+                    table.setTableType(entry.tableType());
                 }
-                if (!entry.getTableName().equals(table.getTableName())) {
+                if (!entry.tableName().equals(table.getTableName())) {
                     table.addIssue(
                             RecoveryIssueSeverity.WARN,
                             RecoveryIssueCode.REGISTRY_MISMATCH,
-                            "registry table name differs [registry=" + entry.getTableName()
+                            "registry table name differs [registry=" + entry.tableName()
                                     + ", discovered=" + table.getTableName() + ']'
                     );
                 }

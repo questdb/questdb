@@ -1603,7 +1603,7 @@ public class BoundedSeqTxnLogReaderTest extends AbstractCairoTest {
         StringBuilder sb = new StringBuilder();
         for (int i = 0, n = state.getIssues().size(); i < n; i++) {
             if (i > 0) sb.append("; ");
-            sb.append(state.getIssues().getQuick(i).getCode()).append(':').append(state.getIssues().getQuick(i).getMessage());
+            sb.append(state.getIssues().getQuick(i).code()).append(':').append(state.getIssues().getQuick(i).message());
         }
         return sb.toString();
     }
@@ -1629,7 +1629,7 @@ public class BoundedSeqTxnLogReaderTest extends AbstractCairoTest {
 
     private static boolean hasIssue(SeqTxnLogState state, RecoveryIssueCode issueCode) {
         for (int i = 0, n = state.getIssues().size(); i < n; i++) {
-            if (state.getIssues().getQuick(i).getCode() == issueCode) {
+            if (state.getIssues().getQuick(i).code() == issueCode) {
                 return true;
             }
         }
@@ -1638,7 +1638,7 @@ public class BoundedSeqTxnLogReaderTest extends AbstractCairoTest {
 
     private static boolean hasIssueContaining(SeqTxnLogState state, String substring) {
         for (int i = 0, n = state.getIssues().size(); i < n; i++) {
-            if (state.getIssues().getQuick(i).getMessage().contains(substring)) {
+            if (state.getIssues().getQuick(i).message().contains(substring)) {
                 return true;
             }
         }
