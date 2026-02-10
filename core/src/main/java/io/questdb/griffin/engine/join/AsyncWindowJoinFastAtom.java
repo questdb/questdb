@@ -41,7 +41,7 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.DirectIntMultiLongHashMap;
 import io.questdb.std.IntHashSet;
-import io.questdb.std.IntList;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -229,7 +229,7 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
             SymbolTableSource masterSymbolTableSource,
             TablePageFrameCursor pageFrameCursor,
             PageFrameAddressCache frameAddressCache,
-            IntList framePartitionIndexes,
+            DirectIntList framePartitionIndexes,
             LongList frameRowCounts,
             LongList partitionTimestamps,
             LongList partitionCeilings,

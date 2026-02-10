@@ -45,8 +45,9 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.IntList;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -68,7 +69,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
     private final LongList slavePartitionTimestamps = new LongList();
     // Slave time frame cache data
     private final PageFrameAddressCache slaveTimeFrameAddressCache;
-    private final IntList slaveTimeFramePartitionIndexes = new IntList();
+    private final DirectIntList slaveTimeFramePartitionIndexes;
     private final LongList slaveTimeFrameRowCounts = new LongList();
     private SqlExecutionContext executionContext;
     private int frameLimit;
@@ -83,12 +84,18 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
             ObjList<Function> recordFunctions,
             RecordCursorFactory slaveFactory
     ) {
-        this.recordFunctions = recordFunctions;
-        this.slaveFactory = slaveFactory;
-        this.recordA = new VirtualRecord(recordFunctions);
-        this.recordB = new VirtualRecord(recordFunctions);
-        this.slaveTimeFrameAddressCache = new PageFrameAddressCache();
-        this.isOpen = true;
+        try {
+            this.isOpen = true;
+            this.recordFunctions = recordFunctions;
+            this.slaveFactory = slaveFactory;
+            this.recordA = new VirtualRecord(recordFunctions);
+            this.recordB = new VirtualRecord(recordFunctions);
+            this.slaveTimeFrameAddressCache = new PageFrameAddressCache();
+            this.slaveTimeFramePartitionIndexes = new DirectIntList(64, MemoryTag.NATIVE_DEFAULT, true);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
@@ -118,6 +125,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
                 mapCursor = Misc.free(mapCursor);
                 slaveFrameCursor = Misc.free(slaveFrameCursor);
                 Misc.free(slaveTimeFrameAddressCache);
+                Misc.free(slaveTimeFramePartitionIndexes);
                 isOpen = false;
             }
         }
@@ -259,6 +267,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
     private int initializeSlaveTimeFrameCache() {
         RecordMetadata slaveMetadata = slaveFactory.getMetadata();
         slaveTimeFrameAddressCache.of(slaveMetadata, slaveFrameCursor.getColumnIndexes(), slaveFrameCursor.isExternal());
+        slaveTimeFramePartitionIndexes.reopen();
         slaveTimeFramePartitionIndexes.clear();
         slaveTimeFrameRowCounts.clear();
 

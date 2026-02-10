@@ -46,9 +46,11 @@ import io.questdb.griffin.engine.table.SelectedRecord;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -70,7 +72,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private final LongList slavePartitionCeilings = new LongList();
     private final LongList slavePartitionTimestamps = new LongList();
     private final PageFrameAddressCache slaveTimeFrameAddressCache;
-    private final IntList slaveTimeFramePartitionIndexes = new IntList();
+    private final DirectIntList slaveTimeFramePartitionIndexes;
     private final LongList slaveTimeFrameRowCounts = new LongList();
     private boolean allFramesActive;
     private long cursor = -1;
@@ -95,22 +97,29 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
             int columnSplit,
             boolean isMasterFiltered
     ) {
-        this.groupByFunctions = groupByFunctions;
-        this.slaveMetadata = slaveMetadata;
-        this.columnSplit = columnSplit;
-        this.isMasterFiltered = isMasterFiltered;
-        this.slaveTimeFrameAddressCache = new PageFrameAddressCache();
-        this.crossIndex = columnIndex;
-        this.masterRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-        this.groupByRecord = new VirtualRecord(groupByFunctions);
-        final JoinRecord jr = new JoinRecord(columnSplit);
-        jr.of(masterRecord, groupByRecord);
-        if (columnIndex != null) {
-            SelectedRecord sr = new SelectedRecord(columnIndex);
-            sr.of(jr);
-            this.record = sr;
-        } else {
-            this.record = jr;
+        try {
+            this.isOpen = true;
+            this.groupByFunctions = groupByFunctions;
+            this.slaveMetadata = slaveMetadata;
+            this.columnSplit = columnSplit;
+            this.isMasterFiltered = isMasterFiltered;
+            this.slaveTimeFrameAddressCache = new PageFrameAddressCache();
+            this.slaveTimeFramePartitionIndexes = new DirectIntList(64, MemoryTag.NATIVE_DEFAULT, true);
+            this.crossIndex = columnIndex;
+            this.masterRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+            this.groupByRecord = new VirtualRecord(groupByFunctions);
+            final JoinRecord jr = new JoinRecord(columnSplit);
+            jr.of(masterRecord, groupByRecord);
+            if (columnIndex != null) {
+                SelectedRecord sr = new SelectedRecord(columnIndex);
+                sr.of(jr);
+                this.record = sr;
+            } else {
+                this.record = jr;
+            }
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
     }
 
@@ -148,6 +157,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                 // Free shared resources only after workers have finished
                 Misc.free(slaveFrameCursor);
                 Misc.free(slaveTimeFrameAddressCache);
+                Misc.free(slaveTimeFramePartitionIndexes);
                 isOpen = false;
             }
         }
@@ -441,6 +451,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
 
     private int initializeSlaveTimeFrameCache() {
         slaveTimeFrameAddressCache.of(slaveMetadata, slaveFrameCursor.getColumnIndexes(), slaveFrameCursor.isExternal());
+        slaveTimeFramePartitionIndexes.reopen();
         slaveTimeFramePartitionIndexes.clear();
         slaveTimeFrameRowCounts.clear();
 

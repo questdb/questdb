@@ -47,8 +47,9 @@ import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.IntList;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -71,7 +72,7 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
     private final LongList slavePartitionTimestamps = new LongList();
     // Slave time frame cache data
     private final PageFrameAddressCache slaveTimeFrameAddressCache;
-    private final IntList slaveTimeFramePartitionIndexes = new IntList();
+    private final DirectIntList slaveTimeFramePartitionIndexes;
     private final LongList slaveTimeFrameRowCounts = new LongList();
     private SqlExecutionContext executionContext;
     private int frameLimit;
@@ -86,11 +87,17 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
             ObjList<GroupByFunction> groupByFunctions,
             RecordCursorFactory slaveFactory
     ) {
-        this.groupByFunctions = groupByFunctions;
-        this.slaveFactory = slaveFactory;
-        this.recordA = new VirtualRecord(groupByFunctions);
-        this.slaveTimeFrameAddressCache = new PageFrameAddressCache();
-        this.isOpen = true;
+        try {
+            this.isOpen = true;
+            this.groupByFunctions = groupByFunctions;
+            this.slaveFactory = slaveFactory;
+            this.recordA = new VirtualRecord(groupByFunctions);
+            this.slaveTimeFrameAddressCache = new PageFrameAddressCache();
+            this.slaveTimeFramePartitionIndexes = new DirectIntList(64, MemoryTag.NATIVE_DEFAULT, true);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
@@ -121,6 +128,7 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
                 Misc.clearObjList(groupByFunctions);
                 slaveFrameCursor = Misc.free(slaveFrameCursor);
                 Misc.free(slaveTimeFrameAddressCache);
+                Misc.free(slaveTimeFramePartitionIndexes);
                 isOpen = false;
             }
         }
@@ -261,6 +269,7 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
     private int initializeSlaveTimeFrameCache() {
         RecordMetadata slaveMetadata = slaveFactory.getMetadata();
         slaveTimeFrameAddressCache.of(slaveMetadata, slaveFrameCursor.getColumnIndexes(), slaveFrameCursor.isExternal());
+        slaveTimeFramePartitionIndexes.reopen();
         slaveTimeFramePartitionIndexes.clear();
         slaveTimeFrameRowCounts.clear();
 

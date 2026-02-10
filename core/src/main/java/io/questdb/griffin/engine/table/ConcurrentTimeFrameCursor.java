@@ -40,8 +40,8 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -66,9 +66,10 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
     private final PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     private final TimeFrame timeFrame = new TimeFrame();
     private int frameCount = 0;
-    // cursor's lifecycle is managed externally
+    // Cursor's lifecycle is managed externally
     private PageFrameCursor frameCursor;
-    private IntList framePartitionIndexes;
+    // Off-heap because it's per-frame and can be large unlike per-partition lists
+    private DirectIntList framePartitionIndexes;
     private LongList frameRowCounts;
     private LongList partitionCeilings;
     private LongList partitionTimestamps;
@@ -141,7 +142,7 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
                     .put(", frameCount=").put(frameCount).put(']');
         }
 
-        int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
+        int partitionIndex = framePartitionIndexes.get(frameIndex);
         long timestampLo = partitionTimestamps.getQuick(partitionIndex);
         timeFrame.ofEstimate(frameIndex, timestampLo, partitionCeilings.getQuick(partitionIndex));
     }
@@ -155,7 +156,7 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
     public boolean next() {
         int frameIndex = timeFrame.getFrameIndex();
         if (++frameIndex < frameCount) {
-            int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
+            int partitionIndex = framePartitionIndexes.get(frameIndex);
             long timestampLo = partitionTimestamps.getQuick(partitionIndex);
             timeFrame.ofEstimate(frameIndex, timestampLo, partitionCeilings.getQuick(partitionIndex));
             return true;
@@ -168,7 +169,7 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
     public TimeFrameCursor of(
             TablePageFrameCursor frameCursor,
             PageFrameAddressCache frameAddressCache,
-            IntList framePartitionIndexes,
+            DirectIntList framePartitionIndexes,
             LongList frameRowCounts,
             LongList partitionTimestamps,
             LongList partitionCeilings,
@@ -240,7 +241,7 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
     public boolean prev() {
         int frameIndex = timeFrame.getFrameIndex();
         if (--frameIndex >= 0) {
-            int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
+            int partitionIndex = framePartitionIndexes.get(frameIndex);
             long timestampLo = partitionTimestamps.getQuick(partitionIndex);
             timeFrame.ofEstimate(frameIndex, timestampLo, partitionCeilings.getQuick(partitionIndex));
             return true;

@@ -44,7 +44,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.IntList;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -209,7 +209,7 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
             SymbolTableSource masterSymbolTableSource,
             TablePageFrameCursor slavePageFrameCursor,
             PageFrameAddressCache slaveFrameAddressCache,
-            IntList slaveFramePartitionIndexes,
+            DirectIntList slaveFramePartitionIndexes,
             LongList slaveFrameRowCounts,
             LongList slavePartitionTimestamps,
             LongList slavePartitionCeilings,

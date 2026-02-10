@@ -52,7 +52,7 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.IntList;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -445,7 +445,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             SymbolTableSource masterSymbolTableSource,
             TablePageFrameCursor slavePageFrameCursor,
             PageFrameAddressCache slaveFrameAddressCache,
-            IntList slaveFramePartitionIndexes,
+            DirectIntList slaveFramePartitionIndexes,
             LongList slaveFrameRowCounts,
             LongList slavePartitionTimestamps,
             LongList slavePartitionCeilings,
