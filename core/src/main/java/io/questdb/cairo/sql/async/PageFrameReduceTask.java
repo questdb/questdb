@@ -42,10 +42,8 @@ import org.jetbrains.annotations.NotNull;
 
 public class PageFrameReduceTask implements QuietCloseable, Mutable {
     public static final byte TYPE_FILTER = 0;
-    public static final byte TYPE_GROUP_BY = 1;
-    public static final byte TYPE_GROUP_BY_NOT_KEYED = 2;
-    public static final byte TYPE_TOP_K = 3;
-    public static final byte TYPE_WINDOW_JOIN = 4;
+    public static final byte TYPE_TOP_K = 1;
+    public static final byte TYPE_WINDOW_JOIN = 2;
     private static final String exceptionMessage = "unexpected filter error";
 
     private final DirectLongList auxAddresses;
@@ -79,6 +77,29 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         } catch (Throwable th) {
             close();
             throw th;
+        }
+    }
+
+    public static void populateJitAddresses(
+            @NotNull PageFrameMemory frameMemory,
+            @NotNull PageFrameAddressCache pageAddressCache,
+            @NotNull DirectLongList dataAddresses,
+            @NotNull DirectLongList auxAddresses
+    ) {
+        final int columnCount = pageAddressCache.getColumnCount();
+
+        dataAddresses.clear();
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            dataAddresses.add(frameMemory.getPageAddress(columnIndex));
+        }
+
+        auxAddresses.clear();
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            auxAddresses.add(
+                    pageAddressCache.isVarSizeColumn(columnIndex)
+                            ? frameMemory.getAuxPageAddress(columnIndex)
+                            : 0
+            );
         }
     }
 
@@ -216,29 +237,6 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     // Must be called after populateFrameMemory.
     public void populateJitData() {
         populateJitData(frameMemory);
-    }
-
-    public static void populateJitAddresses(
-            @NotNull PageFrameMemory frameMemory,
-            @NotNull PageFrameAddressCache pageAddressCache,
-            @NotNull DirectLongList dataAddresses,
-            @NotNull DirectLongList auxAddresses
-    ) {
-        final int columnCount = pageAddressCache.getColumnCount();
-
-        dataAddresses.clear();
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            dataAddresses.add(frameMemory.getPageAddress(columnIndex));
-        }
-
-        auxAddresses.clear();
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            auxAddresses.add(
-                    pageAddressCache.isVarSizeColumn(columnIndex)
-                            ? frameMemory.getAuxPageAddress(columnIndex)
-                            : 0
-            );
-        }
     }
 
     // Useful when using external frame memory pool.
