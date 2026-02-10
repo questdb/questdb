@@ -526,6 +526,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                             break;
                         }
                         slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
+                        // don't forget to switch the record to the new frame
+                        slaveTimeFrameHelper.recordAt(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     }
                 }
             }
@@ -684,6 +686,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                             break;
                         }
                         slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
+                        // don't forget to switch the record to the new frame
+                        slaveTimeFrameHelper.recordAt(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     }
                 }
             }
@@ -1478,6 +1482,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                                 break;
                             }
                             slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
+                            // don't forget to switch the record to the new frame
+                            slaveTimeFrameHelper.recordAt(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                         }
                     }
                 }
@@ -1630,6 +1636,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                                 break;
                             }
                             slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
+                            // don't forget to switch the record to the new frame
+                            slaveTimeFrameHelper.recordAt(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                         }
                     }
                 }
@@ -2172,7 +2180,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             slaveTimeFrameHelper.restoreBookmark(slaveRowFrameIndex, 0);
             do {
                 // actual row index doesn't matter here due to the later recordAtRowIndex() call
-                slaveTimeFrameHelper.recordAt(Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0));
+                slaveTimeFrameHelper.recordAt(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
 
                 long rowLo = slaveTimeFrameHelper.getTimeFrameRowLo();
                 long rowHi = slaveTimeFrameHelper.getTimeFrameRowHi();

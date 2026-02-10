@@ -429,6 +429,10 @@ public class WindowJoinTimeFrameHelper {
         timeFrameCursor.recordAt(record, rowId);
     }
 
+    public void recordAt(int frameIndex, long rowIndex) {
+        timeFrameCursor.recordAt(record, frameIndex, rowIndex);
+    }
+
     public void recordAtRowIndex(long rowIndex) {
         timeFrameCursor.recordAtRowIndex(record, rowIndex);
     }

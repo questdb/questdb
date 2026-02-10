@@ -185,10 +185,12 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
         // Initialize timestamp cache (2 entries per frame: tsLo, tsHi)
         // Note: setCapacity is safe to call on a closed list - it will allocate memory
         final int cacheSize = 2 * frameCount;
-        frameTimestampCache.setCapacity(cacheSize);
-        frameTimestampCache.clear();
-        for (int i = 0; i < cacheSize; i++) {
-            frameTimestampCache.set(i, Numbers.LONG_NULL);
+        if (cacheSize > 0) {
+            frameTimestampCache.setCapacity(cacheSize);
+            frameTimestampCache.clear();
+            for (int i = 0; i < cacheSize; i++) {
+                frameTimestampCache.set(i, Numbers.LONG_NULL);
+            }
         }
         toTop();
         return this;

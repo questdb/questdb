@@ -79,11 +79,11 @@ public class MarkoutTimeFrameHelper {
      * <p>
      * Updates the internal backward watermark after scanning.
      *
-     * @param startRowId      starting position for backward scan (inclusive), typically the ASOF position
-     * @param masterRecord    master record containing the target key
+     * @param startRowId            starting position for backward scan (inclusive), typically the ASOF position
+     * @param masterRecord          master record containing the target key
      * @param masterAsOfJoinMapSink copier for master's join key columns
      * @param slaveAsOfJoinMapSink  copier for slave's join key columns
-     * @param keyToRowIdMap   map to update with (key -> rowId) entries
+     * @param keyToRowIdMap         map to update with (key -> rowId) entries
      * @return the rowId where target key was found, or Long.MIN_VALUE if not found
      */
     public long backwardScanForKeyMatch(
@@ -332,9 +332,9 @@ public class MarkoutTimeFrameHelper {
      * <p>
      * Updates the internal forward watermark to targetRowId after successful scan.
      *
-     * @param targetRowId    the ASOF position to scan up to (inclusive)
+     * @param targetRowId          the ASOF position to scan up to (inclusive)
      * @param slaveAsOfJoinMapSink copier for slave's join key columns
-     * @param keyToRowIdMap  map to update with (key -> rowId) entries
+     * @param keyToRowIdMap        map to update with (key -> rowId) entries
      */
     public void forwardScanToPosition(
             long targetRowId,
