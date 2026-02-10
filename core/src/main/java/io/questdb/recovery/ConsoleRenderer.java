@@ -57,6 +57,27 @@ public class ConsoleRenderer {
         return color;
     }
 
+    public void printBanner(CharSequence dbRoot, PrintStream out) {
+        out.println("QuestDB offline recovery mode");
+        out.println("dbRoot=" + dbRoot);
+        out.println();
+        out.println("Navigate the database like a filesystem:");
+        out.println("  ls             list tables, then partitions, columns, or WAL dirs");
+        out.println("  cd <name|idx>  enter a table / partition / column by name or index");
+        out.println("  cd ..          go up        cd /    return to root");
+        out.println();
+        out.println("Inspect:");
+        out.println("  show           _txn state, column detail, or WAL detail (depends on level)");
+        out.println("  wal status     sequencer health and pending transactions (table level)");
+        out.println("  show timeline  chronological view of WAL transactions");
+        out.println("  check columns  validate column files against metadata");
+        out.println();
+        out.println("Repair:");
+        out.println("  truncate <N>   shrink a partition to N rows (partition level)");
+        out.println();
+        out.println("Type 'help' for the full command reference.");
+    }
+
     public void printColumnDetail(
             MetaColumnState col, int columnIndex,
             long columnTop, long columnNameTxn, long effectiveRows,
@@ -174,9 +195,9 @@ public class ConsoleRenderer {
         out.println("  cd /                   return to root");
         out.println("  pwd                    print current path");
         out.println("  tables                 discover and list tables");
-        out.println("  show [<name|index>]    show _txn state / WAL details / event detail");
-        out.println("  show <N>               show WAL event detail (segment) / seqTxn detail (WAL root)");
-        out.println("  show timeline          chronological view of all WAL transactions (WAL root)");
+        out.println("  show                   detail for current level (_txn, column, WAL dir/segment)");
+        out.println("  show <name|index>      show _txn state for a table (from root or table level)");
+        out.println("  show timeline          chronological view of WAL transactions (WAL root)");
         out.println("  print <rowNo>          print value at row (column level only)");
         out.println("  truncate <rowCount>    shrink partition to given row count (partition level)");
         out.println("  check columns          validate column files against metadata");

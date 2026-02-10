@@ -3009,8 +3009,8 @@ public void testLsShowsTransientRowCountForLastPartition() throws Exception {
         assertMemoryLeak(() -> {
             String[] result = runSession("help\nquit\n");
             Assert.assertTrue(
-                    "help should mention 'show <N>' for event detail",
-                    result[0].contains("show <N>")
+                    "help should mention 'show <name|index>'",
+                    result[0].contains("show <name|index>")
             );
         });
     }
@@ -4251,10 +4251,10 @@ public void testLsShowsTransientRowCountForLastPartition() throws Exception {
     }
 
     @Test
-    public void testHelpShowsSeqTxnDetail() throws Exception {
+    public void testHelpShowsShowCommand() throws Exception {
         assertMemoryLeak(() -> {
             String[] result = runSession("help\nquit\n");
-            Assert.assertTrue("help should mention show <N> for seqTxn detail", result[0].contains("seqTxn detail"));
+            Assert.assertTrue("help should mention show for current level", result[0].contains("detail for current level"));
         });
     }
 

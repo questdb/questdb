@@ -122,9 +122,7 @@ public class RecoverySession {
     }
 
     public int run(BufferedReader in, PrintStream out, PrintStream err) throws IOException {
-        out.println("QuestDB offline recovery mode");
-        out.println("dbRoot=" + nav.getDbRoot());
-        renderer.printHelp(out);
+        renderer.printBanner(nav.getDbRoot(), out);
 
         String line;
         while (true) {
