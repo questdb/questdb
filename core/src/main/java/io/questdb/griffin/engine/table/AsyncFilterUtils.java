@@ -98,7 +98,7 @@ public class AsyncFilterUtils {
             @NotNull DirectLongList filteredRows,
             long frameRowCount
     ) {
-        final long columnCount = pageAddressCache.getColumnCount();
+        final int columnCount = pageAddressCache.getColumnCount();
 
         dataAddresses.clear();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {

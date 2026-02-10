@@ -223,7 +223,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         assert frameMemory.getFrameIndex() == frameIndex;
 
         final PageFrameAddressCache pageAddressCache = frameSequence.getPageFrameAddressCache();
-        final long columnCount = pageAddressCache.getColumnCount();
+        final int columnCount = pageAddressCache.getColumnCount();
 
         dataAddresses.clear();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
