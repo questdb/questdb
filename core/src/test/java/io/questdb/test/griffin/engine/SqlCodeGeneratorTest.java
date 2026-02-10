@@ -8867,19 +8867,34 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testUnionAllSampleBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table trades (price double, timestamp timestamp) timestamp(timestamp) partition by day");
-            execute("create table trades_agg (high double, timestamp timestamp)");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("CREATE TABLE trades_agg (high DOUBLE, timestamp TIMESTAMP)");
+            execute("""
+                    INSERT INTO trades VALUES
+                     (10.0, '2024-01-01T00:00:10Z'),
+                     (20.0, '2024-01-01T00:00:40Z'),
+                     (15.0, '2024-01-01T00:01:20Z')""");
+            execute("""
+                    INSERT INTO trades_agg VALUES
+                     (50.0, '2024-01-01T00:02:00Z'),
+                     (60.0, '2024-01-01T00:03:00Z')""");
             assertQueryNoLeakCheck(
-                    "high\n",
                     """
-                            select high from (
-                                select timestamp, max(price) as high from trades sample by 1m
-                                union all
-                                select timestamp, high from trades_agg
+                            high
+                            20.0
+                            15.0
+                            50.0
+                            60.0
+                            """,
+                    """
+                            SELECT high FROM (
+                                SELECT timestamp, max(price) AS high FROM trades SAMPLE BY 1m
+                                UNION ALL
+                                SELECT timestamp, high FROM trades_agg
                             )""",
                     null,
                     false,
-                    false
+                    true
             );
         });
     }
@@ -8887,36 +8902,66 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testUnionAllSampleBy2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table trades (price double, timestamp timestamp) timestamp(timestamp) partition by day");
-            execute("create table trades_agg (high double, timestamp timestamp)");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("CREATE TABLE trades_agg (high DOUBLE, timestamp TIMESTAMP)");
+            execute("""
+                    INSERT INTO trades VALUES
+                     (10.0, '2024-01-01T00:00:10Z'),
+                     (20.0, '2024-01-01T00:00:40Z'),
+                     (15.0, '2024-01-01T00:01:20Z')""");
+            execute("""
+                    INSERT INTO trades_agg VALUES
+                     (50.0, '2024-01-01T00:02:00Z'),
+                     (60.0, '2024-01-01T00:03:00Z')""");
             assertQueryNoLeakCheck(
-                    "high\n",
                     """
-                            select high from (
-                                select timestamp, high from trades_agg
-                                union all
-                                select timestamp, max(price) as high from trades sample by 1m
+                            high
+                            50.0
+                            60.0
+                            20.0
+                            15.0
+                            """,
+                    """
+                            SELECT high FROM (
+                                SELECT timestamp, high FROM trades_agg
+                                UNION ALL
+                                SELECT timestamp, max(price) AS high FROM trades SAMPLE BY 1m
                             )""",
                     null,
                     false,
-                    false
+                    true
             );
         });
     }
 
     @Test
-    public void testUnionAllWithFilterUsingAliasFromOneBranch() throws Exception {
+    public void testUnionAllWithFilterUsesAliasFromFirstBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t1 (name1 varchar, ts1 timestamp, sym1 symbol) timestamp(ts1)");
-            execute("create table t2 (name2 varchar, ts2 timestamp, sym2 symbol) timestamp(ts2)");
+            execute("CREATE TABLE t1 (name1 VARCHAR, ts1 TIMESTAMP, sym1 SYMBOL) TIMESTAMP(ts1)");
+            execute("CREATE TABLE t2 (name2 VARCHAR, ts2 TIMESTAMP, sym2 SYMBOL) TIMESTAMP(ts2)");
+            execute("""
+                    INSERT INTO t1 VALUES
+                     ('alice', '2025-12-01T01:30:00Z', 'X'),
+                     ('bob', '2025-12-01T05:00:00Z', 'Y')""");
+            execute("""
+                    INSERT INTO t2 VALUES
+                     ('carol', '2025-12-01T02:00:00Z', 'A'),
+                     ('dave', '2025-12-01T05:00:00Z', 'B')""");
+            // Query assigns the "ts" alias to the TIMESTAMP column in the first branch,
+            // but to the SYMBOL column in the second branch.
+            // WHERE honors the alias assignment in the first branch.
             assertQueryNoLeakCheck(
-                    "ts\n",
                     """
-                            select ts from (
-                                select name1, ts1, sym1 ts from t1
-                                union all
-                                select name2, ts2 ts, sym2 from t2
-                            ) where ts in '2025-12-01T01;2h'
+                            ts
+                            2025-12-01T01:30:00.000000Z
+                            2025-12-01T02:00:00.000000Z
+                            """,
+                    """
+                            SELECT ts FROM (
+                                SELECT name1, ts1 ts, sym1 FROM t1
+                                UNION ALL
+                                SELECT name2, ts2, sym2 ts FROM t2
+                            ) WHERE ts IN '2025-12-01T01;2h'
                             """,
                     "",
                     false,
