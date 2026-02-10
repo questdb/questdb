@@ -1,13 +1,13 @@
 use std::convert::TryInto;
 use std::io::Cursor;
 
-use parquet_format_safe::thrift::protocol::TCompactInputProtocol;
-
 use crate::compression::Compression;
 use crate::error::{Error, Result};
 use crate::metadata::{ColumnChunkMetaData, Descriptor};
 use crate::page::{DataPageHeader, PageType, ParquetPageHeader};
+use crate::parquet_bridge::DataPageHeaderExt;
 use crate::parquet_bridge::Encoding;
+use parquet_format_safe::thrift::protocol::TCompactInputProtocol;
 
 use super::reader::get_page_header;
 
@@ -32,6 +32,13 @@ pub struct SlicedDataPage<'a> {
 impl SlicedDataPage<'_> {
     pub fn num_values(&self) -> usize {
         self.header.num_values()
+    }
+
+    pub fn encoding(&self) -> Encoding {
+        match &self.header {
+            DataPageHeader::V1(d) => d.encoding(),
+            DataPageHeader::V2(d) => d.encoding(),
+        }
     }
 }
 

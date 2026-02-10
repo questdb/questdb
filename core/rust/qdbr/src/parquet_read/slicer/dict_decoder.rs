@@ -1,5 +1,5 @@
 use crate::parquet::error::{fmt_err, ParquetResult};
-use parquet2::page::sliced::DictPageRef;
+use crate::parquet_read::page::DictPage;
 use std::mem::size_of;
 use std::ptr;
 
@@ -32,7 +32,7 @@ impl DictDecoder for VarDictDecoder<'_> {
 }
 
 impl<'a> VarDictDecoder<'a> {
-    pub fn try_new(dict_page: &'a DictPageRef<'a>, is_utf8: bool) -> ParquetResult<Self> {
+    pub fn try_new(dict_page: &'a DictPage<'a>, is_utf8: bool) -> ParquetResult<Self> {
         let mut dict_values: Vec<&[u8]> = Vec::with_capacity(dict_page.num_values);
         let mut offset = 0usize;
         let dict_data = &dict_page.buffer;
@@ -100,7 +100,7 @@ impl<const N: usize> DictDecoder for FixedDictDecoder<'_, N> {
 }
 
 impl<'a, const N: usize> FixedDictDecoder<'a, N> {
-    pub fn try_new(dict_page: &'a DictPageRef<'a>) -> ParquetResult<Self> {
+    pub fn try_new(dict_page: &'a DictPage<'a>) -> ParquetResult<Self> {
         if N * dict_page.num_values != dict_page.buffer.len() {
             return Err(fmt_err!(
                 Layout,

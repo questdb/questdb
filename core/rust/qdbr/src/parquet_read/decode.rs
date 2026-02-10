@@ -13,6 +13,7 @@ use crate::parquet_read::column_sink::var::{
     BinaryColumnSink, RawArrayColumnSink, StringColumnSink, VarcharColumnSink,
 };
 use crate::parquet_read::column_sink::Pushable;
+use crate::parquet_read::page::{split_buffer, DataPage, DictPage};
 use crate::parquet_read::slicer::dict_decoder::{FixedDictDecoder, VarDictDecoder};
 use crate::parquet_read::slicer::rle::{RleDictionarySlicer, RleLocalIsGlobalSymbolDecoder};
 use crate::parquet_read::slicer::{
@@ -30,8 +31,6 @@ use parquet2::deserialize::{HybridDecoderBitmapIter, HybridEncoded};
 
 use parquet2::encoding::hybrid_rle::HybridRleDecoder;
 use parquet2::encoding::{hybrid_rle, Encoding};
-use parquet2::page::sliced::split_buffer;
-use parquet2::page::sliced::{DataPageRef, DictPageRef};
 use parquet2::page::DataPageHeader;
 use parquet2::read::levels::get_bit_width;
 use parquet2::read::{SlicePageReader, SlicedDataPage, SlicedDictPage, SlicedPage};
@@ -93,11 +92,25 @@ impl ColumnChunkBuffers {
     }
 
     pub fn refresh_ptrs(&mut self) {
-        self.data_size = self.data_vec.len();
-        self.data_ptr = self.data_vec.as_mut_ptr();
+        if self.data_ptr.is_null() {
+            self.data_size = self.data_vec.len();
+            self.data_ptr = self.data_vec.as_mut_ptr();
+        }
 
-        self.aux_size = self.aux_vec.len();
-        self.aux_ptr = self.aux_vec.as_mut_ptr();
+        if self.aux_ptr.is_null() {
+            self.aux_size = self.aux_vec.len();
+            self.aux_ptr = self.aux_vec.as_mut_ptr();
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.data_vec.clear();
+        self.data_size = 0;
+        self.data_ptr = ptr::null_mut();
+
+        self.aux_vec.clear();
+        self.aux_size = 0;
+        self.aux_ptr = ptr::null_mut();
     }
 }
 
@@ -391,8 +404,7 @@ impl ParquetDecoder {
         let mut filter_idx = 0usize;
         let filter_count = rows_filter.len();
 
-        column_chunk_bufs.aux_vec.clear();
-        column_chunk_bufs.data_vec.clear();
+        column_chunk_bufs.reset();
 
         let dict_decompress_buffer = &mut ctx.dict_decompress_buffer;
         let decompress_buffer = &mut ctx.decompress_buffer;
@@ -405,9 +417,8 @@ impl ParquetDecoder {
                     let page = decompress_sliced_dict(dict_page, dict_decompress_buffer)?;
                     dict = Some(page);
                 }
-                SlicedPage::Data(data_page) => {
-                    let page_row_count_opt =
-                        sliced_page_row_count(&data_page, col_info.column_type);
+                SlicedPage::Data(page) => {
+                    let page_row_count_opt = sliced_page_row_count(&page, col_info.column_type);
 
                     if let Some(page_row_count) = page_row_count_opt {
                         let page_end = page_row_start + page_row_count;
@@ -434,7 +445,7 @@ impl ParquetDecoder {
                         if FILL_NULLS {
                             let row_lo = row_group_lo.saturating_sub(page_row_start);
                             let row_hi = (row_group_hi - page_row_start).min(page_row_count);
-                            let page = decompress_sliced_data(&data_page, decompress_buffer)?;
+                            let page = decompress_sliced_data(&page, decompress_buffer)?;
                             decode_page_filtered::<true>(
                                 &page,
                                 dict.as_ref(),
@@ -459,7 +470,7 @@ impl ParquetDecoder {
                                 )
                             })?;
                         } else if page_filter_start < filter_idx {
-                            let page = decompress_sliced_data(&data_page, decompress_buffer)?;
+                            let page = decompress_sliced_data(&page, decompress_buffer)?;
                             decode_page_filtered::<false>(
                                 &page,
                                 dict.as_ref(),
@@ -490,7 +501,7 @@ impl ParquetDecoder {
                             break;
                         }
 
-                        let page = decompress_sliced_data(&data_page, decompress_buffer)?;
+                        let page = decompress_sliced_data(&page, decompress_buffer)?;
                         let page_row_count = page_row_count(&page, col_info.column_type)?;
                         let page_end = page_row_start + page_row_count;
 
@@ -606,8 +617,8 @@ impl ParquetDecoder {
 
         let mut dict = None;
         let mut row_count = 0usize;
-        column_chunk_bufs.aux_vec.clear();
-        column_chunk_bufs.data_vec.clear();
+
+        column_chunk_bufs.reset();
 
         let dict_decompress_buffer = &mut ctx.dict_decompress_buffer;
         let decompress_buffer = &mut ctx.decompress_buffer;
@@ -620,13 +631,12 @@ impl ParquetDecoder {
                     let page = decompress_sliced_dict(dict_page, dict_decompress_buffer)?;
                     dict = Some(page);
                 }
-                SlicedPage::Data(data_page) => {
-                    let page_row_count_opt =
-                        sliced_page_row_count(&data_page, col_info.column_type);
+                SlicedPage::Data(page) => {
+                    let page_row_count_opt = sliced_page_row_count(&page, col_info.column_type);
 
                     if let Some(page_row_count) = page_row_count_opt {
                         if row_group_lo < row_count + page_row_count && row_group_hi > row_count {
-                            let page = decompress_sliced_data(&data_page, decompress_buffer)?;
+                            let page = decompress_sliced_data(&page, decompress_buffer)?;
                             decode_page(
                                 &page,
                                 dict.as_ref(),
@@ -649,7 +659,7 @@ impl ParquetDecoder {
                         }
                         row_count += page_row_count;
                     } else {
-                        let page = decompress_sliced_data(&data_page, decompress_buffer)?;
+                        let page = decompress_sliced_data(&page, decompress_buffer)?;
                         let page_row_count = page_row_count(&page, col_info.column_type)?;
 
                         if row_group_lo < row_count + page_row_count && row_group_hi > row_count {
@@ -846,9 +856,9 @@ impl ParquetDecoder {
 /// - `FILL_NULLS = false`: skip rows not in filter
 /// - `FILL_NULLS = true`: fill nulls for rows not in filter
 #[allow(clippy::too_many_arguments)]
-pub fn decode_page_filtered<const FILL_NULLS: bool>(
-    page: &DataPageRef,
-    dict: Option<&DictPageRef>,
+fn decode_page_filtered<const FILL_NULLS: bool>(
+    page: &DataPage,
+    dict: Option<&DictPage>,
     bufs: &mut ColumnChunkBuffers,
     col_info: QdbMetaCol,
     page_row_start: usize,
@@ -1775,8 +1785,8 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
 }
 
 pub fn decode_page(
-    page: &DataPageRef,
-    dict: Option<&DictPageRef>,
+    page: &DataPage,
+    dict: Option<&DictPage>,
     bufs: &mut ColumnChunkBuffers,
     col_info: QdbMetaCol,
     row_lo: usize,
@@ -2495,7 +2505,7 @@ pub fn decode_page(
 
 #[allow(clippy::while_let_on_iterator)]
 fn decode_page0<T: Pushable>(
-    page: &DataPageRef<'_>,
+    page: &DataPage<'_>,
     row_lo: usize,
     row_hi: usize,
     sink: &mut T,
@@ -2708,7 +2718,7 @@ fn decode_bitmap_runs<T: Pushable>(
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::while_let_on_iterator)]
 fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
-    page: &DataPageRef<'_>,
+    page: &DataPage,
     page_row_start: usize,
     page_row_count: usize,
     row_group_lo: usize,
@@ -2736,7 +2746,7 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
     let filter_len = rows_filter.len();
     let mut output_row = row_lo;
 
-    let iter = decode_null_bitmap(page, page_row_count)?;
+    let iter = decode_null_bitmap(&page, page_row_count)?;
     if let Some(iter) = iter {
         let mut current_row = 0usize;
 
@@ -3079,10 +3089,10 @@ fn get_bit_at(values: &[u8], bit_offset: usize) -> bool {
 }
 
 fn decode_null_bitmap<'a>(
-    page: &DataPageRef<'a>,
+    page: &DataPage<'a>,
     count: usize,
 ) -> ParquetResult<Option<HybridDecoderBitmapIter<'a>>> {
-    let nc = page.header().null_count();
+    let nc = page.header.null_count();
     if nc == Some(0) {
         return Ok(None);
     }
@@ -3100,7 +3110,7 @@ fn decode_null_bitmap<'a>(
 #[allow(clippy::while_let_on_iterator)]
 #[allow(clippy::too_many_arguments)]
 fn decode_array_page_filtered<T: DataPageSlicer, const FILL_NULLS: bool>(
-    page: &DataPageRef<'_>,
+    page: &DataPage<'_>,
     page_row_start: usize,
     page_row_count: usize,
     row_group_lo: usize,
@@ -3292,7 +3302,7 @@ fn decode_array_filtered_loop<T: DataPageSlicer, const FILL_NULLS: bool, const R
 }
 
 fn decode_array_page<T: DataPageSlicer>(
-    page: &DataPageRef<'_>,
+    page: &DataPage,
     row_lo: usize,
     row_hi: usize,
     slicer: &mut T,
@@ -3790,7 +3800,7 @@ fn append_array<T: DataPageSlicer>(
 fn decompress_sliced_dict<'a>(
     page: SlicedDictPage<'a>,
     buffer: &'a mut Vec<u8>,
-) -> ParquetResult<DictPageRef<'a>> {
+) -> ParquetResult<DictPage<'a>> {
     let buf = if page.compression != parquet2::compression::Compression::Uncompressed {
         let read_size = page.uncompressed_size;
         buffer.resize(read_size, 0);
@@ -3799,14 +3809,18 @@ fn decompress_sliced_dict<'a>(
     } else {
         page.buffer
     };
-    Ok(DictPageRef::new(buf, page.num_values, page.is_sorted))
+    Ok(DictPage {
+        buffer: buf,
+        num_values: page.num_values,
+        is_sorted: page.is_sorted,
+    })
 }
 
 fn decompress_sliced_data<'a>(
-    page: &SlicedDataPage<'a>,
+    page: &'a SlicedDataPage<'a>,
     decompress_buffer: &'a mut Vec<u8>,
-) -> ParquetResult<DataPageRef<'a>> {
-    let buf = if page.compression != parquet2::compression::Compression::Uncompressed {
+) -> ParquetResult<DataPage<'a>> {
+    let buffer = if page.compression != parquet2::compression::Compression::Uncompressed {
         match &page.header {
             DataPageHeader::V1(_) => {
                 let read_size = page.uncompressed_size;
@@ -3852,12 +3866,11 @@ fn decompress_sliced_data<'a>(
     } else {
         page.buffer
     };
-    Ok(DataPageRef::new(
-        page.header.clone(),
-        buf,
-        page.descriptor.clone(),
-        None,
-    ))
+    Ok(DataPage {
+        buffer,
+        header: &page.header,
+        descriptor: &page.descriptor,
+    })
 }
 
 fn sliced_page_row_count(page: &SlicedDataPage, column_type: ColumnType) -> Option<usize> {
@@ -3876,8 +3889,8 @@ fn sliced_page_row_count(page: &SlicedDataPage, column_type: ColumnType) -> Opti
     }
 }
 
-fn page_row_count(page: &DataPageRef, column_type: ColumnType) -> ParquetResult<usize> {
-    match page.header() {
+fn page_row_count(page: &DataPage, column_type: ColumnType) -> ParquetResult<usize> {
+    match &page.header {
         // V2 has explicit number of rows in the header.
         DataPageHeader::V2(header) => Ok(header.num_rows as usize),
         // V1 is more tricky in case of group types.

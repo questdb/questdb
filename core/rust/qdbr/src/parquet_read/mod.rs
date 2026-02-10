@@ -8,6 +8,7 @@ pub mod column_sink;
 pub mod decode;
 pub mod jni;
 pub mod meta;
+pub mod page;
 pub mod slicer;
 
 // The metadata fields are accessed from Java.

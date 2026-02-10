@@ -1,10 +1,8 @@
 use std::sync::Arc;
 
-use crate::page::sliced::{DataPageRef, DictPageRef};
 pub use crate::thrift_format::{
     DataPageHeader as DataPageHeaderV1, DataPageHeaderV2, PageHeader as ParquetPageHeader,
 };
-pub mod sliced;
 
 use crate::indexes::Interval;
 pub use crate::parquet_bridge::{DataPageHeaderExt, PageType};
@@ -148,8 +146,8 @@ impl DataPageHeader {
 /// and thus cloning it is expensive.
 #[derive(Debug, Clone)]
 pub struct DataPage {
-    pub(super) header: DataPageHeader,
-    pub(super) buffer: Vec<u8>,
+    pub header: DataPageHeader,
+    pub buffer: Vec<u8>,
     pub descriptor: Descriptor,
     pub selected_rows: Option<Vec<Interval>>,
 }
@@ -166,15 +164,6 @@ impl DataPage {
             buffer,
             descriptor,
             rows.map(|x| vec![Interval::new(0, x)]),
-        )
-    }
-
-    pub fn into_ref(&self) -> DataPageRef<'_> {
-        DataPageRef::new_read(
-            self.header.clone(),
-            &self.buffer,
-            self.descriptor.clone(),
-            self.selected_rows.clone(),
         )
     }
 
@@ -263,6 +252,15 @@ pub enum Page {
     Dict(DictPage),
 }
 
+impl Page {
+    pub(crate) fn buffer(&mut self) -> &mut Vec<u8> {
+        match self {
+            Self::Data(page) => &mut page.buffer,
+            Self::Dict(page) => &mut page.buffer,
+        }
+    }
+}
+
 /// A [`CompressedPage`] is a compressed, encoded representation of a Parquet page. It holds actual data
 /// and thus cloning it is expensive.
 #[derive(Debug)]
@@ -300,6 +298,13 @@ impl CompressedPage {
             CompressedPage::Dict(_) => None,
         }
     }
+
+    pub(crate) fn uncompressed_size(&self) -> usize {
+        match self {
+            CompressedPage::Data(page) => page.uncompressed_page_size,
+            CompressedPage::Dict(page) => page.uncompressed_page_size,
+        }
+    }
 }
 
 /// An uncompressed, encoded dictionary page.
@@ -308,16 +313,6 @@ pub struct DictPage {
     pub buffer: Vec<u8>,
     pub num_values: usize,
     pub is_sorted: bool,
-}
-
-impl DictPage {
-    pub fn into_ref(&self) -> DictPageRef<'_> {
-        DictPageRef {
-            buffer: &self.buffer,
-            num_values: self.num_values,
-            is_sorted: self.is_sorted,
-        }
-    }
 }
 
 impl DictPage {

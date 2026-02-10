@@ -1,14 +1,17 @@
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use num_traits::AsPrimitive;
 use parquet2::compression::CompressionOptions;
+use parquet2::encoding::hybrid_rle::{encode_bool, encode_u32};
 use parquet2::encoding::Encoding;
-use parquet2::page::{DataPage, DictPage, Page};
+use parquet2::metadata::Descriptor;
+use parquet2::page::{DataPage, DataPageHeader, DataPageHeaderV1, DictPage, Page};
 use parquet2::schema::types::{ParquetType, PrimitiveType};
 use parquet2::write::Version;
 use qdb_core::col_type::{encode_array_type, ColumnType, ColumnTypeTag};
 use questdbr::allocator::{MemTracking, QdbAllocator};
 use questdbr::parquet::{QdbMetaCol, QdbMetaColFormat};
 use questdbr::parquet_read::decode::decode_page;
+use questdbr::parquet_read::page;
 use questdbr::parquet_read::ColumnChunkBuffers;
 use questdbr::parquet_write::bench::{
     array_to_raw_page, binary_to_page, boolean_to_page, bytes_to_page, int_slice_to_page_notnull,
@@ -17,11 +20,13 @@ use questdbr::parquet_write::bench::{
 };
 use questdbr::parquet_write::schema::column_type_to_parquet_type;
 use questdbr::parquet_write::Nullable;
+use std::collections::HashMap;
 use std::hint::black_box;
 use std::sync::atomic::AtomicUsize;
 
 const ROW_COUNT: usize = 100_000;
 const NULL_PCTS: [u8; 2] = [0, 20];
+const DICT_CARDINALITY: usize = 256;
 
 const INT_ENCODINGS: [Encoding; 2] = [Encoding::Plain, Encoding::DeltaBinaryPacked];
 const LEN_ENCODINGS: [Encoding; 2] = [Encoding::Plain, Encoding::DeltaLengthByteArray];
@@ -553,6 +558,175 @@ fn make_long256_data(row_count: usize, null_pct: u8) -> Vec<[u8; 32]> {
     data
 }
 
+fn make_byte_dict_data(row_count: usize, null_pct: u8) -> Vec<i32> {
+    let card = DICT_CARDINALITY.min(120);
+    (0..row_count)
+        .map(|i| {
+            if is_null_at(i, null_pct) {
+                0i32
+            } else {
+                ((i % card) + 1) as i32
+            }
+        })
+        .collect()
+}
+
+fn make_short_dict_data(row_count: usize, null_pct: u8) -> Vec<i32> {
+    (0..row_count)
+        .map(|i| {
+            if is_null_at(i, null_pct) {
+                0i32
+            } else {
+                ((i % DICT_CARDINALITY) + 1) as i32
+            }
+        })
+        .collect()
+}
+
+fn make_i32_dict_data(row_count: usize, null_pct: u8) -> Vec<i32> {
+    (0..row_count)
+        .map(|i| {
+            if is_null_at(i, null_pct) {
+                i32::MIN
+            } else {
+                (i % DICT_CARDINALITY) as i32
+            }
+        })
+        .collect()
+}
+
+fn make_i64_dict_data(row_count: usize, null_pct: u8) -> Vec<i64> {
+    (0..row_count)
+        .map(|i| {
+            if is_null_at(i, null_pct) {
+                i64::MIN
+            } else {
+                (i % DICT_CARDINALITY) as i64
+            }
+        })
+        .collect()
+}
+
+fn make_f32_dict_data(row_count: usize, null_pct: u8) -> Vec<f32> {
+    (0..row_count)
+        .map(|i| {
+            if is_null_at(i, null_pct) {
+                f32::NAN
+            } else {
+                (i % DICT_CARDINALITY) as f32
+            }
+        })
+        .collect()
+}
+
+fn make_f64_dict_data(row_count: usize, null_pct: u8) -> Vec<f64> {
+    (0..row_count)
+        .map(|i| {
+            if is_null_at(i, null_pct) {
+                f64::NAN
+            } else {
+                (i % DICT_CARDINALITY) as f64
+            }
+        })
+        .collect()
+}
+
+fn dict_bit_width(max: u64) -> u8 {
+    (64 - max.leading_zeros()) as u8
+}
+
+/// Build RLE dictionary-encoded DataPage + DictPage for fixed-size values.
+///
+/// The raw data is reinterpreted as `elem_size`-byte chunks. Null rows
+/// (determined by `null_pct` and `is_null_at`) are excluded from the
+/// dictionary and encoded via definition levels.
+fn build_fixed_rle_dict_pages(
+    raw_data: &[u8],
+    elem_size: usize,
+    null_pct: u8,
+    row_count: usize,
+    column_type: ColumnType,
+) -> (DataPage, DictPage) {
+    let mut dict_map: HashMap<&[u8], u32> = HashMap::new();
+    let mut dict_entries: Vec<&[u8]> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+
+    for i in 0..row_count {
+        if is_null_at(i, null_pct) {
+            continue;
+        }
+        let start = i * elem_size;
+        let val = &raw_data[start..start + elem_size];
+        let idx = match dict_map.get(val) {
+            Some(&idx) => idx,
+            None => {
+                let idx = dict_entries.len() as u32;
+                dict_map.insert(val, idx);
+                dict_entries.push(val);
+                idx
+            }
+        };
+        indices.push(idx);
+    }
+
+    let mut dict_buffer = Vec::with_capacity(dict_entries.len() * elem_size);
+    for entry in &dict_entries {
+        dict_buffer.extend_from_slice(entry);
+    }
+
+    let max_key = if dict_entries.is_empty() {
+        0u32
+    } else {
+        dict_entries.len() as u32 - 1
+    };
+    let bits_per_key = dict_bit_width(max_key as u64);
+
+    // Build data page: definition levels (V1) + RLE-encoded indices
+    let mut data_buffer = Vec::new();
+
+    // Definition levels with V1 length prefix
+    data_buffer.extend_from_slice(&[0u8; 4]);
+    let dl_start = data_buffer.len();
+    let def_levels = (0..row_count).map(|i| !is_null_at(i, null_pct));
+    encode_bool(&mut data_buffer, def_levels, row_count).unwrap();
+    let dl_len = (data_buffer.len() - dl_start) as i32;
+    data_buffer[dl_start - 4..dl_start].copy_from_slice(&dl_len.to_le_bytes());
+
+    // RLE-encoded dictionary indices
+    let non_null_len = indices.len();
+    data_buffer.push(bits_per_key);
+    encode_u32(
+        &mut data_buffer,
+        indices.into_iter(),
+        non_null_len,
+        bits_per_key as u32,
+    )
+    .unwrap();
+
+    let primitive_type = primitive_type_for(column_type);
+    let header = DataPageHeader::V1(DataPageHeaderV1 {
+        num_values: row_count as i32,
+        encoding: Encoding::RleDictionary.into(),
+        definition_level_encoding: Encoding::Rle.into(),
+        repetition_level_encoding: Encoding::Rle.into(),
+        statistics: None,
+    });
+    let data_page = DataPage::new(
+        header,
+        data_buffer,
+        Descriptor {
+            primitive_type,
+            max_def_level: 1,
+            max_rep_level: 0,
+        },
+        Some(row_count),
+    );
+
+    let dict_page = DictPage::new(dict_buffer, dict_entries.len(), false);
+
+    (data_page, dict_page)
+}
+
 fn make_ipv4_data(row_count: usize, null_pct: u8) -> Vec<i32> {
     let mut data = Vec::with_capacity(row_count);
     for i in 0..row_count {
@@ -675,6 +849,28 @@ macro_rules! bytes_cases {
     };
 }
 
+macro_rules! fixed_dict_cases {
+    ($cases:ident, $name:literal, $tag:ident, $elem_size:expr,
+     |$np:ident| $data:expr) => {
+        for &$np in null_pcts(true) {
+            let data = $data;
+            let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
+            let raw = unsafe {
+                std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * $elem_size)
+            };
+            let (page, dict) = build_fixed_rle_dict_pages(raw, $elem_size, $np, ROW_COUNT, ct);
+            $cases.push(build_case(
+                format!(concat!($name, "_dict_n{null_pct}"), null_pct = $np),
+                page,
+                Some(dict),
+                ct,
+                None,
+                ROW_COUNT,
+            ));
+        }
+    };
+}
+
 fn build_cases() -> Vec<BenchCase> {
     let mut cases = Vec::new();
     let options = write_options();
@@ -743,6 +939,30 @@ fn build_cases() -> Vec<BenchCase> {
     simd_cases!(cases, options, "double", Double, &[Encoding::Plain], |np| {
         make_f64_data(ROW_COUNT, np)
     });
+
+    // RLE dictionary-encoded fixed-size types
+    fixed_dict_cases!(cases, "byte", Byte, 4, |np| make_byte_dict_data(
+        ROW_COUNT, np
+    ));
+    fixed_dict_cases!(cases, "short", Short, 4, |np| make_short_dict_data(
+        ROW_COUNT, np
+    ));
+    fixed_dict_cases!(cases, "int", Int, 4, |np| make_i32_dict_data(ROW_COUNT, np));
+    fixed_dict_cases!(cases, "long", Long, 8, |np| make_i64_dict_data(
+        ROW_COUNT, np
+    ));
+    fixed_dict_cases!(cases, "date", Date, 8, |np| make_i64_dict_data(
+        ROW_COUNT, np
+    ));
+    fixed_dict_cases!(cases, "timestamp", Timestamp, 8, |np| make_i64_dict_data(
+        ROW_COUNT, np
+    ));
+    fixed_dict_cases!(cases, "float", Float, 4, |np| make_f32_dict_data(
+        ROW_COUNT, np
+    ));
+    fixed_dict_cases!(cases, "double", Double, 8, |np| make_f64_dict_data(
+        ROW_COUNT, np
+    ));
 
     // Variable-length types — each uses a different page function with different args
     for &encoding in &LEN_ENCODINGS {
@@ -960,7 +1180,14 @@ fn bench_decode_page(c: &mut Criterion) {
             b.iter(|| {
                 state.bufs.data_vec.clear();
                 state.bufs.aux_vec.clear();
-                decode_page_ref(black_box(&page), dict.as_ref(), &mut state.bufs, col_info, 0, row_count);
+                decode_page_ref(
+                    black_box(&page),
+                    dict.as_ref(),
+                    &mut state.bufs,
+                    col_info,
+                    0,
+                    row_count,
+                );
             })
         });
     }
@@ -979,8 +1206,24 @@ pub fn decode_page_ref(
     row_lo: usize,
     row_hi: usize,
 ) {
-    let page = page.into_ref();
-    let dict = dict.map(|d| d.into_ref());
-    decode_page(black_box(&page), dict.as_ref(), bufs, col_info, row_lo, row_hi)
-        .expect("decode_page");
+    let page = page::DataPage {
+        header: &page.header,
+        buffer: &page.buffer,
+        descriptor: &page.descriptor,
+    };
+
+    let dict = dict.map(|d| page::DictPage {
+        buffer: &d.buffer,
+        num_values: d.num_values,
+        is_sorted: d.is_sorted,
+    });
+    decode_page(
+        black_box(&page),
+        dict.as_ref(),
+        bufs,
+        col_info,
+        row_lo,
+        row_hi,
+    )
+    .expect("decode_page");
 }

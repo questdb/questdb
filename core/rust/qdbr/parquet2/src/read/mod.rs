@@ -11,7 +11,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
 
 pub use column::*;
-pub use compression::decompress;
+pub use compression::{decompress, BasicDecompressor, Decompressor};
 pub use metadata::{deserialize_metadata, read_metadata, read_metadata_with_size};
 #[cfg(feature = "async")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
