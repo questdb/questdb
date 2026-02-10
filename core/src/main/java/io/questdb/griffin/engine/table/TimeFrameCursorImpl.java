@@ -41,9 +41,12 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
@@ -61,6 +64,8 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     private final PageFrameMemoryPool frameMemoryPool;
     private final IntList framePartitionIndexes = new IntList();
     private final LongList frameRowCounts = new LongList();
+    // Cache for frame timestamps: [tsLo0, tsHi0, tsLo1, tsHi1, ...] - avoids re-reading on repeated open()
+    private final DirectLongList frameTimestampCache;
     private final RecordMetadata metadata;
     private final LongList partitionCeilings = new LongList();
     private final LongList partitionTimestamps = new LongList();
@@ -76,15 +81,22 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata
     ) {
-        this.metadata = metadata;
-        this.frameAddressCache = new PageFrameAddressCache();
-        this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
+        try {
+            this.metadata = metadata;
+            this.frameAddressCache = new PageFrameAddressCache();
+            this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
+            this.frameTimestampCache = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
     public void close() {
         Misc.free(frameMemoryPool);
         Misc.free(frameAddressCache);
+        Misc.free(frameTimestampCache);
         frameCursor = Misc.free(frameCursor);
     }
 
@@ -180,11 +192,24 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         }
         final long rowCount = frameRowCounts.getQuick(frameIndex);
         if (rowCount > 0) {
-            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-            final long timestampAddress = frameMemory.getPageAddress(metadata.getTimestampIndex());
+            final int cacheOffset = frameIndex * 2;
+            long timestampLo = frameTimestampCache.get(cacheOffset);
+            long timestampHi;
+            if (timestampLo != Numbers.LONG_NULL) {
+                // Cache hit - use cached timestamps
+                timestampHi = frameTimestampCache.get(cacheOffset + 1);
+            } else {
+                // Cache miss - read timestamps directly from frame memory
+                final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+                final long timestampAddress = frameMemory.getPageAddress(metadata.getTimestampIndex());
+                timestampLo = Unsafe.getUnsafe().getLong(timestampAddress);
+                timestampHi = Unsafe.getUnsafe().getLong(timestampAddress + (rowCount - 1) * 8);
+                frameTimestampCache.set(cacheOffset, timestampLo);
+                frameTimestampCache.set(cacheOffset + 1, timestampHi);
+            }
             timeFrame.ofOpen(
-                    Unsafe.getUnsafe().getLong(timestampAddress),
-                    Unsafe.getUnsafe().getLong(timestampAddress + (rowCount - 1) * 8) + 1,
+                    timestampLo,
+                    timestampHi + 1,
                     0,
                     rowCount
             );
@@ -257,6 +282,14 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
                 frameAddressCache.add(frameCount++, frame);
             }
             isFrameCacheBuilt = true;
+            // Initialize timestamp cache (2 entries per frame: tsLo, tsHi)
+            // Note: setCapacity is safe to call on a closed list - it will allocate memory
+            final int cacheSize = 2 * frameCount;
+            frameTimestampCache.setCapacity(cacheSize);
+            frameTimestampCache.clear();
+            for (int i = 0; i < cacheSize; i++) {
+                frameTimestampCache.set(i, Numbers.LONG_NULL);
+            }
         }
     }
 

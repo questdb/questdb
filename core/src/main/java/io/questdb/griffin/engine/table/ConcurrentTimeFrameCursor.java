@@ -77,9 +77,14 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata
     ) {
-        this.metadata = metadata;
-        this.frameTimestampCache = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true);
-        this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
+        try {
+            this.metadata = metadata;
+            this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
+            this.frameTimestampCache = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     public static void populatePartitionTimestamps(
@@ -178,7 +183,7 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
         frameMemoryPool.of(frameAddressCache);
         record.of(frameCursor);
         // Initialize timestamp cache (2 entries per frame: tsLo, tsHi)
-        // Note: setCapacity is safe to call on a closed list - it will allocate memory.
+        // Note: setCapacity is safe to call on a closed list - it will allocate memory
         final int cacheSize = 2 * frameCount;
         frameTimestampCache.setCapacity(cacheSize);
         frameTimestampCache.clear();
