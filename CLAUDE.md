@@ -54,6 +54,7 @@ Use modern Java features:
 - use multiline strings for longer statements (multiple INSERT rows, complex queries),
   as well as to assert multiline query results
 - use the expr::TYPE syntax for casts
+- use underscore to separate thousands in numbers with 5 digits or more
 
 ### Building
 
