@@ -2071,7 +2071,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelNonKeyedGroupByThrowsOnTimeout() throws Exception {
+    public void testParallelNonKeyedGroupByThrowsOnTimeoutDuringReduction() throws Exception {
         // We want the timeout to happen in reduce.
         // Page frame count is 40.
         final long tripWhenTicks = Math.max(10, rnd.nextLong(39));
@@ -2079,7 +2079,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelNonKeyedGroupByThrowsOnTimeoutUnorderedPath() throws Exception {
+    public void testParallelNonKeyedGroupByThrowsOnTimeoutInSetupPhase() throws Exception {
+        // We want the timeout to happen early, before reduction starts.
         testParallelGroupByThrowsOnTimeout("select vwap(price, quantity) from tab", 2);
     }
 
