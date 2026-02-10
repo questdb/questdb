@@ -105,7 +105,9 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             );
             // formula for calculating symbol capacity needs to be in agreement with symbol reader
             this.symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
-            assert symbolCapacity > 0;
+            if (symbolCapacity <= 0) {
+                throw CairoException.critical(0).put("invalid symbol capacity [capacity=").put(symbolCapacity).put(']');
+            }
             final boolean useCache = offsetMem.getBool(HEADER_CACHE_ENABLED);
             this.offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
 

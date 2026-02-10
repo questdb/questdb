@@ -285,7 +285,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         path.trimTo(plen).concat(TableUtils.META_FILE_NAME);
         blockFileReader.of(path.$());
 
-        TransitionResult result = TableMetadataFileBlock.read(blockFileReader, transitionHolder, path.$(), txnMetadataVersion);
+        // Convert logical metadata version to BlockFile version (add 1)
+        TransitionResult result = TableMetadataFileBlock.read(blockFileReader, transitionHolder, path.$(), txnMetadataVersion + 1);
         blockFileReader.close();
 
         return result;
@@ -300,7 +301,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.writerColumnCount = newColumnCount;
         int timestampWriterIndex = newHolder.timestampIndex;
         this.tableId = newHolder.tableId;
-        this.metadataVersion = newHolder.metadataVersion;
+        // Convert BlockFile version to logical metadata version (subtract 1)
+        this.metadataVersion = newHolder.metadataVersion - 1;
         this.maxUncommittedRows = newHolder.maxUncommittedRows;
         this.o3MaxLag = newHolder.o3MaxLag;
         this.walEnabled = newHolder.walEnabled;
@@ -458,7 +460,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.tableId = h.tableId;
         this.maxUncommittedRows = h.maxUncommittedRows;
         this.o3MaxLag = h.o3MaxLag;
-        this.metadataVersion = h.metadataVersion;
+        // Convert BlockFile version to logical metadata version (subtract 1)
+        this.metadataVersion = h.metadataVersion - 1;
         this.walEnabled = h.walEnabled;
         this.ttlHoursOrMonths = h.ttlHoursOrMonths;
         this.columnMetadata.clear();

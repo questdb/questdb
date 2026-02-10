@@ -650,43 +650,61 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         checkDistressed();
         checkColumnName(columnName);
 
+        // Validate index is only supported for SYMBOL columns
+        if (isIndexed && !ColumnType.isSymbol(columnType)) {
+            throw CairoException.nonCritical().put("index flag is only supported for SYMBOL column type [columnType=").put(ColumnType.nameOf(columnType)).put(']');
+        }
+
+        // Validate indexValueBlockCapacity when index is enabled
+        if (isIndexed && indexValueBlockCapacity < 2) {
+            throw CairoException.nonCritical().put("invalid index value block capacity [capacity=").put(indexValueBlockCapacity).put(']');
+        }
+
+        // Validate symbolCapacity for SYMBOL columns
+        if (ColumnType.isSymbol(columnType) && symbolCapacity <= 0) {
+            throw CairoException.nonCritical().put("invalid symbol capacity [capacity=").put(symbolCapacity).put(']');
+        }
+
         if (metadata.getColumnIndexQuiet(columnName) != -1) {
             throw CairoException.duplicateColumn(columnName);
         }
 
         commit();
 
-        long columnNameTxn = getTxn();
-        LOG.info()
-                .$("adding column '").$safe(columnName)
-                .$('[').$(ColumnType.nameOf(columnType)).$("], columnName txn ").$(columnNameTxn)
-                .$(" to ").$substr(pathRootSize, path)
-                .$();
+        try {
+            long columnNameTxn = getTxn();
+            LOG.info()
+                    .$("adding column '").$safe(columnName)
+                    .$('[').$(ColumnType.nameOf(columnType)).$("], columnName txn ").$(columnNameTxn)
+                    .$(" to ").$substr(pathRootSize, path)
+                    .$();
 
-        addColumnToMeta(
-                columnName,
-                columnType,
-                symbolCapacity,
-                symbolCacheFlag,
-                isIndexed,
-                indexValueBlockCapacity,
-                isDedupKey,
-                columnNameTxn,
-                -1,
-                metadata
-        );
+            addColumnToMeta(
+                    columnName,
+                    columnType,
+                    symbolCapacity,
+                    symbolCacheFlag,
+                    isIndexed,
+                    indexValueBlockCapacity,
+                    isDedupKey,
+                    columnNameTxn,
+                    -1,
+                    metadata
+            );
 
+            // extend columnTop list to make sure row cancel can work
+            // need for setting correct top is hard to test without being able to read from table
+            int columnIndex = columnCount - 1;
 
-        // extend columnTop list to make sure row cancel can work
-        // need for setting correct top is hard to test without being able to read from table
-        int columnIndex = columnCount - 1;
+            // Set txn number in the column version file to mark the transaction where the column is added
+            columnVersionWriter.upsertDefaultTxnName(columnIndex, columnNameTxn, txWriter.getLastPartitionTimestamp());
 
-        // Set txn number in the column version file to mark the transaction where the column is added
-        columnVersionWriter.upsertDefaultTxnName(columnIndex, columnNameTxn, txWriter.getLastPartitionTimestamp());
-
-        // create column files
-        if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
-            openNewColumnFiles(columnName, columnType, isIndexed, indexValueBlockCapacity);
+            // create column files
+            if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
+                openNewColumnFiles(columnName, columnType, isIndexed, indexValueBlockCapacity);
+            }
+        } catch (Throwable th) {
+            throwDistressException(th);
         }
 
         commitStructuralMetadataChange();
@@ -9426,7 +9444,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     metadata.getTtlHoursOrMonths(),
                     columns
             );
-            metadata.setMetadataVersion(newVersion);
+            // Convert BlockFile version to logical metadata version (subtract 1)
+            metadata.setMetadataVersion(newVersion - 1);
         } catch (CairoException e) {
             LOG.critical().$("could not write metadata to BlockFile [path=").$(path).$(", errno=").$(e.errno).I$();
             throw e;

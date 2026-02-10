@@ -170,7 +170,8 @@ public class MetadataCache implements QuietCloseable {
 
             table.setMetadataVersion(Long.MIN_VALUE);
 
-            long metadataVersion = holder.metadataVersion;
+            // Convert BlockFile version to logical metadata version (subtract 1)
+            long metadataVersion = holder.metadataVersion - 1;
 
             // make sure we aren't duplicating work
             CairoTable potentiallyExistingTable = tableMap.get(token.getTableName());

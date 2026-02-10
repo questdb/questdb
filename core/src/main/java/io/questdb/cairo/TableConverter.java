@@ -144,7 +144,7 @@ public class TableConverter {
                             long newMetadataVersion;
                             try (BlockFileWriter blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode())) {
                                 blockFileWriter.of(metaPath.$());
-                                TableMetadataFileBlock.write(
+                                newMetadataVersion = TableMetadataFileBlock.write(
                                         blockFileWriter,
                                         ColumnType.VERSION,
                                         holder.tableId,
@@ -156,13 +156,12 @@ public class TableConverter {
                                         holder.ttlHoursOrMonths,
                                         holder.columns
                                 );
-                                newMetadataVersion = blockFileWriter.getVersion();
                             }
 
                             if (walEnabled) {
-                                // Set structure version to match the new BlockFile version
+                                // Convert BlockFile version to logical metadata version (subtract 1)
                                 // with column structure version = 0
-                                txWriter.setStructureVersionUnsafe(newMetadataVersion);
+                                txWriter.setStructureVersionUnsafe(newMetadataVersion - 1);
                             }
                             convertedTables.add(token);
 

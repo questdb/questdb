@@ -62,6 +62,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -91,6 +92,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.PropertyKey.CAIRO_COMMIT_MODE;
 import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
@@ -166,31 +168,6 @@ public class TableWriterTest extends AbstractCairoTest {
                 return super.rename(name1, name2);
             }
         });
-    }
-
-    @Test
-    public void testAddColumnCannotRenameMeta() throws Exception {
-        testAddColumnUnrecoverableFault(new MetaRenameDenyingFacade());
-    }
-
-    @Test
-    public void testAddColumnCannotRenameMetaSwap() throws Exception {
-        testAddColumnUnrecoverableFault(new SwapMetaRenameDenyingFacade());
-    }
-
-    @Test
-    public void testAddColumnCannotRenameMetaSwapAndUseIndexedPrevMeta() throws Exception {
-        TestFilesFacade ff = new SwapMetaRenameDenyingFacade() {
-            int count = 5;
-
-            @Override
-            public int rename(LPSZ from, LPSZ to) {
-                return (!Utf8s.containsAscii(to, TableUtils.META_PREV_FILE_NAME) || --count <= 0)
-                        && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK
-                        : Files.FILES_RENAME_ERR_OTHER;
-            }
-        };
-        testAddColumnUnrecoverableFault(ff);
     }
 
     @Test
@@ -385,28 +362,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnFileOpenFail3() throws Exception {
-        String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
-        testUnrecoverableAddColumn(new TestFilesFacadeImpl() {
-            int count = 1;
-
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
-                    return -1;
-                }
-                return super.openRW(name, opts);
-            }
-
-            @Override
-            public int rename(LPSZ from, LPSZ to) {
-                return !(Utf8s.endsWithAscii(from, TableUtils.META_PREV_FILE_NAME) && --count == 0)
-                        && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK : Files.FILES_RENAME_ERR_OTHER;
-            }
-        });
-    }
-
-    @Test
     public void testAddColumnFileOpenFail4() throws Exception {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
         testAddColumnUnrecoverableFault(new TestFilesFacadeImpl() {
@@ -421,83 +376,57 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnFileOpenFailAndIndexedPrev() throws Exception {
-        String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
-        testUnrecoverableAddColumn(new TestFilesFacadeImpl() {
-            int count = 2;
-            int toCount = 5;
-
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
-                    return -1;
-                }
-                return super.openRW(name, opts);
-            }
-
-            @Override
-            public int rename(LPSZ from, LPSZ to) {
-                return (!Utf8s.containsAscii(from, TableUtils.META_PREV_FILE_NAME) || --count <= 0)
-                        && (!Utf8s.containsAscii(to, TableUtils.META_PREV_FILE_NAME) || --toCount <= 0)
-                        && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK : Files.FILES_RENAME_ERR_OTHER;
-            }
-        });
-    }
-
-    @Test
-    public void testAddColumnHavingTroubleCreatingMetaSwap() throws Exception {
-        int N = 10000;
-        create(FF, PartitionBy.DAY, N);
-        FilesFacade ff = new TestFilesFacadeImpl() {
-            int count = 5;
-
-            @Override
-            public boolean exists(LPSZ path) {
-                return Utf8s.containsAscii(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
-            }
-
-            @Override
-            public boolean removeQuiet(LPSZ name) {
-                if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
-                    return --count < 0;
-                }
-                return super.removeQuiet(name);
-            }
-        };
-
-        try (TableWriter writer = newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
-            @Override
-            public @NotNull FilesFacade getFilesFacade() {
-                return ff;
-            }
-        }, PRODUCT)) {
-            writer.addColumn("xyz", ColumnType.STRING);
-            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
-
+    public void testAddColumnMetaSyncFail() throws Exception {
+        // Test that metadata sync failure during addColumn causes recoverable error
+        // BlockFile uses msync to persist metadata changes when commit mode is SYNC
+        MetaSyncFailingFilesFacade ff = new MetaSyncFailingFilesFacade(0); // Fail on first sync
+        assertMemoryLeak(ff, () -> {
+            setProperty(CAIRO_COMMIT_MODE, "SYNC");
+            long ts = populateTable();
             Rnd rnd = new Rnd();
-            populateProducts(writer, rnd, ts, N, 6 * 60000 * 1000L);
-            writer.commit();
-            Assert.assertEquals(N, writer.size());
-        }
+            TableWriter writer = newOffPoolWriter(engine.getConfiguration(), PRODUCT);
+            try {
+                Assert.assertEquals(20, writer.getColumnCount());
+                ts = populateProducts(writer, rnd, ts, 10000, 60000L * 1000L);
+                writer.commit();
+
+                ff.activate();
+                try {
+                    writer.addColumn("abc", ColumnType.SYMBOL);
+                    Assert.fail("Expected CairoError due to msync failure");
+                } catch (CairoError e) {
+                    // Expected - msync failure during metadata commit causes distressed writer
+                    Assert.assertTrue("Expected msync failure in cause", e.getCause() != null
+                            && e.getCause().getMessage().contains("msync"));
+                    Assert.assertTrue("Writer should be distressed after msync failure", writer.isDistressed());
+                }
+
+                // Deactivate fault injection for recovery
+                ff.deactivate();
+
+                // Writer is distressed - close it
+                Misc.free(writer);
+
+                // Reopen writer - should work since we deactivated the fault
+                writer = newOffPoolWriter(engine.getConfiguration(), PRODUCT);
+
+                // Should still be able to add rows after recovery
+                populateProducts(writer, rnd, ts, 10000, 60000L * 1000L);
+                writer.commit();
+                // populateTable() creates 10000, first populateProducts() adds 10000, this adds 10000 more
+                Assert.assertEquals(30000, writer.size());
+            } finally {
+                writer.close();
+            }
+        });
     }
 
     @Test
-    public void testAddColumnMetaOpenFail() throws Exception {
-        testUnrecoverableAddColumn(new TestFilesFacadeImpl() {
-            int counter = 2;
-
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
-                    counter = 1;
-                    return -1;
-                }
-                if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && --counter == 0) {
-                    return -1;
-                }
-                return super.openRW(name, opts);
-            }
-        });
+    public void testAddColumnMetaSyncFailAndRecover() throws Exception {
+        // With BlockFile format, sync failure leaves the old version intact.
+        // The writer should recover by re-reading the valid old version.
+        MetaSyncFailingFilesFacade ff = new MetaSyncFailingFilesFacade(0);
+        testAddColumnErrorFollowedByRepairFail(ff);
     }
 
     @Test
@@ -530,100 +459,8 @@ public class TableWriterTest extends AbstractCairoTest {
         }
     }
 
-    @Test
-    public void testAddColumnRepairFail() throws Exception {
-        testAddColumnErrorFollowedByRepairFail(new FilesFacadeImpl() {
-            int counter = 2;
-
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                // Cannot write to _meta.swp
-                if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
-                    counter = 1;
-                    return -1;
-                }
-                // And cannot open _meta file to re-read unmodified metadata once.
-                if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && --counter == 0) {
-                    return -1;
-                }
-                return super.openRW(name, opts);
-            }
-
-            @Override
-            public boolean removeQuiet(LPSZ name) {
-                return !Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && super.removeQuiet(name);
-            }
-        });
-    }
-
-    @Test
-    public void testAddColumnRepairFail2() throws Exception {
-        testAddColumnErrorFollowedByRepairFail(new FilesFacadeImpl() {
-            int counter = 1;
-
-            @Override
-            public int rename(LPSZ from, LPSZ to) {
-                // DDL fails because we can't rename _meta.swp to _meta
-                if (Utf8s.containsAscii(from, TableUtils.META_SWAP_FILE_NAME)) {
-                    return -1;
-                }
-                // Also we can't rename _meta.prev to _meta once so that writer become distressed
-                if (Utf8s.containsAscii(from, TableUtils.META_PREV_FILE_NAME) && --counter == 0) {
-                    return -1;
-                }
-                // But rollback from meta.prev to _meta is ok
-                return super.rename(from, to);
-            }
-        });
-    }
-
-    @Test
-    public void testAddColumnSwpFileDelete() throws Exception {
-        assertMemoryLeak(() -> {
-            populateTable();
-            // simulate existence of _meta.swp
-
-            final TestFilesFacade ff = new TestFilesFacade() {
-                boolean deleteAttempted = false;
-
-                @Override
-                public boolean exists(LPSZ path) {
-                    return Utf8s.endsWithAscii(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
-                }
-
-                @Override
-                public boolean removeQuiet(LPSZ name) {
-                    if (Utf8s.endsWithAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
-                        return deleteAttempted = true;
-                    }
-                    return super.removeQuiet(name);
-                }
-
-                @Override
-                public boolean wasCalled() {
-                    return deleteAttempted;
-                }
-            };
-
-            try (TableWriter writer = newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
-                @Override
-                public @NotNull FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            }, PRODUCT)) {
-                Assert.assertEquals(20, writer.getColumnCount());
-                writer.addColumn("abc", ColumnType.STRING);
-                Assert.assertEquals(22, writer.getColumnCount());
-                Assert.assertTrue(ff.wasCalled());
-            }
-        });
-    }
-
-    @Test
-    public void testAddColumnSwpFileDeleteFail() throws Exception {
-        // simulate existence of _meta.swp
-        testAddColumnUnrecoverableFault(new FailMetadataSwapFilesFacade());
-    }
+    // Note: testAddColumnSwpFileDelete and testAddColumnSwpFileDeleteFail removed
+    // BlockFile format doesn't use swap files - it uses dual-region versioning
 
     @Test
     public void testAddColumnToNonEmptyNonPartitioned() {
@@ -751,7 +588,8 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
 
                 try {
-                    writer.addColumn("c", ColumnType.SYMBOL, 0, false, true, 0, false);
+                    // Use valid symbolCapacity (128) but invalid indexValueBlockCapacity (0)
+                    writer.addColumn("c", ColumnType.SYMBOL, 128, false, true, 0, false);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "invalid index value block capacity");
@@ -1382,22 +1220,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCannotOpenTodo() throws Exception {
-        // trick constructor into thinking "_todo" file exists
-        testConstructor(new TestFilesFacadeImpl() {
-            int counter = 1;
-
-            @Override
-            public long openRW(LPSZ path, int opts) {
-                if (Utf8s.endsWithAscii(path, TableUtils.TODO_FILE_NAME) && --counter == 0) {
-                    return -1;
-                }
-                return super.openRW(path, opts);
-            }
-        });
-    }
-
-    @Test
     public void testCannotOpenTxFile() throws Exception {
         testConstructor(new TestFilesFacadeImpl() {
             int count = 1;
@@ -1615,30 +1437,6 @@ public class TableWriterTest extends AbstractCairoTest {
             writer.rollback();
             Assert.assertEquals(0, writer.size());
         }
-    }
-
-    @Test
-    public void testConstructorTruncatedTodo() throws Exception {
-        FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public long length(LPSZ name) {
-                if (Utf8s.endsWithAscii(name, TableUtils.TODO_FILE_NAME)) {
-                    return 12;
-                }
-                return super.length(name);
-            }
-        };
-
-        assertMemoryLeak(() -> {
-                    create(ff, PartitionBy.DAY, 10000);
-                    try {
-                        populateTable0(ff, 10000);
-                        Assert.fail();
-                    } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "corrupt");
-                    }
-                }
-        );
     }
 
     @Test
@@ -1942,33 +1740,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIncorrectTodoCode() throws Exception {
-        assertMemoryLeak(() -> {
-            CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE, ColumnType.TIMESTAMP_MICRO);
-            String all = "all";
-            TableToken tableToken = engine.verifyTableName(all);
-            try (
-                    MemoryCMARW mem = Vm.getCMARWInstance();
-                    Path path = new Path().of(root).concat(tableToken).concat(TableUtils.TODO_FILE_NAME)
-            ) {
-                mem.smallFile(TestFilesFacadeImpl.INSTANCE, path.$(), MemoryTag.MMAP_DEFAULT);
-                mem.putLong(32, 1);
-                mem.putLong(40, 9990001L);
-                mem.jumpTo(48);
-            }
-            try (TableWriter writer = newOffPoolWriter(configuration, all)) {
-                Assert.assertNotNull(writer);
-                Assert.assertTrue(writer.isOpen());
-            }
-
-            try (TableWriter writer = newOffPoolWriter(configuration, all)) {
-                Assert.assertNotNull(writer);
-                Assert.assertTrue(writer.isOpen());
-            }
-        });
-    }
-
-    @Test
     public void testIndexIsAddedToTable() {
         int partitionBy = PartitionBy.DAY;
         int N = 1000;
@@ -2029,11 +1800,11 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testMetaFileDoesNotExist() throws Exception {
         testConstructor(new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, int opts) {
+            public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
                     return -1;
                 }
-                return super.openRW(name, opts);
+                return super.openRO(name);
             }
         });
     }
@@ -2358,38 +2129,8 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRemoveColumnCannotRemoveSomeMetadataPrev() throws Exception {
-        removeColumn(new TestFilesFacade() {
-            int count = 5;
-
-            @Override
-            public boolean removeQuiet(LPSZ name) {
-                if (Utf8s.containsAscii(name, TableUtils.META_PREV_FILE_NAME) && --count > 0) {
-                    return false;
-                }
-                return super.removeQuiet(name);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return count <= 0;
-            }
-        });
-    }
-
-    @Test
     public void testRemoveColumnUnrecoverableRenameFailure() throws Exception {
-        testUnrecoverableRemoveColumn(new FilesFacadeImpl() {
-            int count = 2;
-
-            @Override
-            public int rename(LPSZ from, LPSZ to) {
-                if (Utf8s.endsWithAscii(to, TableUtils.META_FILE_NAME) && count-- > 0) {
-                    return Files.FILES_RENAME_ERR_OTHER;
-                }
-                return super.rename(from, to);
-            }
-        });
+        testUnrecoverableRemoveColumn(new MetaSyncFailingFilesFacade(0));
     }
 
     @Test
@@ -2512,38 +2253,8 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRenameColumnCannotRemoveSomeMetadataPrev() throws Exception {
-        renameColumn(new TestFilesFacade() {
-            int count = 5;
-
-            @Override
-            public boolean removeQuiet(LPSZ name) {
-                if (Utf8s.containsAscii(name, TableUtils.META_PREV_FILE_NAME) && --count > 0) {
-                    return false;
-                }
-                return super.removeQuiet(name);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return count <= 0;
-            }
-        });
-    }
-
-    @Test
     public void testRenameColumnUnrecoverableRenameFailure() throws Exception {
-        testUnrecoverableRenameColumn(new FilesFacadeImpl() {
-            int count = 2;
-
-            @Override
-            public int rename(LPSZ from, LPSZ to) {
-                if (Utf8s.endsWithAscii(to, TableUtils.META_FILE_NAME) && count-- > 0) {
-                    return Files.FILES_RENAME_ERR_OTHER;
-                }
-                return super.rename(from, to);
-            }
-        });
+        testUnrecoverableRenameColumn(new MetaSyncFailingFilesFacade(0));
     }
 
     @Test
@@ -3526,22 +3237,21 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    private void testAddColumnErrorFollowedByRepairFail(FilesFacade ff) throws Exception {
-        assertMemoryLeak(() -> {
-            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public @NotNull FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            };
+    private void testAddColumnErrorFollowedByRepairFail(LazyTestFilesFacade ff) throws Exception {
+        assertMemoryLeak(ff, () -> {
+            // Use SYNC commit mode for MetaSyncFailingFilesFacade to trigger msync calls
+            setProperty(CAIRO_COMMIT_MODE, "SYNC");
             long ts = populateTable();
             Rnd rnd = new Rnd();
-            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+            try (TableWriter writer = newOffPoolWriter(engine.getConfiguration(), PRODUCT)) {
                 ts = populateProducts(writer, rnd, ts, 10000, 60000L * 1000L);
                 writer.commit();
                 Assert.assertEquals(20000, writer.size());
 
                 Assert.assertEquals(20, writer.getColumnCount());
+
+                // Activate facade for MetaSyncFailingFilesFacade
+                ff.activate();
 
                 try {
                     writer.addColumn("abc", ColumnType.STRING);
@@ -3550,8 +3260,9 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
             }
 
+            // Deactivate for recovery
+            ff.deactivate();
             newOffPoolWriter(configuration, PRODUCT).close();
-
             appendAndAssert10K(ts, rnd);
         });
     }
@@ -3587,15 +3298,9 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void testAddColumnUnrecoverableFault(FilesFacade ff) throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(ff, () -> {
             long ts = populateTable();
             Rnd rnd = new Rnd();
-            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public @NotNull FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            };
             TableWriter writer = newOffPoolWriter(configuration, PRODUCT);
             try {
                 Assert.assertEquals(20, writer.getColumnCount());
@@ -3608,7 +3313,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 try {
                     writer.addColumn("abc", ColumnType.SYMBOL);
                     Assert.fail();
-                } catch (CairoException ignore) {
+                } catch (CairoException | CairoError ignore) {
                 }
 
                 if (writer.isDistressed()) {
@@ -4232,22 +3937,18 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    private void testUnrecoverableRemoveColumn(FilesFacade ff) throws Exception {
-        assertMemoryLeak(() -> {
-            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public @NotNull FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            };
+    private void testUnrecoverableRemoveColumn(LazyTestFilesFacade ff) throws Exception {
+        assertMemoryLeak(ff, () -> {
+            setProperty(CAIRO_COMMIT_MODE, "SYNC");
             final int N = 20000;
             create(FF, PartitionBy.DAY, N);
             long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
             Rnd rnd = new Rnd();
-            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+            try (TableWriter writer = newOffPoolWriter(engine.getConfiguration(), PRODUCT)) {
                 ts = append10KProducts(ts, rnd, writer);
                 writer.commit();
 
+                ff.activate();
                 try {
                     writer.removeColumn("supplier");
                     Assert.fail();
@@ -4255,7 +3956,8 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
             }
 
-            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+            ff.deactivate();
+            try (TableWriter writer = newOffPoolWriter(engine.getConfiguration(), PRODUCT)) {
                 append10KProducts(ts, rnd, writer);
                 writer.commit();
                 Assert.assertEquals(N, writer.size());
@@ -4263,27 +3965,24 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    private void testUnrecoverableRenameColumn(FilesFacade ff) throws Exception {
-        assertMemoryLeak(() -> {
-            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public @NotNull FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            };
+    private void testUnrecoverableRenameColumn(LazyTestFilesFacade ff) throws Exception {
+        assertMemoryLeak(ff, () -> {
+            setProperty(CAIRO_COMMIT_MODE, "SYNC");
             final int N = 20000;
             create(FF, PartitionBy.DAY, N);
             long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
             Rnd rnd = new Rnd();
-            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+            try (TableWriter writer = newOffPoolWriter(engine.getConfiguration(), PRODUCT)) {
                 ts = append10KProducts(ts, rnd, writer);
                 writer.commit();
 
+                ff.activate();
                 try {
                     writer.renameColumn("supplier", "sup");
                     Assert.fail();
                 } catch (CairoError ignore) {
                 }
+                ff.deactivate();
             }
 
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
@@ -4346,28 +4045,6 @@ public class TableWriterTest extends AbstractCairoTest {
         long count = Long.MAX_VALUE;
     }
 
-    private static class FailMetadataSwapFilesFacade extends LazyTestFilesFacade {
-        int count = configuration.getMaxSwapFileCount() + 1;
-
-        @Override
-        public boolean exists(LPSZ path) {
-            return Utf8s.containsAscii(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
-        }
-
-        @Override
-        public boolean removeQuiet(LPSZ name) {
-            if (active && Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME) && --count > 0) {
-                return false;
-            }
-            return super.removeQuiet(name);
-        }
-
-        @Override
-        public boolean wasCalled() {
-            return count != configuration.getMaxSwapFileCount();
-        }
-    }
-
     private static abstract class LazyTestFilesFacade extends TestFilesFacade {
         protected boolean active;
 
@@ -4385,38 +4062,71 @@ public class TableWriterTest extends AbstractCairoTest {
         }
     }
 
-    private static class MetaRenameDenyingFacade extends LazyTestFilesFacade {
-        int counter = configuration.getFileOperationRetryCount() + 1;
+    /**
+     * FilesFacade that fails msync for _meta file after a specified number of successful syncs.
+     * This simulates BlockFileWriter commit failures during metadata updates.
+     * <p>
+     * Note: File and mmap tracking always happens (regardless of 'active' flag) because
+     * the meta file may be opened before activation. Only the failure injection is gated by 'active'.
+     */
+    private static class MetaSyncFailingFilesFacade extends LazyTestFilesFacade {
+        private final LongHashSet metaFileAddresses = new LongHashSet();
+        private final LongHashSet metaFileFds = new LongHashSet();
+        private int syncFailCountdown;
+        private boolean syncFailed = false;
+
+        MetaSyncFailingFilesFacade(int failAfterSyncs) {
+            this.syncFailCountdown = failAfterSyncs;
+        }
 
         @Override
-        public int rename(LPSZ from, LPSZ to) {
-            if (active && Utf8s.containsAscii(to, TableUtils.META_PREV_FILE_NAME) && --counter > 0) {
-                return Files.FILES_RENAME_ERR_OTHER;
+        public boolean close(long fd) {
+            metaFileFds.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            long addr = super.mmap(fd, len, offset, flags, memoryTag);
+            // Always track meta file addresses (not gated by 'active') because mmap may happen before activation
+            if (addr > 0 && metaFileFds.contains(fd)) {
+                metaFileAddresses.add(addr);
             }
-            return super.rename(from, to);
+            return addr;
+        }
+
+        @Override
+        public void msync(long addr, long len, boolean async) {
+            // Only fail when active (allows setup before enabling fault injection)
+            if (active && metaFileAddresses.contains(addr)) {
+                if (syncFailCountdown <= 0) {
+                    syncFailed = true;
+                    throw CairoException.critical(0).put("simulated msync failure for _meta file");
+                }
+                syncFailCountdown--;
+            }
+            super.msync(addr, len, async);
+        }
+
+        @Override
+        public void munmap(long address, long size, int memoryTag) {
+            metaFileAddresses.remove(address);
+            super.munmap(address, size, memoryTag);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            long fd = super.openRW(name, opts);
+            // Always track meta file fds (not gated by 'active') because file may be opened before activation
+            if (fd > 0 && Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
+                metaFileFds.add(fd);
+            }
+            return fd;
         }
 
         @Override
         public boolean wasCalled() {
-            return counter < configuration.getFileOperationRetryCount() + 1;
-        }
-    }
-
-    private static class SwapMetaRenameDenyingFacade extends LazyTestFilesFacade {
-        boolean hit = false;
-
-        @Override
-        public int rename(LPSZ from, LPSZ to) {
-            if (active && Utf8s.endsWithAscii(from, TableUtils.META_SWAP_FILE_NAME) && !hit) {
-                hit = true;
-                return Files.FILES_RENAME_ERR_OTHER;
-            }
-            return super.rename(from, to);
-        }
-
-        @Override
-        public boolean wasCalled() {
-            return hit;
+            return syncFailed;
         }
     }
 }

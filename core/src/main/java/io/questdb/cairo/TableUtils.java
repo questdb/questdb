@@ -28,7 +28,6 @@ import io.questdb.MessageBus;
 import io.questdb.Telemetry;
 import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
-import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
@@ -41,7 +40,6 @@ import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCMR;
-import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -197,7 +195,6 @@ public final class TableUtils {
     static final int META_FLAG_BIT_INDEXED = 1;
     static final int META_FLAG_BIT_SYMBOL_CACHE = 1 << 2;
     static final int META_FLAG_BIT_DEDUP_KEY = META_FLAG_BIT_SYMBOL_CACHE << 1;
-    static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
     private static final Log LOG = LogFactory.getLog(TableUtils.class);
@@ -312,10 +309,6 @@ public final class TableUtils {
             checksum = -1337;
         }
         return checksum;
-    }
-
-    public static void cleanupDirQuiet(FilesFacade ff, Utf8Sequence dir) {
-        cleanupDirQuiet(ff, dir, LOG);
     }
 
     public static void cleanupDirQuiet(FilesFacade ff, Utf8Sequence dir, Log log) {
@@ -516,7 +509,7 @@ public final class TableUtils {
                 }
                 throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path.trimTo(rootLen).$()).put(", tableDir=").put(tableDir).put(']');
             }
-            createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId);
+            createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableId);
         } finally {
             path.trimTo(rootLen);
         }
@@ -547,7 +540,7 @@ public final class TableUtils {
                 throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path.trimTo(rootLen).$()).put(']');
             }
             dirCreated = true;
-            createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId);
+            createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableId);
         } catch (Throwable e) {
             if (dirCreated) {
                 ff.rmdir(path.trimTo(rootLen).slash());
@@ -567,10 +560,9 @@ public final class TableUtils {
             int rootLen,
             CharSequence tableDir,
             TableStructure structure,
-            int tableVersion,
             int tableId
     ) {
-        createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId, TXN_FILE_NAME);
+        createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableId, TXN_FILE_NAME);
     }
 
     public static void createTableOrViewOrMatViewFiles(
@@ -582,7 +574,6 @@ public final class TableUtils {
             int rootLen,
             CharSequence tableDir,
             TableStructure structure,
-            int tableVersion,
             int tableId,
             CharSequence txnFileName
     ) {
@@ -647,7 +638,7 @@ public final class TableUtils {
             // Create TXN file last, it is used to determine if table exists
             mem.smallFile(ff, path.trimTo(rootLen).concat(txnFileName).$(), MemoryTag.MMAP_DEFAULT);
             // metadata version starts at 1 (matching BlockFile header)
-            createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 1, 0L, 0L);
+            createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0, 0L, 0L);
             mem.sync(false);
         } finally {
             if (dirFd > 0) {
@@ -2020,6 +2011,14 @@ public final class TableUtils {
                 int type = structure.getColumnType(i);
                 int flags = 0;
                 if (structure.isIndexed(i)) {
+                    // Validate index is only supported for SYMBOL columns
+                    if (!ColumnType.isSymbol(type)) {
+                        throw CairoException.nonCritical()
+                                .put("index flag is only supported for SYMBOL column type [column=")
+                                .put(structure.getColumnName(i))
+                                .put(", columnType=").put(ColumnType.nameOf(type))
+                                .put(']');
+                    }
                     flags |= TableMetadataFileBlock.FLAG_INDEXED;
                 }
                 if (structure.getSymbolCacheFlag(i)) {

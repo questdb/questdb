@@ -1665,7 +1665,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
 
         while (true) {
-            TableReaderMetadata.TransitionResult result = metadata.prepareTransition(-1);
+            TableReaderMetadata.TransitionResult result = metadata.prepareTransition(txnMetadataVersion);
             switch (result) {
                 case SUCCESS:
                     break;

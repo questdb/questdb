@@ -187,7 +187,8 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.maxUncommittedRows = holder.maxUncommittedRows;
         this.o3MaxLag = holder.o3MaxLag;
         this.timestampIndex = holder.timestampIndex;
-        this.metadataVersion = holder.metadataVersion;
+        // Convert BlockFile version to logical metadata version (subtract 1)
+        this.metadataVersion = holder.metadataVersion - 1;
         this.walEnabled = holder.walEnabled;
         this.ttlHoursOrMonths = holder.ttlHoursOrMonths;
 
