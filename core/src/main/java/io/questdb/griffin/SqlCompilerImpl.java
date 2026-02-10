@@ -763,15 +763,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private int addColumnWithType(
-            AlterOperationBuilder addColumn,
+            @Nullable AlterOperationBuilder addColumn,
             CharSequence columnName,
             int columnNamePosition
     ) throws SqlException {
         CharSequence tok;
         tok = expectToken(lexer, "column type");
-
-        int columnType = SqlUtil.toPersistedType(tok, lexer.lastTokenPosition());
         int typePosition = lexer.lastTokenPosition();
+
+        int columnType = SqlUtil.toPersistedType(tok, typePosition);
 
         int dim = SqlUtil.parseArrayDimensionality(lexer, columnType, typePosition);
         if (dim > 0) {
@@ -786,6 +786,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         if (columnType == ColumnType.DECIMAL) {
             columnType = SqlParser.parseDecimalColumnType(lexer);
+        } else if (columnType == ColumnType.GEOHASH) {
+            columnType = SqlParser.parseGeoHashColumnType(lexer);
         }
 
         tok = SqlUtil.fetchNext(lexer);
@@ -795,32 +797,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.position(typePosition).put(columnName).put(" has an unmatched `]` - were you trying to define an array?");
         } else {
             lexer.unparseLast();
-        }
-
-        if (columnType == ColumnType.GEOHASH) {
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || tok.charAt(0) != '(') {
-                throw SqlException.position(lexer.getPosition()).put("missing GEOHASH precision");
-            }
-
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok != null && tok.charAt(0) != ')') {
-                int geoHashBits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, tok);
-                tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || tok.charAt(0) != ')') {
-                    if (tok != null) {
-                        throw SqlException.position(lexer.lastTokenPosition())
-                                .put("invalid GEOHASH type literal, expected ')'")
-                                .put(" found='").put(tok.charAt(0)).put("'");
-                    }
-                    throw SqlException.position(lexer.getPosition())
-                            .put("invalid GEOHASH type literal, expected ')'");
-                }
-                columnType = ColumnType.getGeoHashTypeWithBits(geoHashBits);
-            } else {
-                throw SqlException.position(lexer.lastTokenPosition())
-                        .put("missing GEOHASH precision");
-            }
         }
 
         tok = SqlUtil.fetchNext(lexer);
@@ -909,16 +885,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             indexed = false;
         }
 
-        addColumn.addColumnToList(
-                columnName,
-                columnNamePosition,
-                columnType,
-                Numbers.ceilPow2(symbolCapacity),
-                cache,
-                indexed,
-                Numbers.ceilPow2(indexValueBlockCapacity),
-                false
-        );
+        if (addColumn != null) {
+            addColumn.addColumnToList(
+                    columnName,
+                    columnNamePosition,
+                    columnType,
+                    Numbers.ceilPow2(symbolCapacity),
+                    cache,
+                    indexed,
+                    Numbers.ceilPow2(indexValueBlockCapacity),
+                    false
+            );
+        }
         lexer.unparseLast();
         return columnType;
     }
@@ -960,23 +938,35 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok != null && isExistsKeyword(tok)) {
                         tok = SqlUtil.fetchNext(lexer); // captured column name
+                        final int columnNamePosition = lexer.lastTokenPosition();
                         final int columnIndex = tableMetadata.getColumnIndexQuiet(tok);
                         if (columnIndex != -1) {
-                            tok = expectToken(lexer, "column type");
-                            final int columnType = ColumnType.typeOf(tok);
-                            if (columnType == -1) {
-                                throw SqlException.$(lexer.lastTokenPosition(), "unrecognized column type: ").put(tok);
-                            }
+                            // peek at the type token to capture its position for error reporting
+                            expectToken(lexer, "column type");
+                            final int typePosition = lexer.lastTokenPosition();
+                            lexer.unparseLast();
+                            // parse and validate the full column definition without adding to the operation
+                            CharSequence existingColumnName = tableMetadata.getColumnName(columnIndex);
+                            int columnType = addColumnWithType(null, existingColumnName, columnNamePosition);
                             final int existingType = tableMetadata.getColumnType(columnIndex);
                             if (existingType != columnType) {
                                 throw SqlException
-                                        .$(lexer.lastTokenPosition(), "column already exists with a different column type [current type=")
+                                        .$(typePosition, "column already exists with a different column type [current type=")
                                         .put(ColumnType.nameOf(existingType))
                                         .put(", requested type=")
                                         .put(ColumnType.nameOf(columnType))
                                         .put(']');
                             }
-                            break;
+                            // addColumnWithType called lexer.unparseLast(), so fetch the delimiter
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok == null || (!isSingleQueryMode && isSemicolon(tok))) {
+                                break;
+                            }
+                            semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
+                            if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+                            }
+                            continue;
                         }
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "unexpected token '").put(tok)

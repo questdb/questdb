@@ -85,7 +85,7 @@ namespace questdb::x86 {
                     case data_type_t::f64: {
                         double value = instr.dpayload;
                         Vec dummy;
-                        if (!cache.findFloat(value, dummy)) {
+                        if (!cache.findFloat(value, type, dummy)) {
                             Vec reg;
                             if (type == data_type_t::f32) {
                                 reg = c.new_xmm_ss("const_f_%f", value);
@@ -96,7 +96,7 @@ namespace questdb::x86 {
                                 Mem mem = c.new_double_const(ConstPoolScope::kLocal, value);
                                 c.movsd(reg, mem);
                             }
-                            cache.addFloat(value, reg);
+                            cache.addFloat(value, type, reg);
                         }
                         break;
                     }
@@ -358,7 +358,7 @@ namespace questdb::x86 {
             case data_type_t::f64: {
                 // Check if constant is already in a register
                 Vec reg;
-                if (cache.findFloat(instr.dpayload, reg)) {
+                if (cache.findFloat(instr.dpayload, type, reg)) {
                     return {reg, type, data_kind_t::kConst};
                 }
                 return {imm(instr.dpayload), type, data_kind_t::kConst};
@@ -373,7 +373,7 @@ namespace questdb::x86 {
     }
 
     bool is_float(double x) {
-        return x >= std::numeric_limits<float>::min() && x <= std::numeric_limits<float>::max();
+        return x >= -std::numeric_limits<float>::max() && x <= std::numeric_limits<float>::max();
     }
 
     jit_value_t imm2reg(Compiler &c, data_type_t dst_type, const jit_value_t &v) {
