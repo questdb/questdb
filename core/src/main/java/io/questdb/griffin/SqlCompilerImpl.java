@@ -3326,22 +3326,28 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void compileSet(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
-        // SET name { = | TO } value [, value]*
-        // PG compatibility no-op — consume expected tokens only.
-        CharSequence tok = SqlUtil.fetchNext(lexer); // name
-        if (tok != null && !isSemicolon(tok)) {
-            tok = SqlUtil.fetchNext(lexer); // = or TO
-            if (tok != null && !isSemicolon(tok)) {
-                tok = SqlUtil.fetchNext(lexer); // first value
-                if (tok != null && !isSemicolon(tok)) {
-                    // consume optional [, value]*
-                    while ((tok = SqlUtil.fetchNext(lexer)) != null && Chars.equals(tok, ',')) {
-                        SqlUtil.fetchNext(lexer); // value after comma
-                    }
-                    // put back whatever stopped the loop (next statement token, ';', etc.)
-                    lexer.unparseLast();
-                }
-            }
+        // SET [SESSION | LOCAL] name { = | TO } value [, value]*
+        // PG compatibility no-op — validate syntax, then discard.
+        CharSequence tok = expectToken(lexer, "parameter name");
+
+        // skip optional SESSION / LOCAL prefix
+        if (Chars.equalsLowerCaseAscii("session", tok) || Chars.equalsLowerCaseAscii("local", tok)) {
+            tok = expectToken(lexer, "parameter name");
+        }
+
+        tok = expectToken(lexer, "'=' or 'TO'");
+        if (!Chars.equals(tok, '=') && !isToKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'=' or 'TO' expected");
+        }
+
+        expectToken(lexer, "value");
+
+        // consume optional [, value]*
+        while ((tok = SqlUtil.fetchNext(lexer)) != null && !isSemicolon(tok) && Chars.equals(tok, ',')) {
+            expectToken(lexer, "value");
+        }
+        if (tok != null) {
+            lexer.unparseLast();
         }
         compiledQuery.ofSet();
     }

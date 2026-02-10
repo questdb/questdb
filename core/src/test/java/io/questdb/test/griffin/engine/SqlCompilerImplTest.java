@@ -2605,6 +2605,81 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCompileSetDanglingComma() throws Exception {
+        assertException("SET x = y,", 10, "value expected");
+    }
+
+    @Test
+    public void testCompileSetInvalidOperator() throws Exception {
+        assertException("SET x GARBAGE y", 6, "'=' or 'TO' expected");
+    }
+
+    @Test
+    public void testCompileSetMissingName() throws Exception {
+        assertException("SET", 3, "parameter name expected");
+    }
+
+    @Test
+    public void testCompileSetMissingNameSemicolon() throws Exception {
+        assertException("SET;", 3, "parameter name expected");
+    }
+
+    @Test
+    public void testCompileSetMissingOperator() throws Exception {
+        assertException("SET x", 5, "'=' or 'TO' expected");
+    }
+
+    @Test
+    public void testCompileSetMissingValue() throws Exception {
+        assertException("SET x =", 7, "value expected");
+    }
+
+    @Test
+    public void testCompileSetMultipleValues() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET x TO y, z", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetQuotedValue() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET x = 'quoted'", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetWithLocal() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET LOCAL x = y", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetWithSession() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET SESSION x = y", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetWithTo() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET x TO y", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
     public void testCompileStatementsBatch() throws Exception {
         String query = "SELECT pg_advisory_unlock_all(); CLOSE ALL;";
         assertMemoryLeak(() -> {
