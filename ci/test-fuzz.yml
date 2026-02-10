@@ -40,7 +40,7 @@ stages:
               javadoc_step: ""
               javadoc_profile: ""
         pool:
-          name: hetzner-docker
+          name: hetzner-incus
         timeoutInMinutes: 60
         variables:
           SOURCE_CODE_CHANGED: true

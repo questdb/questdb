@@ -15,8 +15,7 @@ stages:
     jobs:
       - job: BuildOnLinux
         displayName: "Build on Linux"
-        pool:
-          vmImage: "ubuntu-latest"
+        pool: hetzner-incus
         steps:
           - checkout: self
             fetchDepth: 1
@@ -45,8 +44,7 @@ stages:
         condition: succeeded()
         displayName: "Upload snapshot to S3"
         container: pypy:3.7-slim-buster
-        pool:
-          vmImage: "ubuntu-latest"
+        pool: hetzner-incus
         steps:
           - checkout: none
           - task: DownloadBuildArtifacts@0

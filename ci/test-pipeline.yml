@@ -32,8 +32,7 @@ stages:
     jobs:
       - job: TriggerEnterprise
         displayName: "Trigger Enterprise Pipeline"
-        pool:
-          vmImage: "ubuntu-latest"
+        pool: hetzner-incus
         variables:
           SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
         condition: eq(variables['SOURCE_CODE_CHANGED'], 'true')
@@ -166,8 +165,7 @@ stages:
     jobs:
       - job: CoverageReport
         displayName: "Coverage Report"
-        pool:
-          vmImage: "ubuntu-latest"
+        pool: hetzner-incus
         variables:
           RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
           CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]

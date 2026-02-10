@@ -2,8 +2,7 @@ trigger: none
 
 pr: none
 
-pool:
-  vmImage: ubuntu-latest
+pool: hetzner-incus
 
 steps:
   - script: |
