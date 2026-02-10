@@ -7,7 +7,7 @@ jobs:
       matrix:
         linux-griffin-root:
           imageName: "ubuntu-latest"
-          poolName: "hetzner-docker"
+          poolName: "hetzner-incus"
           os: Linux
           jdk: "1.17"
           testset: "coverage-griffin-root"
@@ -16,7 +16,7 @@ jobs:
           javadoc_profile: ""
         linux-griffin-sub:
           imageName: "ubuntu-latest"
-          poolName: "hetzner-docker"
+          poolName: "hetzner-incus"
           os: Linux
           jdk: "1.17"
           testset: "coverage-griffin-sub"
@@ -26,7 +26,7 @@ jobs:
           javadoc_profile: ""
         linux-fuzz1:
           imageName: "ubuntu-latest"
-          poolName: "hetzner-docker"
+          poolName: "hetzner-incus"
           os: Linux
           jdk: "1.17"
           testset: "coverage-fuzz1"
@@ -35,7 +35,7 @@ jobs:
           javadoc_profile: ""
         linux-fuzz2:
           imageName: "ubuntu-latest"
-          poolName: "hetzner-docker"
+          poolName: "hetzner-incus"
           os: Linux
           jdk: "1.17"
           testset: "coverage-fuzz2"
@@ -45,7 +45,7 @@ jobs:
           javadoc_profile: ""
         linux-cairo-root:
           imageName: "ubuntu-latest"
-          poolName: "hetzner-docker"
+          poolName: "hetzner-incus"
           os: Linux
           jdk: "1.17"
           testset: "coverage-cairo-root"
@@ -55,7 +55,7 @@ jobs:
           javadoc_profile: ""
         linux-cairo-sub:
           imageName: "ubuntu-latest"
-          poolName: "hetzner-docker"
+          poolName: "hetzner-incus"
           os: Linux
           jdk: "1.17"
           testset: "coverage-cairo-sub"
@@ -65,7 +65,7 @@ jobs:
           javadoc_profile: ""
         linux-pgwire:
           imageName: "ubuntu-latest"
-          poolName: "hetzner-docker"
+          poolName: "hetzner-incus"
           os: Linux
           jdk: "1.17"
           testset: "coverage-pgwire"
@@ -74,7 +74,7 @@ jobs:
           javadoc_profile: ""
         linux-other:
           imageName: "ubuntu-latest"
-          poolName: "hetzner-docker"
+          poolName: "hetzner-incus"
           os: Linux
           jdk: "1.17"
           testset: "coverage-other"

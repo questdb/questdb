@@ -28,7 +28,7 @@ jobs:
       clean: all
     displayName: "on linux-x64-zfs"
     pool:
-      name: "hetzner-docker-zfs"
+      name: "hetzner-incus-zfs"
     timeoutInMinutes: 60
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     variables:
@@ -52,7 +52,7 @@ jobs:
       clean: all
     displayName: "on linux-x86-graal"
     pool:
-      name: "hetzner-docker"
+      name: "hetzner-incus"
     timeoutInMinutes: 60
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     variables:
