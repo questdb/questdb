@@ -42,6 +42,7 @@ Use modern Java features:
 
 - enhanced switch
 - multiline string literal
+- pattern variable in instanceof checks
 
 ### Tests
 
@@ -52,6 +53,7 @@ Use modern Java features:
 - use a single INSERT statement to insert multiple rows
 - use multiline strings for longer statements (multiple INSERT rows, complex queries),
   as well as to assert multiline query results
+- use the expr::TYPE syntax for casts
 
 ### Building
 
