@@ -5369,24 +5369,6 @@ public class SqlOptimiser implements Mutable {
                     model.addTopDownColumn(qc, qc.getAlias());
                 }
             }
-            // Propagate the same key columns to union siblings that already have
-            // top-down column pruning, so their column counts stay in sync.
-            // UNION columns are positionally aligned, so index i in bottomUpColumns
-            // corresponds to the same position in each union member.
-            QueryModel um = model.getUnionModel();
-            while (um != null) {
-                if (um.getTopDownColumns().size() > 0) {
-                    ObjList<QueryColumn> umCols = um.getBottomUpColumns();
-                    for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
-                        QueryColumn qc = bottomUpColumns.getQuick(i);
-                        if (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
-                            QueryColumn uqc = umCols.getQuick(i);
-                            um.addTopDownColumn(uqc, uqc.getAlias());
-                        }
-                    }
-                }
-                um = um.getUnionModel();
-            }
         }
 
         // latest on
@@ -5423,6 +5405,29 @@ public class SqlOptimiser implements Mutable {
 
         if (nestedIsFlex && nestedAllowsColumnChange) {
             emitColumnLiteralsTopDown(model.getColumns(), nested);
+
+            // If any UNION branch is GROUP BY, pre-add its key column positions
+            // to nested's topDownColumns. GROUP BY branches need all key columns
+            // for correct grouping, even if the outer query doesn't select them.
+            // By adding them here (before the indexed propagation below), the
+            // indexed loop will propagate them to ALL branches uniformly,
+            // regardless of where the GROUP BY branch sits in the UNION chain.
+            if (nested.getUnionModel() != null && nested.getTopDownColumns().size() > 0) {
+                final ObjList<QueryColumn> nestedBu = nested.getBottomUpColumns();
+                QueryModel groupByScan = nested;
+                while (groupByScan != null) {
+                    if (groupByScan.getSelectModelType() == SELECT_MODEL_GROUP_BY) {
+                        final ObjList<QueryColumn> groupByBu = groupByScan.getBottomUpColumns();
+                        for (int i = 0, n = groupByBu.size(); i < n; i++) {
+                            QueryColumn qc = groupByBu.getQuick(i);
+                            if (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
+                                nested.addTopDownColumn(nestedBu.getQuick(i), nestedBu.getQuick(i).getAlias());
+                            }
+                        }
+                    }
+                    groupByScan = groupByScan.getUnionModel();
+                }
+            }
 
             final IntList unionColumnIndexes = tempIntList;
             unionColumnIndexes.clear();
