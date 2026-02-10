@@ -129,8 +129,7 @@ stages:
       - BuildAndRunOnAzure
     jobs:
       - job: Release
-        pool:
-          vmImage: 'ubuntu-24.04'
+        pool: hetzner-incus
         steps:
           - checkout: self
             fetchDepth: 1

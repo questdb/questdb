@@ -19,16 +19,13 @@ schedules:
 variables:
   SKIP_VALIDATION: 'false'  # Set to 'true' to skip validation
 
-pool:
-  vmImage: 'ubuntu-20.04'
+pool: hetzner-incus
 
 jobs:
   - job: RunOn
     displayName: "Build and push docker"
 
-    pool:
-      name: "Azure Pipelines"
-      vmImage: "ubuntu-latest"
+    pool: hetzner-incus
 
     timeoutInMinutes: 60
 
