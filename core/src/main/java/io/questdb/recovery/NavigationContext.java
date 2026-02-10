@@ -67,6 +67,7 @@ public class NavigationContext {
     private MetaState cachedMetaState;
     private SeqTxnLogState cachedSeqTxnLogState;
     private ObjList<PartitionScanEntry> cachedPartitionScan;
+    private String previousPath;
     private RegistryState cachedRegistryState;
     private TxnState cachedTxnState;
     private int currentColumnIndex = -1;
@@ -97,6 +98,29 @@ public class NavigationContext {
         this.walDiscoveryService = walDiscoveryService;
     }
 
+    public String buildPath() {
+        if (currentTable == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append(currentTable.getTableName());
+        if (walNav != null) {
+            sb.append("/wal");
+            if (walNav.getCurrentWalId() >= 0) {
+                sb.append("/wal").append(walNav.getCurrentWalId());
+                if (walNav.getCurrentSegmentId() >= 0) {
+                    sb.append("/").append(walNav.getCurrentSegmentId());
+                }
+            }
+        } else if (currentPartitionIndex >= 0) {
+            sb.append("/").append(formatPartitionName(currentPartitionIndex));
+            if (currentColumnIndex >= 0) {
+                sb.append("/").append(formatColumnName(currentColumnIndex));
+            }
+        }
+        return sb.toString();
+    }
+
     public String buildPrompt() {
         StringBuilder sb = new StringBuilder("recover:");
         if (currentTable == null) {
@@ -116,38 +140,88 @@ public class NavigationContext {
         return sb.toString();
     }
 
-    public void cd(String target, PrintStream err) {
+    public boolean cd(String target, PrintStream err) {
         if (target.isEmpty() || "/".equals(target)) {
+            previousPath = buildPath();
             cdRoot();
-            return;
+            return true;
         }
 
         if ("..".equals(target)) {
+            previousPath = buildPath();
             cdUp();
-            return;
+            return true;
         }
 
-        // WAL navigation delegation
-        if (walNav != null) {
-            walNav.cd(target, err);
-            return;
+        if ("-".equals(target)) {
+            if (previousPath == null) {
+                err.println("no previous directory");
+                return false;
+            }
+            String currentPath = buildPath();
+            String targetPath = previousPath;
+            // temporarily nullify previousPath so recursive cd() doesn't overwrite it
+            previousPath = null;
+            cdRoot();
+            if (targetPath.isEmpty()) {
+                previousPath = currentPath;
+                return true;
+            }
+            // navigate each segment of targetPath
+            String[] segments = targetPath.split("/");
+            boolean ok = true;
+            for (String segment : segments) {
+                if (segment.isEmpty()) {
+                    continue;
+                }
+                if (!cdSingle(segment, err)) {
+                    ok = false;
+                    break;
+                }
+            }
+            if (ok) {
+                previousPath = currentPath;
+                return true;
+            }
+            // restore: cd back to where we were
+            cdRoot();
+            if (!currentPath.isEmpty()) {
+                String[] restoreSegments = currentPath.split("/");
+                for (String segment : restoreSegments) {
+                    if (!segment.isEmpty()) {
+                        cdSingle(segment, err);
+                    }
+                }
+            }
+            previousPath = targetPath;
+            return false;
         }
 
-        // "cd wal" from table level enters WAL navigation
-        if ("wal".equals(target) && currentTable != null && currentPartitionIndex < 0) {
-            cdIntoWal(err);
-            return;
+        // multi-level cd: split on "/" and navigate each segment
+        if (target.contains("/")) {
+            String savedPath = buildPath();
+            String[] segments = target.split("/");
+            for (String segment : segments) {
+                if (segment.isEmpty()) {
+                    continue;
+                }
+                if ("..".equals(segment)) {
+                    cdUp();
+                } else if (!cdSingle(segment, err)) {
+                    previousPath = savedPath;
+                    return false;
+                }
+            }
+            previousPath = savedPath;
+            return true;
         }
 
-        if (currentTable == null) {
-            cdIntoTable(target, err);
-        } else if (currentPartitionIndex < 0) {
-            cdIntoPartition(target, err);
-        } else if (currentColumnIndex < 0) {
-            cdIntoColumn(target, err);
-        } else {
-            err.println("already at leaf level (column); cd .. to go up");
+        String savedPath = buildPath();
+        if (cdSingle(target, err)) {
+            previousPath = savedPath;
+            return true;
         }
+        return false;
     }
 
     public void cdRoot() {
@@ -382,16 +456,39 @@ public class NavigationContext {
         return false;
     }
 
-    private void cdIntoColumn(String target, PrintStream err) {
+    private boolean cdSingle(String target, PrintStream err) {
+        // WAL navigation delegation
+        if (walNav != null) {
+            return walNav.cd(target, err);
+        }
+
+        // "cd wal" from table level enters WAL navigation
+        if ("wal".equals(target) && currentTable != null && currentPartitionIndex < 0) {
+            return cdIntoWal(err);
+        }
+
+        if (currentTable == null) {
+            return cdIntoTable(target, err);
+        } else if (currentPartitionIndex < 0) {
+            return cdIntoPartition(target, err);
+        } else if (currentColumnIndex < 0) {
+            return cdIntoColumn(target, err);
+        } else {
+            err.println("already at leaf level (column); cd .. to go up");
+            return false;
+        }
+    }
+
+    private boolean cdIntoColumn(String target, PrintStream err) {
         if (cachedMetaState == null || cachedMetaState.getColumns().size() == 0) {
             err.println("no columns available");
-            return;
+            return false;
         }
 
         PartitionScanEntry partEntry = cachedPartitionScan.getQuick(currentPartitionIndex);
         if (partEntry.txnPartition() != null && partEntry.txnPartition().parquetFormat()) {
             err.println("cannot enter columns of a parquet partition");
-            return;
+            return false;
         }
 
         ObjList<MetaColumnState> columns = cachedMetaState.getColumns();
@@ -419,24 +516,25 @@ public class NavigationContext {
 
         if (colIndex < 0) {
             err.println("column not found: " + target);
-            return;
+            return false;
         }
 
         MetaColumnState col = columns.getQuick(colIndex);
         if (col.type() < 0) {
             err.println("cannot enter dropped column: " + col.name());
-            return;
+            return false;
         }
 
         currentColumnIndex = colIndex;
         computeColumnCache();
+        return true;
     }
 
-    private void cdIntoWal(PrintStream err) {
+    private boolean cdIntoWal(PrintStream err) {
         DiscoveredTable table = currentTable;
         if (table.isWalEnabledKnown() && !table.isWalEnabled()) {
             err.println("this table does not use WAL");
-            return;
+            return false;
         }
 
         // ensure seqTxnLogState is loaded so scan can cross-reference
@@ -450,12 +548,13 @@ public class NavigationContext {
             WalScanState walScanState = walDiscoveryService.scan(path.toString(), cachedSeqTxnLogState);
             walNav = new WalNavigationContext(walScanState);
         }
+        return true;
     }
 
-    private void cdIntoPartition(String target, PrintStream err) {
+    private boolean cdIntoPartition(String target, PrintStream err) {
         if (cachedPartitionScan == null || cachedPartitionScan.size() == 0) {
             err.println("no partitions available");
-            return;
+            return false;
         }
 
         // try numeric index (0-based)
@@ -463,7 +562,7 @@ public class NavigationContext {
             int index = Numbers.parseInt(target);
             if (index >= 0 && index < cachedPartitionScan.size()) {
                 currentPartitionIndex = index;
-                return;
+                return true;
             }
             // fall through to try by formatted partition name (e.g. YEAR partitions like "2024")
         } catch (NumericException ignore) {
@@ -475,21 +574,22 @@ public class NavigationContext {
             PartitionScanEntry entry = cachedPartitionScan.getQuick(i);
             if (target.equals(entry.partitionName())) {
                 currentPartitionIndex = i;
-                return;
+                return true;
             }
         }
         for (int i = 0, n = cachedPartitionScan.size(); i < n; i++) {
             PartitionScanEntry entry = cachedPartitionScan.getQuick(i);
             if (target.equals(entry.dirName())) {
                 currentPartitionIndex = i;
-                return;
+                return true;
             }
         }
 
         err.println("partition not found: " + target);
+        return false;
     }
 
-    private void cdIntoTable(String target, PrintStream err) {
+    private boolean cdIntoTable(String target, PrintStream err) {
         if (lastDiscoveredTables.size() == 0) {
             lastDiscoveredTables = tableDiscoveryService.discoverTables(dbRoot);
         }
@@ -497,7 +597,7 @@ public class NavigationContext {
         DiscoveredTable table = findTable(target);
         if (table == null) {
             err.println("table not found: " + target);
-            return;
+            return false;
         }
 
         currentTable = table;
@@ -512,6 +612,7 @@ public class NavigationContext {
                     cachedTxnState, cachedMetaState
             );
         }
+        return true;
     }
 
     private void computeColumnCache() {

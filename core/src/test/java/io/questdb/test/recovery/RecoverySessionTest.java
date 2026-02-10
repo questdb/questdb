@@ -935,7 +935,8 @@ public class RecoverySessionTest extends AbstractCairoTest {
                 if (line.trim().startsWith("idx") || line.trim().isEmpty()
                         || line.contains("recover:") || line.contains("issues")
                         || line.contains("commands:") || line.contains("dbRoot=")
-                        || line.startsWith("  ") || line.startsWith("QuestDB")) {
+                        || line.startsWith("  ") || line.startsWith("QuestDB")
+                        || line.startsWith("'cd wal'")) {
                     continue;
                 }
                 Assert.assertFalse("wal dir should be filtered: " + line, line.contains("wal"));
@@ -1060,7 +1061,8 @@ public class RecoverySessionTest extends AbstractCairoTest {
     public void testLsTableMultiplePartitions() throws Exception {
         assertMemoryLeak(() -> {
             createTableWithRows("nav_multi", 10);
-            String[] result = runSession("cd nav_multi\nls\nquit\n");
+            // cd auto-ls shows partitions; no need for explicit ls
+            String[] result = runSession("cd nav_multi\nquit\n");
             // should have 10 partitions (1 per day)
             String outText = result[0];
             // Count lines with "1970-01-" which are partition entries
@@ -1135,7 +1137,8 @@ public class RecoverySessionTest extends AbstractCairoTest {
             createNonWalTableWithRows("nav_missing", 3);
             deletePartitionDir("nav_missing", "1970-01-02");
 
-            String[] result = runSession("cd nav_missing\nls\nquit\n");
+            // cd auto-ls shows partitions; no need for explicit ls
+            String[] result = runSession("cd nav_missing\nquit\n");
             String outText = result[0];
             Assert.assertTrue("MISSING should appear for deleted partition", outText.contains("MISSING"));
             // other partitions should not have MISSING/ORPHAN status
@@ -1329,6 +1332,27 @@ public void testLsShowsTransientRowCountForLastPartition() throws Exception {
             Assert.assertTrue(outText.contains("session_tbl"));
             Assert.assertTrue(outText.contains("table: session_tbl"));
             Assert.assertTrue(outText.contains("partitions:"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testShowAtPartitionLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("show_part", 2);
+            String[] result = runSession("cd show_part\ncd 0\nshow\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(outText.contains("partition:"));
+            Assert.assertTrue(outText.contains("dir:"));
+            Assert.assertTrue(outText.contains("status: MATCHED"));
+            Assert.assertTrue(outText.contains("rows: 1"));
+            Assert.assertTrue(outText.contains("format: native"));
+            Assert.assertTrue(outText.contains("readOnly:"));
+            Assert.assertTrue(outText.contains("partitionBy: DAY"));
+            Assert.assertTrue(outText.contains("columns: 2"));
+            // should NOT contain full table dump fields
+            Assert.assertFalse(outText.contains("fixedRowCount:"));
+            Assert.assertFalse(outText.contains("transientRowCount:"));
             Assert.assertEquals("", result[1]);
         });
     }
@@ -2994,22 +3018,22 @@ public void testLsShowsTransientRowCountForLastPartition() throws Exception {
     }
 
     @Test
-    public void testHelpIncludesCdWal() throws Exception {
+    public void testHelpAllIncludesCdWal() throws Exception {
         assertMemoryLeak(() -> {
-            String[] result = runSession("help\nquit\n");
+            String[] result = runSession("help all\nquit\n");
             Assert.assertTrue(
-                    "help should mention 'cd wal'",
+                    "help all should mention 'cd wal'",
                     result[0].contains("cd wal")
             );
         });
     }
 
     @Test
-    public void testHelpShowsEventCommands() throws Exception {
+    public void testHelpAllShowsEventCommands() throws Exception {
         assertMemoryLeak(() -> {
-            String[] result = runSession("help\nquit\n");
+            String[] result = runSession("help all\nquit\n");
             Assert.assertTrue(
-                    "help should mention 'show <name|index>'",
+                    "help all should mention 'show <name|index>'",
                     result[0].contains("show <name|index>")
             );
         });
@@ -3634,6 +3658,78 @@ public void testLsShowsTransientRowCountForLastPartition() throws Exception {
     }
 
     @Test
+    public void testShowFirstAtWalRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_first", 10);
+            String[] result = runSession("cd wal_first\ncd wal\nshow first 3\nquit\n");
+            String out = result[0];
+            Assert.assertTrue(out.contains("seqTxn"));
+            // 10 records, showing first 3 → should say "7 more records"
+            Assert.assertTrue("should indicate truncation", out.contains("more records (showing first 3 of 10)"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testShowFirstDefaultLimitAtWalRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_first_def", 5);
+            String[] result = runSession("cd wal_first_def\ncd wal\nshow first\nquit\n");
+            String out = result[0];
+            Assert.assertTrue(out.contains("seqTxn"));
+            // 5 records, default limit 100 → no truncation message
+            Assert.assertFalse("should not truncate", out.contains("more records"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testShowLastAtWalRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_last", 10);
+            String[] result = runSession("cd wal_last\ncd wal\nshow last 3\nquit\n");
+            String out = result[0];
+            Assert.assertTrue(out.contains("seqTxn"));
+            // 10 records, showing last 3 → should say "7 earlier records omitted"
+            Assert.assertTrue("should indicate omission", out.contains("earlier records omitted (showing last 3 of 10)"));
+            // last 3 seqTxns are 8, 9, 10
+            Assert.assertTrue("should contain seqTxn 10", out.contains("10 "));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testShowLastDefaultLimitAtWalRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_last_def", 5);
+            String[] result = runSession("cd wal_last_def\ncd wal\nshow last\nquit\n");
+            String out = result[0];
+            Assert.assertTrue(out.contains("seqTxn"));
+            // 5 records, default limit 100 → no omission message
+            Assert.assertFalse("should not omit", out.contains("earlier records omitted"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testShowFirstInvalidLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_first_inv", 3);
+            String[] result = runSession("cd wal_first_inv\ncd wal\nshow first abc\nquit\n");
+            Assert.assertTrue("should report invalid limit", result[1].contains("invalid limit"));
+        });
+    }
+
+    @Test
+    public void testShowLastZeroLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_last_zero", 3);
+            String[] result = runSession("cd wal_last_zero\ncd wal\nshow last 0\nquit\n");
+            Assert.assertTrue("should report limit must be > 0", result[1].contains("limit must be > 0"));
+        });
+    }
+
+    @Test
     public void testShowSeqTxnMultipleSegments() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table wal_st10 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
@@ -4243,18 +4339,423 @@ public void testLsShowsTransientRowCountForLastPartition() throws Exception {
     }
 
     @Test
-    public void testHelpShowsTimelineCommand() throws Exception {
+    public void testHelpAllShowsTimelineCommand() throws Exception {
         assertMemoryLeak(() -> {
-            String[] result = runSession("help\nquit\n");
-            Assert.assertTrue("help should mention show timeline", result[0].contains("show timeline"));
+            String[] result = runSession("help all\nquit\n");
+            Assert.assertTrue("help all should mention show timeline", result[0].contains("show timeline"));
         });
     }
 
     @Test
-    public void testHelpShowsShowCommand() throws Exception {
+    public void testHelpAllShowsShowCommand() throws Exception {
+        assertMemoryLeak(() -> {
+            String[] result = runSession("help all\nquit\n");
+            Assert.assertTrue("help all should mention show for current level", result[0].contains("detail for current level"));
+        });
+    }
+
+    // -- Phase 1: multi-level cd, cd -, boolean cd --
+
+    @Test
+    public void testCdDashBasic() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("cd_dash", 2);
+            // cd into table, cd .., cd - should go back to table
+            String[] result = runSession("cd cd_dash\ncd ..\ncd -\npwd\nquit\n");
+            Assert.assertTrue(result[0].contains("/cd_dash\n"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCdDashFromRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("cd_dash_root", 2);
+            // cd - from root with no previous path should error
+            String[] result = runSession("cd -\nquit\n");
+            Assert.assertTrue(result[1].contains("no previous directory"));
+        });
+    }
+
+    @Test
+    public void testCdDashSwapBackAndForth() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("cd_dash_swap_a", 2);
+            createTableWithRows("cd_dash_swap_b", 2);
+            // cd A, cd /, cd B, cd - (back to root where A was before B), cd - (back to B)
+            String[] result = runSession("cd cd_dash_swap_a\ncd /\ncd cd_dash_swap_b\ncd -\npwd\ncd -\npwd\nquit\n");
+            // after first cd -, should be at root
+            // after second cd -, should be at cd_dash_swap_b
+            Assert.assertTrue(result[0].contains("/cd_dash_swap_b\n"));
+        });
+    }
+
+    @Test
+    public void testCdDashAcrossWal() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("cd_dash_wal", 3);
+            // cd into table, cd wal, cd .., cd - should go back to wal
+            String[] result = runSession("cd cd_dash_wal\ncd wal\ncd ..\ncd -\npwd\nquit\n");
+            Assert.assertTrue(result[0].contains("/cd_dash_wal/wal\n"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testMultiLevelCdBasic() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("multi_cd", 2);
+            // multi-level cd: table/partition in one command
+            String[] result = runSession("cd multi_cd/0\npwd\nquit\n");
+            Assert.assertTrue(
+                    "should navigate to partition via multi-level cd",
+                    result[0].contains("/multi_cd/1970-01-01\n")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testMultiLevelCdWithDotDot() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("multi_cd_dd", 2);
+            // multi-level cd with .. segment
+            String[] result = runSession("cd multi_cd_dd/0/../1\npwd\nquit\n");
+            Assert.assertTrue(
+                    "should navigate up and into partition 1",
+                    result[0].contains("/multi_cd_dd/1970-01-02\n")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testMultiLevelCdPartialFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("multi_cd_fail", 2);
+            // multi-level cd where second segment fails; user left at table level
+            String[] result = runSession("cd multi_cd_fail/nonexistent\npwd\nquit\n");
+            Assert.assertTrue(result[1].contains("partition not found"));
+            // user should be at the table level (first segment succeeded)
+            Assert.assertTrue(result[0].contains("/multi_cd_fail\n"));
+        });
+    }
+
+    @Test
+    public void testMultiLevelCdIntoWal() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("multi_cd_wal", 3);
+            // multi-level cd from root into wal/wal1/0
+            String[] result = runSession("cd multi_cd_wal/wal/wal1/0\npwd\nquit\n");
+            Assert.assertTrue(
+                    "should navigate to wal segment via multi-level cd",
+                    result[0].contains("/multi_cd_wal/wal/wal1/0\n")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    // -- Phase 2: auto-ls on cd + hints --
+
+    @Test
+    public void testAutoLsOnCdIntoTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("auto_ls_tbl", 2);
+            // cd into table should auto-ls, showing partition listing
+            String[] result = runSession("cd auto_ls_tbl\nquit\n");
+            Assert.assertTrue(
+                    "cd should auto-ls, showing partition listing",
+                    result[0].contains("1970-01-01")
+            );
+        });
+    }
+
+    @Test
+    public void testAutoLsOnCdRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("auto_ls_root", 2);
+            // cd / should auto-ls, showing table listing
+            String[] result = runSession("cd auto_ls_root\ncd /\nquit\n");
+            Assert.assertTrue(
+                    "cd / should auto-ls, showing tables",
+                    result[0].contains("table_name")
+            );
+        });
+    }
+
+    @Test
+    public void testHintAtTableLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("hint_tbl", 2);
+            String[] result = runSession("cd hint_tbl\nquit\n");
+            Assert.assertTrue(
+                    "should show hint at table level",
+                    result[0].contains("'show' for _txn detail")
+            );
+        });
+    }
+
+    @Test
+    public void testHintAtPartitionLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("hint_part", 2);
+            String[] result = runSession("cd hint_part\ncd 0\nquit\n");
+            Assert.assertTrue(
+                    "should show hint at partition level",
+                    result[0].contains("'show' for partition detail")
+            );
+        });
+    }
+
+    @Test
+    public void testHintAtColumnLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("hint_col", 2);
+            String[] result = runSession("cd hint_col\ncd 0\ncd sym\nquit\n");
+            Assert.assertTrue(
+                    "should show hint at column level",
+                    result[0].contains("'print <rowNo>'")
+            );
+        });
+    }
+
+    @Test
+    public void testHintAtWalRootLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("hint_wal_root", 3);
+            String[] result = runSession("cd hint_wal_root\ncd wal\nquit\n");
+            Assert.assertTrue(
+                    "should show hint at WAL root level",
+                    result[0].contains("'show timeline'")
+            );
+        });
+    }
+
+    @Test
+    public void testHintAtWalDirLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("hint_wal_dir", 3);
+            String[] result = runSession("cd hint_wal_dir\ncd wal\ncd wal1\nquit\n");
+            Assert.assertTrue(
+                    "should show hint at WAL dir level",
+                    result[0].contains("'show' for directory detail")
+            );
+        });
+    }
+
+    @Test
+    public void testHintAtWalSegmentLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("hint_wal_seg", 3);
+            String[] result = runSession("cd hint_wal_seg\ncd wal\ncd wal1\ncd 0\nquit\n");
+            Assert.assertTrue(
+                    "should show hint at WAL segment level",
+                    result[0].contains("'show <txn>'")
+            );
+        });
+    }
+
+    // -- Phase 3: partition footer, show at root, timeline limits --
+
+    @Test
+    public void testPartitionFooter() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("footer_test", 5);
+            String[] result = runSession("cd footer_test\nquit\n");
+            Assert.assertTrue(
+                    "should show partition footer with count",
+                    result[0].contains("5 partitions")
+            );
+            Assert.assertTrue(
+                    "should show total rows in footer",
+                    result[0].contains("total rows")
+            );
+        });
+    }
+
+    @Test
+    public void testPartitionFooterWithOrphan() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonWalTableWithRows("footer_orphan", 2);
+            createOrphanDir("footer_orphan", "old-backup");
+            String[] result = runSession("cd footer_orphan\nquit\n");
+            Assert.assertTrue(
+                    "should show orphan count in footer",
+                    result[0].contains("1 orphan")
+            );
+        });
+    }
+
+    @Test
+    public void testShowAtRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("show_root_a", 2);
+            createTableWithRows("show_root_b", 3);
+            String[] result = runSession("show\nquit\n");
+            Assert.assertTrue(
+                    "show at root should list table names",
+                    result[0].contains("show_root_a")
+            );
+            Assert.assertTrue(
+                    "show at root should list table names",
+                    result[0].contains("show_root_b")
+            );
+            Assert.assertTrue(
+                    "show at root should show total rows",
+                    result[0].contains("total rows")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testShowTimelineLastN() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("timeline_last", 5);
+            String[] result = runSession("cd timeline_last\ncd wal\nshow timeline last 2\nquit\n");
+            Assert.assertTrue(
+                    "should show 'showing last' message",
+                    result[0].contains("showing last 2")
+            );
+        });
+    }
+
+    @Test
+    public void testShowTimelineFirstN() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("timeline_first", 5);
+            String[] result = runSession("cd timeline_first\ncd wal\nshow timeline first 2\nquit\n");
+            Assert.assertTrue(
+                    "should show 'showing first' message",
+                    result[0].contains("showing first 2")
+            );
+        });
+    }
+
+    // -- Phase 4: show pending, check triage, contextual help --
+
+    @Test
+    public void testShowPendingAtWrongLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("pending_wrong", 2);
+            String[] result = runSession("show pending\nquit\n");
+            Assert.assertTrue(result[1].contains("show pending is only valid in WAL mode"));
+        });
+    }
+
+    @Test
+    public void testCheckTriageAtRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("triage_a", 2);
+            createTableWithRows("triage_b", 3);
+            String[] result = runSession("check\nquit\n");
+            Assert.assertTrue(
+                    "check at root should show table triage",
+                    result[0].contains("triage_a")
+            );
+            Assert.assertTrue(
+                    "check at root should show table triage",
+                    result[0].contains("triage_b")
+            );
+            Assert.assertTrue(
+                    "check at root should show summary",
+                    result[0].contains("tables checked")
+            );
+        });
+    }
+
+    @Test
+    public void testCheckAtTableDelegatesToCheckColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("check_delegate", 2);
+            String[] result = runSession("cd check_delegate\ncheck\nquit\n");
+            // check at table level should delegate to check columns
+            Assert.assertTrue(
+                    "check at table should run column check",
+                    result[0].contains("check complete")
+            );
+        });
+    }
+
+    @Test
+    public void testContextualHelpAtRoot() throws Exception {
         assertMemoryLeak(() -> {
             String[] result = runSession("help\nquit\n");
-            Assert.assertTrue("help should mention show for current level", result[0].contains("detail for current level"));
+            Assert.assertTrue(
+                    "contextual help at root should mention check",
+                    result[0].contains("check")
+            );
+            Assert.assertTrue(
+                    "contextual help at root should mention database summary",
+                    result[0].contains("database summary")
+            );
+        });
+    }
+
+    @Test
+    public void testContextualHelpAtTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("help_tbl", 2);
+            String[] result = runSession("cd help_tbl\nhelp\nquit\n");
+            Assert.assertTrue(
+                    "contextual help at table should mention cd wal",
+                    result[0].contains("cd wal")
+            );
+            Assert.assertTrue(
+                    "contextual help at table should mention wal status",
+                    result[0].contains("wal status")
+            );
+        });
+    }
+
+    @Test
+    public void testContextualHelpAtPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("help_part", 2);
+            String[] result = runSession("cd help_part\ncd 0\nhelp\nquit\n");
+            Assert.assertTrue(
+                    "contextual help at partition should mention truncate",
+                    result[0].contains("truncate")
+            );
+        });
+    }
+
+    @Test
+    public void testContextualHelpAtColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("help_col_ctx", 2);
+            String[] result = runSession("cd help_col_ctx\ncd 0\ncd sym\nhelp\nquit\n");
+            Assert.assertTrue(
+                    "contextual help at column should mention print",
+                    result[0].contains("print <rowNo>")
+            );
+        });
+    }
+
+    @Test
+    public void testContextualHelpAtWalRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("help_wal_ctx", 3);
+            String[] result = runSession("cd help_wal_ctx\ncd wal\nhelp\nquit\n");
+            Assert.assertTrue(
+                    "contextual help at WAL root should mention show pending",
+                    result[0].contains("show pending")
+            );
+            Assert.assertTrue(
+                    "contextual help at WAL root should mention show timeline",
+                    result[0].contains("show timeline")
+            );
+        });
+    }
+
+    @Test
+    public void testHelpAllShowsEverything() throws Exception {
+        assertMemoryLeak(() -> {
+            String[] result = runSession("help all\nquit\n");
+            Assert.assertTrue("help all should mention cd wal", result[0].contains("cd wal"));
+            Assert.assertTrue("help all should mention show pending", result[0].contains("show pending"));
+            Assert.assertTrue("help all should mention cd -", result[0].contains("cd -"));
+            Assert.assertTrue("help all should mention cd a/b/c", result[0].contains("cd a/b/c"));
         });
     }
 

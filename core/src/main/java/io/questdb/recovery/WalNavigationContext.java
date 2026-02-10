@@ -58,13 +58,14 @@ public class WalNavigationContext {
         return sb.toString();
     }
 
-    public void cd(String target, PrintStream err) {
+    public boolean cd(String target, PrintStream err) {
         if (currentWalId < 0) {
-            cdIntoWalDir(target, err);
+            return cdIntoWalDir(target, err);
         } else if (currentSegmentId < 0) {
-            cdIntoSegment(target, err);
+            return cdIntoSegment(target, err);
         } else {
             err.println("already at leaf level (segment); cd .. to go up");
+            return false;
         }
     }
 
@@ -138,19 +139,19 @@ public class WalNavigationContext {
         this.cachedWalScanState = state;
     }
 
-    private void cdIntoSegment(String target, PrintStream err) {
+    private boolean cdIntoSegment(String target, PrintStream err) {
         int segmentId;
         try {
             segmentId = Numbers.parseInt(target);
         } catch (NumericException e) {
             err.println("segment must be a number: " + target);
-            return;
+            return false;
         }
 
         WalDirEntry walEntry = findWalDirEntry(currentWalId);
         if (walEntry == null) {
             err.println("wal" + currentWalId + " not found");
-            return;
+            return false;
         }
 
         ObjList<WalSegmentEntry> segments = walEntry.segments();
@@ -158,16 +159,17 @@ public class WalNavigationContext {
             if (segments.getQuick(i).segmentId() == segmentId) {
                 currentSegmentId = segmentId;
                 cachedWalEventState = null;
-                return;
+                return true;
             }
         }
         err.println("segment not found: " + target + " in wal" + currentWalId);
+        return false;
     }
 
-    private void cdIntoWalDir(String target, PrintStream err) {
+    private boolean cdIntoWalDir(String target, PrintStream err) {
         if (cachedWalScanState == null || cachedWalScanState.getEntries().size() == 0) {
             err.println("no WAL directories found");
-            return;
+            return false;
         }
 
         ObjList<WalDirEntry> entries = cachedWalScanState.getEntries();
@@ -180,12 +182,12 @@ public class WalNavigationContext {
                 walId = Numbers.parseInt(target.substring(3));
             } catch (NumericException e) {
                 err.println("invalid WAL directory: " + target);
-                return;
+                return false;
             }
             entry = findWalDirEntry(walId);
             if (entry == null) {
                 err.println("WAL not found: " + target);
-                return;
+                return false;
             }
         } else {
             // bare number -> lookup by listing index
@@ -194,20 +196,21 @@ public class WalNavigationContext {
                 idx = Numbers.parseInt(target);
             } catch (NumericException e) {
                 err.println("invalid WAL directory: " + target);
-                return;
+                return false;
             }
             if (idx < 0 || idx >= entries.size()) {
                 err.println("WAL index out of range: " + target);
-                return;
+                return false;
             }
             entry = entries.getQuick(idx);
         }
 
         if (entry.status() == WalScanStatus.MISSING) {
             err.println("WAL directory is missing from disk: wal" + entry.walId());
-            return;
+            return false;
         }
 
         currentWalId = entry.walId();
+        return true;
     }
 }

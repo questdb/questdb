@@ -164,7 +164,9 @@ public class RecoverySession {
         map.put("ls", RecoverySession::cmdLs);
         map.put("print", RecoverySession::cmdPrint);
         map.put("pwd", RecoverySession::cmdPwd);
+        map.put("check", RecoverySession::cmdCheck);
         map.put("show", RecoverySession::cmdShow);
+        map.put("show pending", RecoverySession::cmdShowPending);
         map.put("show timeline", RecoverySession::cmdShowTimeline);
         map.put("tables", RecoverySession::cmdTables);
         map.put("truncate", RecoverySession::cmdTruncate);
@@ -176,12 +178,18 @@ public class RecoverySession {
     private ParsedCommand parseCommand(String line) {
         String lower = line.toLowerCase();
 
-        // exact matches first
+        // exact and prefix matches for multi-word commands
         if (lower.equals("check columns")) {
             return new ParsedCommand(commands.get("check columns"), "");
         }
-        if (lower.equals("show timeline")) {
-            return new ParsedCommand(commands.get("show timeline"), "");
+        if (lower.equals("show timeline") || lower.startsWith("show timeline ")) {
+            String timelineArg = lower.length() > "show timeline".length()
+                    ? line.substring("show timeline".length()).trim()
+                    : "";
+            return new ParsedCommand(commands.get("show timeline"), timelineArg);
+        }
+        if (lower.equals("show pending")) {
+            return new ParsedCommand(commands.get("show pending"), "");
         }
         if (lower.equals("wal status")) {
             return new ParsedCommand(commands.get("wal status"), "");
@@ -200,12 +208,24 @@ public class RecoverySession {
 
     private static void cmdCd(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
         NavigationContext nav = ctx.getNav();
-        if (arg.isEmpty() || "/".equals(arg)) {
-            nav.cdRoot();
-        } else if ("..".equals(arg)) {
-            nav.cdUp();
+        if (nav.cd(arg, err)) {
+            cmdLs("", ctx, out, err);
+        }
+    }
+
+    private static void cmdCheck(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
+        NavigationContext nav = ctx.getNav();
+        if (nav.isAtRoot()) {
+            // triage: one-line-per-table summary
+            ObjList<DiscoveredTable> tables = nav.getLastDiscoveredTables();
+            if (tables.size() == 0) {
+                nav.discoverTables();
+                tables = nav.getLastDiscoveredTables();
+            }
+            ctx.getRenderer().printCheckTriage(tables, ctx.getBoundedTxnReader(), nav.getDbRoot(), out);
         } else {
-            nav.cd(arg, err);
+            // at table or partition level: delegate to check columns
+            cmdCheckColumns(arg, ctx, out, err);
         }
     }
 
@@ -224,7 +244,24 @@ public class RecoverySession {
     }
 
     private static void cmdHelp(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
-        ctx.getRenderer().printHelp(out);
+        if ("all".equalsIgnoreCase(arg)) {
+            ctx.getRenderer().printHelp(out);
+        } else {
+            NavigationContext nav = ctx.getNav();
+            boolean inWalRoot = false, inWalDir = false, inWalSegment = false;
+            if (nav.isInWalMode()) {
+                WalNavigationContext walNav = nav.getWalNav();
+                switch (walNav.getLevel()) {
+                    case WAL_ROOT -> inWalRoot = true;
+                    case WAL_DIR -> inWalDir = true;
+                    case WAL_SEGMENT -> inWalSegment = true;
+                }
+            }
+            ctx.getRenderer().printContextualHelp(
+                    nav.isAtRoot(), nav.isAtTable(), nav.isAtPartition(), nav.isAtColumn(),
+                    inWalRoot, inWalDir, inWalSegment, out
+            );
+        }
     }
 
     private static void cmdLs(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
@@ -245,6 +282,7 @@ public class RecoverySession {
                             nav.getCachedMetaState(),
                             out
                     );
+                    renderer.printHints(false, false, false, false, true, false, false, out);
                 }
                 case WAL_DIR -> {
                     WalDirEntry walEntry = walNav.findWalDirEntry(walNav.getCurrentWalId());
@@ -259,6 +297,7 @@ public class RecoverySession {
                                 walNav.getCurrentWalId(),
                                 out
                         );
+                        renderer.printHints(false, false, false, false, false, true, false, out);
                     } else {
                         err.println("WAL directory not found");
                     }
@@ -274,6 +313,7 @@ public class RecoverySession {
                             walNav.getCurrentSegmentId(),
                             out
                     );
+                    renderer.printHints(false, false, false, false, false, false, true, out);
                 }
             }
             return;
@@ -286,6 +326,12 @@ public class RecoverySession {
             renderer.printTables(nav.getLastDiscoveredTables(), registryState, out);
         } else if (nav.isAtTable()) {
             renderer.printPartitionScan(nav.getCachedPartitionScan(), nav.getCachedTxnState(), nav.getCachedMetaState(), out);
+            DiscoveredTable table = nav.getCurrentTable();
+            if (!table.isWalEnabledKnown() || table.isWalEnabled()) {
+                out.println();
+                out.println("'cd wal' to browse WAL transactions and segments");
+            }
+            renderer.printHints(false, true, false, false, false, false, false, out);
         } else if (nav.isAtPartition()) {
             MetaState cachedMetaState = nav.getCachedMetaState();
             if (cachedMetaState == null) {
@@ -294,8 +340,10 @@ public class RecoverySession {
             }
             long[] columnTops = nav.computeAllColumnTops();
             renderer.printColumns(cachedMetaState, columnTops, out);
+            renderer.printHints(false, false, true, false, false, false, false, out);
         } else {
             showColumn(ctx, out, err);
+            renderer.printHints(false, false, false, true, false, false, false, out);
         }
     }
 
@@ -370,7 +418,31 @@ public class RecoverySession {
                                 nav.getCachedSeqTxnLogState(),
                                 nav.getCachedTxnState(),
                                 out,
-                                100
+                                100,
+                                false
+                        );
+                    } else if (arg.startsWith("first") || arg.startsWith("last")) {
+                        boolean showLast = arg.startsWith("last");
+                        String numPart = arg.substring(showLast ? 4 : 5).trim();
+                        int limit = 100;
+                        if (!numPart.isEmpty()) {
+                            try {
+                                limit = Numbers.parseInt(numPart);
+                                if (limit <= 0) {
+                                    err.println("limit must be > 0");
+                                    break;
+                                }
+                            } catch (NumericException e) {
+                                err.println("invalid limit: " + numPart);
+                                break;
+                            }
+                        }
+                        ctx.getRenderer().printSeqTxnLog(
+                                nav.getCachedSeqTxnLogState(),
+                                nav.getCachedTxnState(),
+                                out,
+                                limit,
+                                showLast
                         );
                     } else {
                         showSeqTxnDetail(arg, ctx, nav, out, err);
@@ -405,13 +477,25 @@ public class RecoverySession {
         if (arg.isEmpty()) {
             if (nav.isAtColumn()) {
                 showColumn(ctx, out, err);
+            } else if (nav.isAtPartition()) {
+                PartitionScanEntry entry = nav.getCachedPartitionScan().getQuick(nav.getCurrentPartitionIndex());
+                ctx.getRenderer().printPartitionDetail(entry, nav.getCachedMetaState(), out);
             } else if (nav.getCurrentTable() != null) {
                 TxnState state = nav.getCachedTxnState() != null
                         ? nav.getCachedTxnState()
                         : nav.getTxnReader().readForTable(nav.getDbRoot(), nav.getCurrentTable());
                 ctx.getRenderer().printShow(nav.getCurrentTable(), state, out);
             } else {
-                err.println("show requires a table name or index (or cd into a table first)");
+                // root level: show database summary
+                if (nav.getLastDiscoveredTables().size() == 0) {
+                    nav.discoverTables();
+                }
+                ctx.getRenderer().printDatabaseSummary(
+                        nav.getLastDiscoveredTables(),
+                        ctx.getBoundedTxnReader(),
+                        nav.getDbRoot(),
+                        out
+                );
             }
             return;
         }
@@ -430,6 +514,32 @@ public class RecoverySession {
         ctx.getRenderer().printShow(table, state, out);
     }
 
+    private static void cmdShowPending(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
+        NavigationContext nav = ctx.getNav();
+        if (!nav.isInWalMode()) {
+            err.println("show pending is only valid in WAL mode (cd into a table, then cd wal)");
+            return;
+        }
+        WalNavigationContext walNav = nav.getWalNav();
+        if (walNav.getLevel() != WalLevel.WAL_ROOT) {
+            err.println("show pending is only valid at WAL root level (cd .. to go up)");
+            return;
+        }
+        ensureSeqTxnLogState(nav);
+        enrichRecordsFromEvents(ctx, nav);
+        TxnState txnState = nav.getCachedTxnState();
+        long tableSeqTxn = txnState != null ? txnState.getSeqTxn() : TxnState.UNSET_LONG;
+        if (tableSeqTxn == TxnState.UNSET_LONG) {
+            err.println("cannot determine table seqTxn; unable to filter pending records");
+            return;
+        }
+        ctx.getRenderer().printPendingRecords(
+                nav.getCachedSeqTxnLogState(),
+                txnState,
+                out
+        );
+    }
+
     private static void cmdShowTimeline(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
         NavigationContext nav = ctx.getNav();
         if (!nav.isInWalMode()) {
@@ -443,11 +553,40 @@ public class RecoverySession {
         }
         ensureSeqTxnLogState(nav);
         enrichRecordsFromEvents(ctx, nav);
+
+        int limit = Integer.MAX_VALUE;
+        boolean showLast = false;
+        if (!arg.isEmpty()) {
+            if (arg.startsWith("first") || arg.startsWith("last")) {
+                showLast = arg.startsWith("last");
+                String numPart = arg.substring(showLast ? 4 : 5).trim();
+                if (!numPart.isEmpty()) {
+                    try {
+                        limit = Numbers.parseInt(numPart);
+                        if (limit <= 0) {
+                            err.println("limit must be > 0");
+                            return;
+                        }
+                    } catch (NumericException e) {
+                        err.println("invalid limit: " + numPart);
+                        return;
+                    }
+                } else {
+                    limit = 100;
+                }
+            } else {
+                err.println("usage: show timeline [first|last [N]]");
+                return;
+            }
+        }
+
         ctx.getRenderer().printTimeline(
                 nav.getCachedSeqTxnLogState(),
                 nav.getCachedTxnState(),
                 nav.getCachedMetaState(),
-                out
+                out,
+                limit,
+                showLast
         );
     }
 

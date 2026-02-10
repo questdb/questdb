@@ -75,7 +75,52 @@ public class ConsoleRenderer {
         out.println("Repair:");
         out.println("  truncate <N>   shrink a partition to N rows (partition level)");
         out.println();
-        out.println("Type 'help' for the full command reference.");
+        out.println("Type 'help' for available commands, 'help all' for the full reference.");
+    }
+
+    public void printDatabaseSummary(
+            ObjList<DiscoveredTable> tables,
+            BoundedTxnReader txnReader,
+            CharSequence dbRoot,
+            PrintStream out
+    ) {
+        if (tables.size() == 0) {
+            out.println("No tables discovered.");
+            return;
+        }
+        out.printf("%s %s %s %s%n",
+                color.bold(String.format("%-36s", "table")),
+                color.bold(String.format("%-12s", "rows")),
+                color.bold(String.format("%-10s", "wal")),
+                color.bold(String.format("%-8s", "issues")));
+        long grandTotal = 0;
+        int totalIssues = 0;
+        for (int i = 0, n = tables.size(); i < n; i++) {
+            DiscoveredTable table = tables.getQuick(i);
+            TxnState txnState = txnReader.readForTable(dbRoot, table);
+            long rowCount = txnState.getRowCount();
+            String rowStr = rowCount != TxnState.UNSET_LONG ? String.format("%,d", rowCount) : "N/A";
+            if (rowCount != TxnState.UNSET_LONG) {
+                grandTotal += rowCount;
+            }
+            int issues = table.getIssues().size() + txnState.getIssues().size();
+            totalIssues += issues;
+            out.printf("%-36s %-12s %-10s %-8d%n",
+                    table.getTableName(),
+                    rowStr,
+                    table.isWalEnabledKnown() ? table.isWalEnabled() : "unknown",
+                    issues
+            );
+        }
+        out.printf("%n%d table%s, %s total rows",
+                tables.size(),
+                tables.size() != 1 ? "s" : "",
+                String.format("%,d", grandTotal)
+        );
+        if (totalIssues > 0) {
+            out.printf(", %d issue%s", totalIssues, totalIssues != 1 ? "s" : "");
+        }
+        out.println();
     }
 
     public void printColumnDetail(
@@ -104,6 +149,35 @@ public class ConsoleRenderer {
         if (actualAuxSize >= 0) {
             out.println("actual aux size: " + formatBytes(actualAuxSize));
         }
+    }
+
+    public void printCheckTriage(
+            ObjList<DiscoveredTable> tables,
+            BoundedTxnReader txnReader,
+            CharSequence dbRoot,
+            PrintStream out
+    ) {
+        if (tables.size() == 0) {
+            out.println("No tables discovered.");
+            return;
+        }
+        int okCount = 0;
+        int issueCount = 0;
+        for (int i = 0, n = tables.size(); i < n; i++) {
+            DiscoveredTable table = tables.getQuick(i);
+            TxnState txnState = txnReader.readForTable(dbRoot, table);
+            int issues = table.getIssues().size() + txnState.getIssues().size();
+            if (issues == 0) {
+                out.println(table.getTableName() + ": " + color.green("OK"));
+                okCount++;
+            } else {
+                out.println(table.getTableName() + ": " + color.yellow(issues + " issue" + (issues != 1 ? "s" : "")));
+                issueCount++;
+            }
+        }
+        out.println();
+        out.println(tables.size() + " table" + (tables.size() != 1 ? "s" : "") + " checked, "
+                + okCount + " OK, " + issueCount + " with issues");
     }
 
     public void printCheckResult(ColumnCheckResult result, String tableName, long rowCount, PrintStream out) {
@@ -186,6 +260,78 @@ public class ConsoleRenderer {
         printIssues("meta issues", metaState.getIssues(), out);
     }
 
+    public void printHints(
+            boolean atRoot, boolean atTable, boolean atPartition, boolean atColumn,
+            boolean inWalRoot, boolean inWalDir, boolean inWalSegment,
+            PrintStream out
+    ) {
+        if (atRoot) {
+            // banner already explains; no hint needed
+            return;
+        }
+        out.println();
+        if (atColumn) {
+            out.println("'print <rowNo>' to read a value");
+        } else if (atPartition) {
+            out.println("'show' for partition detail, 'truncate <N>' to shrink, 'check columns' to validate");
+        } else if (atTable) {
+            out.println("'show' for _txn detail, 'check columns' to validate");
+        } else if (inWalSegment) {
+            out.println("'show <txn>' for event detail");
+        } else if (inWalDir) {
+            out.println("'show' for directory detail");
+        } else if (inWalRoot) {
+            out.println("'show timeline' for chronological view, 'show pending' for unapplied txns");
+        }
+    }
+
+    public void printContextualHelp(
+            boolean atRoot, boolean atTable, boolean atPartition, boolean atColumn,
+            boolean inWalRoot, boolean inWalDir, boolean inWalSegment,
+            PrintStream out
+    ) {
+        out.println("commands:");
+        // common navigation commands
+        out.println("  ls                     list contents at current level");
+        out.println("  cd <name|index>        navigate into an item");
+        out.println("  cd ..                  go up one level");
+        out.println("  cd /                   return to root");
+        out.println("  cd -                   go to previous location");
+        out.println("  pwd                    print current path");
+
+        if (atRoot) {
+            out.println("  show                   database summary");
+            out.println("  check                  quick health triage for all tables");
+            out.println("  check columns          validate column files for all tables");
+        } else if (atTable) {
+            out.println("  show                   _txn state for current table");
+            out.println("  cd wal                 enter WAL navigation");
+            out.println("  check columns          validate column files");
+            out.println("  wal status             WAL/sequencer status");
+        } else if (atPartition) {
+            out.println("  show                   partition detail");
+            out.println("  truncate <rowCount>    shrink partition to given row count");
+            out.println("  check columns          validate column files for this partition");
+        } else if (atColumn) {
+            out.println("  show                   column detail");
+            out.println("  print <rowNo>          print value at row");
+        } else if (inWalRoot) {
+            out.println("  show                   sequencer txnlog records");
+            out.println("  show first|last [N]    first/last N records (default 100)");
+            out.println("  show timeline          chronological view of WAL transactions");
+            out.println("  show pending           show only unapplied transactions");
+        } else if (inWalDir) {
+            out.println("  show                   WAL directory detail");
+        } else if (inWalSegment) {
+            out.println("  show                   segment summary");
+            out.println("  show <txn>             event detail for a specific txn");
+        }
+
+        out.println("  help                   show contextual help");
+        out.println("  help all               show full command reference");
+        out.println("  quit|exit              leave recovery mode");
+    }
+
     public void printHelp(PrintStream out) {
         out.println("commands:");
         out.println("  ls                     list tables / partitions / columns / WAL dirs");
@@ -193,17 +339,50 @@ public class ConsoleRenderer {
         out.println("  cd wal                 enter WAL navigation (from table level)");
         out.println("  cd ..                  go up one level");
         out.println("  cd /                   return to root");
+        out.println("  cd -                   go to previous location");
+        out.println("  cd a/b/c               multi-level navigation");
         out.println("  pwd                    print current path");
         out.println("  tables                 discover and list tables");
-        out.println("  show                   detail for current level (_txn, column, WAL dir/segment)");
+        out.println("  show                   detail for current level (_txn, partition, column, WAL)");
         out.println("  show <name|index>      show _txn state for a table (from root or table level)");
+        out.println("  show first|last [N]    first/last N sequencer records (default 100, WAL root)");
         out.println("  show timeline          chronological view of WAL transactions (WAL root)");
+        out.println("  show pending           show only unapplied WAL transactions (WAL root)");
         out.println("  print <rowNo>          print value at row (column level only)");
         out.println("  truncate <rowCount>    shrink partition to given row count (partition level)");
+        out.println("  check                  quick health triage (root) or column check (table/partition)");
         out.println("  check columns          validate column files against metadata");
         out.println("  wal status             show WAL/sequencer status (table level)");
-        out.println("  help                   show help");
+        out.println("  help                   show contextual help");
+        out.println("  help all               show full command reference");
         out.println("  quit|exit              leave recovery mode");
+    }
+
+    public void printPartitionDetail(PartitionScanEntry entry, MetaState metaState, PrintStream out) {
+        out.println("partition: " + entry.partitionName());
+        out.println("dir: " + entry.dirName());
+        out.println("status: " + entry.status());
+        out.println("rows: " + entry.rowCount());
+
+        TxnPartitionState txnPart = entry.txnPartition();
+        if (txnPart != null) {
+            out.println("timestampLo: " + formatTimestamp(txnPart.timestampLo()));
+            out.println("format: " + (txnPart.parquetFormat() ? "parquet" : "native"));
+            out.println("readOnly: " + txnPart.readOnly());
+            out.println("nameTxn: " + txnPart.nameTxn());
+            if (txnPart.squashCount() > 0) {
+                out.println("squashCount: " + txnPart.squashCount());
+            }
+            if (txnPart.parquetFormat() && txnPart.parquetFileSize() > 0) {
+                out.println("parquetFileSize: " + formatBytes(txnPart.parquetFileSize()));
+            }
+            out.println("txnIndex: " + txnPart.index());
+        }
+
+        if (metaState != null) {
+            out.println("partitionBy: " + PartitionBy.toString(metaState.getPartitionBy()));
+            out.println("columns: " + metaState.getColumns().size());
+        }
     }
 
     public void printPartitionScan(
@@ -222,6 +401,9 @@ public class ConsoleRenderer {
                     color.bold(String.format("%-10s", "format")),
                     color.bold(String.format("%-10s", "readOnly")),
                     color.bold(String.format("%-10s", "status")));
+            long totalRows = 0;
+            int orphanCount = 0;
+            int missingCount = 0;
             for (int i = 0, n = entries.size(); i < n; i++) {
                 PartitionScanEntry entry = entries.getQuick(i);
                 TxnPartitionState part = entry.txnPartition();
@@ -230,7 +412,13 @@ public class ConsoleRenderer {
                     case ORPHAN -> color.yellow("ORPHAN");
                     case MISSING -> color.red("MISSING");
                 };
+                switch (entry.status()) {
+                    case ORPHAN -> orphanCount++;
+                    case MISSING -> missingCount++;
+                    default -> {}
+                }
                 if (part != null) {
+                    totalRows += entry.rowCount();
                     out.printf(
                             "%-5d %-30s %-12d %-10s %-10s %-10s%n",
                             i,
@@ -252,6 +440,16 @@ public class ConsoleRenderer {
                     );
                 }
             }
+            StringBuilder footer = new StringBuilder();
+            footer.append(entries.size()).append(" partition").append(entries.size() != 1 ? "s" : "");
+            footer.append(", ").append(String.format("%,d", totalRows)).append(" total rows");
+            if (orphanCount > 0) {
+                footer.append(", ").append(orphanCount).append(" orphan");
+            }
+            if (missingCount > 0) {
+                footer.append(", ").append(missingCount).append(" missing");
+            }
+            out.println(footer);
         }
 
         if (metaState != null) {
@@ -262,7 +460,71 @@ public class ConsoleRenderer {
         }
     }
 
-    public void printSeqTxnLog(SeqTxnLogState seqState, TxnState txnState, PrintStream out, int limit) {
+    public void printPendingRecords(SeqTxnLogState seqState, TxnState txnState, PrintStream out) {
+        if (seqState == null) {
+            out.println("no sequencer txnlog state available");
+            return;
+        }
+
+        long tableSeqTxn = txnState != null ? txnState.getSeqTxn() : TxnState.UNSET_LONG;
+        if (tableSeqTxn == TxnState.UNSET_LONG) {
+            out.println("cannot determine table seqTxn");
+            return;
+        }
+
+        ObjList<SeqTxnRecord> records = seqState.getRecords();
+        // count pending
+        int pendingCount = 0;
+        for (int i = 0, n = records.size(); i < n; i++) {
+            if (records.getQuick(i).getTxn() > tableSeqTxn) {
+                pendingCount++;
+            }
+        }
+
+        if (pendingCount == 0) {
+            out.println("no pending transactions");
+            return;
+        }
+
+        out.printf("%s %s %s %s %s %s%n",
+                color.bold(String.format("%-8s", "seqTxn")),
+                color.bold(String.format("%-10s", "structVer")),
+                color.bold(String.format("%-8s", "walId")),
+                color.bold(String.format("%-6s", "seg")),
+                color.bold(String.format("%-8s", "segTxn")),
+                color.bold(String.format("%-10s", "rows")));
+
+        for (int i = 0, n = records.size(); i < n; i++) {
+            SeqTxnRecord rec = records.getQuick(i);
+            if (rec.getTxn() <= tableSeqTxn) {
+                continue;
+            }
+            String walIdStr;
+            if (rec.isDdlChange()) {
+                walIdStr = color.cyan("(DDL)");
+            } else if (rec.isTableDrop()) {
+                walIdStr = color.red("(DROP)");
+            } else {
+                walIdStr = String.valueOf(rec.getWalId());
+            }
+            String rowsStr = rec.getRowCount() != TxnState.UNSET_LONG
+                    ? Long.toString(rec.getRowCount())
+                    : "-";
+            out.printf("%-8d %-10d %-8s %-6s %-8s %-10s%n",
+                    rec.getTxn(),
+                    rec.getStructureVersion(),
+                    walIdStr,
+                    rec.isDdlChange() || rec.isTableDrop() ? "-" : String.valueOf(rec.getSegmentId()),
+                    rec.isDdlChange() || rec.isTableDrop() ? "-" : String.valueOf(rec.getSegmentTxn()),
+                    rowsStr
+            );
+        }
+
+        out.println();
+        out.println(pendingCount + " pending transaction" + (pendingCount != 1 ? "s" : ""));
+    }
+
+    public void printSeqTxnLog(SeqTxnLogState seqState, TxnState txnState, PrintStream out, int limit, boolean showLast) {
         if (seqState == null) {
             out.println("no sequencer txnlog state available");
             return;
@@ -276,6 +538,17 @@ public class ConsoleRenderer {
             return;
         }
 
+        int total = records.size();
+        int count = Math.min(total, limit);
+        int startIdx = showLast ? total - count : 0;
+
+        if (total > limit) {
+            int skipped = total - count;
+            if (showLast) {
+                out.println("... " + skipped + " earlier records omitted (showing last " + limit + " of " + total + ")");
+            }
+        }
+
         out.printf("%s %s %s %s %s %s %s %s%n",
                 color.bold(String.format("%-8s", "seqTxn")),
                 color.bold(String.format("%-10s", "structVer")),
@@ -286,8 +559,7 @@ public class ConsoleRenderer {
                 color.bold(String.format("%-10s", "rows")),
                 color.bold(String.format("%-12s", "status")));
 
-        int count = Math.min(records.size(), limit);
-        for (int i = 0; i < count; i++) {
+        for (int i = startIdx; i < startIdx + count; i++) {
             SeqTxnRecord rec = records.getQuick(i);
             String statusStr = formatSeqTxnStatus(rec, tableSeqTxn);
             String walIdStr;
@@ -315,8 +587,8 @@ public class ConsoleRenderer {
             );
         }
 
-        if (records.size() > limit) {
-            out.println("... " + (records.size() - limit) + " more records (showing first " + limit + ")");
+        if (total > limit && !showLast) {
+            out.println("... " + (total - limit) + " more records (showing first " + limit + " of " + total + ")");
         }
 
         printIssues("sequencer txnlog issues", seqState.getIssues(), out);
@@ -584,6 +856,10 @@ public class ConsoleRenderer {
     }
 
     public void printTimeline(SeqTxnLogState seqState, TxnState txnState, MetaState metaState, PrintStream out) {
+        printTimeline(seqState, txnState, metaState, out, Integer.MAX_VALUE, false);
+    }
+
+    public void printTimeline(SeqTxnLogState seqState, TxnState txnState, MetaState metaState, PrintStream out, int limit, boolean showLast) {
         if (seqState == null) {
             out.println("no sequencer txnlog state available");
             return;
@@ -597,6 +873,14 @@ public class ConsoleRenderer {
 
         long tableSeqTxn = txnState != null ? txnState.getSeqTxn() : TxnState.UNSET_LONG;
 
+        int total = records.size();
+        int count = Math.min(total, limit);
+        int startIdx = showLast ? total - count : 0;
+
+        if (total > limit && showLast) {
+            out.println("... " + (total - count) + " earlier records omitted (showing last " + limit + " of " + total + ")");
+        }
+
         out.printf("%s %s %s %s %s %s %s%n",
                 color.bold(String.format("%-8s", "seqTxn")),
                 color.bold(String.format("%-26s", "commitTime")),
@@ -606,7 +890,7 @@ public class ConsoleRenderer {
                 color.bold(String.format("%-20s", "partitions")),
                 color.bold(String.format("%-10s", "status")));
 
-        for (int i = 0, n = records.size(); i < n; i++) {
+        for (int i = startIdx; i < startIdx + count; i++) {
             SeqTxnRecord rec = records.getQuick(i);
 
             String walSegStr;
@@ -653,6 +937,10 @@ public class ConsoleRenderer {
                     partStr,
                     statusStr
             );
+        }
+
+        if (total > limit && !showLast) {
+            out.println("... " + (total - limit) + " more records (showing first " + limit + " of " + total + ")");
         }
     }
 
