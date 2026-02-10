@@ -8865,33 +8865,64 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUnionAllAssertionError() throws Exception {
-        execute("create table t1 (name1 varchar, ts1 timestamp, sym1 symbol) timestamp(ts1)");
-        execute("create table t2 (name2 varchar, ts2 timestamp, sym2 symbol) timestamp(ts2)");
-        assertQuery(
-                "ts\n",
-                "select ts from (select name1, ts1, sym1 ts from t1 union all select name2, ts2 ts, sym2 from t2) where ts in '2025-12-01T01;2h';",
-                "",
-                false,
-                false
-        );
+    public void testUnionAllSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, timestamp timestamp) timestamp(timestamp) partition by day");
+            execute("create table trades_agg (high double, timestamp timestamp)");
+            assertQueryNoLeakCheck(
+                    "high\n",
+                    """
+                            select high from (
+                                select timestamp, max(price) as high from trades sample by 1m
+                                union all
+                                select timestamp, high from trades_agg
+                            )""",
+                    null,
+                    false,
+                    false
+            );
+        });
     }
 
     @Test
-    public void testUnionAllSampleByAssertionError() throws Exception {
-        execute("create table trades (price double, timestamp timestamp) timestamp(timestamp) partition by day");
-        execute("create table trades_agg (high double, timestamp timestamp)");
-        assertQuery(
-                "high\n",
-                "select high from (" +
-                        "select timestamp, max(price) as high from trades sample by 1m " +
-                        "union all " +
-                        "select timestamp, high from trades_agg" +
-                        ")",
-                null,
-                false,
-                false
-        );
+    public void testUnionAllSampleBy2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, timestamp timestamp) timestamp(timestamp) partition by day");
+            execute("create table trades_agg (high double, timestamp timestamp)");
+            assertQueryNoLeakCheck(
+                    "high\n",
+                    """
+                            select high from (
+                                select timestamp, high from trades_agg
+                                union all
+                                select timestamp, max(price) as high from trades sample by 1m
+                            )""",
+                    null,
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testUnionAllWithFilterUsingAliasFromOneBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 (name1 varchar, ts1 timestamp, sym1 symbol) timestamp(ts1)");
+            execute("create table t2 (name2 varchar, ts2 timestamp, sym2 symbol) timestamp(ts2)");
+            assertQueryNoLeakCheck(
+                    "ts\n",
+                    """
+                            select ts from (
+                                select name1, ts1, sym1 ts from t1
+                                union all
+                                select name2, ts2 ts, sym2 from t2
+                            ) where ts in '2025-12-01T01;2h'
+                            """,
+                    "",
+                    false,
+                    false
+            );
+        });
     }
 
     @Test
