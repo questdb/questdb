@@ -290,10 +290,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return taskType;
     }
 
-    public WorkStealingStrategy getWorkStealingStrategy() {
-        return workStealingStrategy;
-    }
-
     public boolean isActive() {
         return valid.get();
     }

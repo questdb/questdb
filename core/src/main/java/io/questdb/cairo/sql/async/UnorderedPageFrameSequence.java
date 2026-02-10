@@ -291,10 +291,6 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         return workStealingStrategy;
     }
 
-    private boolean hasError() {
-        return !errorMsg.isEmpty();
-    }
-
     public boolean isActive() {
         return isValid.get();
     }
@@ -393,6 +389,10 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             frameAddressCache.add(frameCount++, frame);
         }
+    }
+
+    private boolean hasError() {
+        return !errorMsg.isEmpty();
     }
 
     private void reduceLocally(int frameIndex) {

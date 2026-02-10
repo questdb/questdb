@@ -126,7 +126,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         assert perWorkerKeyFunctions == null || perWorkerKeyFunctions.size() == workerCount;
         assert perWorkerGroupByFunctions == null || perWorkerGroupByFunctions.size() == workerCount;
 
-        final int slotCount = workerCount;
         try {
             this.configuration = configuration;
             this.keyTypes = new ArrayColumnTypes().addAll(keyTypes);
@@ -144,8 +143,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                     ownerFilter,
                     filterUsedColumnIndexes,
                     perWorkerFilters,
-                    slotCount,
-                    slotCount,
+                    workerCount,
+                    workerCount,
                     1,
                     1
             );
@@ -153,15 +152,15 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             final Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
             ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);
             if (perWorkerGroupByFunctions != null) {
-                perWorkerFunctionUpdaters = new ObjList<>(slotCount);
-                for (int i = 0; i < slotCount; i++) {
+                perWorkerFunctionUpdaters = new ObjList<>(workerCount);
+                for (int i = 0; i < workerCount; i++) {
                     perWorkerFunctionUpdaters.extendAndSet(i, GroupByFunctionsUpdaterFactory.getInstance(updaterClass, perWorkerGroupByFunctions.getQuick(i)));
                 }
             } else {
                 perWorkerFunctionUpdaters = null;
             }
 
-            perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
+            perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
 
             lastShardStats = new ObjList<>(NUM_SHARDS);
             for (int i = 0; i < NUM_SHARDS; i++) {
@@ -169,8 +168,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             }
             lastOwnerStats = new MapStats();
             ownerFragment = new MapFragment(-1);
-            perWorkerFragments = new ObjList<>(slotCount);
-            for (int i = 0; i < slotCount; i++) {
+            perWorkerFragments = new ObjList<>(workerCount);
+            for (int i = 0; i < workerCount; i++) {
                 perWorkerFragments.extendAndSet(i, new MapFragment(i));
             }
             // Destination shards are lazily initialized by the worker threads.
@@ -199,8 +198,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                     null
             );
             if (perWorkerKeyFunctions != null) {
-                perWorkerMapSinks = new ObjList<>(slotCount);
-                for (int i = 0; i < slotCount; i++) {
+                perWorkerMapSinks = new ObjList<>(workerCount);
+                for (int i = 0; i < workerCount; i++) {
                     perWorkerMapSinks.extendAndSet(i, RecordSinkFactory.getInstance(
                             sinkClass,
                             columnTypes,
@@ -220,8 +219,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             // Make sure to set worker-local allocator for the group by functions.
             GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
             if (perWorkerGroupByFunctions != null) {
-                perWorkerAllocators = new ObjList<>(slotCount);
-                for (int i = 0; i < slotCount; i++) {
+                perWorkerAllocators = new ObjList<>(workerCount);
+                for (int i = 0; i < workerCount; i++) {
                     final GroupByAllocator workerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
                     perWorkerAllocators.extendAndSet(i, workerAllocator);
                     GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(i), workerAllocator);
@@ -230,8 +229,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 perWorkerAllocators = null;
             }
 
-            perWorkerLongTopKLists = new ObjList<>(slotCount);
-            perWorkerLongTopKLists.setAll(slotCount, null);
+            perWorkerLongTopKLists = new ObjList<>(workerCount);
+            perWorkerLongTopKLists.setAll(workerCount, null);
         } catch (Throwable th) {
             close();
             throw th;

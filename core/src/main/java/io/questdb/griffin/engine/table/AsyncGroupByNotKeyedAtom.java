@@ -83,7 +83,6 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
         assert perWorkerGroupByFunctions == null || perWorkerGroupByFunctions.size() == workerCount;
 
-        final int slotCount = workerCount;
         try {
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
 
@@ -95,8 +94,8 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
                     ownerFilter,
                     filterUsedColumnIndexes,
                     perWorkerFilters,
-                    slotCount,
-                    slotCount,
+                    workerCount,
+                    workerCount,
                     1,
                     1
             );
@@ -104,18 +103,18 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
             final Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
             ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);
             if (perWorkerGroupByFunctions != null) {
-                perWorkerFunctionUpdaters = new ObjList<>(slotCount);
-                for (int i = 0; i < slotCount; i++) {
+                perWorkerFunctionUpdaters = new ObjList<>(workerCount);
+                for (int i = 0; i < workerCount; i++) {
                     perWorkerFunctionUpdaters.extendAndSet(i, GroupByFunctionsUpdaterFactory.getInstance(updaterClass, perWorkerGroupByFunctions.getQuick(i)));
                 }
             } else {
                 perWorkerFunctionUpdaters = null;
             }
-            perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
+            perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
 
             ownerMapValue = new SimpleMapValue(valueCount);
-            perWorkerMapValues = new ObjList<>(slotCount);
-            for (int i = 0; i < slotCount; i++) {
+            perWorkerMapValues = new ObjList<>(workerCount);
+            for (int i = 0; i < workerCount; i++) {
                 perWorkerMapValues.extendAndSet(i, new SimpleMapValue(valueCount));
             }
 
@@ -123,8 +122,8 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
             // Make sure to set worker-local allocator for the group by functions.
             GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
             if (perWorkerGroupByFunctions != null) {
-                perWorkerAllocators = new ObjList<>(slotCount);
-                for (int i = 0; i < slotCount; i++) {
+                perWorkerAllocators = new ObjList<>(workerCount);
+                for (int i = 0; i < workerCount; i++) {
                     final GroupByAllocator workerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
                     perWorkerAllocators.extendAndSet(i, workerAllocator);
                     GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(i), workerAllocator);
