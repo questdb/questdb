@@ -414,10 +414,22 @@ public class RecoverySessionTest extends AbstractCairoTest {
     public void testCdIntoTableByIndex() throws Exception {
         assertMemoryLeak(() -> {
             createTableWithRows("nav_tbl_idx", 2);
-            // ls first to discover tables, then cd by index
-            String[] result = runSession("ls\ncd 1\nls\nquit\n");
-            // second ls should show partitions
-            Assert.assertTrue(result[0].contains("dir"));
+            // ls first to discover tables — the table's index depends on
+            // how many directories exist, so we find it dynamically
+            String[] lsResult = runSession("ls\nquit\n");
+            String lsOut = lsResult[0];
+            // find the 0-based idx for our table in the ls output
+            int tableIdx = -1;
+            for (String line : lsOut.split("\n")) {
+                if (line.contains("nav_tbl_idx")) {
+                    tableIdx = Integer.parseInt(line.trim().split("\\s+")[0]);
+                    break;
+                }
+            }
+            Assert.assertTrue("table should appear in ls output", tableIdx >= 0);
+
+            // cd by index, then ls should show partitions
+            String[] result = runSession("ls\ncd " + tableIdx + "\nls\nquit\n");
             Assert.assertTrue(result[0].contains("rows"));
             Assert.assertEquals("", result[1]);
         });

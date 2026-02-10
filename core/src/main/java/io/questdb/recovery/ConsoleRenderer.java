@@ -955,7 +955,7 @@ public class ConsoleRenderer {
                 String registryStatus = getRegistryStatus(table);
                 out.printf(
                         "%-5d %-36s %-36s %-10s %-10s %-10s %-12s %-8d%n",
-                        i + 1,
+                        i,
                         table.getTableName(),
                         table.getDirName(),
                         table.getTableTypeName(),

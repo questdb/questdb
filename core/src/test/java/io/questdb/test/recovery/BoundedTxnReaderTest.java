@@ -270,6 +270,42 @@ public class BoundedTxnReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCorruptReservedBitsSet() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "txn_reserved_bits";
+            createTableWithTxnPartitions(tableName, 2);
+
+            try (Path txnPath = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                Path path = txnPathOf(tableName, txnPath);
+                mem.smallFile(FF, path.$(), MemoryTag.MMAP_DEFAULT);
+
+                long version = mem.getLong(TableUtils.TX_BASE_OFFSET_VERSION_64);
+                boolean isA = (version & 1L) == 0L;
+                int baseOffset = mem.getInt(isA ? TableUtils.TX_BASE_OFFSET_A_32 : TableUtils.TX_BASE_OFFSET_B_32);
+                int symbolsSegmentSize = mem.getInt(isA ? TableUtils.TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 : TableUtils.TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
+                int symbolCount = symbolsSegmentSize / Long.BYTES;
+
+                long partitionDataOffset = baseOffset + TableUtils.getPartitionTableIndexOffset(
+                        TableUtils.getPartitionTableSizeOffset(symbolCount), 0
+                );
+                long maskedSizeOffset = partitionDataOffset + Long.BYTES;
+
+                // set reserved bit 63 (should never be on disk)
+                long originalMaskedSize = mem.getLong(maskedSizeOffset);
+                mem.putLong(maskedSizeOffset, originalMaskedSize | (1L << 63));
+
+                TxnState state = new BoundedTxnReader(FF).read(path.$());
+                Assert.assertTrue(state.getPartitions().size() >= 1);
+                Assert.assertTrue(hasIssue(state, RecoveryIssueCode.RESERVED_BITS_SET));
+
+                // row count should still be correct (low 44 bits unchanged)
+                TxnPartitionState first = state.getPartitions().getQuick(0);
+                Assert.assertEquals(originalMaskedSize & ((1L << 44) - 1), first.getRowCount());
+            }
+        });
+    }
+
+    @Test
     public void testCorruptZeroPartitionSegmentSize() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "txn_zero_pseg";

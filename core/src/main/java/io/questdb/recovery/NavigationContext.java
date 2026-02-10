@@ -208,8 +208,8 @@ public class NavigationContext {
     public DiscoveredTable findTable(String target) {
         try {
             final int index = Numbers.parseInt(target);
-            if (index >= 1 && index <= lastDiscoveredTables.size()) {
-                return lastDiscoveredTables.getQuick(index - 1);
+            if (index >= 0 && index < lastDiscoveredTables.size()) {
+                return lastDiscoveredTables.getQuick(index);
             }
             return null;
         } catch (NumericException ignore) {

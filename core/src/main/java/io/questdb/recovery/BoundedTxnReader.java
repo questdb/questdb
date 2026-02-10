@@ -50,6 +50,7 @@ public class BoundedTxnReader extends AbstractBoundedReader {
     public static final int DEFAULT_MAX_SYMBOLS = 10_000;
     private static final int PARTITION_FLAG_PARQUET_BIT_OFFSET = 61;
     private static final int PARTITION_FLAG_READ_ONLY_BIT_OFFSET = 62;
+    private static final long PARTITION_RESERVED_BITS_MASK = (1L << 63) | (1L << 60);
     private static final int PARTITION_SIZE_BIT_WIDTH = 44;
     private static final long PARTITION_SIZE_MASK = (1L << PARTITION_SIZE_BIT_WIDTH) - 1;
     private final int maxPartitions;
@@ -297,6 +298,15 @@ public class BoundedTxnReader extends AbstractBoundedReader {
             long parquetFileSize = readLongValue(fd, fileSize, scratch, issues, entryOffset + 3L * Long.BYTES, "partition.parquetFileSize");
             if (issues.size() > issuesBefore) {
                 return;
+            }
+
+            if ((maskedSize & PARTITION_RESERVED_BITS_MASK) != 0) {
+                issues.add(new ReadIssue(
+                        RecoveryIssueSeverity.WARN,
+                        RecoveryIssueCode.RESERVED_BITS_SET,
+                        "partition maskedSize has reserved bits set [partition=" + i
+                                + ", maskedSize=0x" + Long.toHexString(maskedSize) + ']'
+                ));
             }
 
             final long rowCount = maskedSize & PARTITION_SIZE_MASK;
