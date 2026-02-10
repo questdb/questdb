@@ -40,7 +40,7 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  * in markout queries.
  * <p>
  * Wraps a {@link TimeFrameCursor} and provides efficient ASOF-style lookups
- * (finding the last row with timestamp <= target) using a combination of
+ * (finding the last row with timestamp less or equal to target) using a combination of
  * linear scan and binary search. Maintains bookmarks for efficient subsequent lookups.
  * <p>
  * Also supports forward and backward scanning to build key-to-rowId maps for keyed ASOF JOIN.
@@ -186,7 +186,7 @@ public class MarkoutTimeFrameHelper {
     }
 
     /**
-     * Finds the row with the largest timestamp <= targetTimestamp (ASOF semantics).
+     * Finds the row with the largest timestamp less or equal to targetTimestamp (ASOF semantics).
      * Returns the row ID, or Long.MIN_VALUE if not found.
      * <p>
      * After a successful call, the helper is positioned at the found row.
