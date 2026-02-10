@@ -3157,7 +3157,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     // PG compatibility no-op: RESET ALL, CLOSE ALL, UNLISTEN *, DISCARD ALL — consume exactly one argument.
     private void compileNoOp(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
-        SqlUtil.fetchNext(lexer);
+        expectToken(lexer, "argument");
         compiledQuery.ofSet();
     }
 
