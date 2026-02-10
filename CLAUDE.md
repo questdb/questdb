@@ -47,8 +47,8 @@ offending character, not the start of the expression.
 
 - Prefer active voice over passive voice in commit messages, PR descriptions,
   and comments.
-  - Good: "The owner thread waits for the latch"
-  - Avoid: "The latch is waited on by the owner thread"
+    - Good: "The owner thread waits for the latch"
+    - Avoid: "The latch is waited on by the owner thread"
 
 ## Git & PR Conventions
 
@@ -95,7 +95,7 @@ because methods won't stay together after auto-sorting.
 Use modern Java features:
 
 - enhanced switch
-- multiline string literal >>>>>>> master
+- multiline string literal
 
 ### Building
 
