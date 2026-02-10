@@ -43,6 +43,12 @@ Use modern Java features:
 - enhanced switch
 - multiline string literal
 
+### Tests
+
+- write all tests using assertMemoryLeak()
+- use assertQueryNoLeakCheck() to assert the results of queries
+- use execute() to run non-queries (DDL)
+
 ### Building
 
 ```bash
