@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
-use crate::page::sliced::{DataPageRef, DictPageRef};
+use crate::page::DataPageHeader;
 pub use crate::thrift_format::{
     DataPageHeader as DataPageHeaderV1, DataPageHeaderV2, PageHeader as ParquetPageHeader,
 };
-pub mod sliced;
 
 use crate::indexes::Interval;
 pub use crate::parquet_bridge::{DataPageHeaderExt, PageType};
@@ -19,9 +18,9 @@ use crate::statistics::{deserialize_statistics, Statistics};
 /// A [`CompressedDataPage`] is compressed, encoded representation of a Parquet data page.
 /// It holds actual data and thus cloning it is expensive.
 #[derive(Debug)]
-pub struct CompressedDataPage {
+pub struct CompressedDataPageRef<'a> {
     pub(crate) header: DataPageHeader,
-    pub(crate) buffer: Vec<u8>,
+    pub(crate) buffer: &'a [u8],
     pub(crate) compression: Compression,
     uncompressed_page_size: usize,
     pub(crate) descriptor: Descriptor,
@@ -30,11 +29,11 @@ pub struct CompressedDataPage {
     pub(crate) selected_rows: Option<Vec<Interval>>,
 }
 
-impl CompressedDataPage {
-    /// Returns a new [`CompressedDataPage`].
+impl<'a> CompressedDataPageRef<'a> {
+    /// Returns a new [`CompressedDataPageRef`].
     pub fn new(
         header: DataPageHeader,
-        buffer: Vec<u8>,
+        buffer: &'a [u8],
         compression: Compression,
         uncompressed_page_size: usize,
         descriptor: Descriptor,
@@ -53,7 +52,7 @@ impl CompressedDataPage {
     /// Returns a new [`CompressedDataPage`].
     pub(crate) fn new_read(
         header: DataPageHeader,
-        buffer: Vec<u8>,
+        buffer: &'a [u8],
         compression: Compression,
         uncompressed_page_size: usize,
         descriptor: Descriptor,
@@ -122,42 +121,20 @@ impl CompressedDataPage {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum DataPageHeader {
-    V1(DataPageHeaderV1),
-    V2(DataPageHeaderV2),
-}
-
-impl DataPageHeader {
-    pub fn num_values(&self) -> usize {
-        match &self {
-            DataPageHeader::V1(d) => d.num_values as usize,
-            DataPageHeader::V2(d) => d.num_values as usize,
-        }
-    }
-
-    pub fn null_count(&self) -> Option<i64> {
-        match &self {
-            DataPageHeader::V1(d) => d.statistics.as_ref().and_then(|x| x.null_count),
-            DataPageHeader::V2(d) => Some(d.num_nulls as i64),
-        }
-    }
-}
-
 /// A [`DataPage`] is an uncompressed, encoded representation of a Parquet data page. It holds actual data
 /// and thus cloning it is expensive.
 #[derive(Debug, Clone)]
-pub struct DataPage {
+pub struct DataPageRef<'a> {
     pub(super) header: DataPageHeader,
-    pub(super) buffer: Vec<u8>,
+    pub(super) buffer: &'a [u8],
     pub descriptor: Descriptor,
     pub selected_rows: Option<Vec<Interval>>,
 }
 
-impl DataPage {
+impl<'a> DataPageRef<'a> {
     pub fn new(
         header: DataPageHeader,
-        buffer: Vec<u8>,
+        buffer: &'a [u8],
         descriptor: Descriptor,
         rows: Option<usize>,
     ) -> Self {
@@ -169,18 +146,9 @@ impl DataPage {
         )
     }
 
-    pub fn into_ref(&self) -> DataPageRef<'_> {
-        DataPageRef::new_read(
-            self.header.clone(),
-            &self.buffer,
-            self.descriptor.clone(),
-            self.selected_rows.clone(),
-        )
-    }
-
     pub(crate) fn new_read(
         header: DataPageHeader,
-        buffer: Vec<u8>,
+        buffer: &'a [u8],
         descriptor: Descriptor,
         selected_rows: Option<Vec<Interval>>,
     ) -> Self {
@@ -196,7 +164,7 @@ impl DataPage {
         &self.header
     }
 
-    pub fn buffer(&self) -> &[u8] {
+    pub fn buffer(&self) -> &'a [u8] {
         &self.buffer
     }
 
@@ -204,12 +172,6 @@ impl DataPage {
     /// When `None`, all rows are to be considered.
     pub fn selected_rows(&self) -> Option<&[Interval]> {
         self.selected_rows.as_deref()
-    }
-
-    /// Returns a mutable reference to the internal buffer.
-    /// Useful to recover the buffer after the page has been decoded.
-    pub fn buffer_mut(&mut self) -> &mut Vec<u8> {
-        &mut self.buffer
     }
 
     pub fn num_values(&self) -> usize {
@@ -256,72 +218,55 @@ impl DataPage {
 /// and thus cloning it may be expensive.
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
-pub enum Page {
+pub enum PageRef<'a> {
     /// A [`DataPage`]
-    Data(DataPage),
+    Data(DataPageRef<'a>),
     /// A [`DictPage`]
-    Dict(DictPage),
+    Dict(DictPageRef<'a>),
 }
 
-/// A [`CompressedPage`] is a compressed, encoded representation of a Parquet page. It holds actual data
+/// A [`CompressedPageRef`] is a compressed, encoded representation of a Parquet page. It holds actual data
 /// and thus cloning it is expensive.
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
-pub enum CompressedPage {
-    Data(CompressedDataPage),
-    Dict(CompressedDictPage),
+pub enum CompressedPageRef<'a> {
+    Data(CompressedDataPageRef<'a>),
+    Dict(CompressedDictPageRef<'a>),
 }
 
-impl CompressedPage {
-    pub(crate) fn buffer(&mut self) -> &mut Vec<u8> {
+impl<'a> CompressedPageRef<'a> {
+    pub(crate) fn buffer(&self) -> &'a [u8] {
         match self {
-            CompressedPage::Data(page) => &mut page.buffer,
-            CompressedPage::Dict(page) => &mut page.buffer,
+            CompressedPageRef::Data(page) => page.buffer,
+            CompressedPageRef::Dict(page) => page.buffer,
         }
     }
 
     pub(crate) fn compression(&self) -> Compression {
         match self {
-            CompressedPage::Data(page) => page.compression(),
-            CompressedPage::Dict(page) => page.compression(),
+            CompressedPageRef::Data(page) => page.compression(),
+            CompressedPageRef::Dict(page) => page.compression(),
         }
     }
 
-    pub(crate) fn num_values(&self) -> usize {
+    pub(crate) fn uncompressed_size(&self) -> usize {
         match self {
-            CompressedPage::Data(page) => page.num_values(),
-            CompressedPage::Dict(_) => 0,
-        }
-    }
-
-    pub(crate) fn selected_rows(&self) -> Option<&[Interval]> {
-        match self {
-            CompressedPage::Data(page) => page.selected_rows(),
-            CompressedPage::Dict(_) => None,
+            CompressedPageRef::Data(page) => page.uncompressed_page_size,
+            CompressedPageRef::Dict(page) => page.uncompressed_page_size,
         }
     }
 }
 
 /// An uncompressed, encoded dictionary page.
 #[derive(Debug)]
-pub struct DictPage {
-    pub buffer: Vec<u8>,
+pub struct DictPageRef<'a> {
+    pub buffer: &'a [u8],
     pub num_values: usize,
     pub is_sorted: bool,
 }
 
-impl DictPage {
-    pub fn into_ref(&self) -> DictPageRef<'_> {
-        DictPageRef {
-            buffer: &self.buffer,
-            num_values: self.num_values,
-            is_sorted: self.is_sorted,
-        }
-    }
-}
-
-impl DictPage {
-    pub fn new(buffer: Vec<u8>, num_values: usize, is_sorted: bool) -> Self {
+impl<'a> DictPageRef<'a> {
+    pub fn new(buffer: &'a [u8], num_values: usize, is_sorted: bool) -> Self {
         Self {
             buffer,
             num_values,
@@ -332,17 +277,17 @@ impl DictPage {
 
 /// A compressed, encoded dictionary page.
 #[derive(Debug)]
-pub struct CompressedDictPage {
-    pub(crate) buffer: Vec<u8>,
+pub struct CompressedDictPageRef<'a> {
+    pub(crate) buffer: &'a [u8],
     compression: Compression,
     pub(crate) num_values: usize,
     pub(crate) uncompressed_page_size: usize,
     pub is_sorted: bool,
 }
 
-impl CompressedDictPage {
+impl<'a> CompressedDictPageRef<'a> {
     pub fn new(
-        buffer: Vec<u8>,
+        buffer: &'a [u8],
         compression: Compression,
         uncompressed_page_size: usize,
         num_values: usize,
@@ -427,7 +372,7 @@ pub fn split_buffer_v2(
 }
 
 /// Splits the page buffer into 3 slices corresponding to (encoded rep levels, encoded def levels, encoded values).
-pub fn split_buffer(page: &DataPage) -> Result<(&[u8], &[u8], &[u8])> {
+pub fn split_buffer<'a>(page: &DataPageRef<'a>) -> Result<(&'a [u8], &'a [u8], &'a [u8])> {
     match page.header() {
         DataPageHeader::V1(_) => split_buffer_v1(
             page.buffer(),

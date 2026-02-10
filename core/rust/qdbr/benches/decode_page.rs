@@ -960,15 +960,7 @@ fn bench_decode_page(c: &mut Criterion) {
             b.iter(|| {
                 state.bufs.data_vec.clear();
                 state.bufs.aux_vec.clear();
-                decode_page(
-                    black_box(&page),
-                    dict.as_ref(),
-                    &mut state.bufs,
-                    col_info,
-                    0,
-                    row_count,
-                )
-                .expect("decode_page");
+                decode_page_ref(black_box(&page), dict.as_ref(), &mut state.bufs, col_info, 0, row_count);
             })
         });
     }
@@ -978,3 +970,17 @@ fn bench_decode_page(c: &mut Criterion) {
 
 criterion_group!(benches, bench_decode_page);
 criterion_main!(benches);
+
+pub fn decode_page_ref(
+    page: &DataPage,
+    dict: Option<&DictPage>,
+    bufs: &mut ColumnChunkBuffers,
+    col_info: QdbMetaCol,
+    row_lo: usize,
+    row_hi: usize,
+) {
+    let page = page.into_ref();
+    let dict = dict.map(|d| d.into_ref());
+    decode_page(black_box(&page), dict.as_ref(), bufs, col_info, row_lo, row_hi)
+        .expect("decode_page");
+}

@@ -34,12 +34,18 @@ pub struct ParquetDecoder {
 pub struct DecodeContext {
     pub file_ptr: *const u8,
     pub file_size: u64,
+    pub dict_decompress_buffer: Vec<u8>,
     pub decompress_buffer: Vec<u8>,
 }
 
 impl DecodeContext {
     pub fn new(file_ptr: *const u8, file_size: u64) -> Self {
-        Self { file_ptr, file_size, decompress_buffer: Vec::new() }
+        Self {
+            file_ptr,
+            file_size,
+            dict_decompress_buffer: Vec::new(),
+            decompress_buffer: Vec::new(),
+        }
     }
 }
 

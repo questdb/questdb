@@ -53,11 +53,7 @@ pub struct SlicePageReader<'a> {
 }
 
 impl<'a> SlicePageReader<'a> {
-    pub fn new(
-        data: &'a [u8],
-        column: &ColumnChunkMetaData,
-        max_page_size: usize,
-    ) -> Result<Self> {
+    pub fn new(data: &'a [u8], column: &ColumnChunkMetaData, max_page_size: usize) -> Result<Self> {
         let (col_start, col_len) = column.byte_range();
         let col_start = col_start as usize;
         let col_end = col_start + col_len as usize;
