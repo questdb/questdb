@@ -77,7 +77,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     protected final ObjList<Function> bindVarFunctions;
     protected final MemoryCARW bindVarMemory;
     protected final CompiledFilter compiledFilter;
-    protected final HorizonJoinSymbolTableSource horizonJoinSymbolTableSource;
     protected final RecordSink masterAsOfJoinMapSink;
     protected final int masterTimestampColumnIndex;
     protected final long masterTimestampScale;
@@ -109,6 +108,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     protected final long sequenceRowCount;
     protected final RecordSink slaveAsOfJoinMapSink;
     protected final int slotCount;
+    private final HorizonJoinSymbolTableSource horizonJoinSymbolTableSource;
 
     protected BaseAsyncHorizonJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,

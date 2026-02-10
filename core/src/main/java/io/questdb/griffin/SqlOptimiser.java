@@ -2062,6 +2062,7 @@ public class SqlOptimiser implements Mutable {
         while (!sqlNodeStack.isEmpty()) {
             ExpressionNode gNode = sqlNodeStack.poll();
             ExpressionNode sNode = sqlNodeStack2.poll();
+            assert sNode != null;
 
             if (gNode.type != sNode.type) {
                 return false;
@@ -8649,7 +8650,7 @@ public class SqlOptimiser implements Mutable {
 
         // Validate HORIZON JOIN GROUP BY clause matches non-aggregate SELECT columns
         if (isHorizonJoin && hasGroupByClause) {
-            validateHorizonJoinGroupBy(columns, groupBy, horizonJoinModel, baseModel);
+            validateHorizonJoinGroupBy(columns, groupBy, baseModel);
         }
 
         if (explicitGroupBy && (rewriteStatus & REWRITE_STATUS_USE_DISTINCT_MODEL) == 0
@@ -9616,7 +9617,6 @@ public class SqlOptimiser implements Mutable {
     private void validateHorizonJoinGroupBy(
             ObjList<QueryColumn> selectColumns,
             ObjList<ExpressionNode> groupByColumns,
-            QueryModel horizonJoinModel,
             QueryModel baseModel
     ) throws SqlException {
         // Count non-aggregate columns from the original SELECT columns
