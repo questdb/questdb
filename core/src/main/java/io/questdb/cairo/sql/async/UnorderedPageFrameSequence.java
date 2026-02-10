@@ -409,7 +409,12 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
                     .$(", frameIndex=").$(frameIndex)
                     .$(", frameCount=").$(frameCount)
                     .I$();
+            int interruptReason = SqlExecutionCircuitBreaker.STATE_OK;
+            if (th instanceof CairoException e) {
+                interruptReason = e.getInterruptionReason();
+            }
             setError(th);
+            cancel(interruptReason);
             throw th;
         }
     }
