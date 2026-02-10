@@ -181,6 +181,10 @@ public class BoundedRegistryReader extends AbstractBoundedReader {
         long appendOffset = Unsafe.getUnsafe().getLong(scratch);
         state.setAppendOffset(appendOffset);
 
+        if (appendOffset == 0) {
+            return; // valid empty registry (just initialized, no entries written)
+        }
+
         if (appendOffset < Long.BYTES) {
             state.addIssue(
                     RecoveryIssueSeverity.ERROR,

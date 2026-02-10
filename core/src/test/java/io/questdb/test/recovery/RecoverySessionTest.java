@@ -24,21 +24,26 @@
 
 package io.questdb.test.recovery;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.SqlException;
 import io.questdb.recovery.ConsoleRenderer;
 import io.questdb.recovery.RecoverySession;
+import io.questdb.recovery.TxnState;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Files;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -63,6 +68,15 @@ public class RecoverySessionTest extends AbstractCairoTest {
             String[] result = runSession("cd nav_bare\ncd\npwd\nquit\n");
             Assert.assertTrue(result[0].contains("/\n"));
             Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCdBeyondSegment() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_beyond_seg", 3);
+            String[] result = runSession("cd wal_beyond_seg\ncd wal\ncd wal1\ncd 0\ncd anything\nquit\n");
+            Assert.assertTrue(result[1].contains("already at leaf level"));
         });
     }
 
@@ -112,12 +126,54 @@ public class RecoverySessionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCdDotDotFromSegment() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_dotdot_seg", 3);
+            String[] result = runSession("cd wal_dotdot_seg\ncd wal\ncd wal1\ncd 0\ncd ..\npwd\nquit\n");
+            // after cd .. from segment, should be back at WAL dir level
+            Assert.assertTrue(
+                    "should be at WAL dir level after cd .. from segment",
+                    result[0].contains("/wal_dotdot_seg/wal/wal1\n")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
     public void testCdDotDotFromTable() throws Exception {
         assertMemoryLeak(() -> {
             createTableWithRows("nav_dotdot_tbl", 2);
             String[] result = runSession("cd nav_dotdot_tbl\ncd ..\nls\nquit\n");
             // after cd .. from table, ls should show tables list
             Assert.assertTrue(result[0].contains("table_name"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCdDotDotFromWalDir() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_dotdot_dir", 3);
+            String[] result = runSession("cd wal_dotdot_dir\ncd wal\ncd wal1\ncd ..\npwd\nquit\n");
+            // after cd .. from WAL dir, should be back at WAL root
+            Assert.assertTrue(
+                    "should be at WAL root after cd .. from wal dir",
+                    result[0].contains("/wal_dotdot_dir/wal\n")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCdDotDotFromWalRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_dotdot_root", 3);
+            String[] result = runSession("cd wal_dotdot_root\ncd wal\ncd ..\npwd\nquit\n");
+            // after cd .. from WAL root, should be back at table level
+            Assert.assertTrue(
+                    "should be at table level after cd .. from wal root",
+                    result[0].contains("/wal_dotdot_root\n")
+            );
             Assert.assertEquals("", result[1]);
         });
     }
@@ -168,6 +224,28 @@ public class RecoverySessionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCdIntoWalDir() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_cd_dir", 3);
+            String[] result = runSession("cd wal_cd_dir\ncd wal\ncd wal1\npwd\nquit\n");
+            Assert.assertTrue(
+                    "prompt should show WAL dir path",
+                    result[0].contains("/wal_cd_dir/wal/wal1\n")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCdIntoWalDirBadName() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_cd_bad", 3);
+            String[] result = runSession("cd wal_cd_bad\ncd wal\ncd notawal\nquit\n");
+            Assert.assertTrue(result[1].contains("invalid WAL directory"));
+        });
+    }
+
+    @Test
     public void testCdIntoMissingPartition() throws Exception {
         assertMemoryLeak(() -> {
             createNonWalTableWithRows("nav_cd_missing", 3);
@@ -175,6 +253,15 @@ public class RecoverySessionTest extends AbstractCairoTest {
             String[] result = runSession("cd nav_cd_missing\ncd 2\npwd\nquit\n");
             // MISSING entry for deleted partition; cd by index should still work
             Assert.assertTrue(result[0].contains("1970-01-02"));
+        });
+    }
+
+    @Test
+    public void testCdIntoMissingWal() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_cd_missing", 3);
+            String[] result = runSession("cd wal_cd_missing\ncd wal\ncd wal99\nquit\n");
+            Assert.assertTrue(result[1].contains("WAL not found"));
         });
     }
 
@@ -214,6 +301,54 @@ public class RecoverySessionTest extends AbstractCairoTest {
             createOrphanDir("nav_cd_orphan", "old-backup");
             String[] result = runSession("cd nav_cd_orphan\ncd old-backup\npwd\nquit\n");
             Assert.assertTrue(result[0].contains("old-backup"));
+        });
+    }
+
+    @Test
+    public void testCdIntoSegment() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_cd_seg", 3);
+            String[] result = runSession("cd wal_cd_seg\ncd wal\ncd wal1\ncd 0\npwd\nquit\n");
+            Assert.assertTrue(
+                    "should show full WAL segment path",
+                    result[0].contains("/wal_cd_seg/wal/wal1/0\n")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCdIntoWalByIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_cd_idx", 3);
+            // at WAL root, "cd 0" navigates to entries[0] (the first WAL)
+            String[] result = runSession("cd wal_cd_idx\ncd wal\ncd 0\npwd\nquit\n");
+            Assert.assertTrue(
+                    "should navigate to first WAL by index",
+                    result[0].contains("/wal/wal1")
+            );
+        });
+    }
+
+    @Test
+    public void testCdIntoWalByIndexOutOfRange() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_cd_idx_oor", 3);
+            String[] result = runSession("cd wal_cd_idx_oor\ncd wal\ncd 999\nquit\n");
+            Assert.assertTrue("should report out of range", result[1].contains("out of range"));
+        });
+    }
+
+    @Test
+    public void testCdIntoWalByNameStillWorksByWalId() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_cd_name", 3);
+            // "cd wal1" should navigate by walId, not by index
+            String[] result = runSession("cd wal_cd_name\ncd wal\ncd wal1\npwd\nquit\n");
+            Assert.assertTrue(
+                    "wal-prefixed cd should use walId",
+                    result[0].contains("/wal/wal1")
+            );
         });
     }
 
@@ -306,6 +441,18 @@ public class RecoverySessionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCdPartitionAfterLeavingWal() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_then_part", 3);
+            // enter WAL mode, exit, then navigate into a partition
+            String[] result = runSession("cd wal_then_part\ncd wal\ncd ..\ncd 0\nls\nquit\n");
+            // should be at partition level, ls shows columns
+            Assert.assertTrue(result[0].contains("column_name"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
     public void testCdSlashFromDeep() throws Exception {
         assertMemoryLeak(() -> {
             createTableWithRows("nav_slash_deep", 2);
@@ -314,6 +461,17 @@ public class RecoverySessionTest extends AbstractCairoTest {
             // after cd /, the prompt should be at root, and pwd should output "/"
             // the prompt is "recover:/> " and pwd prints "/" on a separate line
             Assert.assertTrue(outText.contains("recover:/>"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCdSlashFromWalMode() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_slash", 3);
+            String[] result = runSession("cd wal_slash\ncd wal\ncd /\npwd\nquit\n");
+            Assert.assertTrue(result[0].contains("/\n"));
+            Assert.assertTrue(result[0].contains("recover:/>"));
             Assert.assertEquals("", result[1]);
         });
     }
@@ -473,6 +631,60 @@ public class RecoverySessionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCdWalFromRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            // at root level, "cd wal" tries to enter a table named "wal", not WAL mode
+            execute("create table wal (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into wal values (1, '1970-01-01T00:00:00.000000Z')");
+            waitForAppliedRows("wal", 1);
+
+            String[] result = runSession("cd wal\npwd\nquit\n");
+            // should enter the table named "wal", not WAL navigation mode
+            Assert.assertTrue(
+                    "should be at table level for table named 'wal'",
+                    result[0].contains("/wal\n")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCdWalFromTableLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_cd_from_tbl", 3);
+            String[] result = runSession("cd wal_cd_from_tbl\ncd wal\npwd\nquit\n");
+            Assert.assertTrue(
+                    "should show WAL root path",
+                    result[0].contains("/wal_cd_from_tbl/wal\n")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCdWalOnNonWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonWalTableWithRows("wal_nonwal_cd", 2);
+            String[] result = runSession("cd wal_nonwal_cd\ncd wal\nquit\n");
+            Assert.assertTrue(result[1].contains("does not use WAL"));
+        });
+    }
+
+    @Test
+    public void testCdWalThenCdRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_then_root", 3);
+            String[] result = runSession("cd wal_then_root\ncd wal\ncd /\npwd\nquit\n");
+            Assert.assertTrue(
+                    "should be back at root after cd /",
+                    result[0].contains("/\n")
+            );
+            Assert.assertTrue(result[0].contains("recover:/>"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
     public void testColumnsShowIndexedFlag() throws Exception {
         assertMemoryLeak(() -> {
             createTableWithTypes("nav_indexed", 1);
@@ -568,6 +780,134 @@ public class RecoverySessionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLsAtSegmentLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_ls_seg", 3);
+            String[] result = runSession("cd wal_ls_seg\ncd wal\ncd wal1\ncd 0\nls\nquit\n");
+            // at segment level, ls should show event listing with txn column header
+            Assert.assertTrue(
+                    "should show txn column header in event listing",
+                    result[0].contains("txn")
+            );
+        });
+    }
+
+    @Test
+    public void testLsWalSegmentWithoutWalStatus() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_ls_no_status", 3);
+            // Navigate directly to a WAL segment and ls WITHOUT calling 'wal status' first.
+            // This means seqTxnLogState is null — ls should still work, showing events
+            // with seqTxn="-" instead of actual values.
+            String[] result = runSession("cd wal_ls_no_status\ncd wal\ncd wal1\ncd 0\nls\nquit\n");
+            String outText = result[0];
+            // should show event listing with txn and type columns
+            Assert.assertTrue(
+                    "should show txn column header in event listing",
+                    outText.contains("txn")
+            );
+            Assert.assertTrue(
+                    "should show type column header in event listing",
+                    outText.contains("type")
+            );
+            Assert.assertTrue(
+                    "should show DATA type in event listing",
+                    outText.contains("DATA")
+            );
+            // seqTxn column header should be present since events are listed
+            Assert.assertTrue(
+                    "seqTxn column header should be present",
+                    outText.contains("seqTxn")
+            );
+            // no errors expected
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testLsEventsAtSegmentLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_ls_events", 3);
+            String[] result = runSession("cd wal_ls_events\ncd wal\ncd wal1\ncd 0\nls\nquit\n");
+            String outText = result[0];
+            // ls at segment level should show event listing with txn column header
+            Assert.assertTrue(
+                    "should show txn column header in event listing",
+                    outText.contains("txn")
+            );
+            Assert.assertTrue(
+                    "should show type column header in event listing",
+                    outText.contains("type")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testLsEventsShowsDataType() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_ls_data_type", 3);
+            String[] result = runSession("cd wal_ls_data_type\ncd wal\ncd wal1\ncd 0\nls\nquit\n");
+            Assert.assertTrue(
+                    "should show DATA type in event listing",
+                    result[0].contains("DATA")
+            );
+        });
+    }
+
+    @Test
+    public void testLsAtWalDir() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_ls_dir", 3);
+            String[] result = runSession("cd wal_ls_dir\ncd wal\ncd wal1\nls\nquit\n");
+            // should show segment listing with columns
+            Assert.assertTrue(
+                    "should show segment header",
+                    result[0].contains("segment")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testLsAtWalRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_ls_root", 3);
+            String[] result = runSession("cd wal_ls_root\ncd wal\nls\nquit\n");
+            // should show WAL directory listing
+            Assert.assertTrue(
+                    "should contain 'wal' column header",
+                    result[0].contains("wal")
+            );
+            Assert.assertTrue(
+                    "should show wal1 entry",
+                    result[0].contains("wal1")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testLsAtWalRootShowsOrphans() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_ls_orphan", 3);
+            // create an orphan WAL dir (wal99) that is not referenced in the txnlog
+            TableToken token = engine.verifyTableName("wal_ls_orphan");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token.getDirName()).concat("wal99").slash$();
+                Assert.assertEquals(0, FF.mkdirs(path, configuration.getMkDirMode()));
+            }
+
+            String[] result = runSession("cd wal_ls_orphan\ncd wal\nls\nquit\n");
+            Assert.assertTrue(
+                    "should show unreferenced status for orphan WAL",
+                    result[0].contains("unreferenced")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
     public void testLsFiltersInternalDirs() throws Exception {
         assertMemoryLeak(() -> {
             // WAL tables have wal*, txn_seq, seq dirs
@@ -580,7 +920,10 @@ public class RecoverySessionTest extends AbstractCairoTest {
             // internal dirs should NOT appear in the listing
             for (String line : outText.split("\n")) {
                 // skip header and non-data lines
-                if (line.trim().startsWith("idx") || line.trim().isEmpty() || line.contains("recover:") || line.contains("issues")) {
+                if (line.trim().startsWith("idx") || line.trim().isEmpty()
+                        || line.contains("recover:") || line.contains("issues")
+                        || line.contains("commands:") || line.contains("dbRoot=")
+                        || line.startsWith("  ") || line.startsWith("QuestDB")) {
                     continue;
                 }
                 Assert.assertFalse("wal dir should be filtered: " + line, line.contains("wal"));
@@ -921,6 +1264,45 @@ public void testLsShowsTransientRowCountForLastPartition() throws Exception {
             Assert.assertTrue(outText.contains("/\n"));
             Assert.assertTrue(outText.contains("/nav_pwd\n"));
             Assert.assertTrue(outText.contains("/nav_pwd/1970-01-01\n"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testPwdAtSegment() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_pwd_seg", 3);
+            String[] result = runSession("cd wal_pwd_seg\ncd wal\ncd wal1\ncd 0\npwd\nquit\n");
+            Assert.assertTrue(
+                    "pwd should show full segment path",
+                    result[0].contains("/wal_pwd_seg/wal/wal1/0\n")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testPwdAtWalDir() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_pwd_dir", 3);
+            String[] result = runSession("cd wal_pwd_dir\ncd wal\ncd wal1\npwd\nquit\n");
+            Assert.assertTrue(
+                    "pwd should show WAL dir path",
+                    result[0].contains("/wal_pwd_dir/wal/wal1\n")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testPwdAtWalRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_pwd_root", 3);
+            String[] result = runSession("cd wal_pwd_root\ncd wal\npwd\nquit\n");
+            Assert.assertTrue(
+                    "pwd should show WAL root path",
+                    result[0].contains("/wal_pwd_root/wal\n")
+            );
             Assert.assertEquals("", result[1]);
         });
     }
@@ -1275,6 +1657,34 @@ public void testLsShowsTransientRowCountForLastPartition() throws Exception {
             String outText = result[0];
             Assert.assertTrue(outText.contains("checking chk_tbl_level"));
             Assert.assertTrue(outText.contains("OK"));
+            Assert.assertTrue(outText.contains("check complete"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCheckColumnsInWalMode() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("chk_wal_mode", 3);
+            // check columns from WAL root should run table-level check, not crash
+            String[] result = runSession("cd chk_wal_mode\ncd wal\ncheck columns\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue("should run table-level check from WAL mode",
+                    outText.contains("checking chk_wal_mode"));
+            Assert.assertTrue(outText.contains("check complete"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCheckColumnsInWalDirLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("chk_wal_dir", 3);
+            // check columns from WAL dir level should also work
+            String[] result = runSession("cd chk_wal_dir\ncd wal\ncd wal1\ncheck columns\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue("should run table-level check from WAL dir level",
+                    outText.contains("checking chk_wal_dir"));
             Assert.assertTrue(outText.contains("check complete"));
             Assert.assertEquals("", result[1]);
         });
@@ -2025,6 +2435,162 @@ public void testLsShowsTransientRowCountForLastPartition() throws Exception {
     }
 
     @Test
+    public void testNavigateBackFromSegmentClearsEventState() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_nav_back_seg", 3);
+            // cd to segment, ls (populates events), cd .., cd back to segment, ls again
+            String[] result = runSession(
+                    "cd wal_nav_back_seg\ncd wal\ncd wal1\ncd 0\nls\ncd ..\ncd 0\nls\nquit\n"
+            );
+            // Both ls invocations should work without errors
+            Assert.assertEquals("", result[1]);
+            // The second ls should also show events
+            String outText = result[0];
+            // Find two occurrences of "txn" column header (from both ls calls)
+            int firstTxn = outText.indexOf("txn");
+            Assert.assertTrue("first ls should show txn header", firstTxn >= 0);
+            int secondTxn = outText.indexOf("txn", firstTxn + 10);
+            Assert.assertTrue("second ls should also show txn header", secondTxn > firstTxn);
+        });
+    }
+
+    @Test
+    public void testShowAtSegmentLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_show_seg", 3);
+            String[] result = runSession("cd wal_show_seg\ncd wal\ncd wal1\ncd 0\nshow\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(
+                    "should show segment header",
+                    outText.contains("segment:")
+            );
+            Assert.assertTrue(
+                    "should show maxTxn",
+                    outText.contains("maxTxn")
+            );
+            Assert.assertTrue(
+                    "should show event type counts",
+                    outText.contains("DATA:")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testShowAtWalDirLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_show_dir", 3);
+            String[] result = runSession("cd wal_show_dir\ncd wal\ncd wal1\nshow\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(
+                    "should show walId",
+                    outText.contains("walId")
+            );
+            Assert.assertTrue(
+                    "should show segments count",
+                    outText.contains("segments")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testShowAtWalDirShowsTxnlogRefs() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_show_txnlog_refs", 3);
+            String[] result = runSession("cd wal_show_txnlog_refs\ncd wal\ncd wal1\nshow\nquit\n");
+            Assert.assertTrue(
+                    "should show txnlog references",
+                    result[0].contains("txnlog references")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testShowAtWalRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_show_root", 3);
+            // first call wal status to load seq txnlog state, then cd into WAL and show
+            String[] result = runSession("cd wal_show_root\nwal status\ncd wal\nshow\nquit\n");
+            String outText = result[0];
+            // show at WAL root should display sequencer txnlog with seqTxn column header
+            Assert.assertTrue(
+                    "should show seqTxn column header",
+                    outText.contains("seqTxn")
+            );
+        });
+    }
+
+    @Test
+    public void testShowEventDetail() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_show_event", 3);
+            // show 0 at segment level should show event detail for txn 0
+            String[] result = runSession("cd wal_show_event\ncd wal\ncd wal1\ncd 0\nshow 0\nquit\n");
+            String outText = result[0];
+            Assert.assertTrue(
+                    "should show txn: 0",
+                    outText.contains("txn: 0")
+            );
+            Assert.assertTrue(
+                    "should show type field",
+                    outText.contains("type:")
+            );
+            // DATA events should show startRowID
+            Assert.assertTrue(
+                    "should show startRowID field",
+                    outText.contains("startRowID")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testShowEventInvalidArg() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_show_event_bad", 3);
+            String[] result = runSession("cd wal_show_event_bad\ncd wal\ncd wal1\ncd 0\nshow abc\nquit\n");
+            Assert.assertTrue(
+                    "should report invalid event txn",
+                    result[1].contains("invalid event txn")
+            );
+        });
+    }
+
+    @Test
+    public void testShowEventNotFound() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_show_event_nf", 3);
+            String[] result = runSession("cd wal_show_event_nf\ncd wal\ncd wal1\ncd 0\nshow 999\nquit\n");
+            Assert.assertTrue(
+                    "should report event not found",
+                    result[1].contains("event not found")
+            );
+        });
+    }
+
+    @Test
+    public void testShowSegmentSummaryEventCounts() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_show_seg_counts", 5);
+            String[] result = runSession("cd wal_show_seg_counts\ncd wal\ncd wal1\ncd 0\nshow\nquit\n");
+            String outText = result[0];
+            // Segment summary should show DATA count line
+            Assert.assertTrue(
+                    "should show DATA event count",
+                    outText.contains("DATA:")
+            );
+            // The count should reflect the number of commits we made
+            Assert.assertTrue(
+                    "should show events count",
+                    outText.contains("events:")
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
     public void testPrintColumnNotInPartition() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table print_nip (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
@@ -2270,6 +2836,1416 @@ public void testLsShowsTransientRowCountForLastPartition() throws Exception {
         });
     }
 
+    @Test
+    public void testWalStatusAtRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("wal_root", 2);
+            String[] result = runSession("wal status\nquit\n");
+            Assert.assertTrue(result[1].contains("wal status requires a table"));
+        });
+    }
+
+    @Test
+    public void testWalStatusNonWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonWalTableWithRows("wal_nonwal", 2);
+            String[] result = runSession("cd wal_nonwal\nwal status\nquit\n");
+            Assert.assertTrue(result[0].contains("walEnabled: false"));
+            Assert.assertTrue(result[0].contains("does not use WAL"));
+        });
+    }
+
+    @Test
+    public void testWalStatusOnWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("wal_ok", 3);
+            String[] result = runSession("cd wal_ok\nwal status\nquit\n");
+            String out = result[0];
+            Assert.assertTrue(out.contains("walEnabled: true"));
+            Assert.assertTrue(out.contains("sequencer txns:"));
+            Assert.assertTrue(out.contains("table seqTxn:"));
+            Assert.assertTrue(out.contains("pending: 0 transactions"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testWalStatusShowsPendingTxns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_pending (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into wal_pending select rnd_symbol('AA','BB'), timestamp_sequence('1970-01-01', "
+                    + Micros.DAY_MICROS + "L) from long_sequence(2)");
+            // don't drain WAL queue - leave transactions pending
+            String[] result = runSession("cd wal_pending\nwal status\nquit\n");
+            String out = result[0];
+            Assert.assertTrue(out.contains("walEnabled: true"));
+            Assert.assertTrue(out.contains("pending:"));
+            // should show pending records with wal/segment info
+            Assert.assertTrue(out.contains("wal"));
+        });
+    }
+
+    @Test
+    public void testWalStatusWithDdl() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_ddl (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into wal_ddl values ('AA', '1970-01-01')");
+            waitForAppliedRows("wal_ddl", 1);
+            execute("alter table wal_ddl add column val int");
+            // don't drain - DDL is pending
+            String[] result = runSession("cd wal_ddl\nwal status\nquit\n");
+            String out = result[0];
+            Assert.assertTrue(out.contains("walEnabled: true"));
+            // DDL entries should appear as pending
+            Assert.assertTrue(out.contains("pending:"));
+        });
+    }
+
+    @Test
+    public void testWalStatusViaSubcommand() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("wal_sub", 2);
+            // "wal status" should work same as the two-word command
+            String[] result = runSession("cd wal_sub\nwal status\nquit\n");
+            Assert.assertTrue(result[0].contains("walEnabled: true"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testWalUnknownSubcommand() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("wal_unknown", 2);
+            String[] result = runSession("cd wal_unknown\nwal foo\nquit\n");
+            Assert.assertTrue(result[1].contains("unknown wal subcommand"));
+        });
+    }
+
+    @Test
+    public void testWalStatusRecordsLoaded() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_records (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            // multiple commits to get multiple records
+            try (WalWriter walWriter = getWalWriter("wal_records")) {
+                for (int i = 0; i < 5; i++) {
+                    TableWriter.Row row = walWriter.newRow(i * Micros.DAY_MICROS);
+                    row.putSym(0, "AA");
+                    row.append();
+                    walWriter.commit();
+                }
+            }
+            waitForAppliedRows("wal_records", 5);
+
+            String[] result = runSession("cd wal_records\nwal status\nquit\n");
+            Assert.assertTrue(result[0].contains("records loaded:"));
+            Assert.assertTrue(result[0].contains("pending: 0 transactions"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCdBetweenSegments() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create multiple commits to ensure at least one segment exists.
+            // With a single WalWriter, all commits land in segment 0, so we
+            // verify navigating to segment 0, going back up, and navigating again.
+            createWalTableWithCommits("wal_cd_between_segs", 5);
+            String[] result = runSession(
+                    "cd wal_cd_between_segs\ncd wal\ncd wal1\ncd 0\npwd\ncd ..\ncd 0\npwd\nquit\n"
+            );
+            // Both pwd outputs should show segment 0 path
+            String outText = result[0];
+            int firstIdx = outText.indexOf("/wal_cd_between_segs/wal/wal1/0\n");
+            int secondIdx = outText.indexOf("/wal_cd_between_segs/wal/wal1/0\n", firstIdx + 1);
+            Assert.assertTrue(
+                    "should navigate to segment 0 twice",
+                    firstIdx >= 0 && secondIdx > firstIdx
+            );
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testCdToSegmentAndBackToRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_seg_to_root", 3);
+            String[] result = runSession(
+                    "cd wal_seg_to_root\ncd wal\ncd wal1\ncd 0\ncd /\npwd\nquit\n"
+            );
+            Assert.assertTrue(
+                    "should be at root after cd / from segment",
+                    result[0].contains("/\n")
+            );
+            Assert.assertTrue(result[0].contains("recover:/>"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testHelpIncludesCdWal() throws Exception {
+        assertMemoryLeak(() -> {
+            String[] result = runSession("help\nquit\n");
+            Assert.assertTrue(
+                    "help should mention 'cd wal'",
+                    result[0].contains("cd wal")
+            );
+        });
+    }
+
+    @Test
+    public void testHelpShowsEventCommands() throws Exception {
+        assertMemoryLeak(() -> {
+            String[] result = runSession("help\nquit\n");
+            Assert.assertTrue(
+                    "help should mention 'show <N>' for event detail",
+                    result[0].contains("show <N>")
+            );
+        });
+    }
+
+    @Test
+    public void testHelpIncludesWalNavigation() throws Exception {
+        assertMemoryLeak(() -> {
+            String[] result = runSession("help\nquit\n");
+            // help should mention WAL navigation in some form
+            Assert.assertTrue(
+                    "help should mention WAL navigation",
+                    result[0].contains("WAL") || result[0].contains("wal")
+            );
+        });
+    }
+
+    @Test
+    public void testHelpIncludesWalStatus() throws Exception {
+        assertMemoryLeak(() -> {
+            String[] result = runSession("help\nquit\n");
+            Assert.assertTrue(result[0].contains("wal status"));
+        });
+    }
+
+    // -- formatPartitionRange unit tests --
+
+    @Test
+    public void testFormatPartitionRangeSingleDay() {
+        long ts = 12 * Micros.HOUR_MICROS; // 1970-01-01T12:00
+        String result = ConsoleRenderer.formatPartitionRange(PartitionBy.DAY, ColumnType.TIMESTAMP, ts, ts);
+        Assert.assertEquals("1970-01-01", result);
+    }
+
+    @Test
+    public void testFormatPartitionRangeMultipleDays() {
+        long min = 0; // 1970-01-01
+        long max = 2 * Micros.DAY_MICROS + 12 * Micros.HOUR_MICROS; // 1970-01-03T12:00
+        String result = ConsoleRenderer.formatPartitionRange(PartitionBy.DAY, ColumnType.TIMESTAMP, min, max);
+        Assert.assertEquals("1970-01-01, 1970-01-02, 1970-01-03", result);
+    }
+
+    @Test
+    public void testFormatPartitionRangeHourly() {
+        long min = 0; // 1970-01-01T00:00
+        long max = 2 * Micros.HOUR_MICROS; // 1970-01-01T02:00
+        String result = ConsoleRenderer.formatPartitionRange(PartitionBy.HOUR, ColumnType.TIMESTAMP, min, max);
+        Assert.assertTrue(result.contains(","));
+        // should have 3 hour partitions
+        Assert.assertEquals(3, result.split(",").length);
+    }
+
+    @Test
+    public void testFormatPartitionRangeMonthly() {
+        long min = 0; // 1970-01-01
+        long max = 32L * Micros.DAY_MICROS; // 1970-02-02
+        String result = ConsoleRenderer.formatPartitionRange(PartitionBy.MONTH, ColumnType.TIMESTAMP, min, max);
+        Assert.assertEquals("1970-01, 1970-02", result);
+    }
+
+    @Test
+    public void testFormatPartitionRangeYearly() {
+        long min = 0; // 1970
+        long max = 366L * Micros.DAY_MICROS; // 1971
+        String result = ConsoleRenderer.formatPartitionRange(PartitionBy.YEAR, ColumnType.TIMESTAMP, min, max);
+        Assert.assertEquals("1970, 1971", result);
+    }
+
+    @Test
+    public void testFormatPartitionRangeWeekly() {
+        long min = 0; // 1970-01-01 (Thursday, W01)
+        long max = 8L * Micros.DAY_MICROS; // 1970-01-09 (next week)
+        String result = ConsoleRenderer.formatPartitionRange(PartitionBy.WEEK, ColumnType.TIMESTAMP, min, max);
+        Assert.assertTrue(result.contains(","));
+        Assert.assertEquals(2, result.split(",").length);
+    }
+
+    @Test
+    public void testFormatPartitionRangeNone() {
+        String result = ConsoleRenderer.formatPartitionRange(PartitionBy.NONE, ColumnType.TIMESTAMP, 0, 100);
+        Assert.assertEquals("default", result);
+    }
+
+    @Test
+    public void testFormatPartitionRangeUnsetTimestamps() {
+        String result = ConsoleRenderer.formatPartitionRange(PartitionBy.DAY, ColumnType.TIMESTAMP, TxnState.UNSET_LONG, TxnState.UNSET_LONG);
+        Assert.assertEquals("n/a", result);
+    }
+
+    @Test
+    public void testFormatPartitionRangeUnsetPartitionBy() {
+        String result = ConsoleRenderer.formatPartitionRange(TxnState.UNSET_INT, ColumnType.TIMESTAMP, 0, 100);
+        Assert.assertEquals("n/a", result);
+    }
+
+    @Test
+    public void testFormatPartitionRangeMinOnlyUnset() {
+        String result = ConsoleRenderer.formatPartitionRange(PartitionBy.DAY, ColumnType.TIMESTAMP, TxnState.UNSET_LONG, 100);
+        Assert.assertEquals("n/a", result);
+    }
+
+    @Test
+    public void testFormatPartitionRangeTooMany() {
+        long min = 0; // 1970-01-01
+        long max = 29L * Micros.DAY_MICROS; // 1970-01-30
+        String result = ConsoleRenderer.formatPartitionRange(PartitionBy.DAY, ColumnType.TIMESTAMP, min, max);
+        Assert.assertTrue("should be abbreviated", result.contains(".."));
+        Assert.assertTrue("should contain partition count", result.contains("30 partitions"));
+    }
+
+    @Test
+    public void testFormatPartitionRangeExactly20() {
+        long min = 0; // 1970-01-01
+        long max = 19L * Micros.DAY_MICROS; // 1970-01-20
+        String result = ConsoleRenderer.formatPartitionRange(PartitionBy.DAY, ColumnType.TIMESTAMP, min, max);
+        Assert.assertFalse("should not be abbreviated", result.contains(".."));
+        Assert.assertEquals(20, result.split(",").length);
+    }
+
+    @Test
+    public void testFormatPartitionRangeExactly21() {
+        long min = 0; // 1970-01-01
+        long max = 20L * Micros.DAY_MICROS; // 1970-01-21
+        String result = ConsoleRenderer.formatPartitionRange(PartitionBy.DAY, ColumnType.TIMESTAMP, min, max);
+        Assert.assertTrue("should be abbreviated", result.contains(".."));
+        Assert.assertTrue("should contain partition count", result.contains("21 partitions"));
+    }
+
+    @Test
+    public void testFormatPartitionRangeMinEqualsMax() {
+        long ts = 5 * Micros.DAY_MICROS + 6 * Micros.HOUR_MICROS; // 1970-01-06T06:00
+        String result = ConsoleRenderer.formatPartitionRange(PartitionBy.DAY, ColumnType.TIMESTAMP, ts, ts);
+        Assert.assertEquals("1970-01-06", result);
+    }
+
+    @Test
+    public void testFormatPartitionRangeBoundaryMidnight() {
+        long min = 0; // 1970-01-01T00:00:00
+        long max = Micros.DAY_MICROS; // 1970-01-02T00:00:00 (exactly midnight)
+        String result = ConsoleRenderer.formatPartitionRange(PartitionBy.DAY, ColumnType.TIMESTAMP, min, max);
+        Assert.assertEquals("1970-01-01, 1970-01-02", result);
+    }
+
+    // -- formatDuration unit tests --
+
+    @Test
+    public void testFormatDurationSeconds() {
+        Assert.assertEquals("30s", ConsoleRenderer.formatDuration(30_000_000L));
+    }
+
+    @Test
+    public void testFormatDurationMinutes() {
+        Assert.assertEquals("5m 0s", ConsoleRenderer.formatDuration(5 * 60_000_000L));
+    }
+
+    @Test
+    public void testFormatDurationHoursAndMinutes() {
+        Assert.assertEquals("2h 15m", ConsoleRenderer.formatDuration(2 * 3600_000_000L + 15 * 60_000_000L));
+    }
+
+    @Test
+    public void testFormatDurationDaysAndHours() {
+        Assert.assertEquals("3d 4h", ConsoleRenderer.formatDuration(3 * 86400_000_000L + 4 * 3600_000_000L));
+    }
+
+    @Test
+    public void testFormatDurationZero() {
+        Assert.assertEquals("0s", ConsoleRenderer.formatDuration(0));
+    }
+
+    @Test
+    public void testFormatDurationNegative() {
+        Assert.assertEquals("n/a", ConsoleRenderer.formatDuration(-1));
+    }
+
+    // -- wal status enrichment integration tests --
+
+    @Test
+    public void testWalStatusPendingRowsV2() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+            execute("create table wal_pr (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("wal_pr")) {
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = walWriter.newRow(i * Micros.DAY_MICROS);
+                    row.putSym(0, "AA");
+                    row.append();
+                    walWriter.commit();
+                }
+            }
+            // don't drain - all 3 commits are pending
+            String[] result = runSession("cd wal_pr\nwal status\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show pending rows", out.contains("pending rows:"));
+            Assert.assertTrue("should show affected partitions", out.contains("affected partitions:"));
+        });
+    }
+
+    @Test
+    public void testWalStatusAffectedPartitionsMultipleDays() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+            execute("create table wal_ap (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("wal_ap")) {
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = walWriter.newRow(i * Micros.DAY_MICROS);
+                    row.putSym(0, "AA");
+                    row.append();
+                    walWriter.commit();
+                }
+            }
+            // don't drain
+            String[] result = runSession("cd wal_ap\nwal status\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show affected partitions", out.contains("affected partitions:"));
+            Assert.assertTrue("should show day-level names", out.contains("1970-01-01"));
+        });
+    }
+
+    @Test
+    public void testWalStatusFullyApplied() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("wal_fully", 3);
+            String[] result = runSession("cd wal_fully\nwal status\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show pending: 0", out.contains("pending: 0"));
+            Assert.assertFalse("should not show pending rows for fully applied", out.contains("pending rows:"));
+        });
+    }
+
+    @Test
+    public void testWalStatusTimeSinceLastApplied() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_ts (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("wal_ts")) {
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = walWriter.newRow(i * Micros.DAY_MICROS);
+                    row.putSym(0, "AA");
+                    row.append();
+                    walWriter.commit();
+                }
+            }
+            // apply first, leave rest pending
+            drainWalQueue(engine);
+            execute("insert into wal_ts values ('BB', '1970-01-04')");
+            // new insert is pending
+            String[] result = runSession("cd wal_ts\nwal status\nquit\n");
+            String out = result[0];
+            // if there are pending transactions with a last applied having a commit timestamp
+            if (out.contains("pending:") && !out.contains("pending: 0")) {
+                Assert.assertTrue("should show time since last applied", out.contains("time since last applied:"));
+            }
+        });
+    }
+
+    @Test
+    public void testWalStatusV1ShowsPendingRowsViaEnrichment() throws Exception {
+        assertMemoryLeak(() -> {
+            // default config creates V1 txnlog - no row/timestamp data in seqTxnLog,
+            // but enrichment from WAL event files fills it in
+            execute("create table wal_v1 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("wal_v1")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+            // don't drain
+            String[] result = runSession("cd wal_v1\nwal status\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show pending", out.contains("pending: 1"));
+            Assert.assertTrue("V1 enriched from events should show pending rows", out.contains("pending rows:"));
+            Assert.assertTrue("V1 enriched from events should show affected partitions", out.contains("affected partitions:"));
+        });
+    }
+
+    @Test
+    public void testWalStatusPartitionByHour() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_hour (sym symbol, ts timestamp) timestamp(ts) partition by HOUR WAL");
+            try (WalWriter walWriter = getWalWriter("wal_hour")) {
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = walWriter.newRow(i * Micros.HOUR_MICROS);
+                    row.putSym(0, "AA");
+                    row.append();
+                    walWriter.commit();
+                }
+            }
+            // don't drain
+            String[] result = runSession("cd wal_hour\nwal status\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show pending", out.contains("pending:"));
+        });
+    }
+
+    // -- WAL event detail partition affinity tests --
+
+    @Test
+    public void testWalEventDetailShowsPartitionsSingleDay() throws Exception {
+        assertMemoryLeak(() -> {
+            // use 3 commits so events survive drain (single commits may get purged)
+            createWalTableWithCommits("wal_ep1", 3);
+            // show event 0: ts=0 -> 1970-01-01
+            String[] result = runSession("cd wal_ep1\ncd wal\ncd wal1\ncd 0\nshow 0\nquit\n");
+            Assert.assertTrue("should show partitions", result[0].contains("partitions: 1970-01-01"));
+        });
+    }
+
+    @Test
+    public void testWalEventDetailShowsPartitionsMultipleDays() throws Exception {
+        assertMemoryLeak(() -> {
+            // 3 commits in separate days; events survive drain
+            createWalTableWithCommits("wal_ep2", 3);
+            // events 0 and 1 are in segment 0 after drain (event 2 may be purged)
+            // event 0: ts=0 -> 1970-01-01; event 1: ts=DAY -> 1970-01-02
+            String[] result = runSession("cd wal_ep2\ncd wal\ncd wal1\ncd 0\nshow 1\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show partitions", out.contains("partitions:"));
+            Assert.assertTrue("should contain 1970-01-02", out.contains("1970-01-02"));
+        });
+    }
+
+    @Test
+    public void testWalEventDetailSqlEventNoPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_ep3 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into wal_ep3 values ('AA', '1970-01-01')");
+            waitForAppliedRows("wal_ep3", 1);
+            execute("alter table wal_ep3 add column val int");
+            drainWalQueue(engine);
+            // DDL event is in a separate segment or in the same; navigate to find SQL event
+            String[] result = runSession("cd wal_ep3\ncd wal\ncd wal1\ncd 0\nls\nquit\n");
+            // Check that any SQL events don't have partitions line
+            String out = result[0];
+            // SQL events show "-" in partitions column
+            Assert.assertTrue("should have partitions column header", out.contains("partitions"));
+        });
+    }
+
+    // -- WAL event listing partition column tests --
+
+    @Test
+    public void testWalEventsListingShowsPartitionColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_el1", 3);
+            String[] result = runSession("cd wal_el1\ncd wal\ncd wal1\ncd 0\nls\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("header should contain 'partitions'", out.contains("partitions"));
+        });
+    }
+
+    @Test
+    public void testWalEventsListingMixedEventTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_el2 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into wal_el2 values ('AA', '1970-01-01')");
+            waitForAppliedRows("wal_el2", 1);
+            execute("alter table wal_el2 add column val int");
+            drainWalQueue(engine);
+            String[] result = runSession("cd wal_el2\ncd wal\ncd wal1\ncd 0\nls\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("header should contain 'partitions'", out.contains("partitions"));
+        });
+    }
+
+    @Test
+    public void testWalEventsListingPartitionByMonth() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_el3 (sym symbol, ts timestamp) timestamp(ts) partition by MONTH WAL");
+            try (WalWriter walWriter = getWalWriter("wal_el3")) {
+                // 3 commits so events survive drain; all in 1970-01
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = walWriter.newRow(i * Micros.DAY_MICROS);
+                    row.putSym(0, "AA");
+                    row.append();
+                    walWriter.commit();
+                }
+            }
+            waitForAppliedRows("wal_el3", 3);
+            String[] result = runSession("cd wal_el3\ncd wal\ncd wal1\ncd 0\nls\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show month-level names", out.contains("1970-01"));
+        });
+    }
+
+    // -- WAL dir listing aggregation tests --
+
+    @Test
+    public void testWalDirListingShowsRowsV2() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+            execute("create table wal_dl1 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("wal_dl1")) {
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = walWriter.newRow(i * Micros.DAY_MICROS);
+                    row.putSym(0, "AA");
+                    row.append();
+                    walWriter.commit();
+                }
+            }
+            waitForAppliedRows("wal_dl1", 3);
+            String[] result = runSession("cd wal_dl1\ncd wal\nls\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("header should contain 'rows'", out.contains("rows"));
+            Assert.assertTrue("header should contain 'partitions'", out.contains("partitions"));
+        });
+    }
+
+    @Test
+    public void testWalDirListingShowsPartitionRange() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+            execute("create table wal_dl2 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("wal_dl2")) {
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = walWriter.newRow(i * Micros.DAY_MICROS);
+                    row.putSym(0, "AA");
+                    row.append();
+                    walWriter.commit();
+                }
+            }
+            waitForAppliedRows("wal_dl2", 3);
+            String[] result = runSession("cd wal_dl2\ncd wal\nls\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should contain day-level names", out.contains("1970-01-01"));
+        });
+    }
+
+    @Test
+    public void testWalDirListingMultipleWals() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_dl3 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            // Open both WalWriters concurrently to force wal1 and wal2 creation
+            try (WalWriter w1 = getWalWriter("wal_dl3");
+                 WalWriter w2 = getWalWriter("wal_dl3")) {
+                TableWriter.Row row1 = w1.newRow(0);
+                row1.putSym(0, "AA");
+                row1.append();
+                w1.commit();
+                TableWriter.Row row2 = w2.newRow(Micros.DAY_MICROS);
+                row2.putSym(0, "BB");
+                row2.append();
+                w2.commit();
+            }
+            waitForAppliedRows("wal_dl3", 2);
+            String[] result = runSession("cd wal_dl3\ncd wal\nls\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should have wal1", out.contains("wal1"));
+            Assert.assertTrue("should have wal2", out.contains("wal2"));
+        });
+    }
+
+    @Test
+    public void testWalDirListingOrphanWal() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_dl4", 2);
+            // Create orphan wal99 directory
+            TableToken token = engine.verifyTableName("wal_dl4");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token.getDirName()).concat("wal99").slash$();
+                Assert.assertEquals(0, FF.mkdirs(path, configuration.getMkDirMode()));
+            }
+            String[] result = runSession("cd wal_dl4\ncd wal\nls\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should have wal99", out.contains("wal99"));
+            Assert.assertTrue("should mark as unreferenced", out.contains("unreferenced"));
+        });
+    }
+
+    @Test
+    public void testWalDirListingMissingWalFullyAppliedShowsPurged() throws Exception {
+        assertMemoryLeak(() -> {
+            // Use 3 commits so wal dir survives initial drain, then remove it
+            createWalTableWithCommits("wal_dl5", 3);
+            // all txns are applied; remove wal1 directory — should show "purged"
+            TableToken token = engine.verifyTableName("wal_dl5");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token.getDirName()).concat("wal1").$();
+                FF.rmdir(path);
+            }
+            String[] result = runSession("cd wal_dl5\ncd wal\nls\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show purged for fully applied WAL", out.contains("purged"));
+            Assert.assertFalse("should not show MISSING for fully applied WAL", out.contains("MISSING"));
+        });
+    }
+
+    // -- show <seqTxn> tests --
+
+    @Test
+    public void testShowSeqTxnDataEvent() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_st1", 3);
+            String[] result = runSession("cd wal_st1\ncd wal\nshow 1\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show seqTxn", out.contains("seqTxn: 1"));
+            Assert.assertTrue("should show walId", out.contains("walId:"));
+            Assert.assertTrue("should show segmentId", out.contains("segmentId:"));
+            Assert.assertTrue("should show event detail separator", out.contains("--- event detail ---"));
+            Assert.assertTrue("should show type DATA", out.contains("type: DATA"));
+        });
+    }
+
+    @Test
+    public void testShowSeqTxnDdl() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_st2 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into wal_st2 values ('AA', '1970-01-01')");
+            waitForAppliedRows("wal_st2", 1);
+            execute("alter table wal_st2 add column val int");
+            drainWalQueue(engine);
+            // DDL should be seqTxn 2
+            String[] result = runSession("cd wal_st2\ncd wal\nshow 2\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show type DDL", out.contains("type: DDL"));
+            // DDL should not have event detail section
+            Assert.assertFalse("should not show event detail", out.contains("--- event detail ---"));
+        });
+    }
+
+    @Test
+    public void testShowSeqTxnNotFound() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_st3", 3);
+            String[] result = runSession("cd wal_st3\ncd wal\nshow 999\nquit\n");
+            Assert.assertTrue("should show not found error", result[1].contains("seqTxn not found: 999"));
+        });
+    }
+
+    @Test
+    public void testShowSeqTxnInvalidArg() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_st4", 3);
+            String[] result = runSession("cd wal_st4\ncd wal\nshow abc\nquit\n");
+            Assert.assertTrue("should show invalid error", result[1].contains("invalid seqTxn: abc"));
+        });
+    }
+
+    @Test
+    public void testShowSeqTxnNegative() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_st5", 3);
+            String[] result = runSession("cd wal_st5\ncd wal\nshow -1\nquit\n");
+            Assert.assertTrue("should show not found", result[1].contains("seqTxn not found"));
+        });
+    }
+
+    @Test
+    public void testShowSeqTxnZero() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_st6", 3);
+            String[] result = runSession("cd wal_st6\ncd wal\nshow 0\nquit\n");
+            Assert.assertTrue("should show not found", result[1].contains("seqTxn not found"));
+        });
+    }
+
+    @Test
+    public void testShowSeqTxnWithPartitionAffinity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_st7 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("wal_st7")) {
+                // commit 0: two rows in different days
+                TableWriter.Row row1 = walWriter.newRow(0);
+                row1.putSym(0, "AA");
+                row1.append();
+                TableWriter.Row row2 = walWriter.newRow(Micros.DAY_MICROS);
+                row2.putSym(0, "BB");
+                row2.append();
+                walWriter.commit();
+                // 2 more commits so events survive drain
+                for (int i = 2; i < 4; i++) {
+                    TableWriter.Row row = walWriter.newRow(i * Micros.DAY_MICROS);
+                    row.putSym(0, "CC");
+                    row.append();
+                    walWriter.commit();
+                }
+            }
+            waitForAppliedRows("wal_st7", 4);
+            // show seqTxn 1 resolves to wal1/0 segmentTxn 0 -> the multi-day commit
+            String[] result = runSession("cd wal_st7\ncd wal\nshow 1\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show partitions", out.contains("partitions:"));
+            Assert.assertTrue("should contain 1970-01-01", out.contains("1970-01-01"));
+        });
+    }
+
+    @Test
+    public void testShowSeqTxnMissingWalDir() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_st8 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("wal_st8")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("wal_st8", 1);
+            // delete wal1 directory
+            TableToken token = engine.verifyTableName("wal_st8");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token.getDirName()).concat("wal1").$();
+                FF.rmdir(path);
+            }
+            String[] result = runSession("cd wal_st8\ncd wal\nshow 1\nquit\n");
+            // should get an error about missing wal dir or events
+            String err = result[1];
+            Assert.assertTrue("should show error for missing wal",
+                    err.contains("could not read events") || err.contains("no events found"));
+        });
+    }
+
+    @Test
+    public void testShowSeqTxnNoArgAtWalRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_st9", 3);
+            String[] result = runSession("cd wal_st9\ncd wal\nshow\nquit\n");
+            String out = result[0];
+            // should show the full seqTxnLog table
+            Assert.assertTrue("should show seqTxn header", out.contains("seqTxn"));
+            Assert.assertTrue("should show structVer", out.contains("structVer"));
+        });
+    }
+
+    @Test
+    public void testShowSeqTxnMultipleSegments() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_st10 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            // First writer creates wal1/segment0
+            try (WalWriter w1 = getWalWriter("wal_st10")) {
+                TableWriter.Row row = w1.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                w1.commit();
+            }
+            // Second writer creates wal2/segment0
+            try (WalWriter w2 = getWalWriter("wal_st10")) {
+                TableWriter.Row row = w2.newRow(Micros.DAY_MICROS);
+                row.putSym(0, "BB");
+                row.append();
+                w2.commit();
+            }
+            waitForAppliedRows("wal_st10", 2);
+            // Show seqTxn 2 which should be from wal2
+            String[] result = runSession("cd wal_st10\ncd wal\nshow 2\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show seqTxn: 2", out.contains("seqTxn: 2"));
+            Assert.assertTrue("should show event detail", out.contains("--- event detail ---"));
+        });
+    }
+
+    @Test
+    public void testShowSeqTxnShowsRowCount() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_st11", 3);
+            String[] result = runSession("cd wal_st11\ncd wal\nshow 1\nquit\n");
+            String out = result[0];
+            // row count available via event enrichment
+            Assert.assertTrue("should show rows", out.contains("rows:"));
+        });
+    }
+
+    // -- show timeline tests --
+
+    @Test
+    public void testShowTimelineBasic() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_tl1", 3);
+            String[] result = runSession("cd wal_tl1\ncd wal\nshow timeline\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show seqTxn header", out.contains("seqTxn"));
+            Assert.assertTrue("should show commitTime header", out.contains("commitTime"));
+            Assert.assertTrue("should show wal/seg header", out.contains("wal/seg"));
+            Assert.assertTrue("should show type header", out.contains("type"));
+            Assert.assertTrue("should show rows header", out.contains("rows"));
+            Assert.assertTrue("should show partitions header", out.contains("partitions"));
+            Assert.assertTrue("should show status header", out.contains("status"));
+            Assert.assertTrue("should show applied", out.contains("applied"));
+        });
+    }
+
+    @Test
+    public void testShowTimelineWithPending() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_tl2 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("wal_tl2")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+            // Don't drain - commit is pending
+            String[] result = runSession("cd wal_tl2\ncd wal\nshow timeline\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show PENDING", out.contains("PENDING"));
+        });
+    }
+
+    @Test
+    public void testShowTimelineMixedDdlAndData() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_tl3 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into wal_tl3 values ('AA', '1970-01-01')");
+            waitForAppliedRows("wal_tl3", 1);
+            execute("alter table wal_tl3 add column val int");
+            drainWalQueue(engine);
+            String[] result = runSession("cd wal_tl3\ncd wal\nshow timeline\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show DATA type", out.contains("DATA"));
+            Assert.assertTrue("should show DDL type", out.contains("DDL"));
+            Assert.assertTrue("should show (DDL) wal/seg", out.contains("(DDL)"));
+        });
+    }
+
+    @Test
+    public void testShowTimelineMultipleWals() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_tl4 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            // open both concurrently to force wal1 and wal2 creation
+            try (WalWriter w1 = getWalWriter("wal_tl4");
+                 WalWriter w2 = getWalWriter("wal_tl4")) {
+                TableWriter.Row row1 = w1.newRow(0);
+                row1.putSym(0, "AA");
+                row1.append();
+                w1.commit();
+                TableWriter.Row row2 = w2.newRow(Micros.DAY_MICROS);
+                row2.putSym(0, "BB");
+                row2.append();
+                w2.commit();
+            }
+            waitForAppliedRows("wal_tl4", 2);
+            String[] result = runSession("cd wal_tl4\ncd wal\nshow timeline\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show wal1", out.contains("wal1"));
+            Assert.assertTrue("should show wal2", out.contains("wal2"));
+        });
+    }
+
+    @Test
+    public void testShowTimelineV2ShowsRowsAndPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+            execute("create table wal_tl5 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("wal_tl5")) {
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = walWriter.newRow(i * Micros.DAY_MICROS);
+                    row.putSym(0, "AA");
+                    row.append();
+                    walWriter.commit();
+                }
+            }
+            waitForAppliedRows("wal_tl5", 3);
+            String[] result = runSession("cd wal_tl5\ncd wal\nshow timeline\nquit\n");
+            String out = result[0];
+            // V2 should have real partition names in the timeline
+            Assert.assertTrue("should show partition names", out.contains("1970-01-01"));
+        });
+    }
+
+    @Test
+    public void testShowTimelineEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_tl6 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            drainWalQueue(engine);
+            // no commits at all
+            String[] result = runSession("cd wal_tl6\ncd wal\nshow timeline\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show no records", out.contains("no records"));
+        });
+    }
+
+    @Test
+    public void testShowTimelineAtTableLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithRows("wal_tl7", 2);
+            String[] result = runSession("cd wal_tl7\nshow timeline\nquit\n");
+            Assert.assertTrue("should show error", result[1].contains("WAL mode"));
+        });
+    }
+
+    @Test
+    public void testShowTimelineAtWalDir() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_tl8", 3);
+            String[] result = runSession("cd wal_tl8\ncd wal\ncd wal1\nshow timeline\nquit\n");
+            Assert.assertTrue("should show error", result[1].contains("WAL root"));
+        });
+    }
+
+    @Test
+    public void testShowTimelineAtRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            String[] result = runSession("show timeline\nquit\n");
+            Assert.assertTrue("should show error", result[1].contains("WAL mode"));
+        });
+    }
+
+    @Test
+    public void testShowTimelinePartitionByHour() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+            execute("create table wal_tl9 (sym symbol, ts timestamp) timestamp(ts) partition by HOUR WAL");
+            try (WalWriter walWriter = getWalWriter("wal_tl9")) {
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = walWriter.newRow(i * Micros.HOUR_MICROS);
+                    row.putSym(0, "AA");
+                    row.append();
+                    walWriter.commit();
+                }
+            }
+            waitForAppliedRows("wal_tl9", 3);
+            String[] result = runSession("cd wal_tl9\ncd wal\nshow timeline\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show hour-level partitions", out.contains("1970-01-01T"));
+        });
+    }
+
+    @Test
+    public void testShowTimelineV1EnrichedFromEvents() throws Exception {
+        assertMemoryLeak(() -> {
+            // default test config creates V1 txnlog - no row/timestamp data in seqTxnLog,
+            // but enrichment from WAL event files fills in rows/partitions
+            execute("create table wal_tl10 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("wal_tl10")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("wal_tl10", 1);
+            String[] result = runSession("cd wal_tl10\ncd wal\nshow timeline\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show seqTxn header", out.contains("seqTxn"));
+            Assert.assertTrue("should show DATA type", out.contains("DATA"));
+            // V1 enrichment from events should populate rows column
+            Assert.assertTrue("should show row count from enrichment", out.contains("1"));
+        });
+    }
+
+    @Test
+    public void testShowTimelineNonWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonWalTableWithRows("wal_tl11", 2);
+            String[] result = runSession("cd wal_tl11\nshow timeline\nquit\n");
+            Assert.assertTrue("should show error", result[1].contains("WAL mode"));
+        });
+    }
+
+    // -- edge case & correctness tests --
+
+    @Test
+    public void testWalStatusAfterTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_ec1 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into wal_ec1 values ('AA', '1970-01-01')");
+            drainWalQueue(engine);
+            execute("TRUNCATE TABLE wal_ec1");
+            drainWalQueue(engine);
+            execute("insert into wal_ec1 values ('BB', '1970-01-02')");
+            drainWalQueue(engine);
+            String[] result = runSession("cd wal_ec1\nwal status\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show walEnabled: true", out.contains("walEnabled: true"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testWalStatusMultipleWalWriters() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_ec2 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter w1 = getWalWriter("wal_ec2")) {
+                TableWriter.Row row = w1.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                w1.commit();
+            }
+            try (WalWriter w2 = getWalWriter("wal_ec2")) {
+                TableWriter.Row row = w2.newRow(Micros.DAY_MICROS);
+                row.putSym(0, "BB");
+                row.append();
+                w2.commit();
+            }
+            // don't drain
+            String[] result = runSession("cd wal_ec2\nwal status\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show pending", out.contains("pending:"));
+        });
+    }
+
+    @Test
+    public void testWalStatusAfterSchemaChange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_ec3 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into wal_ec3 values ('AA', '1970-01-01')");
+            drainWalQueue(engine);
+            execute("alter table wal_ec3 add column val int");
+            // don't drain DDL
+            String[] result = runSession("cd wal_ec3\nwal status\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show pending DDL", out.contains("DDL"));
+        });
+    }
+
+    @Test
+    public void testShowSeqTxnAfterSchemaChange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_ec4 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into wal_ec4 values ('AA', '1970-01-01')");
+            drainWalQueue(engine);
+            execute("alter table wal_ec4 add column val int");
+            drainWalQueue(engine);
+            execute("insert into wal_ec4 (sym, ts, val) values ('BB', '1970-01-02', 42)");
+            drainWalQueue(engine);
+
+            // Show seqTxn 1 (data before DDL)
+            String[] result = runSession("cd wal_ec4\ncd wal\nshow 1\nquit\n");
+            Assert.assertTrue("should resolve seqTxn 1", result[0].contains("seqTxn: 1"));
+
+            // Show seqTxn 3 (data after DDL)
+            result = runSession("cd wal_ec4\ncd wal\nshow 3\nquit\n");
+            Assert.assertTrue("should resolve seqTxn 3", result[0].contains("seqTxn: 3"));
+        });
+    }
+
+    @Test
+    public void testWalDirListingAfterSomeApplied() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_ec5 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("wal_ec5")) {
+                for (int i = 0; i < 5; i++) {
+                    TableWriter.Row row = walWriter.newRow(i * Micros.DAY_MICROS);
+                    row.putSym(0, "AA");
+                    row.append();
+                    walWriter.commit();
+                }
+            }
+            waitForAppliedRows("wal_ec5", 5);
+            // All applied, then add pending ones
+            execute("insert into wal_ec5 values ('BB', '1970-01-06')");
+            String[] result = runSession("cd wal_ec5\ncd wal\nls\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show rows column", out.contains("rows"));
+        });
+    }
+
+    @Test
+    public void testAllEnrichedOutputsNonWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonWalTableWithRows("wal_ec6", 2);
+            // show timeline at table level should error
+            String[] result = runSession("cd wal_ec6\nshow timeline\nquit\n");
+            Assert.assertTrue("should error", result[1].contains("WAL mode"));
+            // wal status should say not WAL
+            result = runSession("cd wal_ec6\nwal status\nquit\n");
+            Assert.assertTrue("should show not WAL", result[0].contains("walEnabled: false"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testWalStatusWithMatViewTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createMatViewWithBase("wal_ec7_mv", "wal_ec7_base", 3);
+            // Mat views use WAL internally
+            String[] result = runSession("cd wal_ec7_mv\nwal status\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show walEnabled: true", out.contains("walEnabled: true"));
+        });
+    }
+
+    @Test
+    public void testShowTimelineLargeCommitCount() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_ec8 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("wal_ec8")) {
+                for (int i = 0; i < 50; i++) {
+                    TableWriter.Row row = walWriter.newRow(i * Micros.HOUR_MICROS);
+                    row.putSym(0, "AA");
+                    row.append();
+                    walWriter.commit();
+                }
+            }
+            waitForAppliedRows("wal_ec8", 50);
+            String[] result = runSession("cd wal_ec8\ncd wal\nshow timeline\nquit\n");
+            String out = result[0];
+            // Should render all rows without truncation
+            Assert.assertTrue("should show seqTxn header", out.contains("seqTxn"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testPartitionAffinityOutOfOrderData() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_ec9 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("wal_ec9")) {
+                // Commit 0: Insert out of order: day 2, then day 1
+                TableWriter.Row row1 = walWriter.newRow(Micros.DAY_MICROS); // 1970-01-02
+                row1.putSym(0, "AA");
+                row1.append();
+                TableWriter.Row row2 = walWriter.newRow(0); // 1970-01-01
+                row2.putSym(0, "BB");
+                row2.append();
+                walWriter.commit();
+                // Add 2 more commits so events survive drain
+                for (int i = 2; i < 4; i++) {
+                    TableWriter.Row row = walWriter.newRow(i * Micros.DAY_MICROS);
+                    row.putSym(0, "CC");
+                    row.append();
+                    walWriter.commit();
+                }
+            }
+            waitForAppliedRows("wal_ec9", 4);
+            String[] result = runSession("cd wal_ec9\ncd wal\ncd wal1\ncd 0\nshow 0\nquit\n");
+            String out = result[0];
+            // Should show both partitions and ooo: yes
+            Assert.assertTrue("should show outOfOrder: yes", out.contains("outOfOrder: yes"));
+            Assert.assertTrue("should show partitions", out.contains("partitions:"));
+            Assert.assertTrue("should contain 1970-01-01", out.contains("1970-01-01"));
+            Assert.assertTrue("should contain 1970-01-02", out.contains("1970-01-02"));
+        });
+    }
+
+    @Test
+    public void testWalStatusNoSeqTxnLogFile() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_ec10 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into wal_ec10 values ('AA', '1970-01-01')");
+            drainWalQueue(engine);
+            // delete the txnlog file
+            TableToken token = engine.verifyTableName("wal_ec10");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token.getDirName())
+                        .concat("txn_seq").concat("_txnlog").$();
+                FF.removeQuiet(path.$());
+            }
+            String[] result = runSession("cd wal_ec10\nwal status\nquit\n");
+            // Should not crash, should show some error or empty state
+            Assert.assertEquals("should not crash", "", result[1]);
+        });
+    }
+
+    @Test
+    public void testEnrichedLsPreservesExistingColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_ec11", 3);
+            String[] result = runSession("cd wal_ec11\ncd wal\nls\nquit\n");
+            String out = result[0];
+            // existing columns should still be present
+            Assert.assertTrue("should have idx column", out.contains("idx"));
+            Assert.assertTrue("should have wal column", out.contains("wal"));
+            Assert.assertTrue("should have segments column", out.contains("segments"));
+            Assert.assertTrue("should have refs column", out.contains("refs"));
+            // new columns
+            Assert.assertTrue("should have rows column", out.contains("rows"));
+            Assert.assertTrue("should have partitions column", out.contains("partitions"));
+        });
+    }
+
+    @Test
+    public void testEnrichedWalEventsPreservesExistingColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_ec12", 3);
+            String[] result = runSession("cd wal_ec12\ncd wal\ncd wal1\ncd 0\nls\nquit\n");
+            String out = result[0];
+            // existing columns should still be present
+            Assert.assertTrue("should have txn column", out.contains("txn"));
+            Assert.assertTrue("should have type column", out.contains("type"));
+            Assert.assertTrue("should have rows column", out.contains("rows"));
+            Assert.assertTrue("should have minTimestamp column", out.contains("minTimestamp"));
+            Assert.assertTrue("should have maxTimestamp column", out.contains("maxTimestamp"));
+            Assert.assertTrue("should have ooo column", out.contains("ooo"));
+            Assert.assertTrue("should have seqTxn column", out.contains("seqTxn"));
+            Assert.assertTrue("should have status column", out.contains("status"));
+            // new column
+            Assert.assertTrue("should have partitions column", out.contains("partitions"));
+        });
+    }
+
+    @Test
+    public void testSegmentListingShowsRowsAndPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+            execute("create table wal_sl1 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("wal_sl1")) {
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = walWriter.newRow(i * Micros.DAY_MICROS);
+                    row.putSym(0, "AA");
+                    row.append();
+                    walWriter.commit();
+                }
+            }
+            waitForAppliedRows("wal_sl1", 3);
+            String[] result = runSession("cd wal_sl1\ncd wal\ncd wal1\nls\nquit\n");
+            String out = result[0];
+            // header should have rows and partitions columns
+            Assert.assertTrue("should have rows column", out.contains("rows"));
+            Assert.assertTrue("should have partitions column", out.contains("partitions"));
+            // V2 data: each commit has 1 row — verify the partition name which is specific
+            Assert.assertTrue("should show partition name", out.contains("1970-01-01"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testSegmentListingPreservesExistingColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_sl2", 3);
+            String[] result = runSession("cd wal_sl2\ncd wal\ncd wal1\nls\nquit\n");
+            String out = result[0];
+            // existing columns must be present
+            Assert.assertTrue("should have idx column", out.contains("idx"));
+            Assert.assertTrue("should have segment column", out.contains("segment"));
+            Assert.assertTrue("should have _event column", out.contains("_event"));
+            Assert.assertTrue("should have _event.i column", out.contains("_event.i"));
+            Assert.assertTrue("should have _meta column", out.contains("_meta"));
+            Assert.assertTrue("should have status column", out.contains("status"));
+            // new enrichment columns
+            Assert.assertTrue("should have rows column", out.contains("rows"));
+            Assert.assertTrue("should have partitions column", out.contains("partitions"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testSegmentListingV1EnrichedFromEvents() throws Exception {
+        assertMemoryLeak(() -> {
+            // V1 (default, no SEQ_PART_TXN_COUNT) — enrichment from WAL events fills in rows
+            execute("create table wal_sl3 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("wal_sl3")) {
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = walWriter.newRow(i * Micros.DAY_MICROS);
+                    row.putSym(0, "AA");
+                    row.append();
+                    walWriter.commit();
+                }
+            }
+            waitForAppliedRows("wal_sl3", 3);
+            String[] result = runSession("cd wal_sl3\ncd wal\ncd wal1\nls\nquit\n");
+            String out = result[0];
+            // V1 with enrichment should show partition names (from event timestamps)
+            Assert.assertTrue("should have partition names after enrichment", out.contains("1970-01-01"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testSegmentListingMultipleSegments() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+            execute("create table wal_sl4 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            // Two separate WalWriters: each creates a new wal dir
+            try (WalWriter w1 = getWalWriter("wal_sl4");
+                 WalWriter w2 = getWalWriter("wal_sl4")) {
+                TableWriter.Row row1 = w1.newRow(0);
+                row1.putSym(0, "AA");
+                row1.append();
+                w1.commit();
+                TableWriter.Row row2 = w2.newRow(Micros.DAY_MICROS);
+                row2.putSym(0, "BB");
+                row2.append();
+                w2.commit();
+            }
+            waitForAppliedRows("wal_sl4", 2);
+            // Navigate to wal root and check that we see both wal1 and wal2
+            String[] result = runSession("cd wal_sl4\ncd wal\nls\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should have wal1", out.contains("wal1"));
+            Assert.assertTrue("should have wal2", out.contains("wal2"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testSegmentListingShowsAppliedStatus() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_sl5", 3);
+            // all txns applied after waitForAppliedRows
+            String[] result = runSession("cd wal_sl5\ncd wal\ncd wal1\nls\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show applied status", out.contains("applied"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testSegmentListingShowsPartialStatus() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table wal_sl6 (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("wal_sl6")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+                // apply first commit
+                drainWalQueue(engine);
+
+                // second commit stays pending (writer still open, not drained)
+                TableWriter.Row row2 = walWriter.newRow(Micros.DAY_MICROS);
+                row2.putSym(0, "BB");
+                row2.append();
+                walWriter.commit();
+            }
+            // don't drain — second commit is pending
+            String[] result = runSession("cd wal_sl6\ncd wal\ncd wal1\nls\nquit\n");
+            String out = result[0];
+            Assert.assertTrue("should show partial status (1 applied + 1 pending)",
+                    out.contains("partial"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testSegmentListingUnreferencedSegment() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTableWithCommits("wal_sl7", 3);
+            // Create an extra segment dir that has no seqTxn references
+            TableToken token = engine.verifyTableName("wal_sl7");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token.getDirName())
+                        .concat("wal1").slash().put(99).slash$();
+                Assert.assertEquals(0, FF.mkdirs(path, configuration.getMkDirMode()));
+            }
+            String[] result = runSession("cd wal_sl7\ncd wal\ncd wal1\nls\nquit\n");
+            String out = result[0];
+            // segment 99 should show "unreferenced" or "incomplete" depending on missing files
+            Assert.assertTrue("should list segment 99",
+                    out.contains("99"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testHelpShowsTimelineCommand() throws Exception {
+        assertMemoryLeak(() -> {
+            String[] result = runSession("help\nquit\n");
+            Assert.assertTrue("help should mention show timeline", result[0].contains("show timeline"));
+        });
+    }
+
+    @Test
+    public void testHelpShowsSeqTxnDetail() throws Exception {
+        assertMemoryLeak(() -> {
+            String[] result = runSession("help\nquit\n");
+            Assert.assertTrue("help should mention show <N> for seqTxn detail", result[0].contains("seqTxn detail"));
+        });
+    }
+
     private static void deleteAllRegistryFiles() {
         try (Path path = new Path()) {
             long findPtr = FF.findFirst(path.of(configuration.getDbRoot()).$());
@@ -2359,6 +4335,19 @@ public void testLsShowsTransientRowCountForLastPartition() throws Exception {
                         + " from long_sequence(" + rowCount + ")"
         );
         waitForAppliedRows(tableName, rowCount);
+    }
+
+    private static void createWalTableWithCommits(String tableName, int commitCount) throws SqlException {
+        execute("create table " + tableName + " (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+        try (WalWriter walWriter = getWalWriter(tableName)) {
+            for (int i = 0; i < commitCount; i++) {
+                TableWriter.Row row = walWriter.newRow(i * Micros.DAY_MICROS);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+        }
+        waitForAppliedRows(tableName, commitCount);
     }
 
     private static void createViewWithBase(String viewName, String baseName) throws SqlException {

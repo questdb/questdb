@@ -24,23 +24,35 @@
 
 package io.questdb.recovery;
 
-/** Categorization codes for issues found during file reading and validation. */
-public enum RecoveryIssueCode {
-    CORRUPT_META,
-    CORRUPT_REGISTRY,
-    CORRUPT_SEQ_TXNLOG,
-    CORRUPT_TXN,
-    CORRUPT_WAL_EVENT,
-    INVALID_COUNT,
-    INVALID_OFFSET,
-    IO_ERROR,
-    META_COLUMN_COUNT_MISMATCH,
-    MISSING_FILE,
-    OUT_OF_RANGE,
-    PARTIAL_READ,
-    REGISTRY_DIR_MISSING,
-    REGISTRY_MISMATCH,
-    REGISTRY_NOT_FOUND,
-    SHORT_FILE,
-    TRUNCATED_OUTPUT
+import io.questdb.std.ObjList;
+
+/** Immutable description of a WAL directory (e.g., wal1, wal2). */
+public final class WalDirEntry {
+    private final ObjList<WalSegmentEntry> segments;
+    private final WalScanStatus status;
+    private final int txnlogReferenceCount;
+    private final int walId;
+
+    public WalDirEntry(int walId, ObjList<WalSegmentEntry> segments, WalScanStatus status, int txnlogReferenceCount) {
+        this.walId = walId;
+        this.segments = segments;
+        this.status = status;
+        this.txnlogReferenceCount = txnlogReferenceCount;
+    }
+
+    public ObjList<WalSegmentEntry> getSegments() {
+        return segments;
+    }
+
+    public WalScanStatus getStatus() {
+        return status;
+    }
+
+    public int getTxnlogReferenceCount() {
+        return txnlogReferenceCount;
+    }
+
+    public int getWalId() {
+        return walId;
+    }
 }

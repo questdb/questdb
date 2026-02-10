@@ -33,6 +33,7 @@ import io.questdb.std.FilesFacade;
  */
 public class CommandContext {
     private final BoundedTxnReader boundedTxnReader;
+    private final BoundedWalEventReader boundedWalEventReader;
     private final AnsiColor color;
     private final ColumnCheckService columnCheckService;
     private final ColumnValueReader columnValueReader;
@@ -40,17 +41,21 @@ public class CommandContext {
     private final NavigationContext nav;
     private final PartitionScanService partitionScanService;
     private final ConsoleRenderer renderer;
+    private final WalDiscoveryService walDiscoveryService;
 
     public CommandContext(
             NavigationContext nav,
             BoundedTxnReader boundedTxnReader,
+            BoundedWalEventReader boundedWalEventReader,
             ColumnCheckService columnCheckService,
             ColumnValueReader columnValueReader,
             FilesFacade ff,
             PartitionScanService partitionScanService,
-            ConsoleRenderer renderer
+            ConsoleRenderer renderer,
+            WalDiscoveryService walDiscoveryService
     ) {
         this.boundedTxnReader = boundedTxnReader;
+        this.boundedWalEventReader = boundedWalEventReader;
         this.color = renderer.getColor();
         this.columnCheckService = columnCheckService;
         this.columnValueReader = columnValueReader;
@@ -58,10 +63,15 @@ public class CommandContext {
         this.nav = nav;
         this.partitionScanService = partitionScanService;
         this.renderer = renderer;
+        this.walDiscoveryService = walDiscoveryService;
     }
 
     public BoundedTxnReader getBoundedTxnReader() {
         return boundedTxnReader;
+    }
+
+    public BoundedWalEventReader getBoundedWalEventReader() {
+        return boundedWalEventReader;
     }
 
     public AnsiColor getColor() {
@@ -90,5 +100,9 @@ public class CommandContext {
 
     public ConsoleRenderer getRenderer() {
         return renderer;
+    }
+
+    public WalDiscoveryService getWalDiscoveryService() {
+        return walDiscoveryService;
     }
 }

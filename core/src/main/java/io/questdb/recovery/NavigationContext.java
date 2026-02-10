@@ -33,13 +33,17 @@ import java.io.PrintStream;
 
 /**
  * Owns all mutable navigation state for the recovery session. The user navigates
- * a four-level hierarchy: <em>root → table → partition → column</em>.
+ * a four-level hierarchy: <em>root → table → partition → column</em>, with an
+ * alternative WAL branch: <em>table → wal root → wal dir → segment</em>.
  *
  * <p>On {@code cd} into a table, the context eagerly reads and caches
  * {@link TxnState}, {@link MetaState}, {@link ColumnVersionState}, and the
  * partition scan. On {@code cd} into a column, per-column cache values
  * (column top, name txn, effective row count, in-partition flag) are computed
  * from the cached column-version state.
+ *
+ * <p>{@code cd wal} from table level enters the WAL navigation branch via
+ * {@link WalNavigationContext}. {@code cd ..} from WAL root returns to table.
  *
  * <p>{@code cd ..} from column level clears column cache only; from partition
  * level clears the partition index; from table level resets all caches (same
@@ -51,14 +55,17 @@ public class NavigationContext {
     private final BoundedMetaReader metaReader;
     private final PartitionScanService partitionScanService;
     private final BoundedRegistryReader registryReader;
+    private final BoundedSeqTxnLogReader seqTxnLogReader;
     private final TableDiscoveryService tableDiscoveryService;
     private final BoundedTxnReader txnReader;
+    private final WalDiscoveryService walDiscoveryService;
     private boolean cachedColumnInPartition = true;
     private long cachedColumnNameTxn = -1;
     private long cachedColumnTop = -1;
     private ColumnVersionState cachedCvState;
     private long cachedEffectiveRows = -1;
     private MetaState cachedMetaState;
+    private SeqTxnLogState cachedSeqTxnLogState;
     private ObjList<PartitionScanEntry> cachedPartitionScan;
     private RegistryState cachedRegistryState;
     private TxnState cachedTxnState;
@@ -66,6 +73,7 @@ public class NavigationContext {
     private int currentPartitionIndex = -1;
     private DiscoveredTable currentTable;
     private ObjList<DiscoveredTable> lastDiscoveredTables = new ObjList<>();
+    private WalNavigationContext walNav;
 
     public NavigationContext(
             CharSequence dbRoot,
@@ -73,16 +81,20 @@ public class NavigationContext {
             BoundedMetaReader metaReader,
             PartitionScanService partitionScanService,
             BoundedRegistryReader registryReader,
+            BoundedSeqTxnLogReader seqTxnLogReader,
             TableDiscoveryService tableDiscoveryService,
-            BoundedTxnReader txnReader
+            BoundedTxnReader txnReader,
+            WalDiscoveryService walDiscoveryService
     ) {
         this.dbRoot = dbRoot;
         this.columnVersionReader = columnVersionReader;
         this.metaReader = metaReader;
         this.partitionScanService = partitionScanService;
         this.registryReader = registryReader;
+        this.seqTxnLogReader = seqTxnLogReader;
         this.tableDiscoveryService = tableDiscoveryService;
         this.txnReader = txnReader;
+        this.walDiscoveryService = walDiscoveryService;
     }
 
     public String buildPrompt() {
@@ -91,7 +103,9 @@ public class NavigationContext {
             sb.append("/");
         } else {
             sb.append("/").append(currentTable.getTableName());
-            if (currentPartitionIndex >= 0) {
+            if (walNav != null) {
+                sb.append(walNav.buildPromptSuffix());
+            } else if (currentPartitionIndex >= 0) {
                 sb.append("/").append(formatPartitionName(currentPartitionIndex));
                 if (currentColumnIndex >= 0) {
                     sb.append("/").append(formatColumnName(currentColumnIndex));
@@ -110,6 +124,18 @@ public class NavigationContext {
 
         if ("..".equals(target)) {
             cdUp();
+            return;
+        }
+
+        // WAL navigation delegation
+        if (walNav != null) {
+            walNav.cd(target, err);
+            return;
+        }
+
+        // "cd wal" from table level enters WAL navigation
+        if ("wal".equals(target) && currentTable != null && currentPartitionIndex < 0) {
+            cdIntoWal(err);
             return;
         }
 
@@ -135,11 +161,21 @@ public class NavigationContext {
         cachedEffectiveRows = -1;
         cachedMetaState = null;
         cachedPartitionScan = null;
+        cachedRegistryState = null;
+        cachedSeqTxnLogState = null;
         cachedTxnState = null;
+        walNav = null;
     }
 
     public void cdUp() {
-        if (currentColumnIndex >= 0) {
+        if (walNav != null) {
+            if (walNav.isAtWalRoot()) {
+                // leaving WAL mode back to table level
+                walNav = null;
+            } else {
+                walNav.cdUp();
+            }
+        } else if (currentColumnIndex >= 0) {
             currentColumnIndex = -1;
             cachedColumnInPartition = true;
             cachedColumnNameTxn = -1;
@@ -233,6 +269,10 @@ public class NavigationContext {
         return cachedRegistryState;
     }
 
+    public SeqTxnLogState getCachedSeqTxnLogState() {
+        return cachedSeqTxnLogState;
+    }
+
     public TxnState getCachedTxnState() {
         return cachedTxnState;
     }
@@ -273,6 +313,14 @@ public class NavigationContext {
         return txnReader;
     }
 
+    public WalDiscoveryService getWalDiscoveryService() {
+        return walDiscoveryService;
+    }
+
+    public WalNavigationContext getWalNav() {
+        return walNav;
+    }
+
     public boolean isAtColumn() {
         return currentColumnIndex >= 0;
     }
@@ -286,14 +334,20 @@ public class NavigationContext {
     }
 
     public boolean isAtTable() {
-        return currentTable != null && currentPartitionIndex < 0;
+        return currentTable != null && currentPartitionIndex < 0 && walNav == null;
+    }
+
+    public boolean isInWalMode() {
+        return walNav != null;
     }
 
     public void pwd(PrintStream out) {
         StringBuilder sb = new StringBuilder("/");
         if (currentTable != null) {
             sb.append(currentTable.getTableName());
-            if (currentPartitionIndex >= 0) {
+            if (walNav != null) {
+                sb.append(walNav.buildPromptSuffix());
+            } else if (currentPartitionIndex >= 0) {
                 sb.append("/").append(formatPartitionName(currentPartitionIndex));
                 if (currentColumnIndex >= 0) {
                     sb.append("/").append(formatColumnName(currentColumnIndex));
@@ -301,6 +355,14 @@ public class NavigationContext {
             }
         }
         out.println(sb);
+    }
+
+    public SeqTxnLogState readSeqTxnLogState() {
+        if (currentTable == null) {
+            return null;
+        }
+        cachedSeqTxnLogState = seqTxnLogReader.readForTable(dbRoot, currentTable);
+        return cachedSeqTxnLogState;
     }
 
     public RegistryState readRegistryState() {
@@ -368,6 +430,26 @@ public class NavigationContext {
 
         currentColumnIndex = colIndex;
         computeColumnCache();
+    }
+
+    private void cdIntoWal(PrintStream err) {
+        DiscoveredTable table = currentTable;
+        if (table.isWalEnabledKnown() && !table.isWalEnabled()) {
+            err.println("this table does not use WAL");
+            return;
+        }
+
+        // ensure seqTxnLogState is loaded so scan can cross-reference
+        if (cachedSeqTxnLogState == null) {
+            cachedSeqTxnLogState = seqTxnLogReader.readForTable(dbRoot, table);
+        }
+
+        // scan WAL directories, cross-referencing with seq txnlog state
+        try (Path path = new Path()) {
+            path.of(dbRoot).concat(table.getDirName()).$();
+            WalScanState walScanState = walDiscoveryService.scan(path.toString(), cachedSeqTxnLogState);
+            walNav = new WalNavigationContext(walScanState);
+        }
     }
 
     private void cdIntoPartition(String target, PrintStream err) {

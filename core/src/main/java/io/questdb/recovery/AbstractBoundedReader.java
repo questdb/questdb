@@ -30,8 +30,8 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 
 /**
- * Base class for the four bounded file readers ({@code _txn}, {@code _meta},
- * {@code _cv}, {@code tables.d}). Provides safe read primitives that validate
+ * Base class for the bounded file readers ({@code _txn}, {@code _meta},
+ * {@code _cv}, {@code tables.d}, {@code _txnlog}, {@code _event}). Provides safe read primitives that validate
  * offset and size against the actual file length before issuing a
  * {@link io.questdb.std.FilesFacade#read} call.
  *
@@ -88,6 +88,35 @@ abstract class AbstractBoundedReader {
 
     protected static boolean isRangeReadable(long offset, long width, long fileSize) {
         return offset >= 0 && width >= 0 && fileSize >= 0 && offset <= fileSize - width;
+    }
+
+    protected byte readByteValue(long fd, long fileSize, long scratch, ObjList<ReadIssue> issues, long offset, String fieldName) {
+        if (!isRangeReadable(offset, Byte.BYTES, fileSize)) {
+            addShortReadIssue(
+                    issues,
+                    RecoveryIssueCode.OUT_OF_RANGE,
+                    "field is outside file: " + fieldName,
+                    offset,
+                    Byte.BYTES,
+                    fileSize
+            );
+            return (byte) -1;
+        }
+
+        final long bytesRead = ff.read(fd, scratch, Byte.BYTES, offset);
+        if (bytesRead != Byte.BYTES) {
+            addShortReadIssue(
+                    issues,
+                    bytesRead < 0 ? RecoveryIssueCode.IO_ERROR : RecoveryIssueCode.SHORT_FILE,
+                    "cannot read byte field: " + fieldName,
+                    offset,
+                    Byte.BYTES,
+                    fileSize
+            );
+            return (byte) -1;
+        }
+
+        return Unsafe.getUnsafe().getByte(scratch);
     }
 
     protected int readIntValue(long fd, long fileSize, long scratch, ObjList<ReadIssue> issues, long offset, String fieldName) {

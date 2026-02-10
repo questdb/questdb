@@ -24,23 +24,9 @@
 
 package io.questdb.recovery;
 
-/** Categorization codes for issues found during file reading and validation. */
-public enum RecoveryIssueCode {
-    CORRUPT_META,
-    CORRUPT_REGISTRY,
-    CORRUPT_SEQ_TXNLOG,
-    CORRUPT_TXN,
-    CORRUPT_WAL_EVENT,
-    INVALID_COUNT,
-    INVALID_OFFSET,
-    IO_ERROR,
-    META_COLUMN_COUNT_MISMATCH,
-    MISSING_FILE,
-    OUT_OF_RANGE,
-    PARTIAL_READ,
-    REGISTRY_DIR_MISSING,
-    REGISTRY_MISMATCH,
-    REGISTRY_NOT_FOUND,
-    SHORT_FILE,
-    TRUNCATED_OUTPUT
+/** Navigation level within the WAL hierarchy. */
+public enum WalLevel {
+    WAL_ROOT,
+    WAL_DIR,
+    WAL_SEGMENT
 }

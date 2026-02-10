@@ -27,7 +27,10 @@ package io.questdb.recovery;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.wal.WalTxnType;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -38,8 +41,6 @@ import io.questdb.std.str.Path;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintStream;
-import java.util.HashMap;
-import java.util.Map;
 
 /**
  * Interactive recovery REPL. Runs a read-eval-print loop that accepts commands:
@@ -55,7 +56,7 @@ import java.util.Map;
  */
 public class RecoverySession {
     private final CommandContext commandCtx;
-    private final Map<String, RecoveryCommand> commands;
+    private final CharSequenceObjHashMap<RecoveryCommand> commands;
     private final NavigationContext nav;
     private final ConsoleRenderer renderer;
 
@@ -64,12 +65,15 @@ public class RecoverySession {
             BoundedColumnVersionReader columnVersionReader,
             BoundedMetaReader metaReader,
             BoundedRegistryReader registryReader,
+            BoundedSeqTxnLogReader seqTxnLogReader,
             BoundedTxnReader txnReader,
+            BoundedWalEventReader walEventReader,
             ColumnCheckService columnCheckService,
             ColumnValueReader columnValueReader,
             FilesFacade ff,
             PartitionScanService partitionScanService,
             TableDiscoveryService tableDiscoveryService,
+            WalDiscoveryService walDiscoveryService,
             ConsoleRenderer renderer
     ) {
         this.renderer = renderer;
@@ -79,17 +83,21 @@ public class RecoverySession {
                 metaReader,
                 partitionScanService,
                 registryReader,
+                seqTxnLogReader,
                 tableDiscoveryService,
-                txnReader
+                txnReader,
+                walDiscoveryService
         );
         this.commandCtx = new CommandContext(
                 nav,
                 txnReader,
+                walEventReader,
                 columnCheckService,
                 columnValueReader,
                 ff,
                 partitionScanService,
-                renderer
+                renderer,
+                walDiscoveryService
         );
         this.commands = buildCommandMap();
     }
@@ -100,12 +108,15 @@ public class RecoverySession {
                 new BoundedColumnVersionReader(ff),
                 new BoundedMetaReader(ff),
                 new BoundedRegistryReader(ff),
+                new BoundedSeqTxnLogReader(ff),
                 new BoundedTxnReader(ff),
+                new BoundedWalEventReader(ff),
                 new ColumnCheckService(ff),
                 new ColumnValueReader(ff),
                 ff,
                 new PartitionScanService(ff),
                 new TableDiscoveryService(ff),
+                new WalDiscoveryService(ff),
                 renderer
         );
     }
@@ -147,8 +158,8 @@ public class RecoverySession {
         }
     }
 
-    private Map<String, RecoveryCommand> buildCommandMap() {
-        Map<String, RecoveryCommand> map = new HashMap<>();
+    private CharSequenceObjHashMap<RecoveryCommand> buildCommandMap() {
+        CharSequenceObjHashMap<RecoveryCommand> map = new CharSequenceObjHashMap<>();
         map.put("cd", RecoverySession::cmdCd);
         map.put("check columns", RecoverySession::cmdCheckColumns);
         map.put("help", RecoverySession::cmdHelp);
@@ -156,8 +167,11 @@ public class RecoverySession {
         map.put("print", RecoverySession::cmdPrint);
         map.put("pwd", RecoverySession::cmdPwd);
         map.put("show", RecoverySession::cmdShow);
+        map.put("show timeline", RecoverySession::cmdShowTimeline);
         map.put("tables", RecoverySession::cmdTables);
         map.put("truncate", RecoverySession::cmdTruncate);
+        map.put("wal", RecoverySession::cmdWal);
+        map.put("wal status", RecoverySession::cmdWalStatus);
         return map;
     }
 
@@ -167,6 +181,12 @@ public class RecoverySession {
         // exact matches first
         if (lower.equals("check columns")) {
             return new ParsedCommand(commands.get("check columns"), "");
+        }
+        if (lower.equals("show timeline")) {
+            return new ParsedCommand(commands.get("show timeline"), "");
+        }
+        if (lower.equals("wal status")) {
+            return new ParsedCommand(commands.get("wal status"), "");
         }
 
         // extract verb (first word)
@@ -178,7 +198,7 @@ public class RecoverySession {
         return cmd != null ? new ParsedCommand(cmd, arg) : null;
     }
 
-    // -- command implementations -----------------------------------------------
+
 
     private static void cmdCd(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
         NavigationContext nav = ctx.getNav();
@@ -193,7 +213,10 @@ public class RecoverySession {
 
     private static void cmdCheckColumns(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
         NavigationContext nav = ctx.getNav();
-        if (nav.isAtRoot()) {
+        if (nav.isInWalMode()) {
+            // check columns operates on table-level metadata, not WAL structures
+            checkColumnsForTable(nav.getCurrentTable(), ctx, out, err);
+        } else if (nav.isAtRoot()) {
             checkColumnsFromRoot(ctx, out, err);
         } else if (nav.isAtTable()) {
             checkColumnsForTable(nav.getCurrentTable(), ctx, out, err);
@@ -209,6 +232,55 @@ public class RecoverySession {
     private static void cmdLs(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
         NavigationContext nav = ctx.getNav();
         ConsoleRenderer renderer = ctx.getRenderer();
+
+        // WAL navigation levels
+        if (nav.isInWalMode()) {
+            WalNavigationContext walNav = nav.getWalNav();
+            switch (walNav.getLevel()) {
+                case WAL_ROOT -> {
+                    ensureSeqTxnLogState(nav);
+                    enrichRecordsFromEvents(ctx, nav);
+                    renderer.printWalDirectories(
+                            walNav.getCachedWalScanState(),
+                            nav.getCachedSeqTxnLogState(),
+                            nav.getCachedTxnState(),
+                            nav.getCachedMetaState(),
+                            out
+                    );
+                }
+                case WAL_DIR -> {
+                    WalDirEntry walEntry = walNav.findWalDirEntry(walNav.getCurrentWalId());
+                    if (walEntry != null) {
+                        ensureSeqTxnLogState(nav);
+                        enrichRecordsFromEvents(ctx, nav);
+                        renderer.printWalSegments(
+                                walEntry.getSegments(),
+                                nav.getCachedSeqTxnLogState(),
+                                nav.getCachedTxnState(),
+                                nav.getCachedMetaState(),
+                                walNav.getCurrentWalId(),
+                                out
+                        );
+                    } else {
+                        err.println("WAL directory not found");
+                    }
+                }
+                case WAL_SEGMENT -> {
+                    ensureWalEventState(walNav, ctx, nav);
+                    renderer.printWalEvents(
+                            walNav.getCachedWalEventState(),
+                            nav.getCachedSeqTxnLogState(),
+                            nav.getCachedTxnState(),
+                            nav.getCachedMetaState(),
+                            walNav.getCurrentWalId(),
+                            walNav.getCurrentSegmentId(),
+                            out
+                    );
+                }
+            }
+            return;
+        }
+
         if (nav.isAtRoot()) {
             nav.discoverTables();
             RegistryState registryState = nav.readRegistryState();
@@ -288,6 +360,50 @@ public class RecoverySession {
     private static void cmdShow(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
         NavigationContext nav = ctx.getNav();
 
+        // WAL mode: show sequencer txnlog
+        if (nav.isInWalMode()) {
+            WalNavigationContext walNav = nav.getWalNav();
+            switch (walNav.getLevel()) {
+                case WAL_ROOT -> {
+                    ensureSeqTxnLogState(nav);
+                    enrichRecordsFromEvents(ctx, nav);
+                    if (arg.isEmpty()) {
+                        ctx.getRenderer().printSeqTxnLog(
+                                nav.getCachedSeqTxnLogState(),
+                                nav.getCachedTxnState(),
+                                out,
+                                100
+                        );
+                    } else {
+                        showSeqTxnDetail(arg, ctx, nav, out, err);
+                    }
+                }
+                case WAL_DIR -> {
+                    WalDirEntry walEntry = walNav.findWalDirEntry(walNav.getCurrentWalId());
+                    if (walEntry != null) {
+                        ctx.getRenderer().printWalDirDetail(walEntry, nav.getCachedSeqTxnLogState(), out);
+                    } else {
+                        err.println("WAL directory not found");
+                    }
+                }
+                case WAL_SEGMENT -> {
+                    ensureWalEventState(walNav, ctx, nav);
+                    if (arg.isEmpty()) {
+                        ctx.getRenderer().printWalSegmentDetail(
+                                walNav.getCachedWalEventState(),
+                                nav.getCachedSeqTxnLogState(),
+                                walNav.getCurrentWalId(),
+                                walNav.getCurrentSegmentId(),
+                                out
+                        );
+                    } else {
+                        showWalEvent(arg, walNav, ctx, nav, out, err);
+                    }
+                }
+            }
+            return;
+        }
+
         if (arg.isEmpty()) {
             if (nav.isAtColumn()) {
                 showColumn(ctx, out, err);
@@ -314,6 +430,27 @@ public class RecoverySession {
 
         TxnState state = nav.getTxnReader().readForTable(nav.getDbRoot(), table);
         ctx.getRenderer().printShow(table, state, out);
+    }
+
+    private static void cmdShowTimeline(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
+        NavigationContext nav = ctx.getNav();
+        if (!nav.isInWalMode()) {
+            err.println("show timeline is only valid in WAL mode (cd into a table, then cd wal)");
+            return;
+        }
+        WalNavigationContext walNav = nav.getWalNav();
+        if (walNav.getLevel() != WalLevel.WAL_ROOT) {
+            err.println("show timeline is only valid at WAL root level (cd .. to go up)");
+            return;
+        }
+        ensureSeqTxnLogState(nav);
+        enrichRecordsFromEvents(ctx, nav);
+        ctx.getRenderer().printTimeline(
+                nav.getCachedSeqTxnLogState(),
+                nav.getCachedTxnState(),
+                nav.getCachedMetaState(),
+                out
+        );
     }
 
     private static void cmdTruncate(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
@@ -505,8 +642,7 @@ public class RecoverySession {
             txnPath.of(nav.getDbRoot()).concat(nav.getCurrentTable().getDirName())
                     .concat(TableUtils.TXN_FILE_NAME).$();
 
-            String bakSuffix = ".bak";
-            bakPath.of(txnPath).put(bakSuffix).$();
+            bakPath.of(txnPath).put(".bak").$();
             int bakNum = 0;
             while (ff.exists(bakPath.$())) {
                 bakNum++;
@@ -606,6 +742,36 @@ public class RecoverySession {
         }
     }
 
+    private static void cmdWal(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
+        if ("status".equalsIgnoreCase(arg)) {
+            cmdWalStatus("", ctx, out, err);
+        } else {
+            err.println("unknown wal subcommand: " + arg);
+            err.println("usage: wal status");
+        }
+    }
+
+    private static void cmdWalStatus(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
+        NavigationContext nav = ctx.getNav();
+        if (nav.isAtRoot()) {
+            err.println("wal status requires a table (cd into a table first)");
+            return;
+        }
+
+        DiscoveredTable table = nav.getCurrentTable();
+        if (table.isWalEnabledKnown() && !table.isWalEnabled()) {
+            out.println("walEnabled: false");
+            out.println("this table does not use WAL");
+            return;
+        }
+
+        SeqTxnLogState seqState = nav.readSeqTxnLogState();
+        enrichRecordsFromEvents(ctx, nav);
+        TxnState txnState = nav.getCachedTxnState();
+        MetaState metaState = nav.getCachedMetaState();
+        ctx.getRenderer().printWalStatus(seqState, txnState, metaState, out);
+    }
+
     private static void cmdTables(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
         NavigationContext nav = ctx.getNav();
         nav.discoverTables();
@@ -614,7 +780,246 @@ public class RecoverySession {
         ctx.getRenderer().printTables(nav.getLastDiscoveredTables(), registryState, out);
     }
 
-    // -- helpers ---------------------------------------------------------------
+    private static void ensureSeqTxnLogState(NavigationContext nav) {
+        if (nav.getCachedSeqTxnLogState() == null) {
+            nav.readSeqTxnLogState();
+        }
+    }
+
+    private static void ensureWalEventState(WalNavigationContext walNav, CommandContext ctx, NavigationContext nav) {
+        if (walNav.getCachedWalEventState() == null) {
+            walNav.setCachedWalEventState(
+                    ctx.getBoundedWalEventReader().readForSegment(
+                            nav.getDbRoot(),
+                            nav.getCurrentTable().getDirName(),
+                            walNav.getCurrentWalId(),
+                            walNav.getCurrentSegmentId()
+                    )
+            );
+        }
+    }
+
+    /**
+     * Enriches V1 seqTxn records with row counts and timestamps from WAL event
+     * files. Groups records by (walId, segmentId) so each segment's event file
+     * is read at most once. Records that already have data (V2) are skipped.
+     * Missing or unreadable event files are silently ignored (fields stay UNSET).
+     */
+    private static void enrichRecordsFromEvents(CommandContext ctx, NavigationContext nav) {
+        SeqTxnLogState seqState = nav.getCachedSeqTxnLogState();
+        if (seqState == null) {
+            return;
+        }
+        ObjList<SeqTxnRecord> records = seqState.getRecords();
+        if (records.size() == 0) {
+            return;
+        }
+
+        // check if enrichment is needed: skip if first data record already has row count
+        boolean needsEnrichment = false;
+        for (int i = 0, n = records.size(); i < n; i++) {
+            SeqTxnRecord rec = records.getQuick(i);
+            if (!rec.isDdlChange() && !rec.isTableDrop()) {
+                needsEnrichment = rec.getRowCount() == TxnState.UNSET_LONG;
+                break;
+            }
+        }
+        if (!needsEnrichment) {
+            return;
+        }
+
+        // group records needing enrichment by (walId, segmentId)
+        // key = walId << 32 | segmentId
+        LongObjHashMap<ObjList<SeqTxnRecord>> bySegment = new LongObjHashMap<>();
+        for (int i = 0, n = records.size(); i < n; i++) {
+            SeqTxnRecord rec = records.getQuick(i);
+            if (rec.isDdlChange() || rec.isTableDrop()) {
+                continue;
+            }
+            if (rec.getRowCount() != TxnState.UNSET_LONG) {
+                continue;
+            }
+            long key = ((long) rec.getWalId() << 32) | (rec.getSegmentId() & 0xFFFFFFFFL);
+            int idx = bySegment.keyIndex(key);
+            ObjList<SeqTxnRecord> list;
+            if (idx >= 0) {
+                list = new ObjList<>();
+                bySegment.putAt(idx, key, list);
+            } else {
+                list = bySegment.valueAt(idx);
+            }
+            list.add(rec);
+        }
+
+        BoundedWalEventReader eventReader = ctx.getBoundedWalEventReader();
+        CharSequence dbRoot = nav.getDbRoot();
+        CharSequence tableDirName = nav.getCurrentTable().getDirName();
+
+        bySegment.forEach((key, recsForSegment) -> {
+            int walId = (int) (key >> 32);
+            int segmentId = (int) key;
+
+            WalEventState eventState;
+            try {
+                eventState = eventReader.readForSegment(dbRoot, tableDirName, walId, segmentId);
+            } catch (Exception e) {
+                return; // event file missing or unreadable
+            }
+            if (eventState == null || eventState.getEvents().size() == 0) {
+                return;
+            }
+
+            ObjList<WalEventEntry> events = eventState.getEvents();
+            for (int i = 0, n = recsForSegment.size(); i < n; i++) {
+                SeqTxnRecord rec = recsForSegment.getQuick(i);
+                // find matching event by segmentTxn
+                for (int j = 0, m = events.size(); j < m; j++) {
+                    WalEventEntry evt = events.getQuick(j);
+                    if (evt.getTxn() == rec.getSegmentTxn() && WalTxnType.isDataType(evt.getType())) {
+                        long rows = evt.getEndRowID() - evt.getStartRowID();
+                        rec.enrichFromEvent(
+                                rows >= 0 ? rows : TxnState.UNSET_LONG,
+                                evt.getMinTimestamp(),
+                                evt.getMaxTimestamp()
+                        );
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    private static void showWalEvent(
+            String arg, WalNavigationContext walNav, CommandContext ctx,
+            NavigationContext nav, PrintStream out, PrintStream err
+    ) {
+        long txn;
+        try {
+            txn = Numbers.parseLong(arg);
+        } catch (NumericException e) {
+            err.println("invalid event txn: " + arg);
+            return;
+        }
+
+        WalEventState eventState = walNav.getCachedWalEventState();
+        if (eventState == null) {
+            err.println("no event state available");
+            return;
+        }
+
+        ObjList<WalEventEntry> events = eventState.getEvents();
+        for (int i = 0, n = events.size(); i < n; i++) {
+            WalEventEntry entry = events.getQuick(i);
+            if (entry.getTxn() == txn) {
+                ctx.getRenderer().printWalEventDetail(
+                        entry,
+                        nav.getCachedSeqTxnLogState(),
+                        nav.getCachedMetaState(),
+                        walNav.getCurrentWalId(),
+                        walNav.getCurrentSegmentId(),
+                        out
+                );
+                return;
+            }
+        }
+
+        err.println("event not found: txn " + txn);
+    }
+
+    private static void showSeqTxnDetail(
+            String arg, CommandContext ctx, NavigationContext nav,
+            PrintStream out, PrintStream err
+    ) {
+        long seqTxn;
+        try {
+            seqTxn = Numbers.parseLong(arg);
+        } catch (NumericException e) {
+            err.println("invalid seqTxn: " + arg);
+            return;
+        }
+
+        ensureSeqTxnLogState(nav);
+        SeqTxnLogState seqState = nav.getCachedSeqTxnLogState();
+        if (seqState == null) {
+            err.println("no sequencer txnlog state available");
+            return;
+        }
+
+        SeqTxnRecord found = null;
+        ObjList<SeqTxnRecord> records = seqState.getRecords();
+        for (int i = 0, n = records.size(); i < n; i++) {
+            SeqTxnRecord rec = records.getQuick(i);
+            if (rec.getTxn() == seqTxn) {
+                found = rec;
+                break;
+            }
+        }
+
+        if (found == null) {
+            err.println("seqTxn not found: " + seqTxn);
+            return;
+        }
+
+        out.println("seqTxn: " + found.getTxn());
+        out.println("structureVersion: " + found.getStructureVersion());
+        out.println("commitTimestamp: " + ConsoleRenderer.formatTimestamp(found.getCommitTimestamp()));
+
+        if (found.isDdlChange()) {
+            out.println("type: DDL");
+            return;
+        }
+        if (found.isTableDrop()) {
+            out.println("type: DROP TABLE");
+            return;
+        }
+
+        out.println("walId: " + found.getWalId());
+        out.println("segmentId: " + found.getSegmentId());
+        out.println("segmentTxn: " + found.getSegmentTxn());
+        if (found.getRowCount() != TxnState.UNSET_LONG) {
+            out.println("rows: " + found.getRowCount());
+        }
+
+        // resolve to WAL event detail
+        out.println("--- event detail ---");
+        WalEventState eventState;
+        try {
+            eventState = ctx.getBoundedWalEventReader().readForSegment(
+                    nav.getDbRoot(),
+                    nav.getCurrentTable().getDirName(),
+                    found.getWalId(),
+                    found.getSegmentId()
+            );
+        } catch (Exception e) {
+            err.println("could not read events for wal" + found.getWalId() + "/" + found.getSegmentId() + ": " + e.getMessage());
+            return;
+        }
+
+        if (eventState == null || eventState.getEvents().size() == 0) {
+            err.println("no events found in wal" + found.getWalId() + "/" + found.getSegmentId());
+            return;
+        }
+
+        ObjList<WalEventEntry> events = eventState.getEvents();
+        for (int i = 0, n = events.size(); i < n; i++) {
+            WalEventEntry entry = events.getQuick(i);
+            if (entry.getTxn() == found.getSegmentTxn()) {
+                ctx.getRenderer().printWalEventDetail(
+                        entry,
+                        seqState,
+                        nav.getCachedMetaState(),
+                        found.getWalId(),
+                        found.getSegmentId(),
+                        out
+                );
+                return;
+            }
+        }
+
+        err.println("event not found: segmentTxn " + found.getSegmentTxn() + " in wal" + found.getWalId() + "/" + found.getSegmentId());
+    }
+
+
 
     private static void checkAllPartitions(
             String tableName,
