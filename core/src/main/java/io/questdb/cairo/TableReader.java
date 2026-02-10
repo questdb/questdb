@@ -1665,7 +1665,15 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
 
         while (true) {
-            TableReaderMetadata.TransitionResult result = metadata.prepareTransition(txnMetadataVersion);
+            TableReaderMetadata.TransitionResult result;
+            try {
+                result = metadata.prepareTransition(txnMetadataVersion);
+            } catch (CairoException ex) {
+                throw CairoException.critical(ex.errno).put("metadata read error [table=").put(tableToken)
+                        .put(", txnMetadataVersion=").put(txnMetadataVersion)
+                        .put(", metaFileVersion=").put(metadata.getMetadataVersion())
+                        .put(", error=").put(ex.getFlyweightMessage()).put(']');
+            }
             switch (result) {
                 case SUCCESS:
                     break;

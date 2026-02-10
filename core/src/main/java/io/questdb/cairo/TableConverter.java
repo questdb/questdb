@@ -158,11 +158,9 @@ public class TableConverter {
                                 );
                             }
 
-                            if (walEnabled) {
-                                // Convert BlockFile version to logical metadata version (subtract 1)
-                                // with column structure version = 0
-                                txWriter.setStructureVersionUnsafe(newMetadataVersion - 1);
-                            }
+                            // Convert BlockFile version to logical metadata version (subtract 1)
+                            // Update TxWriter to match the new BlockFile version
+                            txWriter.setStructureVersionUnsafe(newMetadataVersion - 1);
                             convertedTables.add(token);
 
                             try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {

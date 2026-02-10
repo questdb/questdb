@@ -123,6 +123,14 @@ public class BlockFileReader implements Closeable {
             Os.pause();
         }
 
+        if (memory.size() < HEADER_SIZE) {
+            throw CairoException.critical(0)
+                    .put("block file too small [expected=").put(HEADER_SIZE)
+                    .put(", actual=").put(file.size())
+                    .put(", fd=").put(file.getFd())
+                    .put(']');
+        }
+
         final long memoryBaseAddress = memory.getPageAddress(0);
         final long checksumAddress = memoryBaseAddress + REGION_HEADER_SIZE + REGION_BLOCK_COUNT_OFFSET;
         final long checksumSize = regionLength - REGION_HEADER_SIZE - REGION_BLOCK_COUNT_OFFSET;

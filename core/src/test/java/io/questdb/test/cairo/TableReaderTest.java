@@ -1870,9 +1870,11 @@ public class TableReaderTest extends AbstractCairoTest {
             }
 
             TestUtils.assertEquals(
-                    "a\n" +
-                            "0x04000000000000000300000000000000020000000000000001\n" +
-                            "0x08000000000000000700000000000000060000000000000005\n", sink
+                    """
+                            a
+                            0x04000000000000000300000000000000020000000000000001
+                            0x08000000000000000700000000000000060000000000000005
+                            """, sink
             );
         });
     }
@@ -1934,7 +1936,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         reader.reload();
                         Assert.fail();
                     } catch (CairoException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "Metadata read timeout");
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "could not open, file does not exist");
                     }
                 }
             }
@@ -1991,7 +1993,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         reader.reload();
                         Assert.fail();
                     } catch (CairoException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "Metadata read timeout");
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "metadata read error [table=" + tableName);
                     }
                 }
             }
@@ -2029,7 +2031,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     reader.reload();
                     Assert.fail();
                 } catch (CairoException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(), "Metadata read timeout");
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "metadata read error [table=" + tableName);
                 }
             }
 
@@ -2037,15 +2039,17 @@ public class TableReaderTest extends AbstractCairoTest {
             try (TableReader ignored = getReader(tableToken)) {
                 Assert.fail();
             } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "Metadata read timeout");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "metadata read error [table=" + tableName);
             }
         });
     }
 
     @Test
     public void testNullValueRecovery() throws Exception {
-        final String expected = replaceTimestampSuffix1("int\tshort\tbyte\tdouble\tfloat\tlong\tstr\tsym\tbool\tbin\tdate\tvarchar\ttimestamp\n" +
-                "null\t0\t0\tnull\tnull\tnull\t\tabc\ttrue\t\t\t\t1970-01-01T00:00:00.100000Z\n", ColumnType.nameOf(timestampType));
+        final String expected = replaceTimestampSuffix1("""
+                int\tshort\tbyte\tdouble\tfloat\tlong\tstr\tsym\tbool\tbin\tdate\tvarchar\ttimestamp
+                null\t0\t0\tnull\tnull\tnull\t\tabc\ttrue\t\t\t\t1970-01-01T00:00:00.100000Z
+                """, ColumnType.nameOf(timestampType));
 
         assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE, timestampType);
@@ -2531,8 +2535,10 @@ public class TableReaderTest extends AbstractCairoTest {
                 cursor.toTop();
                 println(reader.getMetadata(), cursor);
                 TestUtils.assertEquals(
-                        replaceTimestampSuffix("l\ttimestamp\txyz\n" +
-                                "null\t2016-03-02T10:00:00.000000Z\t\n", ColumnType.nameOf(timestampType)),
+                        replaceTimestampSuffix("""
+                                l\ttimestamp\txyz
+                                null\t2016-03-02T10:00:00.000000Z\t
+                                """, ColumnType.nameOf(timestampType)),
                         sink
                 );
             }
@@ -2585,7 +2591,7 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReloadWithTrailingNullString() throws Exception {
+    public void testReloadWithTrailingNullString() {
         final String tableName = "reload_test";
         TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY);
         model.col("str", ColumnType.STRING);
@@ -2980,6 +2986,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
 
                 try (TableReader ignore2 = getReader("all")) {
+                    Assert.fail();
                 } catch (CairoException ex) {
                     TestUtils.assertContains(ex.getFlyweightMessage(), "max txn-inflight limit reached");
                 }
@@ -4534,19 +4541,15 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     boolean isSamePartition(long timestampA, long timestampB, int partitionBy) {
-        switch (partitionBy) {
-            case PartitionBy.NONE:
-                return true;
-            case PartitionBy.DAY:
-            case PartitionBy.MONTH:
-            case PartitionBy.WEEK:
-            case PartitionBy.YEAR:
-            case PartitionBy.HOUR:
+        return switch (partitionBy) {
+            case PartitionBy.NONE -> true;
+            case PartitionBy.DAY, PartitionBy.MONTH, PartitionBy.WEEK, PartitionBy.YEAR, PartitionBy.HOUR -> {
                 TimestampDriver.TimestampFloorMethod partitionByMethod = timestampDriver.getPartitionFloorMethod(partitionBy);
-                return partitionByMethod.floor(timestampA) == partitionByMethod.floor(timestampB);
-            default:
-                throw CairoException.critical(0).put("Cannot compare timestamps for unsupported partition type: [").put(partitionBy).put(']');
-        }
+                yield partitionByMethod.floor(timestampA) == partitionByMethod.floor(timestampB);
+            }
+            default ->
+                    throw CairoException.critical(0).put("Cannot compare timestamps for unsupported partition type: [").put(partitionBy).put(']');
+        };
     }
 
     @FunctionalInterface

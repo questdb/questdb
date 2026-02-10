@@ -185,6 +185,13 @@ public class TableMetadataFileBlock {
             throw CairoException.critical(CairoException.METADATA_VALIDATION)
                     .put("metadata columns block not found [path=").put(path).put(']');
         }
+
+        // Validate column types
+        validateColumnTypes(holder, path);
+
+        // Validate timestamp index
+        validateTimestampIndex(holder, path);
+
         return TableReaderMetadata.TransitionResult.SUCCESS;
     }
 
@@ -325,6 +332,49 @@ public class TableMetadataFileBlock {
         holder.o3MaxLag = block.getLong(offset);
         offset += Long.BYTES;
         holder.ttlHoursOrMonths = block.getInt(offset);
+    }
+
+    private static void validateColumnTypes(MetadataHolder holder, LPSZ path) {
+        for (int i = 0, n = holder.columns.size(); i < n; i++) {
+            TableColumnMetadata col = holder.columns.getQuick(i);
+            int columnType = col.getColumnType();
+            // Check if column type is valid by checking if nameOf returns "unknown"
+            if (columnType >= 0 && ColumnType.tagOf(columnType) > ColumnType.NULL) {
+                throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                        .put("invalid column type [index=").put(i)
+                        .put(", type=").put(columnType)
+                        .put(", column=").put(col.getColumnName())
+                        .put(", path=").put(path).put(']');
+            }
+        }
+    }
+
+    private static void validateTimestampIndex(MetadataHolder holder, LPSZ path) {
+        int timestampIndex = holder.timestampIndex;
+        int columnCount = holder.columns.size();
+
+        // -1 means no timestamp column, which is valid
+        if (timestampIndex == -1) {
+            return;
+        }
+
+        // Check timestamp index is within valid range
+        if (timestampIndex < -1 || timestampIndex >= columnCount) {
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                    .put("timestamp column index is out of range [index=").put(timestampIndex)
+                    .put(", columnCount=").put(columnCount)
+                    .put(", path=").put(path).put(']');
+        }
+
+        // Check that the column at timestamp index is actually a TIMESTAMP type
+        TableColumnMetadata col = holder.columns.getQuick(timestampIndex);
+        int columnType = col.getColumnType();
+        if (!ColumnType.isTimestamp(columnType)) {
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                    .put("designated timestamp column is not of TIMESTAMP type [index=").put(timestampIndex)
+                    .put(", type=").put(ColumnType.nameOf(columnType))
+                    .put(", path=").put(path).put(']');
+        }
     }
 
     /**
