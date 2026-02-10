@@ -98,21 +98,7 @@ public class AsyncFilterUtils {
             @NotNull DirectLongList filteredRows,
             long frameRowCount
     ) {
-        final int columnCount = pageAddressCache.getColumnCount();
-
-        dataAddresses.clear();
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            dataAddresses.add(frameMemory.getPageAddress(columnIndex));
-        }
-
-        auxAddresses.clear();
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            auxAddresses.add(
-                    pageAddressCache.isVarSizeColumn(columnIndex)
-                            ? frameMemory.getAuxPageAddress(columnIndex)
-                            : 0
-            );
-        }
+        PageFrameReduceTask.populateJitAddresses(frameMemory, pageAddressCache, dataAddresses, auxAddresses);
 
         if (filteredRows.getCapacity() < frameRowCount) {
             filteredRows.setCapacity(frameRowCount);

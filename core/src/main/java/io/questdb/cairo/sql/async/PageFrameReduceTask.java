@@ -218,11 +218,12 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         populateJitData(frameMemory);
     }
 
-    // Useful when using external frame memory pool.
-    public void populateJitData(@NotNull PageFrameMemory frameMemory) {
-        assert frameMemory.getFrameIndex() == frameIndex;
-
-        final PageFrameAddressCache pageAddressCache = frameSequence.getPageFrameAddressCache();
+    public static void populateJitAddresses(
+            @NotNull PageFrameMemory frameMemory,
+            @NotNull PageFrameAddressCache pageAddressCache,
+            @NotNull DirectLongList dataAddresses,
+            @NotNull DirectLongList auxAddresses
+    ) {
         final int columnCount = pageAddressCache.getColumnCount();
 
         dataAddresses.clear();
@@ -238,7 +239,12 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
                             : 0
             );
         }
+    }
 
+    // Useful when using external frame memory pool.
+    public void populateJitData(@NotNull PageFrameMemory frameMemory) {
+        assert frameMemory.getFrameIndex() == frameIndex;
+        populateJitAddresses(frameMemory, frameSequence.getPageFrameAddressCache(), dataAddresses, auxAddresses);
         if (!isCountOnly) {
             final long rowCount = getFrameRowCount();
             if (filteredRows.getCapacity() < rowCount) {
