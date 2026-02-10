@@ -352,7 +352,9 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     }
 
     public void reset() {
+        // reset() must not be called if there are any tasks in progress that use this page frame sequence:
         assert queuedCount == 0 || doneLatch.done(queuedCount);
+
         frameCount = 0;
         queuedCount = 0;
         isReadyToDispatch = false;
