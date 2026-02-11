@@ -8865,6 +8865,112 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionAllSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("CREATE TABLE trades_agg (high DOUBLE, timestamp TIMESTAMP)");
+            execute("""
+                    INSERT INTO trades VALUES
+                     (10.0, '2024-01-01T00:00:10Z'),
+                     (20.0, '2024-01-01T00:00:40Z'),
+                     (15.0, '2024-01-01T00:01:20Z')""");
+            execute("""
+                    INSERT INTO trades_agg VALUES
+                     (50.0, '2024-01-01T00:02:00Z'),
+                     (60.0, '2024-01-01T00:03:00Z')""");
+            assertQueryNoLeakCheck(
+                    """
+                            high
+                            20.0
+                            15.0
+                            50.0
+                            60.0
+                            """,
+                    """
+                            SELECT high FROM (
+                                SELECT timestamp, max(price) AS high FROM trades SAMPLE BY 1m
+                                UNION ALL
+                                SELECT timestamp, high FROM trades_agg
+                            )""",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testUnionAllSampleBy2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("CREATE TABLE trades_agg (high DOUBLE, timestamp TIMESTAMP)");
+            execute("""
+                    INSERT INTO trades VALUES
+                     (10.0, '2024-01-01T00:00:10Z'),
+                     (20.0, '2024-01-01T00:00:40Z'),
+                     (15.0, '2024-01-01T00:01:20Z')""");
+            execute("""
+                    INSERT INTO trades_agg VALUES
+                     (50.0, '2024-01-01T00:02:00Z'),
+                     (60.0, '2024-01-01T00:03:00Z')""");
+            assertQueryNoLeakCheck(
+                    """
+                            high
+                            50.0
+                            60.0
+                            20.0
+                            15.0
+                            """,
+                    """
+                            SELECT high FROM (
+                                SELECT timestamp, high FROM trades_agg
+                                UNION ALL
+                                SELECT timestamp, max(price) AS high FROM trades SAMPLE BY 1m
+                            )""",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testUnionAllWithFilterUsesAliasFromFirstBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (name1 VARCHAR, ts1 TIMESTAMP, sym1 SYMBOL) TIMESTAMP(ts1)");
+            execute("CREATE TABLE t2 (name2 VARCHAR, ts2 TIMESTAMP, sym2 SYMBOL) TIMESTAMP(ts2)");
+            execute("""
+                    INSERT INTO t1 VALUES
+                     ('alice', '2025-12-01T01:30:00Z', 'X'),
+                     ('bob', '2025-12-01T05:00:00Z', 'Y')""");
+            execute("""
+                    INSERT INTO t2 VALUES
+                     ('carol', '2025-12-01T02:00:00Z', 'A'),
+                     ('dave', '2025-12-01T05:00:00Z', 'B')""");
+            // Query assigns the "ts" alias to the TIMESTAMP column in the first branch,
+            // but to the SYMBOL column in the second branch.
+            // WHERE honors the alias assignment in the first branch.
+            assertQueryNoLeakCheck(
+                    """
+                            ts
+                            2025-12-01T01:30:00.000000Z
+                            2025-12-01T02:00:00.000000Z
+                            """,
+                    """
+                            SELECT ts FROM (
+                                SELECT name1, ts1 ts, sym1 FROM t1
+                                UNION ALL
+                                SELECT name2, ts2, sym2 ts FROM t2
+                            ) WHERE ts IN '2025-12-01T01;2h'
+                            """,
+                    "",
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testUnionCastMatrix() {
         final int[][] expected = SqlCodeGenerator.expectedUnionCastMatrix();
         printExpectedUnionCastMatrix(expected);
@@ -9045,6 +9151,33 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVirtualColumnWithDateaddTimestampMetadata() throws Exception {
+        // Test that when using dateadd on timestamp column, the result metadata has correct timestamp
+        // even without explicit timestamp(ts) clause
+        assertMemoryLeak(() -> {
+            execute("create table trades (timestamp TIMESTAMP, price DOUBLE, amount DOUBLE) timestamp(timestamp) partition by DAY");
+            execute("insert into trades values ('2022-01-15T12:00:00.000000Z', 100.0, 10.0)");
+            execute("insert into trades values ('2022-06-15T12:00:00.000000Z', 150.0, 20.0)");
+
+            // Query with dateadd but without explicit timestamp(ts) clause
+            try (
+                    RecordCursorFactory factory = select("SELECT dateadd('h', -1, timestamp) as ts, price FROM trades");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                RecordMetadata metadata = factory.getMetadata();
+                // Verify timestamp index is set to the 'ts' column (index 0)
+                Assert.assertEquals("Expected timestamp index to be 0 (ts column)", 0, metadata.getTimestampIndex());
+
+                // Also verify data is correct
+                Record record = cursor.getRecord();
+                Assert.assertTrue(cursor.hasNext());
+                // First row: 2022-01-15T12:00:00 - 1h = 2022-01-15T11:00:00 = 1642244400000000 microseconds
+                Assert.assertEquals(100.0, record.getDouble(1), 0.001);
+            }
+        });
+    }
+
+    @Test
     public void testVirtualColumns() throws Exception {
         assertQuery(
                 """
@@ -9154,33 +9287,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 true,
                 true
         );
-    }
-
-    @Test
-    public void testVirtualColumnWithDateaddTimestampMetadata() throws Exception {
-        // Test that when using dateadd on timestamp column, the result metadata has correct timestamp
-        // even without explicit timestamp(ts) clause
-        assertMemoryLeak(() -> {
-            execute("create table trades (timestamp TIMESTAMP, price DOUBLE, amount DOUBLE) timestamp(timestamp) partition by DAY");
-            execute("insert into trades values ('2022-01-15T12:00:00.000000Z', 100.0, 10.0)");
-            execute("insert into trades values ('2022-06-15T12:00:00.000000Z', 150.0, 20.0)");
-
-            // Query with dateadd but without explicit timestamp(ts) clause
-            try (
-                    RecordCursorFactory factory = select("SELECT dateadd('h', -1, timestamp) as ts, price FROM trades");
-                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-            ) {
-                RecordMetadata metadata = factory.getMetadata();
-                // Verify timestamp index is set to the 'ts' column (index 0)
-                Assert.assertEquals("Expected timestamp index to be 0 (ts column)", 0, metadata.getTimestampIndex());
-
-                // Also verify data is correct
-                Record record = cursor.getRecord();
-                Assert.assertTrue(cursor.hasNext());
-                // First row: 2022-01-15T12:00:00 - 1h = 2022-01-15T11:00:00 = 1642244400000000 microseconds
-                Assert.assertEquals(100.0, record.getDouble(1), 0.001);
-            }
-        });
     }
 
     /**

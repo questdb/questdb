@@ -812,9 +812,10 @@ public class SqlParser {
             } else {
                 CharSequence tokenAlias = qc.getAst().token;
                 if (qc.isWindowExpression() && ((WindowExpression) qc).isIgnoreNulls()) {
-                    StringSink sink = Misc.getThreadLocalSink();
-                    sink.put(tokenAlias).put("_ignore_nulls");
-                    tokenAlias = sink.toString();
+                    CharacterStoreEntry cse = characterStore.newEntry();
+                    cse.put(tokenAlias);
+                    cse.put("_ignore_nulls");
+                    tokenAlias = cse.toImmutable();
                 }
                 alias = createColumnAlias(tokenAlias, qc.getAst().type, aliasMap);
             }
@@ -2659,6 +2660,45 @@ public class SqlParser {
         int joinType;
         boolean hasWindowJoin = false;
         while (tok != null && (joinType = joinStartSet.get(tok)) != -1) {
+            // Check if this is a WINDOW clause (named window definitions) rather than WINDOW JOIN
+            // WINDOW clause pattern: WINDOW name AS (...)
+            // WINDOW JOIN pattern: WINDOW JOIN table ON ... or WINDOW table ON ...
+            if (isWindowKeyword(tok)) {
+                // Save lexer state before lookahead
+                int windowLastPos = lexer.lastTokenPosition();
+                CharSequence windowTok = tok;
+
+                // Lookahead: read two tokens after WINDOW to distinguish
+                // WINDOW clause (WINDOW name AS ...) from WINDOW JOIN (WINDOW JOIN table ON ...).
+                // We always check both tokens because join keywords like "join", "cross",
+                // "left" etc. could theoretically be quoted window names.
+                CharSequence nextTok = SqlUtil.fetchNext(lexer);
+                boolean isWindowClause = false;
+                if (nextTok != null) {
+                    if (isAsKeyword(nextTok)) {
+                        // WINDOW AS (...) - missing window name
+                        lexer.backTo(windowLastPos, windowTok);
+                        tok = optTok(lexer);
+                        break;
+                    }
+                    CharSequence afterName = SqlUtil.fetchNext(lexer);
+                    if (afterName != null && isAsKeyword(afterName)) {
+                        isWindowClause = true;
+                    }
+                }
+
+                // Restore lexer to start of "window" token so it can be re-read
+                lexer.backTo(windowLastPos, windowTok);
+
+                if (isWindowClause) {
+                    // Break out of join loop - WINDOW clause will be parsed after the loop
+                    // Re-read "window" so tok is valid for WINDOW clause parsing
+                    tok = optTok(lexer);
+                    break;
+                }
+                // WINDOW JOIN - re-read "window" so tok is valid for parseJoin
+                tok = optTok(lexer);
+            }
             if (hasWindowJoin && joinType != QueryModel.JOIN_WINDOW) {
                 throw SqlException.$((lexer.lastTokenPosition()), "no other join types allowed after window join");
             }
@@ -2831,6 +2871,73 @@ public class SqlParser {
                 tok = optTok(lexer);
             } while (tok != null && Chars.equals(tok, ','));
         }
+
+        // expect [window]
+        // WINDOW clause for named window definitions: WINDOW w AS (PARTITION BY ... ORDER BY ...)
+        // SQL standard places WINDOW between HAVING/GROUP BY and ORDER BY.
+        if (tok != null && isWindowKeyword(tok)) {
+            do {
+                // Parse window name
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "window name expected after 'window'");
+                }
+                if (isAsKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "window name expected after 'window'");
+                }
+                validateIdentifier(lexer, tok);
+                SqlKeywords.assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+
+                // Intern the window name immediately before any more lexer operations
+                // (the lexer reuses its buffer, so tok would be overwritten)
+                CharacterStoreEntry cse = characterStore.newEntry();
+                cse.put(GenericLexer.unquote(tok));
+                CharSequence windowName = cse.toImmutable();
+                int windowNamePos = lexer.lastTokenPosition();
+
+                // Check for duplicate window name in the outer (master) model
+                if (masterModel.getNamedWindows().keyIndex(windowName) < 0) {
+                    throw SqlException.$(windowNamePos, "duplicate window name");
+                }
+
+                // Expect AS
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || !isAsKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'as' expected after window name");
+                }
+
+                // Expect '('
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || tok.charAt(0) != '(') {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'(' expected after 'as'");
+                }
+
+                // Create WindowExpression and parse the specification
+                WindowExpression windowSpec = windowExpressionPool.next();
+                windowSpec.clear();
+                expressionParser.parseWindowSpec(lexer, windowSpec, sqlParserCallback, model.getDecls());
+
+                // Validate base window reference (window inheritance):
+                // the base must be defined earlier in the same WINDOW clause (no forward references)
+                if (windowSpec.hasBaseWindow()) {
+                    CharSequence baseName = windowSpec.getBaseWindowName();
+                    if (masterModel.getNamedWindows().keyIndex(baseName) > -1) {
+                        throw SqlException.$(windowSpec.getBaseWindowNamePosition(), "window '")
+                                .put(baseName).put("' is not defined");
+                    }
+                }
+
+                // Store named window in the outer (master) model where the SELECT columns are defined,
+                // not the FROM model. The window functions in SELECT reference these named windows.
+                masterModel.getNamedWindows().put(windowName, windowSpec);
+
+                tok = optTok(lexer);
+            } while (tok != null && Chars.equals(tok, ','));
+        }
+
+        // Validate that all named window references in SELECT columns are defined.
+        // Fail fast here rather than waiting for the optimizer.
+        validateNamedWindowReferences(masterModel);
 
         // expect [order by]
 
@@ -4572,7 +4679,7 @@ public class SqlParser {
         return tok;
     }
 
-    private void validateIdentifier(GenericLexer lexer, CharSequence tok) throws SqlException {
+    static void validateIdentifier(GenericLexer lexer, CharSequence tok) throws SqlException {
         if (tok == null || tok.isEmpty()) {
             throw SqlException.position(lexer.lastTokenPosition()).put("non-empty identifier expected");
         }
@@ -4597,6 +4704,43 @@ public class SqlParser {
                     c == '_' ||
                     c == '$')) {
                 throw SqlException.position(lexer.lastTokenPosition()).put("identifier can contain letters, digits, '_' or '$'");
+            }
+        }
+    }
+
+    private void validateNamedWindowReferences(QueryModel model) throws SqlException {
+        LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows = model.getNamedWindows();
+        ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            if (qc.isWindowExpression()) {
+                WindowExpression wc = (WindowExpression) qc;
+                if (wc.isNamedWindowReference() && namedWindows.keyIndex(wc.getWindowName()) > -1) {
+                    throw SqlException.$(wc.getWindowNamePosition(), "window '").put(wc.getWindowName()).put("' is not defined");
+                }
+            }
+            // Check nested expression trees for all columns, not just window expressions,
+            // to catch cases like: row_number() OVER w + 1 (where top-level column is +)
+            validateNamedWindowReferencesInExpr(qc.getAst(), namedWindows);
+        }
+    }
+
+    private void validateNamedWindowReferencesInExpr(ExpressionNode node, LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.windowExpression != null && node.windowExpression.isNamedWindowReference()) {
+            CharSequence name = node.windowExpression.getWindowName();
+            if (namedWindows.keyIndex(name) > -1) {
+                throw SqlException.$(node.windowExpression.getWindowNamePosition(), "window '").put(name).put("' is not defined");
+            }
+        }
+        if (node.paramCount < 3) {
+            validateNamedWindowReferencesInExpr(node.lhs, namedWindows);
+            validateNamedWindowReferencesInExpr(node.rhs, namedWindows);
+        } else {
+            for (int i = 0, n = node.paramCount; i < n; i++) {
+                validateNamedWindowReferencesInExpr(node.args.getQuick(i), namedWindows);
             }
         }
     }
