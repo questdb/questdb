@@ -4002,20 +4002,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     createTableOp.getBatchO3MaxLag(),
                                     createTableOp.getCopyDataProgressReporter()
                             );
-                        } catch (CairoException e) {
-                            e.position(position);
-                            LogRecord record = LOG.error()
-                                    .$("could not create table as select [message=").$safe(e.getFlyweightMessage());
-                            if (!e.isCancellation()) {
-                                record.$(", errno=").$(e.getErrno());
-                            }
-                            record.I$();
-                            engine.dropTableOrViewOrMatView(path, tableToken);
-                            engine.unlockTableName(tableToken);
-                            throw e;
                         } catch (Throwable e) {
-                            LOG.error().$("could not create table as select [message=").$safe(e instanceof FlyweightMessageContainer
-                                    ? ((FlyweightMessageContainer) e).getFlyweightMessage() : e.getMessage()).I$();
+                            if (e instanceof CairoException ce) {
+                                ce.position(position);
+                                LogRecord record = LOG.error()
+                                        .$("could not create table as select [message=").$safe(ce.getFlyweightMessage());
+                                if (!ce.isCancellation()) {
+                                    record.$(", errno=").$(ce.getErrno());
+                                }
+                                record.I$();
+                            } else {
+                                LOG.error().$("could not create table as select [message=").$safe(e instanceof FlyweightMessageContainer
+                                        ? ((FlyweightMessageContainer) e).getFlyweightMessage() : e.getMessage()).I$();
+                            }
                             engine.dropTableOrViewOrMatView(path, tableToken);
                             engine.unlockTableName(tableToken);
                             throw e;
