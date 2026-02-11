@@ -2677,10 +2677,10 @@ public class SqlOptimiser implements Mutable {
 
         // Skip if nested model doesn't preserve row ordering
         int nestedType = nested.getSelectModelType();
-        if (nestedType == SELECT_MODEL_GROUP_BY
-                || nestedType == SELECT_MODEL_DISTINCT
-                || nestedType == SELECT_MODEL_WINDOW) {
-            return;
+        switch (nestedType) {
+            case SELECT_MODEL_GROUP_BY, SELECT_MODEL_DISTINCT, SELECT_MODEL_WINDOW -> {
+                return;
+            }
         }
 
         // Find the source of the timestamp - traverse down through nested models
