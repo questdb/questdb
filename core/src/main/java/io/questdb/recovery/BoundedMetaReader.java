@@ -168,7 +168,7 @@ public class BoundedMetaReader extends AbstractBoundedReader {
 
             // look up the previously read column type/indexed info
             MetaColumnState existing = metaState.getColumns().getQuick(i);
-            metaState.getColumns().setQuick(i, new MetaColumnState(name, existing.type(), existing.typeName(), existing.indexed()));
+            metaState.getColumns().setQuick(i, new MetaColumnState(name, existing.type(), existing.typeName(), existing.indexed(), existing.indexBlockCapacity()));
 
             offset = nameDataOffset + nameDataSize;
         }
@@ -190,11 +190,17 @@ public class BoundedMetaReader extends AbstractBoundedReader {
                 return;
             }
 
+            long indexBlockCapacityOffset = flagsOffset + Long.BYTES;
+            int indexBlockCapacity = readIntValue(fd, fileSize, scratch, metaState.getIssues(), indexBlockCapacityOffset, "column[" + i + "].indexBlockCapacity");
+            if (metaState.getIssues().size() > issuesBefore) {
+                return;
+            }
+
             boolean indexed = (flags & META_FLAG_BIT_INDEXED) != 0;
             String typeName = ColumnType.nameOf(type);
 
             // store with placeholder name; will be replaced in readColumnNames
-            metaState.getColumns().add(new MetaColumnState("", type, typeName, indexed));
+            metaState.getColumns().add(new MetaColumnState("", type, typeName, indexed, indexBlockCapacity));
         }
     }
 

@@ -73,7 +73,8 @@ public class ConsoleRenderer {
         out.println("  check columns  validate column files against metadata");
         out.println();
         out.println("Repair:");
-        out.println("  truncate <N>   shrink a partition to N rows (partition level)");
+        out.println("  drop index <col>  clear indexed flag in _meta (table level)");
+        out.println("  truncate <N>      shrink a partition to N rows (partition level)");
         out.println();
         out.println("Type 'help' for available commands, 'help all' for the full reference.");
     }
@@ -307,6 +308,7 @@ public class ConsoleRenderer {
             out.println("  show                   _txn state for current table");
             out.println("  cd wal                 enter WAL navigation");
             out.println("  check columns          validate column files");
+            out.println("  drop index <column>    clear indexed flag in _meta for a column");
             out.println("  wal status             WAL/sequencer status");
         } else if (atPartition) {
             out.println("  show                   partition detail");
@@ -349,6 +351,7 @@ public class ConsoleRenderer {
         out.println("  show timeline          chronological view of WAL transactions (WAL root)");
         out.println("  show pending           show only unapplied WAL transactions (WAL root)");
         out.println("  print <rowNo>          print value at row (column level only)");
+        out.println("  drop index <column>    clear indexed flag in _meta (table level)");
         out.println("  truncate <rowCount>    shrink partition to given row count (partition level)");
         out.println("  check                  quick health triage (root) or column check (table/partition)");
         out.println("  check columns          validate column files against metadata");

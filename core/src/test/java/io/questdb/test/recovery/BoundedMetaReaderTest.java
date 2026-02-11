@@ -27,6 +27,7 @@ package io.questdb.test.recovery;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -216,6 +217,59 @@ public class BoundedMetaReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadMetaDefaultIndexBlockCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            // "index" without explicit capacity uses the engine default
+            execute("create table meta_def_ibc (sym symbol index, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("meta_def_ibc")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("meta_def_ibc", 1);
+
+            MetaState state = readMetaState("meta_def_ibc", new BoundedMetaReader(FF));
+            MetaColumnState symCol = null;
+            for (int i = 0, n = state.getColumns().size(); i < n; i++) {
+                if ("sym".equals(state.getColumns().getQuick(i).name())) {
+                    symCol = state.getColumns().getQuick(i);
+                    break;
+                }
+            }
+            Assert.assertNotNull(symCol);
+            Assert.assertTrue(symCol.indexed());
+            Assert.assertTrue("default indexBlockCapacity should be > 0", symCol.indexBlockCapacity() > 0);
+        });
+    }
+
+    @Test
+    public void testReadMetaIndexBlockCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table meta_ibc (sym symbol index capacity 256, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("meta_ibc")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("meta_ibc", 1);
+
+            MetaState state = readMetaState("meta_ibc", new BoundedMetaReader(FF));
+            MetaColumnState symCol = null;
+            for (int i = 0, n = state.getColumns().size(); i < n; i++) {
+                if ("sym".equals(state.getColumns().getQuick(i).name())) {
+                    symCol = state.getColumns().getQuick(i);
+                    break;
+                }
+            }
+            Assert.assertNotNull(symCol);
+            Assert.assertTrue(symCol.indexed());
+            Assert.assertEquals(256, symCol.indexBlockCapacity());
+        });
+    }
+
+    @Test
     public void testReadMetaIndexedColumn() throws Exception {
         assertMemoryLeak(() -> {
             createTableWithTypes("meta_indexed");
@@ -227,6 +281,7 @@ public class BoundedMetaReaderTest extends AbstractCairoTest {
                 MetaColumnState col = state.getColumns().getQuick(i);
                 if ("sym".equals(col.name())) {
                     Assert.assertTrue("sym should be indexed", col.indexed());
+                    Assert.assertTrue("indexed column should have indexBlockCapacity > 0", col.indexBlockCapacity() > 0);
                     foundIndexed = true;
                 } else {
                     Assert.assertFalse(col.name() + " should not be indexed", col.indexed());
@@ -263,6 +318,76 @@ public class BoundedMetaReaderTest extends AbstractCairoTest {
 
             Assert.assertEquals(ColumnType.TIMESTAMP, state.getColumns().getQuick(5).type());
             Assert.assertEquals("TIMESTAMP", state.getColumns().getQuick(5).typeName());
+        });
+    }
+
+    @Test
+    public void testReadMetaNonIndexedColumnBlockCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithTypes("meta_nonibc");
+
+            MetaState state = readMetaState("meta_nonibc", new BoundedMetaReader(FF));
+            for (int i = 0, n = state.getColumns().size(); i < n; i++) {
+                MetaColumnState col = state.getColumns().getQuick(i);
+                if (!"sym".equals(col.name())) {
+                    Assert.assertEquals("non-indexed column " + col.name() + " should have indexBlockCapacity 0",
+                            0, col.indexBlockCapacity());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testProductionReaderAgreesMultipleSchemas() throws Exception {
+        assertMemoryLeak(() -> {
+            // non-WAL table
+            execute("create table rt_nonwal (val long, ts timestamp) timestamp(ts) partition by DAY");
+            execute("insert into rt_nonwal select x, timestamp_sequence('1970-01-01', 86400000000L) from long_sequence(2)");
+            verifyProductionAgreement("rt_nonwal");
+
+            // WAL with indexed SYMBOL
+            execute("create table rt_wal_idx (sym symbol index, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("rt_wal_idx")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("rt_wal_idx", 1);
+            verifyProductionAgreement("rt_wal_idx");
+
+            // WAL without indexed SYMBOL
+            execute("create table rt_wal_nosym (val long, ts timestamp) timestamp(ts) partition by HOUR WAL");
+            try (WalWriter walWriter = getWalWriter("rt_wal_nosym")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putLong(0, 42L);
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("rt_wal_nosym", 1);
+            verifyProductionAgreement("rt_wal_nosym");
+
+            // Multiple indexed columns
+            execute("create table rt_multi_idx (s1 symbol index, s2 symbol index capacity 128, s3 symbol, ts timestamp)"
+                    + " timestamp(ts) partition by MONTH WAL");
+            try (WalWriter walWriter = getWalWriter("rt_multi_idx")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "A");
+                row.putSym(1, "B");
+                row.putSym(2, "C");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("rt_multi_idx", 1);
+            verifyProductionAgreement("rt_multi_idx");
+        });
+    }
+
+    @Test
+    public void testProductionReaderAgreesWithBoundedReader() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithTypes("rt_basic");
+            verifyProductionAgreement("rt_basic");
         });
     }
 
@@ -627,6 +752,31 @@ public class BoundedMetaReaderTest extends AbstractCairoTest {
     private static MetaState readMetaStateWithFf(String tableName, FilesFacade customFf) {
         try (Path metaPath = new Path()) {
             return new BoundedMetaReader(customFf).read(metaPathOf(tableName, metaPath).$());
+        }
+    }
+
+    private static void verifyProductionAgreement(String tableName) {
+        MetaState bounded = readMetaState(tableName, new BoundedMetaReader(FF));
+        Assert.assertEquals(0, bounded.getIssues().size());
+
+        try (Path metaPath = new Path(); TableReaderMetadata prodMeta = new TableReaderMetadata(configuration)) {
+            metaPathOf(tableName, metaPath);
+            prodMeta.loadMetadata(metaPath.$());
+
+            Assert.assertEquals("columnCount", prodMeta.getColumnCount(), bounded.getColumnCount());
+            Assert.assertEquals("partitionBy", prodMeta.getPartitionBy(), bounded.getPartitionBy());
+            Assert.assertEquals("timestampIndex", prodMeta.getTimestampIndex(), bounded.getTimestampIndex());
+
+            for (int i = 0, n = bounded.getColumns().size(); i < n; i++) {
+                MetaColumnState col = bounded.getColumns().getQuick(i);
+                if (col.type() < 0) {
+                    continue; // dropped column
+                }
+                Assert.assertEquals("column[" + i + "].name", prodMeta.getColumnName(i), col.name());
+                Assert.assertEquals("column[" + i + "].type", prodMeta.getColumnType(i), col.type());
+                Assert.assertEquals("column[" + i + "].indexed", prodMeta.isColumnIndexed(i), col.indexed());
+                Assert.assertEquals("column[" + i + "].indexBlockCapacity", prodMeta.getIndexBlockCapacity(i), col.indexBlockCapacity());
+            }
         }
     }
 

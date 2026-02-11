@@ -45,7 +45,8 @@ import java.io.PrintStream;
 /**
  * Interactive recovery REPL. Runs a read-eval-print loop that accepts commands:
  * {@code tables}, {@code cd}, {@code ls}, {@code show}, {@code print},
- * {@code pwd}, {@code help}, {@code truncate}, and {@code check columns}.
+ * {@code pwd}, {@code help}, {@code truncate}, {@code drop index}, and
+ * {@code check columns}.
  *
  * <p>Command dispatch is table-driven: {@link #buildCommandMap()} registers all
  * commands as static methods implementing {@link RecoveryCommand}. Each command
@@ -160,6 +161,7 @@ public class RecoverySession {
         CharSequenceObjHashMap<RecoveryCommand> map = new CharSequenceObjHashMap<>();
         map.put("cd", RecoverySession::cmdCd);
         map.put("check columns", RecoverySession::cmdCheckColumns);
+        map.put("drop index", RecoverySession::cmdDropIndex);
         map.put("help", RecoverySession::cmdHelp);
         map.put("ls", RecoverySession::cmdLs);
         map.put("print", RecoverySession::cmdPrint);
@@ -181,6 +183,12 @@ public class RecoverySession {
         // exact and prefix matches for multi-word commands
         if (lower.equals("check columns")) {
             return new ParsedCommand(commands.get("check columns"), "");
+        }
+        if (lower.equals("drop index") || lower.startsWith("drop index ")) {
+            String dropArg = line.length() > "drop index".length()
+                    ? line.substring("drop index".length()).trim()
+                    : "";
+            return new ParsedCommand(commands.get("drop index"), dropArg);
         }
         if (lower.equals("show timeline") || lower.startsWith("show timeline ")) {
             String timelineArg = lower.length() > "show timeline".length()
@@ -240,6 +248,167 @@ public class RecoverySession {
             checkColumnsForTable(nav.getCurrentTable(), ctx, out, err);
         } else {
             checkColumnsForPartition(ctx, out, err);
+        }
+    }
+
+    private static void cmdDropIndex(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
+        NavigationContext nav = ctx.getNav();
+        FilesFacade ff = ctx.getFf();
+
+        if (!nav.isAtTable()) {
+            err.println("drop index is only valid at table level (cd into a table first)");
+            return;
+        }
+
+        if (arg.isEmpty()) {
+            err.println("usage: drop index <column_name>");
+            return;
+        }
+
+        MetaState cachedMetaState = nav.getCachedMetaState();
+        if (cachedMetaState == null || cachedMetaState.getColumns().size() == 0) {
+            err.println("no meta state available for current table");
+            return;
+        }
+
+        // find the column by name, skipping dropped columns (negative type)
+        ObjList<MetaColumnState> columns = cachedMetaState.getColumns();
+        int columnIndex = -1;
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            MetaColumnState candidate = columns.getQuick(i);
+            if (candidate.type() >= 0 && arg.equalsIgnoreCase(candidate.name())) {
+                columnIndex = i;
+                break;
+            }
+        }
+
+        if (columnIndex < 0) {
+            err.println("column not found: " + arg);
+            return;
+        }
+
+        MetaColumnState col = columns.getQuick(columnIndex);
+        if (!col.indexed()) {
+            err.println("column '" + col.name() + "' is not indexed");
+            return;
+        }
+
+        // backup _meta to _meta.bak (or _meta.bak.N)
+        try (Path metaPath = new Path(); Path bakPath = new Path()) {
+            metaPath.of(nav.getDbRoot()).concat(nav.getCurrentTable().getDirName())
+                    .concat(TableUtils.META_FILE_NAME).$();
+
+            bakPath.of(metaPath).put(".bak").$();
+            int bakNum = 0;
+            while (ff.exists(bakPath.$())) {
+                bakNum++;
+                bakPath.of(metaPath).put(".bak.").put(bakNum).$();
+            }
+
+            int copyResult = ff.copy(metaPath.$(), bakPath.$());
+            if (copyResult < 0) {
+                err.println("failed to create backup: " + bakPath);
+                return;
+            }
+            out.println("backup: " + bakPath);
+
+            // patch: clear the indexed bit in the flags field
+            long flagsOffset = TableUtils.META_OFFSET_COLUMN_TYPES
+                    + (long) columnIndex * TableUtils.META_COLUMN_DATA_SIZE
+                    + Integer.BYTES; // skip type (4 bytes) to get to flags
+
+            long fd = ff.openRW(metaPath.$(), 0);
+            if (fd < 0) {
+                err.println("failed to open _meta for writing");
+                return;
+            }
+            try {
+                long scratch = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    long bytesRead = ff.read(fd, scratch, Long.BYTES, flagsOffset);
+                    if (bytesRead != Long.BYTES) {
+                        err.println("failed to read flags at offset " + flagsOffset);
+                        return;
+                    }
+                    long flags = Unsafe.getUnsafe().getLong(scratch);
+                    long newFlags = flags & ~1L; // clear bit 0 (META_FLAG_BIT_INDEXED)
+                    Unsafe.getUnsafe().putLong(scratch, newFlags);
+                    long bytesWritten = ff.write(fd, scratch, Long.BYTES, flagsOffset);
+                    if (bytesWritten != Long.BYTES) {
+                        err.println("failed to write flags at offset " + flagsOffset);
+                        return;
+                    }
+                } finally {
+                    Unsafe.free(scratch, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            } finally {
+                ff.close(fd);
+            }
+
+            // validate with BoundedMetaReader
+            BoundedMetaReader metaReader = nav.getMetaReader();
+            MetaState readBack = metaReader.read(metaPath.$());
+            boolean valid = true;
+
+            if (readBack.getColumns().size() <= columnIndex) {
+                err.println("WARNING: BoundedMetaReader could not read column " + columnIndex + " after patch");
+                valid = false;
+            } else {
+                MetaColumnState patchedCol = readBack.getColumns().getQuick(columnIndex);
+                if (patchedCol.indexed()) {
+                    err.println("WARNING: column still indexed after patch according to BoundedMetaReader");
+                    valid = false;
+                }
+                // verify other columns unchanged
+                for (int i = 0, n = Math.min(columns.size(), readBack.getColumns().size()); i < n; i++) {
+                    if (i == columnIndex) {
+                        continue;
+                    }
+                    MetaColumnState orig = columns.getQuick(i);
+                    MetaColumnState reread = readBack.getColumns().getQuick(i);
+                    if (orig.indexed() != reread.indexed() || orig.type() != reread.type()) {
+                        err.println("WARNING: column " + orig.name() + " changed unexpectedly after patch");
+                        valid = false;
+                    }
+                }
+            }
+
+            // validate by re-reading the flags directly from disk
+            long verifyFd = ff.openRO(metaPath.$());
+            if (verifyFd >= 0) {
+                try {
+                    long scratch2 = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        long bytesRead2 = ff.read(verifyFd, scratch2, Long.BYTES, flagsOffset);
+                        if (bytesRead2 == Long.BYTES) {
+                            long verifyFlags = Unsafe.getUnsafe().getLong(scratch2);
+                            if ((verifyFlags & 1L) != 0) {
+                                err.println("WARNING: raw flags still show indexed bit set after patch");
+                                valid = false;
+                            }
+                        }
+                    } finally {
+                        Unsafe.free(scratch2, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    }
+                } finally {
+                    ff.close(verifyFd);
+                }
+            }
+
+            // report
+            out.println("column: " + col.name());
+            out.println("type: " + col.typeName());
+            out.println("indexed: true -> false");
+            out.println("indexBlockCapacity: " + col.indexBlockCapacity());
+
+            if (valid) {
+                out.println("OK");
+            }
+
+            // invalidate caches and re-navigate
+            String tableName = nav.getCurrentTable().getTableName();
+            nav.cdRoot();
+            nav.cd(tableName, err);
         }
     }
 

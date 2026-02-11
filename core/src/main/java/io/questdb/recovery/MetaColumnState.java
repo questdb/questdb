@@ -25,7 +25,8 @@
 package io.questdb.recovery;
 
 /**
- * Immutable column metadata from {@code _meta}: name, type, and indexed flag.
+ * Immutable column metadata from {@code _meta}: name, type, indexed flag,
+ * and index block capacity.
  */
-public record MetaColumnState(String name, int type, String typeName, boolean indexed) {
+public record MetaColumnState(String name, int type, String typeName, boolean indexed, int indexBlockCapacity) {
 }

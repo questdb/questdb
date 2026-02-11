@@ -738,6 +738,742 @@ public class RecoverySessionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table di_basic (sym symbol index, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("di_basic")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("di_basic", 1);
+
+            String[] result = runSession("cd di_basic\ndrop index sym\nquit\n");
+            Assert.assertTrue("should show indexed change", result[0].contains("indexed: true -> false"));
+            Assert.assertTrue("should print OK", result[0].contains("OK"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testDropIndexAlreadyDropped() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table di_already (sym symbol index, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("di_already")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("di_already", 1);
+
+            // first drop succeeds
+            String[] result = runSession("cd di_already\ndrop index sym\nquit\n");
+            Assert.assertTrue(result[0].contains("OK"));
+            Assert.assertEquals("", result[1]);
+
+            // second drop fails
+            result = runSession("cd di_already\ndrop index sym\nquit\n");
+            Assert.assertTrue("should say not indexed", result[1].contains("not indexed"));
+        });
+    }
+
+    @Test
+    public void testDropIndexBoundedReaderVerification() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table di_bounded (sym symbol index, val long, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("di_bounded")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.putLong(1, 42L);
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("di_bounded", 1);
+
+            runSession("cd di_bounded\ndrop index sym\nquit\n");
+
+            // verify with BoundedMetaReader
+            io.questdb.recovery.BoundedMetaReader metaReader = new io.questdb.recovery.BoundedMetaReader(FF);
+            TableToken token = engine.verifyTableName("di_bounded");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME).$();
+                io.questdb.recovery.MetaState state = metaReader.read(path.$());
+                Assert.assertEquals(0, state.getIssues().size());
+                for (int i = 0, n = state.getColumns().size(); i < n; i++) {
+                    io.questdb.recovery.MetaColumnState col = state.getColumns().getQuick(i);
+                    if ("sym".equals(col.name())) {
+                        Assert.assertFalse("sym should no longer be indexed", col.indexed());
+                    }
+                    if ("val".equals(col.name())) {
+                        Assert.assertEquals(ColumnType.LONG, col.type());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDropIndexByteIdentical() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table di_bytes (sym symbol index, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("di_bytes")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("di_bytes", 1);
+
+            runSession("cd di_bytes\ndrop index sym\nquit\n");
+
+            // find column index for 'sym' and verify only the flags field changed
+            TableToken token = engine.verifyTableName("di_bytes");
+            try (Path metaPath = new Path(); Path bakPath = new Path()) {
+                metaPath.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME).$();
+                bakPath.of(metaPath).put(".bak").$();
+
+                long metaFd = FF.openRO(metaPath.$());
+                long bakFd = FF.openRO(bakPath.$());
+                Assert.assertTrue(metaFd > -1);
+                Assert.assertTrue(bakFd > -1);
+                try {
+                    long metaSize = FF.length(metaFd);
+                    long bakSize = FF.length(bakFd);
+                    Assert.assertEquals("file sizes should match", bakSize, metaSize);
+
+                    // read both files fully
+                    long metaBuf = io.questdb.std.Unsafe.malloc(metaSize, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                    long bakBuf = io.questdb.std.Unsafe.malloc(bakSize, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        Assert.assertEquals(metaSize, FF.read(metaFd, metaBuf, metaSize, 0));
+                        Assert.assertEquals(bakSize, FF.read(bakFd, bakBuf, bakSize, 0));
+
+                        // find the sym column index
+                        io.questdb.recovery.BoundedMetaReader reader = new io.questdb.recovery.BoundedMetaReader(FF);
+                        io.questdb.recovery.MetaState bakState = reader.read(bakPath.$());
+                        int symIndex = -1;
+                        for (int i = 0, n = bakState.getColumns().size(); i < n; i++) {
+                            if ("sym".equals(bakState.getColumns().getQuick(i).name())) {
+                                symIndex = i;
+                                break;
+                            }
+                        }
+                        Assert.assertTrue(symIndex >= 0);
+
+                        // the flags field is 8 bytes at typeOffset + 4
+                        long flagsOffset = TableUtils.META_OFFSET_COLUMN_TYPES
+                                + (long) symIndex * TableUtils.META_COLUMN_DATA_SIZE
+                                + Integer.BYTES;
+
+                        // compare bytes before flags
+                        for (long off = 0; off < flagsOffset; off++) {
+                            Assert.assertEquals("byte mismatch at offset " + off,
+                                    io.questdb.std.Unsafe.getUnsafe().getByte(bakBuf + off),
+                                    io.questdb.std.Unsafe.getUnsafe().getByte(metaBuf + off));
+                        }
+
+                        // compare bytes after flags field
+                        for (long off = flagsOffset + Long.BYTES; off < metaSize; off++) {
+                            Assert.assertEquals("byte mismatch at offset " + off,
+                                    io.questdb.std.Unsafe.getUnsafe().getByte(bakBuf + off),
+                                    io.questdb.std.Unsafe.getUnsafe().getByte(metaBuf + off));
+                        }
+
+                        // verify flags differ only in bit 0
+                        long bakFlags = io.questdb.std.Unsafe.getUnsafe().getLong(bakBuf + flagsOffset);
+                        long metaFlags = io.questdb.std.Unsafe.getUnsafe().getLong(metaBuf + flagsOffset);
+                        Assert.assertNotEquals("flags should differ", bakFlags, metaFlags);
+                        Assert.assertEquals("only bit 0 should differ", bakFlags & ~1L, metaFlags & ~1L);
+                    } finally {
+                        io.questdb.std.Unsafe.free(metaBuf, metaSize, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                        io.questdb.std.Unsafe.free(bakBuf, bakSize, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                    }
+                } finally {
+                    FF.close(metaFd);
+                    FF.close(bakFd);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDropIndexCreatesBackup() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table di_backup (sym symbol index, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("di_backup")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("di_backup", 1);
+
+            runSession("cd di_backup\ndrop index sym\nquit\n");
+
+            TableToken token = engine.verifyTableName("di_backup");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token)
+                        .concat(TableUtils.META_FILE_NAME).put(".bak").$();
+                Assert.assertTrue("backup file should exist", FF.exists(path.$()));
+            }
+        });
+    }
+
+    @Test
+    public void testDropIndexEngineCanQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table di_query (sym symbol index, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("di_query")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("di_query", 1);
+
+            runSession("cd di_query\ndrop index sym\nquit\n");
+
+            // release everything so engine picks up the modified _meta
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            // engine should still be able to query
+            Assert.assertEquals(1, getRowCount("di_query"));
+
+            try (RecordCursorFactory factory = select("select * from di_query where sym = 'AA'")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDropIndexEngineCanReAddIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table di_readd (sym symbol index, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("di_readd")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("di_readd", 1);
+
+            runSession("cd di_readd\ndrop index sym\nquit\n");
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            // re-add the index
+            execute("ALTER TABLE di_readd ALTER COLUMN sym ADD INDEX");
+            drainWalQueue(engine);
+
+            // verify query still works
+            Assert.assertEquals(1, getRowCount("di_readd"));
+        });
+    }
+
+    @Test
+    public void testDropIndexEngineFullLifecycle() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table di_lifecycle (sym symbol index, ts timestamp) timestamp(ts) partition by DAY WAL");
+            // insert some rows
+            try (WalWriter walWriter = getWalWriter("di_lifecycle")) {
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = walWriter.newRow(i * Micros.DAY_MICROS);
+                    row.putSym(0, "V" + i);
+                    row.append();
+                    walWriter.commit();
+                }
+            }
+            waitForAppliedRows("di_lifecycle", 3);
+
+            // drop index via recovery session
+            runSession("cd di_lifecycle\ndrop index sym\nquit\n");
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            // verify queries work
+            Assert.assertEquals(3, getRowCount("di_lifecycle"));
+
+            // insert more rows via WAL
+            execute("insert into di_lifecycle values ('V3', '1970-01-04')");
+            drainWalQueue(engine);
+            Assert.assertEquals(4, getRowCount("di_lifecycle"));
+
+            // re-add index
+            execute("ALTER TABLE di_lifecycle ALTER COLUMN sym ADD INDEX");
+            drainWalQueue(engine);
+
+            Assert.assertEquals(4, getRowCount("di_lifecycle"));
+        });
+    }
+
+    @Test
+    public void testDropIndexFuzz() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int iter = 0; iter < 50; iter++) {
+                String tableName = "di_fuzz_" + iter;
+                // random number of columns 1-8, random subset indexed
+                int numSymCols = 1 + (iter % 5);
+                StringBuilder createSql = new StringBuilder("create table " + tableName + " (");
+                int indexedIdx = iter % numSymCols; // which sym column to index
+
+                for (int c = 0; c < numSymCols; c++) {
+                    if (c > 0) {
+                        createSql.append(", ");
+                    }
+                    createSql.append("s").append(c).append(" symbol");
+                    if (c == indexedIdx) {
+                        createSql.append(" index");
+                    }
+                }
+                createSql.append(", ts timestamp) timestamp(ts) partition by DAY WAL");
+                execute(createSql.toString());
+
+                try (WalWriter walWriter = getWalWriter(tableName)) {
+                    TableWriter.Row row = walWriter.newRow(0);
+                    for (int c = 0; c < numSymCols; c++) {
+                        row.putSym(c, "V" + c);
+                    }
+                    row.append();
+                    walWriter.commit();
+                }
+                waitForAppliedRows(tableName, 1);
+
+                String columnName = "s" + indexedIdx;
+                String[] result = runSession("cd " + tableName + "\ndrop index " + columnName + "\nquit\n");
+                Assert.assertTrue("iter " + iter + ": should print OK", result[0].contains("OK"));
+                Assert.assertEquals("iter " + iter + ": no errors", "", result[1]);
+
+                // verify with BoundedMetaReader
+                io.questdb.recovery.BoundedMetaReader reader = new io.questdb.recovery.BoundedMetaReader(FF);
+                TableToken token = engine.verifyTableName(tableName);
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME).$();
+                    io.questdb.recovery.MetaState state = reader.read(path.$());
+                    Assert.assertEquals(0, state.getIssues().size());
+
+                    for (int c = 0; c < numSymCols; c++) {
+                        io.questdb.recovery.MetaColumnState col = state.getColumns().getQuick(c);
+                        Assert.assertFalse("iter " + iter + ": column s" + c + " should not be indexed",
+                                col.indexed());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDropIndexInvalidColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table di_invalid (sym symbol index, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("di_invalid")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("di_invalid", 1);
+
+            String[] result = runSession("cd di_invalid\ndrop index nonexistent\nquit\n");
+            Assert.assertTrue("should say column not found", result[1].contains("column not found"));
+        });
+    }
+
+    @Test
+    public void testDropIndexMatchesActiveColumnNotDropped() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table with indexed sym, then drop it and re-add sym (non-indexed)
+            execute("create table di_reuse (sym symbol index, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("di_reuse")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "A");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("di_reuse", 1);
+
+            execute("alter table di_reuse drop column sym");
+            execute("alter table di_reuse add column sym symbol");
+            drainWalQueue();
+
+            // now _meta has two "sym" entries: slot 0 (deleted, type<0, indexed=true) and slot 2 (active, not indexed)
+            // drop index should report "not indexed" for the active column, not patch the deleted slot
+            String[] result = runSession("cd di_reuse\ndrop index sym\nquit\n");
+            Assert.assertTrue("should report not indexed for the active column",
+                    result[1].contains("not indexed"));
+        });
+    }
+
+    @Test
+    public void testDropIndexMultipleBackups() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table di_mbak (s1 symbol index, s2 symbol index, ts timestamp)"
+                    + " timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("di_mbak")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "A");
+                row.putSym(1, "B");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("di_mbak", 1);
+
+            runSession("cd di_mbak\ndrop index s1\nquit\n");
+            runSession("cd di_mbak\ndrop index s2\nquit\n");
+
+            TableToken token = engine.verifyTableName("di_mbak");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token)
+                        .concat(TableUtils.META_FILE_NAME).put(".bak").$();
+                Assert.assertTrue("_meta.bak should exist", FF.exists(path.$()));
+
+                path.of(configuration.getDbRoot()).concat(token)
+                        .concat(TableUtils.META_FILE_NAME).put(".bak.1").$();
+                Assert.assertTrue("_meta.bak.1 should exist", FF.exists(path.$()));
+            }
+        });
+    }
+
+    @Test
+    public void testDropIndexMultipleIndexedColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table di_multi (s1 symbol index, s2 symbol index, s3 symbol index, ts timestamp)"
+                    + " timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("di_multi")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "A");
+                row.putSym(1, "B");
+                row.putSym(2, "C");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("di_multi", 1);
+
+            // drop index on middle column only
+            String[] result = runSession("cd di_multi\ndrop index s2\nquit\n");
+            Assert.assertTrue(result[0].contains("OK"));
+            Assert.assertEquals("", result[1]);
+
+            // verify s1 and s3 still indexed, s2 not
+            io.questdb.recovery.BoundedMetaReader reader = new io.questdb.recovery.BoundedMetaReader(FF);
+            TableToken token = engine.verifyTableName("di_multi");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME).$();
+                io.questdb.recovery.MetaState state = reader.read(path.$());
+                for (int i = 0, n = state.getColumns().size(); i < n; i++) {
+                    io.questdb.recovery.MetaColumnState col = state.getColumns().getQuick(i);
+                    if ("s1".equals(col.name()) || "s3".equals(col.name())) {
+                        Assert.assertTrue(col.name() + " should still be indexed", col.indexed());
+                    } else if ("s2".equals(col.name())) {
+                        Assert.assertFalse("s2 should not be indexed", col.indexed());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDropIndexNoArgument() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table di_noarg (sym symbol index, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("di_noarg")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("di_noarg", 1);
+
+            String[] result = runSession("cd di_noarg\ndrop index\nquit\n");
+            Assert.assertTrue("should show usage", result[1].contains("usage") || result[1].contains("column_name"));
+        });
+    }
+
+    @Test
+    public void testDropIndexNonWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table di_nonwal (sym symbol index, ts timestamp) timestamp(ts) partition by DAY");
+            execute("insert into di_nonwal values ('AA', '1970-01-01')");
+
+            String[] result = runSession("cd di_nonwal\ndrop index sym\nquit\n");
+            Assert.assertTrue("should show indexed change", result[0].contains("indexed: true -> false"));
+            Assert.assertTrue("should print OK", result[0].contains("OK"));
+            Assert.assertEquals("", result[1]);
+        });
+    }
+
+    @Test
+    public void testDropIndexNotIndexed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table di_notidx (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("di_notidx")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("di_notidx", 1);
+
+            String[] result = runSession("cd di_notidx\ndrop index sym\nquit\n");
+            Assert.assertTrue("should say not indexed", result[1].contains("not indexed"));
+        });
+    }
+
+    @Test
+    public void testDropIndexOnColumnLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table di_collevel (sym symbol index, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("di_collevel")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("di_collevel", 1);
+
+            // cd into column level
+            String[] result = runSession("cd di_collevel\ncd 0\ncd sym\ndrop index sym\nquit\n");
+            Assert.assertTrue("should say table level", result[1].contains("table level"));
+        });
+    }
+
+    @Test
+    public void testDropIndexOnWalLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table di_wallevel (sym symbol index, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("di_wallevel")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("di_wallevel", 1);
+
+            String[] result = runSession("cd di_wallevel\ncd wal\ndrop index sym\nquit\n");
+            Assert.assertTrue("should say table level", result[1].contains("table level"));
+        });
+    }
+
+    @Test
+    public void testDropIndexPreservesOtherFlags() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table with dedup key + indexed symbol
+            execute("create table di_flags (sym symbol index, ts timestamp)"
+                    + " timestamp(ts) partition by DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            try (WalWriter walWriter = getWalWriter("di_flags")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("di_flags", 1);
+
+            // read flags before drop
+            TableToken token = engine.verifyTableName("di_flags");
+            long flagsBefore;
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME).$();
+                io.questdb.recovery.BoundedMetaReader reader = new io.questdb.recovery.BoundedMetaReader(FF);
+                io.questdb.recovery.MetaState stateBefore = reader.read(path.$());
+                int symIdx = -1;
+                for (int i = 0, n = stateBefore.getColumns().size(); i < n; i++) {
+                    if ("sym".equals(stateBefore.getColumns().getQuick(i).name())) {
+                        symIdx = i;
+                        break;
+                    }
+                }
+                Assert.assertTrue(symIdx >= 0);
+
+                // read raw flags
+                long flagsOffset = TableUtils.META_OFFSET_COLUMN_TYPES
+                        + (long) symIdx * TableUtils.META_COLUMN_DATA_SIZE
+                        + Integer.BYTES;
+                long fd = FF.openRO(path.$());
+                Assert.assertTrue(fd > -1);
+                try {
+                    long scratch = io.questdb.std.Unsafe.malloc(Long.BYTES, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        FF.read(fd, scratch, Long.BYTES, flagsOffset);
+                        flagsBefore = io.questdb.std.Unsafe.getUnsafe().getLong(scratch);
+                    } finally {
+                        io.questdb.std.Unsafe.free(scratch, Long.BYTES, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                    }
+                } finally {
+                    FF.close(fd);
+                }
+            }
+
+            // verify indexed bit and dedup bit are both set
+            Assert.assertTrue("indexed bit should be set before", (flagsBefore & 1L) != 0);
+            // dedup key bit is bit 3 (value 8)
+            Assert.assertTrue("dedup bit should be set before", (flagsBefore & 8L) != 0);
+
+            // drop index
+            String[] result = runSession("cd di_flags\ndrop index sym\nquit\n");
+            Assert.assertTrue(result[0].contains("OK"));
+
+            // read flags after drop
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME).$();
+                long flagsOffset = TableUtils.META_OFFSET_COLUMN_TYPES
+                        + Integer.BYTES; // sym is column 0
+                long fd = FF.openRO(path.$());
+                Assert.assertTrue(fd > -1);
+                try {
+                    long scratch = io.questdb.std.Unsafe.malloc(Long.BYTES, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        FF.read(fd, scratch, Long.BYTES, flagsOffset);
+                        long flagsAfter = io.questdb.std.Unsafe.getUnsafe().getLong(scratch);
+                        Assert.assertFalse("indexed bit should be cleared", (flagsAfter & 1L) != 0);
+                        Assert.assertTrue("dedup bit should be preserved", (flagsAfter & 8L) != 0);
+                    } finally {
+                        io.questdb.std.Unsafe.free(scratch, Long.BYTES, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                    }
+                } finally {
+                    FF.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDropIndexProductionReaderVerification() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table di_prod (sym symbol index, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("di_prod")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("di_prod", 1);
+
+            runSession("cd di_prod\ndrop index sym\nquit\n");
+
+            // verify with production TableReaderMetadata
+            TableToken token = engine.verifyTableName("di_prod");
+            try (Path path = new Path();
+                 io.questdb.cairo.TableReaderMetadata prodMeta = new io.questdb.cairo.TableReaderMetadata(configuration)) {
+                path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME).$();
+                prodMeta.loadMetadata(path.$());
+                for (int i = 0; i < prodMeta.getColumnCount(); i++) {
+                    if ("sym".equals(prodMeta.getColumnName(i))) {
+                        Assert.assertFalse("production reader should see sym as not indexed",
+                                prodMeta.isColumnIndexed(i));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDropIndexProductionRoundTrip() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table di_rt (sym symbol index capacity 128, val long, ts timestamp)"
+                    + " timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("di_rt")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.putLong(1, 42L);
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("di_rt", 1);
+
+            runSession("cd di_rt\ndrop index sym\nquit\n");
+
+            // compare BoundedMetaReader and production reader field-by-field
+            io.questdb.recovery.BoundedMetaReader boundedReader = new io.questdb.recovery.BoundedMetaReader(FF);
+            TableToken token = engine.verifyTableName("di_rt");
+            try (Path path = new Path();
+                 io.questdb.cairo.TableReaderMetadata prodMeta = new io.questdb.cairo.TableReaderMetadata(configuration)) {
+                path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME).$();
+                io.questdb.recovery.MetaState bounded = boundedReader.read(path.$());
+                prodMeta.loadMetadata(path.$());
+
+                Assert.assertEquals(prodMeta.getColumnCount(), bounded.getColumnCount());
+                Assert.assertEquals(prodMeta.getPartitionBy(), bounded.getPartitionBy());
+                Assert.assertEquals(prodMeta.getTimestampIndex(), bounded.getTimestampIndex());
+
+                for (int i = 0; i < bounded.getColumns().size(); i++) {
+                    io.questdb.recovery.MetaColumnState col = bounded.getColumns().getQuick(i);
+                    if (col.type() < 0) {
+                        continue;
+                    }
+                    Assert.assertEquals("column[" + i + "].name",
+                            prodMeta.getColumnName(i), col.name());
+                    Assert.assertEquals("column[" + i + "].type",
+                            prodMeta.getColumnType(i), col.type());
+                    Assert.assertEquals("column[" + i + "].indexed",
+                            prodMeta.isColumnIndexed(i), col.indexed());
+                    Assert.assertEquals("column[" + i + "].indexBlockCapacity",
+                            prodMeta.getIndexBlockCapacity(i), col.indexBlockCapacity());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDropIndexSelfRoundTrip() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table di_selfrt (sym symbol index, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("di_selfrt")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("di_selfrt", 1);
+
+            runSession("cd di_selfrt\ndrop index sym\nquit\n");
+
+            // read back with BoundedMetaReader and verify
+            io.questdb.recovery.BoundedMetaReader reader = new io.questdb.recovery.BoundedMetaReader(FF);
+            TableToken token = engine.verifyTableName("di_selfrt");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME).$();
+                io.questdb.recovery.MetaState state = reader.read(path.$());
+                Assert.assertEquals(0, state.getIssues().size());
+                for (int i = 0, n = state.getColumns().size(); i < n; i++) {
+                    io.questdb.recovery.MetaColumnState col = state.getColumns().getQuick(i);
+                    if ("sym".equals(col.name())) {
+                        Assert.assertFalse("sym should not be indexed", col.indexed());
+                        Assert.assertEquals(ColumnType.SYMBOL, col.type());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDropIndexWrongLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table di_level (sym symbol index, ts timestamp) timestamp(ts) partition by DAY WAL");
+            try (WalWriter walWriter = getWalWriter("di_level")) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "AA");
+                row.append();
+                walWriter.commit();
+            }
+            waitForAppliedRows("di_level", 1);
+
+            // at root level
+            String[] result = runSession("drop index sym\nquit\n");
+            Assert.assertTrue("should say table level", result[1].contains("table level"));
+
+            // at partition level
+            result = runSession("cd di_level\ncd 0\ndrop index sym\nquit\n");
+            Assert.assertTrue("should say table level", result[1].contains("table level"));
+        });
+    }
+
+    @Test
     public void testDroppedMatViewNotInRegistry() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table dmv_base (sym symbol, price double, ts timestamp) timestamp(ts) partition by DAY WAL");
