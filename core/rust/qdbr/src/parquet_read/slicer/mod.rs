@@ -564,3 +564,94 @@ impl<'a> BooleanBitmapSlicer<'a> {
         }
     }
 }
+
+/// Slicer for RLE/Bit-Packed Hybrid encoded boolean values.
+///
+/// The Parquet RLE encoding for booleans uses bit_width=1 with the standard
+/// RLE/Bit-Packed Hybrid format, prefixed by a 4-byte little-endian length.
+pub struct BooleanRleSlicer<'a> {
+    decoder: parquet2::encoding::hybrid_rle::HybridRleDecoder<'a>,
+    sliced_row_count: usize,
+    error: ParquetResult<()>,
+}
+
+impl DataPageSlicer for BooleanRleSlicer<'_> {
+    #[inline]
+    fn next(&mut self) -> &[u8] {
+        match self.decoder.next() {
+            Some(Ok(val)) => {
+                if val != 0 {
+                    &BOOL_TRUE
+                } else {
+                    &BOOL_FALSE
+                }
+            }
+            Some(Err(e)) => {
+                self.error = Err(e.into());
+                &BOOL_FALSE
+            }
+            None => {
+                self.error = Err(fmt_err!(Layout, "not enough RLE boolean values"));
+                &BOOL_FALSE
+            }
+        }
+    }
+
+    #[inline]
+    fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()> {
+        let val = self.next();
+        dest.extend_from_slice(val)
+    }
+
+    fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
+        for _ in 0..count {
+            let val = self.next();
+            dest.extend_from_slice(val)?;
+        }
+        Ok(())
+    }
+
+    fn skip(&mut self, count: usize) {
+        for _ in 0..count {
+            let _ = self.decoder.next();
+        }
+    }
+
+    fn count(&self) -> usize {
+        self.sliced_row_count
+    }
+
+    fn data_size(&self) -> usize {
+        self.sliced_row_count
+    }
+
+    fn result(&self) -> ParquetResult<()> {
+        self.error.clone()
+    }
+}
+
+impl<'a> BooleanRleSlicer<'a> {
+    pub fn try_new(
+        data: &'a [u8],
+        row_count: usize,
+        sliced_row_count: usize,
+    ) -> ParquetResult<Self> {
+        // RLE boolean values are prefixed with a 4-byte LE length
+        if data.len() < 4 {
+            return Err(fmt_err!(
+                Layout,
+                "boolean RLE buffer too short: {} bytes",
+                data.len()
+            ));
+        }
+        let _length = u32::from_le_bytes(data[..4].try_into().unwrap()) as usize;
+        let rle_data = &data[4..];
+        let decoder =
+            parquet2::encoding::hybrid_rle::HybridRleDecoder::try_new(rle_data, 1, row_count)?;
+        Ok(Self {
+            decoder,
+            sliced_row_count,
+            error: Ok(()),
+        })
+    }
+}

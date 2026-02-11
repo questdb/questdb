@@ -6,19 +6,19 @@ use parquet2::encoding::hybrid_rle::{Decoder, HybridEncoded};
 use std::mem::size_of;
 
 /// Custom repeat iterator that supports efficient skipping.
-struct RepeatN {
-    value: u32,
-    remaining: usize,
+pub struct RepeatN {
+    pub value: u32,
+    pub remaining: usize,
 }
 
 impl RepeatN {
     #[inline]
-    fn new(value: u32, count: usize) -> Self {
+    pub fn new(value: u32, count: usize) -> Self {
         Self { value, remaining: count }
     }
 
     #[inline]
-    fn next(&mut self) -> Option<u32> {
+    pub fn next(&mut self) -> Option<u32> {
         if self.remaining > 0 {
             self.remaining -= 1;
             Some(self.value)
@@ -28,7 +28,7 @@ impl RepeatN {
     }
 
     #[inline]
-    fn skip(&mut self, n: usize) -> usize {
+    pub fn skip(&mut self, n: usize) -> usize {
         let skipped = n.min(self.remaining);
         self.remaining -= skipped;
         skipped
@@ -37,9 +37,12 @@ impl RepeatN {
 
 type BitpackedIterator<'a> = bitpacked::Decoder<'a, u32>;
 
-enum RleIterator<'a> {
+pub enum RleIterator<'a> {
     Bitpacked(BitpackedIterator<'a>),
     Rle(RepeatN),
+    /// Fast path for 8-bit bitpacked data: each byte is a dict index.
+    /// Avoids the unpack step entirely.
+    ByteIndices { data: &'a [u8], pos: usize },
 }
 
 impl RleIterator<'_> {
@@ -48,6 +51,15 @@ impl RleIterator<'_> {
         match self {
             RleIterator::Bitpacked(iter) => iter.next(),
             RleIterator::Rle(iter) => iter.next(),
+            RleIterator::ByteIndices { data, pos } => {
+                if *pos < data.len() {
+                    let val = data[*pos] as u32;
+                    *pos += 1;
+                    Some(val)
+                } else {
+                    None
+                }
+            }
         }
     }
 
@@ -56,6 +68,12 @@ impl RleIterator<'_> {
         match self {
             RleIterator::Bitpacked(iter) => iter.advance(n),
             RleIterator::Rle(iter) => iter.skip(n),
+            RleIterator::ByteIndices { data, pos } => {
+                let avail = data.len() - *pos;
+                let skipped = n.min(avail);
+                *pos += skipped;
+                skipped
+            }
         }
     }
 }
