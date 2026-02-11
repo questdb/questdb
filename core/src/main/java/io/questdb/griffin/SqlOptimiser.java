@@ -42,6 +42,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.griffin.engine.functions.catalogue.AllTablesFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowDateStyleCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowDefaultTransactionReadOnlyCursorFactory;
@@ -117,6 +119,7 @@ public class SqlOptimiser implements Mutable {
     private static final int JOIN_OP_EQUAL = 1;
     private static final int JOIN_OP_OR = 3;
     private static final int JOIN_OP_REGEX = 4;
+    private static final Log LOG = LogFactory.getLog(SqlOptimiser.class);
     private static final String LONG_MAX_VALUE_STR = "" + Long.MAX_VALUE;
     // Maximum depth of nested window functions (e.g., sum(sum(row_number() OVER ()) OVER ()) OVER () is 3 levels)
     private static final int MAX_WINDOW_FUNCTION_NESTING_DEPTH = 8;
@@ -9282,7 +9285,7 @@ public class SqlOptimiser implements Mutable {
                     addWhereNode(branch, clone);
                 }
             } catch (NonLiteralException ignore) {
-                // skip this branch - the outer filter still guarantees correctness
+                LOG.debug().$("skipping filter push-down into set operation branch: column resolves to expression, not literal [filter=").$(node).$(", branch=").$(branch.getTableName()).I$();
             }
             branch = branch.getUnionModel();
         }
