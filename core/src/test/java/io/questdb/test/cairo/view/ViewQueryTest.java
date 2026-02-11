@@ -30,16 +30,18 @@ public class ViewQueryTest extends AbstractViewTest {
 
     @Test
     public void testCreateConstantView() throws Exception {
-        final String query1 = "select 42 as col";
-        createView(VIEW1, query1);
+        assertMemoryLeak(() -> {
+            final String query1 = "select 42 as col";
+            createView(VIEW1, query1);
 
-        assertQueryNoLeakCheck(
-                """
-                        col
-                        42
-                        """,
-                VIEW1
-        );
+            assertQueryNoLeakCheck(
+                    """
+                            col
+                            42
+                            """,
+                    VIEW1
+            );
+        });
     }
 
     @Test
@@ -1020,24 +1022,26 @@ public class ViewQueryTest extends AbstractViewTest {
 
     @Test
     public void testQueryViewInQuotes() throws Exception {
-        final String query1 = "select 42 as col";
-        createView(VIEW1, query1);
+        assertMemoryLeak(() -> {
+            final String query1 = "select 42 as col";
+            createView(VIEW1, query1);
 
-        assertQueryNoLeakCheck(
-                """
-                        col
-                        42
-                        """,
-                "SELECT * FROM '" + VIEW1 + "'"
-        );
+            assertQueryNoLeakCheck(
+                    """
+                            col
+                            42
+                            """,
+                    "SELECT * FROM '" + VIEW1 + "'"
+            );
 
-        assertQueryNoLeakCheck(
-                """
-                        col
-                        42
-                        """,
-                "SELECT * FROM \"" + VIEW1 + "\""
-        );
+            assertQueryNoLeakCheck(
+                    """
+                            col
+                            42
+                            """,
+                    "SELECT * FROM \"" + VIEW1 + "\""
+            );
+        });
     }
 
     @Test
