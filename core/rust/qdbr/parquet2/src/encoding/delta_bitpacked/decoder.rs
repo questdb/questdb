@@ -232,69 +232,50 @@ impl<'a> Decoder<'a> {
 
         let mut written = 0;
 
-        // Emit the first (already-decoded) value if it hasn't been consumed yet
-        if written < count {
-            out[written] = self.next_value;
-            written += 1;
-            self.values_remaining -= 1;
+        // Emit the pending next_value first
+        out[written] = self.next_value;
+        written += 1;
+        self.values_remaining -= 1;
 
-            if self.values_remaining == 0 {
-                return Ok(written);
-            }
-
-            // Load the next delta and advance next_value
-            let delta = self.load_delta()?;
-            self.next_value = self.next_value.wrapping_add(delta);
-        }
-
-        // Now decode remaining values in batch via the block's delta decoder
+        // Batch-decode remaining values via the block's delta decoder
         while written < count && self.values_remaining > 0 {
-            // We have next_value ready. Write it.
-            out[written] = self.next_value;
-            written += 1;
-            self.values_remaining -= 1;
+            if let Some(ref mut block) = self.current_block {
+                let batch_count = (count - written).min(self.values_remaining);
+                let mut delta_buf = [0i64; 128];
+                let to_decode = batch_count.min(128);
+                let decoded = block.decode_deltas_batch(&mut delta_buf[..to_decode])?;
 
-            if self.values_remaining == 0 {
-                break;
-            }
+                // Prefix sum: convert deltas to absolute values
+                let mut acc = self.next_value;
+                for i in 0..decoded {
+                    acc = acc.wrapping_add(delta_buf[i]);
+                    out[written + i] = acc;
+                }
+                self.next_value = acc;
+                written += decoded;
+                self.values_remaining -= decoded;
 
-            // Batch-decode deltas from current block
-            let batch_count = (count - written).min(self.values_remaining);
-            if batch_count > 0 {
-                if let Some(ref mut block) = self.current_block {
-                    let mut delta_buf = [0i64; 128];
-                    let to_decode = batch_count.min(128);
-                    let decoded = block.decode_deltas_batch(&mut delta_buf[..to_decode])?;
+                if self.values_remaining > 0 && block.remaining == 0 {
+                    // Advance to next block
+                    let consumed = block.consumed_bytes;
+                    self.values = &self.values[consumed..];
+                    self.consumed_bytes += consumed;
 
-                    // Prefix sum: convert deltas to absolute values
-                    let mut acc = self.next_value;
-                    for i in 0..decoded {
-                        acc = acc.wrapping_add(delta_buf[i]);
-                        out[written + i] = acc;
-                    }
-                    self.next_value = acc;
-                    written += decoded;
-                    self.values_remaining -= decoded;
-
-                    if self.values_remaining > 0 && block.remaining == 0 {
-                        // Load next block
-                        let consumed = block.consumed_bytes;
-                        self.values = &self.values[consumed..];
-                        self.consumed_bytes += consumed;
-
-                        self.current_block = Some(Block::try_new(
-                            self.values,
-                            self.num_mini_blocks,
-                            self.values_per_mini_block,
-                            self.values_remaining,
-                        )?);
-
-                        // Load next delta for next_value
-                        let delta = self.load_delta()?;
-                        self.next_value = self.next_value.wrapping_add(delta);
-                    }
+                    self.current_block = Some(Block::try_new(
+                        self.values,
+                        self.num_mini_blocks,
+                        self.values_per_mini_block,
+                        self.values_remaining,
+                    )?);
                 }
             }
+        }
+
+        // Maintain the invariant: next_value must hold the next value to emit.
+        // Load the next delta so next_value is ready for subsequent calls.
+        if self.values_remaining > 0 {
+            let delta = self.load_delta()?;
+            self.next_value = self.next_value.wrapping_add(delta);
         }
 
         Ok(written)
