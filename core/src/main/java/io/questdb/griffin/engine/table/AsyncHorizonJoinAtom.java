@@ -173,22 +173,23 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
                     null
             );
 
-            if (perWorkerKeyFunctions != null) {
-                perWorkerMapSinks = new ObjList<>(slotCount);
-                for (int i = 0; i < slotCount; i++) {
-                    perWorkerMapSinks.extendAndSet(i, RecordSinkFactory.getInstance(
-                            sinkClass,
-                            markoutMetadata,
-                            groupByColumnFilter,
-                            perWorkerKeyFunctions.getQuick(i),
-                            null,
-                            null,
-                            null,
-                            null
-                    ));
-                }
-            } else {
-                perWorkerMapSinks = null;
+            perWorkerMapSinks = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
+                final ObjList<Function> workerKeyFunctions = perWorkerKeyFunctions != null
+                        ? perWorkerKeyFunctions.getQuick(i)
+                        : ownerKeyFunctions;
+                perWorkerMapSinks.extendAndSet(i,
+                        RecordSinkFactory.getInstance(
+                                sinkClass,
+                                markoutMetadata,
+                                groupByColumnFilter,
+                                workerKeyFunctions,
+                                null,
+                                null,
+                                null,
+                                null
+                        )
+                );
             }
 
             // Per-worker aggregation maps
@@ -217,7 +218,7 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
     }
 
     public RecordSink getMapSink(int slotId) {
-        if (slotId == -1 || perWorkerMapSinks == null) {
+        if (slotId == -1) {
             return ownerMapSink;
         }
         return perWorkerMapSinks.getQuick(slotId);
