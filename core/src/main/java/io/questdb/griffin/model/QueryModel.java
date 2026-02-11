@@ -133,6 +133,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<QueryModel> joinModels = new ObjList<>();
     private final ObjList<ExpressionNode> latestBy = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap modelAliasIndexes = new LowerCaseCharSequenceIntHashMap();
+    // Named window definitions from WINDOW clause (e.g., WINDOW w AS (PARTITION BY ...))
+    private final LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<ExpressionNode> orderBy = new ObjList<>();
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntList orderByDirection = new IntList();
@@ -507,6 +509,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         sqlNodeStack.clear();
         joinColumns.clear();
         withClauseModel.clear();
+        namedWindows.clear();
         selectModelType = SELECT_MODEL_NONE;
         columnNameToAliasMap.clear();
         tableNameFunction = null;
@@ -645,8 +648,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void copyDeclsFrom(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, boolean overrideDeclares) throws SqlException {
         if (decls != null && decls.size() > 0) {
+            final ObjList<CharSequence> keys = decls.keys();
             if (overrideDeclares) {
-                final ObjList<CharSequence> keys = decls.keys();
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     final CharSequence key = keys.getQuick(i);
                     // Only allow override if the variable is marked as OVERRIDABLE
@@ -658,7 +661,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 }
                 this.decls.putAll(decls);
             } else {
-                final ObjList<CharSequence> keys = decls.keys();
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     final CharSequence key = keys.getQuick(i);
                     this.decls.putIfAbsent(key, decls.get(key));
@@ -873,6 +875,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
 
         return null;
+    }
+
+    public LowerCaseCharSequenceObjHashMap<WindowExpression> getNamedWindows() {
+        return namedWindows;
     }
 
     public QueryModel getNestedModel() {
