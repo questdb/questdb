@@ -4429,6 +4429,42 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void mergeWindowSpec(WindowExpression child, WindowExpression base) {
+        // SQL standard merge rules:
+        // PARTITION BY: child must not have its own (enforced by parser) — copy from base
+        if (child.getPartitionBy().size() == 0 && base.getPartitionBy().size() > 0) {
+            for (int i = 0, n = base.getPartitionBy().size(); i < n; i++) {
+                child.getPartitionBy().add(ExpressionNode.deepClone(expressionNodePool, base.getPartitionBy().getQuick(i)));
+            }
+        }
+        // ORDER BY: if child has ORDER BY, use child's; otherwise copy from base
+        if (child.getOrderBy().size() == 0 && base.getOrderBy().size() > 0) {
+            for (int i = 0, n = base.getOrderBy().size(); i < n; i++) {
+                child.getOrderBy().add(ExpressionNode.deepClone(expressionNodePool, base.getOrderBy().getQuick(i)));
+            }
+            child.getOrderByDirection().addAll(base.getOrderByDirection());
+        }
+        // Frame: if child has a non-default frame, use child's; otherwise copy from base
+        if (!child.isNonDefaultFrame() && base.isNonDefaultFrame()) {
+            child.setFramingMode(base.getFramingMode());
+            child.setRowsLo(base.getRowsLo());
+            child.setRowsLoExpr(
+                    ExpressionNode.deepClone(expressionNodePool, base.getRowsLoExpr()),
+                    base.getRowsLoExprPos()
+            );
+            child.setRowsLoExprTimeUnit(base.getRowsLoExprTimeUnit());
+            child.setRowsLoKind(base.getRowsLoKind(), base.getRowsLoKindPos());
+            child.setRowsHi(base.getRowsHi());
+            child.setRowsHiExpr(
+                    ExpressionNode.deepClone(expressionNodePool, base.getRowsHiExpr()),
+                    base.getRowsHiExprPos()
+            );
+            child.setRowsHiExprTimeUnit(base.getRowsHiExprTimeUnit());
+            child.setRowsHiKind(base.getRowsHiKind(), base.getRowsHiKindPos());
+            child.setExclusionKind(base.getExclusionKind(), base.getExclusionKindPos());
+        }
+    }
+
     private void moveWhereInsideSubQueries(QueryModel model) throws SqlException {
         if (
                 model.getSelectModelType() != SELECT_MODEL_DISTINCT
@@ -6248,6 +6284,70 @@ public class SqlOptimiser implements Mutable {
                 resolveNamedWindowsInExpr(node.args.getQuick(i), model);
             }
         }
+    }
+
+    private void resolveWindowInheritance(QueryModel model) throws SqlException {
+        LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows = model.getNamedWindows();
+        if (namedWindows.size() > 0) {
+            ObjList<CharSequence> keys = namedWindows.keys();
+            for (int i = 0, n = keys.size(); i < n; i++) {
+                CharSequence windowName = keys.getQuick(i);
+                WindowExpression window = namedWindows.get(windowName);
+                if (window != null && window.hasBaseWindow()) {
+                    IntHashSet visited = intHashSetPool.next();
+                    resolveWindowInheritanceChain(model, windowName, window, visited);
+                }
+            }
+        }
+
+        // recurse into nested, join, and union models
+        QueryModel nested = model.getNestedModel();
+        if (nested != null) {
+            resolveWindowInheritance(nested);
+        }
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            resolveWindowInheritance(joinModels.getQuick(i));
+        }
+        QueryModel union = model.getUnionModel();
+        if (union != null) {
+            resolveWindowInheritance(union);
+        }
+    }
+
+    private void resolveWindowInheritanceChain(
+            QueryModel model,
+            CharSequence windowName,
+            WindowExpression window,
+            IntHashSet visited
+    ) throws SqlException {
+        if (!window.hasBaseWindow()) {
+            return;
+        }
+
+        // Cycle detection using the base window name position as unique key
+        int pos = window.getBaseWindowNamePosition();
+        if (visited.contains(pos)) {
+            throw SqlException.$(pos, "circular window reference");
+        }
+        visited.add(pos);
+
+        CharSequence baseName = window.getBaseWindowName();
+        WindowExpression baseWindow = model.getNamedWindows().get(baseName);
+        if (baseWindow == null) {
+            throw SqlException.$(pos, "window '").put(baseName).put("' is not defined");
+        }
+
+        // Recursively resolve the base window first if it also inherits
+        if (baseWindow.hasBaseWindow()) {
+            resolveWindowInheritanceChain(model, baseName, baseWindow, visited);
+        }
+
+        // Merge the base spec into the child
+        mergeWindowSpec(window, baseWindow);
+
+        // Clear the base reference — inheritance is now resolved
+        window.setBaseWindowName(null, 0);
     }
 
     // Rewrite:
@@ -10074,6 +10174,7 @@ public class SqlOptimiser implements Mutable {
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
             validateNoWindowFunctionsInWhereClauses(rewrittenModel);
+            resolveWindowInheritance(rewrittenModel);
             resolveNamedWindows(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
             detectTimestampOffsetsRecursive(rewrittenModel);

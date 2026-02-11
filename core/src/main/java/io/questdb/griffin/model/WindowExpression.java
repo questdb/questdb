@@ -58,6 +58,9 @@ public final class WindowExpression extends QueryColumn {
     private final ObjList<ExpressionNode> orderBy = new ObjList<>(2);
     private final IntList orderByDirection = new IntList(2);
     private final ObjList<ExpressionNode> partitionBy = new ObjList<>(2);
+    // For window inheritance: WINDOW w2 AS (w1 ROWS ...) — stores the base window name
+    private CharSequence baseWindowName;
+    private int baseWindowNamePosition;
     private int exclusionKind = EXCLUDE_NO_OTHERS;
     private int exclusionKindPos;
     private int framingMode = FRAMING_RANGE; // default mode is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT
@@ -90,6 +93,8 @@ public final class WindowExpression extends QueryColumn {
     @Override
     public void clear() {
         super.clear();
+        baseWindowName = null;
+        baseWindowNamePosition = 0;
         partitionBy.clear();
         orderBy.clear();
         orderByDirection.clear();
@@ -160,6 +165,14 @@ public final class WindowExpression extends QueryColumn {
 
         this.windowName = null;
         this.windowNamePosition = 0;
+    }
+
+    public CharSequence getBaseWindowName() {
+        return baseWindowName;
+    }
+
+    public int getBaseWindowNamePosition() {
+        return baseWindowNamePosition;
     }
 
     public int getExclusionKind() {
@@ -246,6 +259,10 @@ public final class WindowExpression extends QueryColumn {
         return windowNamePosition;
     }
 
+    public boolean hasBaseWindow() {
+        return baseWindowName != null;
+    }
+
     public boolean isIgnoreNulls() {
         return ignoreNulls;
     }
@@ -268,6 +285,11 @@ public final class WindowExpression extends QueryColumn {
     @Override
     public WindowExpression of(CharSequence alias, ExpressionNode ast) {
         return (WindowExpression) super.of(alias, ast);
+    }
+
+    public void setBaseWindowName(CharSequence baseWindowName, int baseWindowNamePosition) {
+        this.baseWindowName = baseWindowName;
+        this.baseWindowNamePosition = baseWindowNamePosition;
     }
 
     public void setExclusionKind(int exclusionKind, int exclusionKindPos) {

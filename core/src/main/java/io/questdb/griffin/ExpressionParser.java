@@ -770,7 +770,7 @@ public class ExpressionParser {
             throw SqlException.$(lexer.lastTokenPosition(), "')' or window specification expected");
         }
 
-        // Detect window inheritance attempts like WINDOW w2 AS (w1 ORDER BY y) or (w1).
+        // Detect window inheritance like WINDOW w2 AS (w1 ORDER BY y) or (w1).
         // If the first token is an unquoted non-keyword identifier followed by ')' or a
         // window clause keyword, it's a reference to another named window.
         if (tok.charAt(0) != ')'
@@ -782,6 +782,11 @@ public class ExpressionParser {
                 && !SqlKeywords.isCumulativeKeyword(tok)
                 && !Chars.isQuoted(tok)) {
             int inheritPos = lexer.lastTokenPosition();
+            // Intern the token immediately — the lexer reuses its flyweight buffer,
+            // so tok would be overwritten by the next fetchNext call
+            CharacterStoreEntry cse = characterStore.newEntry();
+            cse.put(tok);
+            CharSequence baseWindowName = cse.toImmutable();
             CharSequence nextTok = SqlUtil.fetchNext(lexer);
             // Look at what follows: if it's ')' or a window clause keyword, this is inheritance
             if (nextTok != null && (nextTok.charAt(0) == ')'
@@ -791,14 +796,22 @@ public class ExpressionParser {
                     || SqlKeywords.isRangeKeyword(nextTok)
                     || SqlKeywords.isGroupsKeyword(nextTok)
                     || SqlKeywords.isCumulativeKeyword(nextTok))) {
-                throw SqlException.$(inheritPos, "window inheritance is not supported");
+                // Store the base window name for inheritance resolution
+                windowCol.setBaseWindowName(baseWindowName, inheritPos);
+                // Continue parsing — child may add ORDER BY, frame clause on top
+                // PARTITION BY is not allowed in child (validated later)
+                tok = nextTok;
+            } else {
+                // Not inheritance - restore both tokens and let downstream parsing handle the error
+                lexer.backTo(inheritPos, baseWindowName);
+                tok = SqlUtil.fetchNext(lexer);
             }
-            // Not inheritance - restore both tokens and let downstream parsing handle the error
-            lexer.backTo(inheritPos, tok);
-            tok = SqlUtil.fetchNext(lexer);
         }
 
-        // Handle PARTITION BY
+        // Handle PARTITION BY — not allowed in child window when base is specified (SQL standard)
+        if (SqlKeywords.isPartitionKeyword(tok) && windowCol.hasBaseWindow()) {
+            throw SqlException.$(lexer.lastTokenPosition(), "PARTITION BY not allowed in window referencing another window");
+        }
         if (SqlKeywords.isPartitionKeyword(tok)) {
             tok = SqlUtil.fetchNext(lexer);
             if (tok == null || !SqlKeywords.isByKeyword(tok)) {

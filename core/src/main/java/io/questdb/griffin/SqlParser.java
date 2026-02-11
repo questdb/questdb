@@ -2915,6 +2915,16 @@ public class SqlParser {
                 windowSpec.clear();
                 expressionParser.parseWindowSpec(lexer, windowSpec, sqlParserCallback, model.getDecls());
 
+                // Validate base window reference (window inheritance):
+                // the base must be defined earlier in the same WINDOW clause (no forward references)
+                if (windowSpec.hasBaseWindow()) {
+                    CharSequence baseName = windowSpec.getBaseWindowName();
+                    if (masterModel.getNamedWindows().keyIndex(baseName) > -1) {
+                        throw SqlException.$(windowSpec.getBaseWindowNamePosition(), "window '")
+                                .put(baseName).put("' is not defined");
+                    }
+                }
+
                 // Store named window in the outer (master) model where the SELECT columns are defined,
                 // not the FROM model. The window functions in SELECT reference these named windows.
                 masterModel.getNamedWindows().put(windowName, windowSpec);
