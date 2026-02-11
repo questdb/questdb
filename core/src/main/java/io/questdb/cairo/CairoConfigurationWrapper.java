@@ -672,6 +672,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getParquetExportBatchSize() {
+        return getDelegate().getParquetExportBatchSize();
+    }
+
+    @Override
     public int getParquetExportCompressionCodec() {
         return getDelegate().getParquetExportCompressionCodec();
     }

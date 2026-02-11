@@ -4133,6 +4133,24 @@ public class SqlOptimiser implements Mutable {
                 && model.getTimestampOffsetAlias() == null;
     }
 
+    // Walks only the nested-model chain (not join models) because named windows are defined
+    // on the masterModel and propagated through nesting, never on join models.
+    // Stops at subquery boundaries to prevent resolving names from inner scopes.
+    private WindowExpression lookupNamedWindow(QueryModel model, CharSequence windowName) {
+        QueryModel current = model;
+        while (current != null) {
+            WindowExpression namedWindow = current.getNamedWindows().get(windowName);
+            if (namedWindow != null) {
+                return namedWindow;
+            }
+            if (current.isNestedModelIsSubQuery()) {
+                break;
+            }
+            current = current.getNestedModel();
+        }
+        return null;
+    }
+
     private ExpressionNode makeJoinAlias() {
         CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
         characterStoreEntry.put(SUB_QUERY_ALIAS_PREFIX).put(defaultAliasCount++);
@@ -4411,6 +4429,42 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void mergeWindowSpec(WindowExpression child, WindowExpression base) {
+        // SQL standard merge rules:
+        // PARTITION BY: child must not have its own (enforced by parser) — copy from base
+        if (child.getPartitionBy().size() == 0 && base.getPartitionBy().size() > 0) {
+            for (int i = 0, n = base.getPartitionBy().size(); i < n; i++) {
+                child.getPartitionBy().add(ExpressionNode.deepClone(expressionNodePool, base.getPartitionBy().getQuick(i)));
+            }
+        }
+        // ORDER BY: if child has ORDER BY, use child's; otherwise copy from base
+        if (child.getOrderBy().size() == 0 && base.getOrderBy().size() > 0) {
+            for (int i = 0, n = base.getOrderBy().size(); i < n; i++) {
+                child.getOrderBy().add(ExpressionNode.deepClone(expressionNodePool, base.getOrderBy().getQuick(i)));
+            }
+            child.getOrderByDirection().addAll(base.getOrderByDirection());
+        }
+        // Frame: if child has a non-default frame, use child's; otherwise copy from base
+        if (!child.isNonDefaultFrame() && base.isNonDefaultFrame()) {
+            child.setFramingMode(base.getFramingMode());
+            child.setRowsLo(base.getRowsLo());
+            child.setRowsLoExpr(
+                    ExpressionNode.deepClone(expressionNodePool, base.getRowsLoExpr()),
+                    base.getRowsLoExprPos()
+            );
+            child.setRowsLoExprTimeUnit(base.getRowsLoExprTimeUnit());
+            child.setRowsLoKind(base.getRowsLoKind(), base.getRowsLoKindPos());
+            child.setRowsHi(base.getRowsHi());
+            child.setRowsHiExpr(
+                    ExpressionNode.deepClone(expressionNodePool, base.getRowsHiExpr()),
+                    base.getRowsHiExprPos()
+            );
+            child.setRowsHiExprTimeUnit(base.getRowsHiExprTimeUnit());
+            child.setRowsHiKind(base.getRowsHiKind(), base.getRowsHiKindPos());
+            child.setExclusionKind(base.getExclusionKind(), base.getExclusionKindPos());
+        }
+    }
+
     private void moveWhereInsideSubQueries(QueryModel model) throws SqlException {
         if (
                 model.getSelectModelType() != SELECT_MODEL_DISTINCT
@@ -4578,6 +4632,38 @@ public class SqlOptimiser implements Mutable {
 
     private ExpressionNode nextLiteral(CharSequence token) {
         return nextLiteral(token, 0);
+    }
+
+    private void normalizeWindowFrame(WindowExpression ac, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        long rowsLo = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsLoExpr(), sqlExecutionContext);
+        long rowsHi = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsHiExpr(), sqlExecutionContext);
+
+        switch (ac.getRowsLoKind()) {
+            case WindowExpression.PRECEDING:
+                rowsLo = rowsLo != Long.MAX_VALUE ? -rowsLo : Long.MIN_VALUE;
+                break;
+            case WindowExpression.FOLLOWING:
+                break;
+            default:
+                // CURRENT ROW
+                rowsLo = 0;
+                break;
+        }
+
+        switch (ac.getRowsHiKind()) {
+            case WindowExpression.PRECEDING:
+                rowsHi = rowsHi != Long.MAX_VALUE ? -rowsHi : Long.MIN_VALUE;
+                break;
+            case WindowExpression.FOLLOWING:
+                break;
+            default:
+                // CURRENT ROW
+                rowsHi = 0;
+                break;
+        }
+
+        ac.setRowsLo(rowsLo);
+        ac.setRowsHi(rowsHi);
     }
 
     private boolean nonAggregateFunctionDependsOn(ExpressionNode node, ExpressionNode timestampNode) {
@@ -5379,12 +5465,10 @@ public class SqlOptimiser implements Mutable {
         // propagate explicit timestamp declaration
         if (model.getTimestamp() != null && nestedIsFlex && nestedAllowsColumnChange) {
             emitLiteralsTopDown(model.getTimestamp(), nested);
-
-            QueryModel unionModel = nested.getUnionModel();
-            while (unionModel != null) {
-                emitLiteralsTopDown(model.getTimestamp(), unionModel);
-                unionModel = unionModel.getUnionModel();
-            }
+            // Don't emit to nested union models by name here. In UNION, columns are matched
+            // by position, not name. Name-based resolution can map to a wrong column index
+            // in union branches. The indexed propagation below (emitColumnLiteralsTopDown loop)
+            // correctly propagates columns by position.
         }
 
         if (model.getWhereClause() != null) {
@@ -5393,12 +5477,10 @@ public class SqlOptimiser implements Mutable {
             }
             if (nestedAllowsColumnChange) {
                 emitLiteralsTopDown(model.getWhereClause(), nested);
-
-                QueryModel unionModel = nested.getUnionModel();
-                while (unionModel != null) {
-                    emitLiteralsTopDown(model.getWhereClause(), unionModel);
-                    unionModel = unionModel.getUnionModel();
-                }
+                // Don't emit to nested union models by name here. In UNION, columns are matched
+                // by position, not name. Name-based resolution can map to a wrong column index
+                // in union branches. The indexed propagation below (emitColumnLiteralsTopDown loop)
+                // correctly propagates columns by position.
             }
         }
 
@@ -5409,6 +5491,29 @@ public class SqlOptimiser implements Mutable {
 
         if (nestedIsFlex && nestedAllowsColumnChange) {
             emitColumnLiteralsTopDown(model.getColumns(), nested);
+
+            // If any UNION branch is GROUP BY, pre-add its key column positions
+            // to nested's topDownColumns. GROUP BY branches need all key columns
+            // for correct grouping, even if the outer query doesn't select them.
+            // By adding them here (before the indexed propagation below), the
+            // indexed loop will propagate them to ALL branches uniformly,
+            // regardless of where the GROUP BY branch sits in the UNION chain.
+            if (nested.getUnionModel() != null && nested.getTopDownColumns().size() > 0) {
+                final ObjList<QueryColumn> nestedBu = nested.getBottomUpColumns();
+                QueryModel groupByScan = nested;
+                while (groupByScan != null) {
+                    if (groupByScan.getSelectModelType() == SELECT_MODEL_GROUP_BY) {
+                        final ObjList<QueryColumn> groupByBu = groupByScan.getBottomUpColumns();
+                        for (int i = 0, n = groupByBu.size(); i < n; i++) {
+                            QueryColumn qc = groupByBu.getQuick(i);
+                            if (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
+                                nested.addTopDownColumn(nestedBu.getQuick(i), nestedBu.getQuick(i).getAlias());
+                            }
+                        }
+                    }
+                    groupByScan = groupByScan.getUnionModel();
+                }
+            }
 
             final IntList unionColumnIndexes = tempIntList;
             unionColumnIndexes.clear();
@@ -6135,6 +6240,132 @@ public class SqlOptimiser implements Mutable {
         if (model.getUnionModel() != null) {
             resolveJoinColumns(model.getUnionModel());
         }
+    }
+
+    private void resolveNamedWindowReference(WindowExpression ac, QueryModel model) throws SqlException {
+        CharSequence windowName = ac.getWindowName();
+        WindowExpression namedWindow = lookupNamedWindow(model, windowName);
+        if (namedWindow == null) {
+            throw SqlException.$(ac.getWindowNamePosition(), "window '").put(windowName).put("' is not defined");
+        }
+        ac.copySpecFrom(namedWindow, expressionNodePool);
+    }
+
+    /**
+     * Resolves all named window references in the model tree by copying the spec
+     * from the named window definition into each referencing WindowExpression.
+     * Called between validateNoWindowFunctionsInWhereClauses and rewriteSelectClause
+     * so the optimizer sees fully populated partition-by / order-by lists before
+     * dedup, ORDER BY propagation, or literal emission.
+     */
+    private void resolveNamedWindows(QueryModel model) throws SqlException {
+        // Window expressions only exist in bottomUpColumns (topDownColumns only contain LITERALs)
+        ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            if (qc.isWindowExpression()) {
+                WindowExpression ac = (WindowExpression) qc;
+                if (ac.isNamedWindowReference()) {
+                    resolveNamedWindowReference(ac, model);
+                }
+            }
+            // Resolve named window references inside nested expressions (e.g., sum(row_number() OVER w) OVER ())
+            resolveNamedWindowsInExpr(qc.getAst(), model);
+        }
+
+        // recurse into nested, join, and union models
+        QueryModel nested = model.getNestedModel();
+        if (nested != null) {
+            resolveNamedWindows(nested);
+        }
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            resolveNamedWindows(joinModels.getQuick(i));
+        }
+        QueryModel union = model.getUnionModel();
+        if (union != null) {
+            resolveNamedWindows(union);
+        }
+    }
+
+    private void resolveNamedWindowsInExpr(ExpressionNode node, QueryModel model) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.windowExpression != null && node.windowExpression.isNamedWindowReference()) {
+            resolveNamedWindowReference(node.windowExpression, model);
+        }
+        if (node.paramCount < 3) {
+            resolveNamedWindowsInExpr(node.lhs, model);
+            resolveNamedWindowsInExpr(node.rhs, model);
+        } else {
+            for (int i = 0, n = node.paramCount; i < n; i++) {
+                resolveNamedWindowsInExpr(node.args.getQuick(i), model);
+            }
+        }
+    }
+
+    private void resolveWindowInheritance(QueryModel model) throws SqlException {
+        LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows = model.getNamedWindows();
+        if (namedWindows.size() > 0) {
+            ObjList<CharSequence> keys = namedWindows.keys();
+            for (int i = 0, n = keys.size(); i < n; i++) {
+                CharSequence windowName = keys.getQuick(i);
+                WindowExpression window = namedWindows.get(windowName);
+                if (window != null && window.hasBaseWindow()) {
+                    IntHashSet visited = intHashSetPool.next();
+                    resolveWindowInheritanceChain(model, window, visited);
+                }
+            }
+        }
+
+        // recurse into nested, join, and union models
+        QueryModel nested = model.getNestedModel();
+        if (nested != null) {
+            resolveWindowInheritance(nested);
+        }
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            resolveWindowInheritance(joinModels.getQuick(i));
+        }
+        QueryModel union = model.getUnionModel();
+        if (union != null) {
+            resolveWindowInheritance(union);
+        }
+    }
+
+    private void resolveWindowInheritanceChain(
+            QueryModel model,
+            WindowExpression window,
+            IntHashSet visited
+    ) throws SqlException {
+        if (!window.hasBaseWindow()) {
+            return;
+        }
+
+        // Cycle detection using the base window name position as unique key
+        int pos = window.getBaseWindowNamePosition();
+        if (visited.contains(pos)) {
+            throw SqlException.$(pos, "circular window reference");
+        }
+        visited.add(pos);
+
+        CharSequence baseName = window.getBaseWindowName();
+        WindowExpression baseWindow = model.getNamedWindows().get(baseName);
+        if (baseWindow == null) {
+            throw SqlException.$(pos, "window '").put(baseName).put("' is not defined");
+        }
+
+        // Recursively resolve the base window first if it also inherits
+        if (baseWindow.hasBaseWindow()) {
+            resolveWindowInheritanceChain(model, baseWindow, visited);
+        }
+
+        // Merge the base spec into the child
+        mergeWindowSpec(window, baseWindow);
+
+        // Clear the base reference — inheritance is now resolved
+        window.setBaseWindowName(null, 0);
     }
 
     // Rewrite:
@@ -8465,23 +8696,12 @@ public class SqlOptimiser implements Mutable {
                 final boolean window = qc.isWindowExpression();
 
                 if (window & qc.getAst().type == FUNCTION) {
-                    // Window model can be after either translation model directly
-                    // or after inner virtual model, which can be sandwiched between
-                    // translation model and window model.
-                    // To make sure columns, referenced by the window model
-                    // are rendered correctly we will emit them into a dedicated
-                    // translation model for the window model.
-                    // When we're able to determine which combination of models precedes the
-                    // window model, we can copy columns from window_translation model to
-                    // either only to translation model or both translation model and the
-                    // inner virtual models.
                     final WindowExpression ac = (WindowExpression) qc;
                     int innerColumnsPre = innerVirtualModel.getBottomUpColumns().size();
+
                     replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getPartitionBy());
                     replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getOrderBy());
                     int innerColumnsPost = innerVirtualModel.getBottomUpColumns().size();
-                    // window model might require columns it doesn't explicitly contain (e.g. used for order by or partition by  in over() clause  )
-                    // skipping translating model will trigger 'invalid column' exceptions
                     forceTranslatingModel |= innerColumnsPre != innerColumnsPost;
                 }
             }
@@ -9552,39 +9772,20 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0, n = queryColumns.size(); i < n; i++) {
                 QueryColumn qc = queryColumns.getQuick(i);
                 if (qc.isWindowExpression()) {
-                    final WindowExpression ac = (WindowExpression) qc;
-                    // preceding and following accept non-negative values only
-                    long rowsLo = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsLoExpr(), sqlExecutionContext);
-                    long rowsHi = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsHiExpr(), sqlExecutionContext);
+                    normalizeWindowFrame((WindowExpression) qc, sqlExecutionContext);
+                }
+            }
+        }
 
-                    switch (ac.getRowsLoKind()) {
-                        case WindowExpression.PRECEDING:
-                            rowsLo = rowsLo != Long.MAX_VALUE ? -rowsLo : Long.MIN_VALUE;
-                            break;
-                        case WindowExpression.FOLLOWING:
-                            //rowsLo = rowsLo;
-                            break;
-                        default:
-                            // CURRENT ROW
-                            rowsLo = 0;
-                            break;
-                    }
-
-                    switch (ac.getRowsHiKind()) {
-                        case WindowExpression.PRECEDING:
-                            rowsHi = rowsHi != Long.MAX_VALUE ? -rowsHi : Long.MIN_VALUE;
-                            break;
-                        case WindowExpression.FOLLOWING:
-                            //rowsHi = rowsHi;
-                            break;
-                        default:
-                            // CURRENT ROW
-                            rowsHi = 0;
-                            break;
-                    }
-
-                    ac.setRowsLo(rowsLo);
-                    ac.setRowsHi(rowsHi);
+        // Validate named window definitions (WINDOW clause). Referenced definitions were already
+        // validated above via resolved copies, but unreferenced definitions need validation too.
+        LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows = model.getNamedWindows();
+        if (namedWindows.size() > 0) {
+            ObjList<CharSequence> keys = namedWindows.keys();
+            for (int i = 0, n = keys.size(); i < n; i++) {
+                WindowExpression ac = namedWindows.get(keys.getQuick(i));
+                if (ac != null) {
+                    normalizeWindowFrame(ac, sqlExecutionContext);
                 }
             }
         }
@@ -9991,6 +10192,8 @@ public class SqlOptimiser implements Mutable {
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
             validateNoWindowFunctionsInWhereClauses(rewrittenModel);
+            resolveWindowInheritance(rewrittenModel);
+            resolveNamedWindows(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
             detectTimestampOffsetsRecursive(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);

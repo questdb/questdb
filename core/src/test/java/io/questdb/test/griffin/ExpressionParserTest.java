@@ -2244,7 +2244,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(
                 "f(c) over (partition by b order by ts",
                 35,
-                "')' expected to close OVER clause"
+                "')' expected to close window specification"
         );
     }
 
