@@ -302,8 +302,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             // Get ASOF join resources
             final MarkoutTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
             final Map asOfJoinMap = atom.getAsOfJoinMap(slotId);  // Cache: joinKey -> rowId
-            final RecordSink masterAsOfJoinMapSink = atom.getMasterKeyCopier();
-            final RecordSink slaveAsOfJoinMapSink = atom.getSlaveKeyCopier();
+            final RecordSink masterAsOfJoinMapSink = atom.getMasterAsOfJoinSink();
+            final RecordSink slaveAsOfJoinMapSink = atom.getSlaveAsOfJoinMapSink();
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
             final Record masterKeyRecord = atom.getMasterKeyRecord(slotId, record);
 
@@ -495,8 +495,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             // Get ASOF join resources
             final MarkoutTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
             final Map asOfJoinMap = atom.getAsOfJoinMap(slotId);  // Cache: joinKey -> rowId
-            final RecordSink masterAsOfJoinMapSink = atom.getMasterKeyCopier();
-            final RecordSink slaveAsOfJoinMapSink = atom.getSlaveKeyCopier();
+            final RecordSink masterAsOfJoinMapSink = atom.getMasterAsOfJoinSink();
+            final RecordSink slaveAsOfJoinMapSink = atom.getSlaveAsOfJoinMapSink();
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
             final Record masterKeyRecord = atom.getMasterKeyRecord(slotId, record);
 

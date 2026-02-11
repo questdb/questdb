@@ -357,7 +357,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         return perWorkerCombinedRecords.getQuick(slotId);
     }
 
-    public RecordSink getMasterKeyCopier() {
+    public RecordSink getMasterAsOfJoinSink() {
         return masterAsOfJoinMapSink;
     }
 
@@ -395,7 +395,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         return sequenceRowCount;
     }
 
-    public RecordSink getSlaveKeyCopier() {
+    public RecordSink getSlaveAsOfJoinMapSink() {
         return slaveAsOfJoinMapSink;
     }
 

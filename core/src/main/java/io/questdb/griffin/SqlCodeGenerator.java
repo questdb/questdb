@@ -3204,7 +3204,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * Generates the AsyncMarkoutGroupByRecordCursorFactory for HORIZON JOIN.
+     * Generates the factories for HORIZON JOIN.
      */
     private RecordCursorFactory generateHorizonJoinFactory(
             QueryModel parentModel,
@@ -4739,8 +4739,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // Process join context for key-based matching (similar to ASOF JOIN)
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
 
-                                // Create the AsyncMarkoutGroupByRecordCursorFactory
-                                // This returns the complete factory with GROUP BY aggregation
                                 return generateHorizonJoinFactory(
                                         parentModel,
                                         horizonContext,
