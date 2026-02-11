@@ -396,7 +396,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (!executionContext.isValidationOnly()) {
             CharSequence tok = SqlUtil.fetchNext(lexer);
             if (tok != null && !isSemicolon(tok)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+                throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
             }
         }
 
@@ -462,7 +462,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                     // consume residual text, such as semicolon
                     goToQueryEnd();
-                    // We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
+                    // We've to move lexer because some query handlers don't consume all tokens
                     // some code in postCompile might need full text of current query
                     try {
                         batchCallback.postCompile(this, compiledQuery, sqlText);
@@ -2372,7 +2372,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private void compileBegin(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         // BEGIN [TRANSACTION] — consume the optional keyword
         CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok != null && !isSemicolon(tok) && !isTransactionKeyword(tok)) {
+        if (tok != null && !isTransactionKeyword(tok)) {
             lexer.unparseLast();
         }
         compiledQuery.ofBegin();
@@ -2430,7 +2430,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private void compileCommit(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         // COMMIT [TRANSACTION] — consume the optional keyword
         CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok != null && !isSemicolon(tok) && !isTransactionKeyword(tok)) {
+        if (tok != null && !isTransactionKeyword(tok)) {
             lexer.unparseLast();
         }
         compiledQuery.ofCommit();
@@ -3309,7 +3309,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private void compileRollback(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         // ROLLBACK [TRANSACTION] — consume the optional keyword
         CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok != null && !isSemicolon(tok) && !isTransactionKeyword(tok)) {
+        if (tok != null && !isTransactionKeyword(tok)) {
             lexer.unparseLast();
         }
         compiledQuery.ofRollback();
@@ -3326,14 +3326,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         tok = expectToken(lexer, "'=' or 'TO'");
-        if (!Chars.equals(tok, '=') && !isToKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'=' or 'TO' expected");
+        if (Chars.equals(tok, '=') || isToKeyword(tok)) {
+            // Standard form: validate value [, value]*
+            do {
+                expectToken(lexer, "value");
+            } while ((tok = SqlUtil.fetchNext(lexer)) != null && !isSemicolon(tok) && Chars.equals(tok, ','));
+        } else {
+            // Non-standard form (e.g., SET TIME ZONE 'UTC'): consume remaining tokens
+            while ((tok = SqlUtil.fetchNext(lexer)) != null && !isSemicolon(tok)) {
+            }
         }
-
-        // consume optional [, value]*
-        do {
-            expectToken(lexer, "value");
-        } while ((tok = SqlUtil.fetchNext(lexer)) != null && !isSemicolon(tok) && Chars.equals(tok, ','));
 
         if (tok != null) {
             lexer.unparseLast();
