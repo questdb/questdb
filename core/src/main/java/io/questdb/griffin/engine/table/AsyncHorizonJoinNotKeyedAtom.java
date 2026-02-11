@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Function;
@@ -34,6 +35,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.jit.CompiledFilter;
+import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -62,8 +64,17 @@ public class AsyncHorizonJoinNotKeyedAtom extends BaseAsyncHorizonJoinAtom {
             @NotNull LongList offsets,
             int valueCount,
             @Nullable ColumnTypes asOfJoinKeyTypes,
-            @Nullable RecordSink masterAsOfJoinMapSink,
-            @Nullable RecordSink slaveAsOfJoinMapSink,
+            @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
+            @Nullable Class<RecordSink> slaveAsOfJoinMapSinkClass,
+            @Transient @Nullable ColumnTypes masterAsOfJoinColumnTypes,
+            @Transient @Nullable ColumnFilter masterAsOfJoinColumnFilter,
+            @Transient @Nullable ColumnTypes slaveAsOfJoinColumnTypes,
+            @Transient @Nullable ColumnFilter slaveAsOfJoinColumnFilter,
+            @Transient @Nullable BitSet asOfWriteSymbolAsString,
+            @Transient @Nullable BitSet asOfWriteStringAsVarcharMaster,
+            @Transient @Nullable BitSet asOfWriteStringAsVarcharSlave,
+            @Transient @Nullable BitSet writeTimestampAsNanosMaster,
+            @Transient @Nullable BitSet writeTimestampAsNanosSlave,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -87,8 +98,17 @@ public class AsyncHorizonJoinNotKeyedAtom extends BaseAsyncHorizonJoinAtom {
                 masterTimestampColumnIndex,
                 offsets,
                 asOfJoinKeyTypes,
-                masterAsOfJoinMapSink,
-                slaveAsOfJoinMapSink,
+                masterAsOfJoinMapSinkClass,
+                slaveAsOfJoinMapSinkClass,
+                masterAsOfJoinColumnTypes,
+                masterAsOfJoinColumnFilter,
+                slaveAsOfJoinColumnTypes,
+                slaveAsOfJoinColumnFilter,
+                asOfWriteSymbolAsString,
+                asOfWriteStringAsVarcharMaster,
+                asOfWriteStringAsVarcharSlave,
+                writeTimestampAsNanosMaster,
+                writeTimestampAsNanosSlave,
                 masterColumnCount,
                 masterSymbolKeyColumnIndices,
                 slaveSymbolKeyColumnIndices,

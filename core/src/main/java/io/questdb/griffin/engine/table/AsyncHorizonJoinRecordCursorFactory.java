@@ -29,6 +29,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
@@ -57,6 +58,7 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.LongList;
@@ -105,8 +107,17 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Nullable ColumnTypes asOfJoinKeyTypes,
-            @Nullable RecordSink masterAsOfJoinMapSink,
-            @Nullable RecordSink slaveAsOfJoinMapSink,
+            @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
+            @Nullable Class<RecordSink> slaveAsOfJoinMapSinkClass,
+            @Transient @Nullable ColumnTypes masterAsOfJoinColumnTypes,
+            @Transient @Nullable ColumnFilter masterAsOfJoinColumnFilter,
+            @Transient @Nullable ColumnTypes slaveAsOfJoinColumnTypes,
+            @Transient @Nullable ColumnFilter slaveAsOfJoinColumnFilter,
+            @Transient @Nullable BitSet asOfWriteSymbolAsString,
+            @Transient @Nullable BitSet asOfWriteStringAsVarcharMaster,
+            @Transient @Nullable BitSet asOfWriteStringAsVarcharSlave,
+            @Transient @Nullable BitSet writeTimestampAsNanosMaster,
+            @Transient @Nullable BitSet writeTimestampAsNanosSlave,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -153,8 +164,17 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     keyTypes,
                     valueTypes,
                     asOfJoinKeyTypes,
-                    masterAsOfJoinMapSink,
-                    slaveAsOfJoinMapSink,
+                    masterAsOfJoinMapSinkClass,
+                    slaveAsOfJoinMapSinkClass,
+                    masterAsOfJoinColumnTypes,
+                    masterAsOfJoinColumnFilter,
+                    slaveAsOfJoinColumnTypes,
+                    slaveAsOfJoinColumnFilter,
+                    asOfWriteSymbolAsString,
+                    asOfWriteStringAsVarcharMaster,
+                    asOfWriteStringAsVarcharSlave,
+                    writeTimestampAsNanosMaster,
+                    writeTimestampAsNanosSlave,
                     masterColumnCount,
                     masterSymbolKeyColumnIndices,
                     slaveSymbolKeyColumnIndices,
@@ -316,8 +336,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             // Get ASOF join resources
             final MarkoutTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
             final Map asOfJoinMap = atom.getAsOfJoinMap(slotId);  // Cache: joinKey -> rowId
-            final RecordSink masterAsOfJoinMapSink = atom.getMasterAsOfJoinSink();
-            final RecordSink slaveAsOfJoinMapSink = atom.getSlaveAsOfJoinMapSink();
+            final RecordSink masterAsOfJoinMapSink = atom.getMasterAsOfJoinSink(slotId);
+            final RecordSink slaveAsOfJoinMapSink = atom.getSlaveAsOfJoinMapSink(slotId);
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
             final Record masterKeyRecord = atom.getMasterKeyRecord(slotId, record);
 
@@ -512,8 +532,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             // Get ASOF join resources
             final MarkoutTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
             final Map asOfJoinMap = atom.getAsOfJoinMap(slotId);  // Cache: joinKey -> rowId
-            final RecordSink masterAsOfJoinMapSink = atom.getMasterAsOfJoinSink();
-            final RecordSink slaveAsOfJoinMapSink = atom.getSlaveAsOfJoinMapSink();
+            final RecordSink masterAsOfJoinMapSink = atom.getMasterAsOfJoinSink(slotId);
+            final RecordSink slaveAsOfJoinMapSink = atom.getSlaveAsOfJoinMapSink(slotId);
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
             final Record masterKeyRecord = atom.getMasterKeyRecord(slotId, record);
 

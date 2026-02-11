@@ -3407,8 +3407,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         // Process ASOF join key information for the join lookup
         ArrayColumnTypes asOfJoinKeyTypes = null;
-        RecordSink masterAsOfJoinMapSink = null;
-        RecordSink slaveAsOfJoinMapSink = null;
+        Class<RecordSink> masterAsOfJoinMapSinkClass = null;
+        Class<RecordSink> slaveAsOfJoinMapSinkClass = null;
+        BitSet asOfWriteSymbolAsString = null;
+        BitSet asOfWriteStringAsVarcharA = null;
+        BitSet asOfWriteStringAsVarcharB = null;
         int[] masterSymbolKeyColumnIndices = null;
         int[] slaveSymbolKeyColumnIndices = null;
 
@@ -3422,17 +3425,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // Build ASOF join key types and configure symbol/string handling
             asOfJoinKeyTypes = new ArrayColumnTypes();
-            BitSet asOfWriteSymbolAsString = new BitSet();
-            BitSet asOfWriteStringAsVarcharA = new BitSet();
-            BitSet asOfWriteStringAsVarcharB = new BitSet();
+            asOfWriteSymbolAsString = new BitSet();
+            asOfWriteStringAsVarcharA = new BitSet();
+            asOfWriteStringAsVarcharB = new BitSet();
             IntList masterSymbolKeyCols = null;
             IntList slaveSymbolKeyCols = null;
+            writeTimestampAsNanosA.clear();
+            writeTimestampAsNanosB.clear();
 
             for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
                 final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
                 final int columnIndexB = listColumnFilterB.getColumnIndexFactored(k);
                 final int columnTypeA = slaveMetadata.getColumnType(columnIndexA);
                 final int columnTypeB = masterMetadata.getColumnType(columnIndexB);
+
+                if (columnTypeB != columnTypeA
+                        && !(isSymbolOrStringOrVarchar(columnTypeB) && isSymbolOrStringOrVarchar(columnTypeA))
+                        && !(isTimestamp(columnTypeB) && isTimestamp(columnTypeA))
+                ) {
+                    throw SqlException.$(asOfJoinContext.aNodes.getQuick(k).position, "join column type mismatch");
+                }
 
                 // For SYMBOL columns from different tables, write as STRING for comparison
                 if (ColumnType.isVarchar(columnTypeA) || ColumnType.isVarchar(columnTypeB)) {
@@ -3463,6 +3475,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     asOfJoinKeyTypes.add(columnTypeB);
                     asOfWriteSymbolAsString.set(columnIndexA);
                     asOfWriteSymbolAsString.set(columnIndexB);
+                } else if (columnTypeA != columnTypeB && isTimestamp(columnTypeA) && isTimestamp(columnTypeB)) {
+                    asOfJoinKeyTypes.add(TIMESTAMP_NANO);
+                    if (!isTimestampNano(columnTypeA)) {
+                        writeTimestampAsNanosA.set(columnIndexA);
+                    }
+                    if (!isTimestampNano(columnTypeB)) {
+                        writeTimestampAsNanosB.set(columnIndexB);
+                    }
                 } else {
                     asOfJoinKeyTypes.add(columnTypeA);
                 }
@@ -3473,21 +3493,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 slaveSymbolKeyColumnIndices = slaveSymbolKeyCols.toArray();
             }
 
-            // Create key copiers with proper symbol/varchar handling
-            masterAsOfJoinMapSink = RecordSinkFactory.getInstance(
+            // Generate key copier classes with proper symbol/varchar handling
+            // Two-phase pattern: generate class once, create per-worker instances in atoms
+            masterAsOfJoinMapSinkClass = RecordSinkFactory.getInstanceClass(
                     configuration,
                     asm,
                     masterMetadata,
                     listColumnFilterB,
+                    null,
+                    null,
                     asOfWriteSymbolAsString,
                     asOfWriteStringAsVarcharB,
                     writeTimestampAsNanosB
             );
-            slaveAsOfJoinMapSink = RecordSinkFactory.getInstance(
+            slaveAsOfJoinMapSinkClass = RecordSinkFactory.getInstanceClass(
                     configuration,
                     asm,
                     slaveMetadata,
                     listColumnFilterA,
+                    null,
+                    null,
                     asOfWriteSymbolAsString,
                     asOfWriteStringAsVarcharA,
                     writeTimestampAsNanosA
@@ -3499,6 +3524,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (!masterFactory.recordCursorSupportsRandomAccess()) {
                 throw SqlException.position(slaveModel.getJoinKeywordPosition())
                         .put("HORIZON JOIN master table must support random access or page frames");
+            }
+
+            // Create sink instances from generated classes for single-threaded path
+            final RecordSink masterAsOfJoinMapSink;
+            final RecordSink slaveAsOfJoinMapSink;
+            if (masterAsOfJoinMapSinkClass != null) {
+                masterAsOfJoinMapSink = RecordSinkFactory.getInstance(
+                        masterAsOfJoinMapSinkClass,
+                        masterMetadata,
+                        listColumnFilterB,
+                        null, null,
+                        asOfWriteSymbolAsString,
+                        asOfWriteStringAsVarcharB,
+                        writeTimestampAsNanosB
+                );
+                slaveAsOfJoinMapSink = RecordSinkFactory.getInstance(
+                        slaveAsOfJoinMapSinkClass,
+                        slaveMetadata,
+                        listColumnFilterA,
+                        null,
+                        null,
+                        asOfWriteSymbolAsString,
+                        asOfWriteStringAsVarcharA,
+                        writeTimestampAsNanosA
+                );
+            } else {
+                masterAsOfJoinMapSink = null;
+                slaveAsOfJoinMapSink = null;
             }
 
             // Choose single-threaded factory based on whether there are GROUP BY keys
@@ -3576,8 +3629,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     perWorkerGroupByFunctions,
                     valueTypesCopy.getColumnCount(),
                     asOfJoinKeyTypes,
-                    masterAsOfJoinMapSink,
-                    slaveAsOfJoinMapSink,
+                    masterAsOfJoinMapSinkClass,
+                    slaveAsOfJoinMapSinkClass,
+                    masterMetadata,
+                    listColumnFilterB,
+                    slaveMetadata,
+                    listColumnFilterA,
+                    asOfWriteSymbolAsString,
+                    asOfWriteStringAsVarcharB,
+                    asOfWriteStringAsVarcharA,
+                    writeTimestampAsNanosB,
+                    writeTimestampAsNanosA,
                     masterMetadata.getColumnCount(),
                     masterSymbolKeyColumnIndices,
                     slaveSymbolKeyColumnIndices,
@@ -3612,8 +3674,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 keyTypesCopy,
                 valueTypesCopy,
                 asOfJoinKeyTypes,
-                masterAsOfJoinMapSink,
-                slaveAsOfJoinMapSink,
+                masterAsOfJoinMapSinkClass,
+                slaveAsOfJoinMapSinkClass,
+                masterMetadata,
+                listColumnFilterB,
+                slaveMetadata,
+                listColumnFilterA,
+                asOfWriteSymbolAsString,
+                asOfWriteStringAsVarcharB,
+                asOfWriteStringAsVarcharA,
+                writeTimestampAsNanosB,
+                writeTimestampAsNanosA,
                 masterMetadata.getColumnCount(),
                 masterSymbolKeyColumnIndices,
                 slaveSymbolKeyColumnIndices,
@@ -8572,9 +8643,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final String columnNameA = slaveMetadata.getColumnName(columnIndexA);
             final int columnTypeB = masterMetadata.getColumnType(columnIndexB);
             final String columnNameB = masterMetadata.getColumnName(columnIndexB);
-            if (columnTypeB != columnTypeA &&
-                    !(isSymbolOrStringOrVarchar(columnTypeB) && isSymbolOrStringOrVarchar(columnTypeA)) &&
-                    !(isTimestamp(columnTypeB) && isTimestamp(columnTypeA))
+            if (columnTypeB != columnTypeA
+                    && !(isSymbolOrStringOrVarchar(columnTypeB) && isSymbolOrStringOrVarchar(columnTypeA))
+                    && !(isTimestamp(columnTypeB) && isTimestamp(columnTypeA))
             ) {
                 // index in column filter and join context is the same
                 throw SqlException.$(jc.aNodes.getQuick(k).position, "join column type mismatch");

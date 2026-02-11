@@ -2568,6 +2568,136 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinTypeMismatchIntVsDouble() throws Exception {
+        assertHorizonJoinTypeMismatch("INT", "DOUBLE");
+    }
+
+    @Test
+    public void testHorizonJoinTypeMismatchLongVsSymbol() throws Exception {
+        assertHorizonJoinTypeMismatch("LONG", "SYMBOL");
+    }
+
+    @Test
+    public void testHorizonJoinWithByteKey() throws Exception {
+        assertHorizonJoinWithTypedKey("BYTE", "BYTE", "1", "2");
+    }
+
+    @Test
+    public void testHorizonJoinWithDateKey() throws Exception {
+        assertHorizonJoinWithTypedKey("DATE", "DATE",
+                "'2000-01-01T00:00:00.000Z'", "'2000-01-02T00:00:00.000Z'");
+    }
+
+    @Test
+    public void testHorizonJoinWithDecimal128Key() throws Exception {
+        // DECIMAL(20, 5) has precision 20, which maps to DECIMAL128 internally
+        assertHorizonJoinWithTypedKey("DECIMAL(20, 5)", "DECIMAL(20, 5)",
+                "1.00000::DECIMAL(20,5)", "2.00000::DECIMAL(20,5)");
+    }
+
+    @Test
+    public void testHorizonJoinWithDecimal256Key() throws Exception {
+        // DECIMAL(40, 5) has precision 40, which maps to DECIMAL256 internally
+        assertHorizonJoinWithTypedKey("DECIMAL(40, 5)", "DECIMAL(40, 5)",
+                "1.00000::DECIMAL(40,5)", "2.00000::DECIMAL(40,5)");
+    }
+
+    @Test
+    public void testHorizonJoinWithDoubleKey() throws Exception {
+        assertHorizonJoinWithTypedKey("DOUBLE", "DOUBLE", "1.0", "2.0");
+    }
+
+    @Test
+    public void testHorizonJoinWithIntKey() throws Exception {
+        assertHorizonJoinWithTypedKey("INT", "INT", "1", "2");
+    }
+
+    @Test
+    public void testHorizonJoinWithIpv4Key() throws Exception {
+        assertHorizonJoinWithTypedKey("IPv4", "IPv4", "'1.0.0.1'", "'1.0.0.2'");
+    }
+
+    @Test
+    public void testHorizonJoinWithMixedTimestampKey() throws Exception {
+        // Test HORIZON JOIN with TIMESTAMP_NS key on master and TIMESTAMP key on slave.
+        // The coercion logic should convert both to TIMESTAMP_NANO for comparison.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE orders (ts #TIMESTAMP, k TIMESTAMP_NS, qty LONG) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, k TIMESTAMP, price DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.500000Z', '2000-01-01T00:00:00.000000Z', 100.0),
+                                ('1970-01-01T00:00:00.500000Z', '2000-01-02T00:00:00.000000Z', 200.0),
+                                ('1970-01-01T00:00:01.500000Z', '2000-01-01T00:00:00.000000Z', 110.0),
+                                ('1970-01-01T00:00:01.500000Z', '2000-01-02T00:00:00.000000Z', 210.0)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('1970-01-01T00:00:01.000000Z', '2000-01-01T00:00:00.000000000Z', 100),
+                                ('1970-01-01T00:00:01.000000Z', '2000-01-02T00:00:00.000000000Z', 200)
+                            """
+            );
+
+            // At offset 0: key1->100.0, key2->200.0, avg=150.0, sum(qty)=300
+            // At offset 1s: key1->110.0, key2->210.0, avg=160.0, sum(qty)=300
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
+                    "FROM orders AS t " +
+                    "HORIZON JOIN prices AS p ON (t.k = p.k) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tsum
+                            0\t150.0\t300
+                            1\t160.0\t300
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithShortKey() throws Exception {
+        assertHorizonJoinWithTypedKey("SHORT", "SHORT", "1", "2");
+    }
+
+    @Test
+    public void testHorizonJoinWithStringKey() throws Exception {
+        assertHorizonJoinWithTypedKey("STRING", "STRING", "'AAPL'", "'GOOG'");
+    }
+
+    @Test
+    public void testHorizonJoinWithStringMasterVarcharSlaveKey() throws Exception {
+        assertHorizonJoinWithTypedKey("STRING", "VARCHAR", "'AAPL'", "'GOOG'");
+    }
+
+    @Test
+    public void testHorizonJoinWithUuidKey() throws Exception {
+        assertHorizonJoinWithTypedKey("UUID", "UUID",
+                "'11111111-1111-1111-1111-111111111111'", "'22222222-2222-2222-2222-222222222222'");
+    }
+
+    @Test
+    public void testHorizonJoinWithVarcharMasterStringSlaveKey() throws Exception {
+        assertHorizonJoinWithTypedKey("VARCHAR", "STRING", "'AAPL'", "'GOOG'");
+    }
+
+    @Test
     public void testHorizonJoinNotKeyedAllColumnTypes() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -2645,6 +2775,75 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     sql,
                     null,
                     false,
+                    true
+            );
+        });
+    }
+
+    private void assertHorizonJoinTypeMismatch(String masterKeyType, String slaveKeyType) throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE orders (ts #TIMESTAMP, k " + masterKeyType + ", qty LONG) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, k " + slaveKeyType + ", price DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            assertExceptionNoLeakCheck(
+                    "SELECT avg(p.price) " +
+                            "FROM orders AS t " +
+                            "HORIZON JOIN prices AS p ON (t.k = p.k) " +
+                            "RANGE FROM 0s TO 0s STEP 1s AS h",
+                    72,
+                    "join column type mismatch"
+            );
+        });
+    }
+
+    private void assertHorizonJoinWithTypedKey(String masterKeyType, String slaveKeyType, String keyVal1, String keyVal2) throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE orders (ts #TIMESTAMP, k " + masterKeyType + ", qty LONG) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, k " + slaveKeyType + ", price DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    "INSERT INTO prices VALUES " +
+                            "('1970-01-01T00:00:00.500000Z', " + keyVal1 + ", 100.0), " +
+                            "('1970-01-01T00:00:00.500000Z', " + keyVal2 + ", 200.0), " +
+                            "('1970-01-01T00:00:01.500000Z', " + keyVal1 + ", 110.0), " +
+                            "('1970-01-01T00:00:01.500000Z', " + keyVal2 + ", 210.0)"
+            );
+
+            execute(
+                    "INSERT INTO orders VALUES " +
+                            "('1970-01-01T00:00:01.000000Z', " + keyVal1 + ", 100), " +
+                            "('1970-01-01T00:00:01.000000Z', " + keyVal2 + ", 200)"
+            );
+
+            // At offset 0: key1->100.0, key2->200.0, avg=150.0, sum(qty)=300
+            // At offset 1s: key1->110.0, key2->210.0, avg=160.0, sum(qty)=300
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
+                    "FROM orders AS t " +
+                    "HORIZON JOIN prices AS p ON (t.k = p.k) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tsum
+                            0\t150.0\t300
+                            1\t160.0\t300
+                            """,
+                    sql,
+                    null,
+                    true,
                     true
             );
         });

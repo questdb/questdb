@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
@@ -43,6 +44,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.jit.CompiledFilter;
+import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.LongList;
@@ -77,8 +79,17 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Nullable ColumnTypes asOfJoinKeyTypes,
-            @Nullable RecordSink masterAsOfJoinMapSink,
-            @Nullable RecordSink slaveAsOfJoinMapSink,
+            @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
+            @Nullable Class<RecordSink> slaveAsOfJoinMapSinkClass,
+            @Transient @Nullable ColumnTypes masterAsOfJoinColumnTypes,
+            @Transient @Nullable ColumnFilter masterAsOfJoinColumnFilter,
+            @Transient @Nullable ColumnTypes slaveAsOfJoinColumnTypes,
+            @Transient @Nullable ColumnFilter slaveAsOfJoinColumnFilter,
+            @Transient @Nullable BitSet asOfWriteSymbolAsString,
+            @Transient @Nullable BitSet asOfWriteStringAsVarcharMaster,
+            @Transient @Nullable BitSet asOfWriteStringAsVarcharSlave,
+            @Transient @Nullable BitSet writeTimestampAsNanosMaster,
+            @Transient @Nullable BitSet writeTimestampAsNanosSlave,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -105,8 +116,17 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
                 masterTimestampColumnIndex,
                 offsets,
                 asOfJoinKeyTypes,
-                masterAsOfJoinMapSink,
-                slaveAsOfJoinMapSink,
+                masterAsOfJoinMapSinkClass,
+                slaveAsOfJoinMapSinkClass,
+                masterAsOfJoinColumnTypes,
+                masterAsOfJoinColumnFilter,
+                slaveAsOfJoinColumnTypes,
+                slaveAsOfJoinColumnFilter,
+                asOfWriteSymbolAsString,
+                asOfWriteStringAsVarcharMaster,
+                asOfWriteStringAsVarcharSlave,
+                writeTimestampAsNanosMaster,
+                writeTimestampAsNanosSlave,
                 masterColumnCount,
                 masterSymbolKeyColumnIndices,
                 slaveSymbolKeyColumnIndices,
