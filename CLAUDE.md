@@ -42,6 +42,19 @@ Use modern Java features:
 
 - enhanced switch
 - multiline string literal
+- pattern variable in instanceof checks
+
+### Tests
+
+- write all tests using assertMemoryLeak()
+- use assertQueryNoLeakCheck() to assert the results of queries
+- use execute() to run non-queries (DDL)
+- use UPPERCASE for SQL keywords (CREATE TABLE, INSERT, SELECT ... AS ... FROM, etc.)
+- use a single INSERT statement to insert multiple rows
+- use multiline strings for longer statements (multiple INSERT rows, complex queries),
+  as well as to assert multiline query results
+- use the expr::TYPE syntax for casts
+- use underscore to separate thousands in numbers with 5 digits or more
 
 ### Building
 
