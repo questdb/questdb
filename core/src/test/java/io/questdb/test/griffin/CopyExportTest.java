@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -36,8 +37,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.Job;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
@@ -457,6 +460,70 @@ public class CopyExportTest extends AbstractCairoTest {
                 37,
                 "unsupported format, only 'parquet' is supported"
         );
+    }
+
+    @Test
+    public void testCopyParquetFailsWithMmapErrorCleansTempTable() throws Exception {
+        final LongHashSet tempTableColumnFds = new LongHashSet();
+        final AtomicBoolean failed = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                tempTableColumnFds.remove(fd);
+                return super.close(fd);
+            }
+
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (tempTableColumnFds.contains(fd) && failed.compareAndSet(false, true)) {
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (Utf8s.containsAscii(name, File.separator + "copy.") && Utf8s.endsWithAscii(name, ".d")) {
+                    tempTableColumnFds.add(fd);
+                }
+                return fd;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute("create table test_table (x int, y long, z string)");
+            execute("insert into test_table values (1, 100L, 'hello'), (2, 200L, 'world')");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "copy (select * from test_table) to 'mmap_fail_output' with format parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                """
+                                        status
+                                        failed
+                                        """,
+                                "SELECT status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+
+                        ObjHashSet<TableToken> bucket = new ObjHashSet<>();
+                        engine.getTableTokens(bucket, false);
+                        for (int i = 0, n = bucket.size(); i < n; i++) {
+                            TableToken token = bucket.get(i);
+                            Assert.assertFalse(
+                                    "temp table should have been cleaned up: " + token.getTableName(),
+                                    token.getTableName().startsWith("copy.")
+                            );
+                        }
+                    });
+
+            testCopyExport(stmt, test);
+        });
     }
 
     @Test
