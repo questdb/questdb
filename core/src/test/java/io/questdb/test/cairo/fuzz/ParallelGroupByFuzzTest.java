@@ -457,162 +457,32 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelDecimal128KeyGroupBy() throws Exception {
-        // Decimals aren't yet supported in parquet.
-        Assume.assumeFalse(convertToParquet);
-
-        final int numOfThreads = 8;
-        final int numOfIterations = 50;
-        final String query = "SELECT key, avg + sum from (" +
-                "  SELECT key, avg(value), sum(colTop) FROM tab" +
-                ") ORDER BY key";
-        final String expected = """
-                key\tcolumn
-                0\t1644027.5
-                1\t1640823.5
-                2\t1641624.5
-                3\t1642425.5
-                4\t1643226.5
-                """;
-
-        final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
-        final WorkerPool pool = new WorkerPool(() -> 4);
-        TestUtils.execute(
-                pool,
-                (engine, compiler, sqlExecutionContext) -> {
-                    engine.execute(
-                            "CREATE TABLE tab (" +
-                                    "  ts TIMESTAMP," +
-                                    "  key DECIMAL(20, 0)," +
-                                    "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
-                            sqlExecutionContext
-                    );
-                    engine.execute(
-                            "insert into tab select (x * 864000000)::timestamp, (x % 5)::DECIMAL(20,0), x from long_sequence(" + ROW_COUNT + ")",
-                            sqlExecutionContext
-                    );
-                    engine.execute("ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
-                    engine.execute(
-                            "insert into tab " +
-                                    "select ((50 + x) * 864000000)::timestamp, ((50 + x) % 5)::DECIMAL(20,0), 50 + x, 50 + x " +
-                                    "from long_sequence(" + ROW_COUNT + ")",
-                            sqlExecutionContext
-                    );
-                    if (convertToParquet) {
-                        execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
-                    }
-
-                    final CyclicBarrier barrier = new CyclicBarrier(numOfThreads);
-                    final SOCountDownLatch haltLatch = new SOCountDownLatch(numOfThreads);
-
-                    for (int i = 0; i < numOfThreads; i++) {
-                        final int threadId = i;
-                        new Thread(() -> {
-                            final StringSink sink = new StringSink();
-                            TestUtils.await(barrier);
-                            try {
-                                for (int j = 0; j < numOfIterations; j++) {
-                                    assertQueries(engine, sqlExecutionContext, sink, query, expected);
-                                }
-                            } catch (Throwable th) {
-                                th.printStackTrace(System.out);
-                                errors.put(threadId, th);
-                            } finally {
-                                haltLatch.countDown();
-                            }
-                        }).start();
-                    }
-                    haltLatch.await();
-                },
-                configuration,
-                LOG
+        testParallelDecimalKeyGroupBy(
+                "SELECT d128, avg(d64) FROM tab ORDER BY d128 LIMIT 5",
+                """
+                        d128\tavg
+                        0.000\t10.00
+                        1.000\t10.90
+                        2.000\t11.90
+                        3.000\t12.90
+                        4.000\t13.90
+                        """
         );
-
-        if (!errors.isEmpty()) {
-            for (Map.Entry<Integer, Throwable> entry : errors.entrySet()) {
-                LOG.error().$("Error in thread [id=").$(entry.getKey()).$("] ").$(entry.getValue()).$();
-            }
-            fail("Error in threads");
-        }
     }
 
     @Test
     public void testParallelDecimal256KeyGroupBy() throws Exception {
-        // Decimals aren't yet supported in parquet.
-        Assume.assumeFalse(convertToParquet);
-
-        final int numOfThreads = 8;
-        final int numOfIterations = 50;
-        final String query = "SELECT key, avg + sum from (" +
-                "  SELECT key, avg(value), sum(colTop) FROM tab" +
-                ") ORDER BY key";
-        final String expected = """
-                key\tcolumn
-                0\t1644027.5
-                1\t1640823.5
-                2\t1641624.5
-                3\t1642425.5
-                4\t1643226.5
-                """;
-
-        final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
-        final WorkerPool pool = new WorkerPool(() -> 4);
-        TestUtils.execute(
-                pool,
-                (engine, compiler, sqlExecutionContext) -> {
-                    engine.execute(
-                            "CREATE TABLE tab (" +
-                                    "  ts TIMESTAMP," +
-                                    "  key DECIMAL(40, 0)," +
-                                    "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
-                            sqlExecutionContext
-                    );
-                    engine.execute(
-                            "insert into tab select (x * 864000000)::timestamp, (x % 5)::DECIMAL(40,0), x from long_sequence(" + ROW_COUNT + ")",
-                            sqlExecutionContext
-                    );
-                    engine.execute("ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
-                    engine.execute(
-                            "insert into tab " +
-                                    "select ((50 + x) * 864000000)::timestamp, ((50 + x) % 5)::DECIMAL(40,0), 50 + x, 50 + x " +
-                                    "from long_sequence(" + ROW_COUNT + ")",
-                            sqlExecutionContext
-                    );
-                    if (convertToParquet) {
-                        execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
-                    }
-
-                    final CyclicBarrier barrier = new CyclicBarrier(numOfThreads);
-                    final SOCountDownLatch haltLatch = new SOCountDownLatch(numOfThreads);
-
-                    for (int i = 0; i < numOfThreads; i++) {
-                        final int threadId = i;
-                        new Thread(() -> {
-                            final StringSink sink = new StringSink();
-                            TestUtils.await(barrier);
-                            try {
-                                for (int j = 0; j < numOfIterations; j++) {
-                                    assertQueries(engine, sqlExecutionContext, sink, query, expected);
-                                }
-                            } catch (Throwable th) {
-                                th.printStackTrace(System.out);
-                                errors.put(threadId, th);
-                            } finally {
-                                haltLatch.countDown();
-                            }
-                        }).start();
-                    }
-                    haltLatch.await();
-                },
-                configuration,
-                LOG
+        testParallelDecimalKeyGroupBy(
+                "SELECT d256, avg(d64) FROM tab ORDER BY d256 LIMIT 5",
+                """
+                        d256\tavg
+                        0.000000\t10.00
+                        1.000000\t10.75
+                        2.000000\t11.75
+                        3.000000\t12.75
+                        4.000000\t13.75
+                        """
         );
-
-        if (!errors.isEmpty()) {
-            for (Map.Entry<Integer, Throwable> entry : errors.entrySet()) {
-                LOG.error().$("Error in thread [id=").$(entry.getKey()).$("] ").$(entry.getValue()).$();
-            }
-            fail("Error in threads");
-        }
     }
 
     @Test
