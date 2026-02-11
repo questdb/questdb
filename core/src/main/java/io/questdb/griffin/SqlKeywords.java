@@ -2403,9 +2403,9 @@ public class SqlKeywords {
                 && (tok.charAt(0) | 32) == 'w'
                 && (tok.charAt(1) | 32) == 'i'
                 && (tok.charAt(2) | 32) == 'n'
-                && (tok.charAt(4) | 32) == 'd'
-                && (tok.charAt(5) | 32) == 'o'
-                && (tok.charAt(6) | 32) == 'w';
+                && (tok.charAt(3) | 32) == 'd'
+                && (tok.charAt(4) | 32) == 'o'
+                && (tok.charAt(5) | 32) == 'w';
     }
 
     public static boolean isWithKeyword(CharSequence tok) {

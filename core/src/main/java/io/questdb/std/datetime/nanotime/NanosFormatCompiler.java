@@ -869,7 +869,8 @@ public class NanosFormatCompiler {
                     break;
                 case OP_NANOS_GREEDY:
                     stackState &= ~(1 << LOCAL_NANOS);
-                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_NANOS);
+                    stackState &= ~(1 << LOCAL_TEMP_LONG);
+                    invokeParseIntSafelyAndStore(parseInt000GreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_NANOS);
                     break;
                 case OP_MILLIS_ONE_DIGIT:
                     stackState &= ~(1 << LOCAL_MILLIS);

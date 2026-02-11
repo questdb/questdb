@@ -663,7 +663,7 @@ public class CopyExportTest extends AbstractCairoTest {
                                 "select * from read_parquet('" + exportRoot + File.separator + "output_large.parquet') where id = 999");
                         assertSql("""
                                         path\tdiskSizeHuman
-                                        output_large.parquet\t123.0 KiB
+                                        output_large.parquet\t122.7 KiB
                                         """,
                                 "select path, diskSizeHuman from export_files()  order by path");
                     });
