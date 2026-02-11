@@ -3333,6 +3333,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             } while ((tok = SqlUtil.fetchNext(lexer)) != null && !isSemicolon(tok) && Chars.equals(tok, ','));
         } else {
             // Non-standard form (e.g., SET TIME ZONE 'UTC'): consume remaining tokens
+            //noinspection StatementWithEmptyBody
             while ((tok = SqlUtil.fetchNext(lexer)) != null && !isSemicolon(tok)) {
             }
         }
