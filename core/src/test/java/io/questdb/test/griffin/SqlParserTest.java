@@ -9907,6 +9907,34 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPushDownTimestampFilterThroughUnionAllMismatchedAliases() throws SqlException {
+        // The "ts" alias maps to the TIMESTAMP column in branch 1 (position 1),
+        // but to the SYMBOL column in branch 2 (position 2). The filter should be
+        // remapped by position so that branch 2 filters on ts2 (the TIMESTAMP at
+        // position 1), not on sym2 which carries the "ts" alias.
+        assertQuery(
+                "select-choose ts from (" +
+                        /**/ "select [ts] from (" +
+                        /**/   "select-choose [ts1 ts] name1, ts1 ts, sym1 from (" +
+                        /**/     "select [ts1] from t1 timestamp (ts1) where ts1 in '2025-12-01T01;2h'" +
+                        /**/   ") union all select-choose [ts2] name2, ts2, sym2 ts from (" +
+                        /**/     "select [ts2] from t2 timestamp (ts2) where ts2 in '2025-12-01T01;2h'" +
+                        /**/   ")" +
+                        /**/ ") _xQdbA1 where ts in '2025-12-01T01;2h'" +
+                        ")",
+                """
+                        SELECT ts FROM (
+                            SELECT name1, ts1 ts, sym1 FROM t1
+                            UNION ALL
+                            SELECT name2, ts2, sym2 ts FROM t2
+                        ) WHERE ts IN '2025-12-01T01;2h'
+                        """,
+                modelOf("t1").col("name1", ColumnType.VARCHAR).timestamp("ts1").col("sym1", ColumnType.SYMBOL),
+                modelOf("t2").col("name2", ColumnType.VARCHAR).timestamp("ts2").col("sym2", ColumnType.SYMBOL)
+        );
+    }
+
+    @Test
     public void testPushFilterThroughUnionAllExprInAllBranches() throws SqlException {
         // Non-timestamp filter is not pushed into union branches.
         assertQuery(

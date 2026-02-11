@@ -197,6 +197,7 @@ public class SqlOptimiser implements Mutable {
     private final IntList tempCrosses = new IntList();
     private final LowerCaseCharSequenceIntHashMap tempCursorAliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> tempCursorAliases = new LowerCaseCharSequenceObjHashMap<>();
+    private final LowerCaseCharSequenceObjHashMap<CharSequence> tempAliasRewriteMap = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<ExpressionNode> tempExprs = new ObjList<>();
     private final IntHashSet tempIntHashSet = new IntHashSet();
     private final IntList tempIntList = new IntList();
@@ -1977,6 +1978,42 @@ public class SqlOptimiser implements Mutable {
         // it's only a duplicate if its being applied to a different model.
         if (parent != model) {
             throw SqlException.position(alias.position).put("Duplicate table or alias: ").put(alias.token);
+        }
+    }
+
+    /**
+     * Walks the expression tree and, for each LITERAL, resolves its positional
+     * index in the first UNION branch, then maps it to the alias at the same
+     * positional index in the current branch. Populates {@link #tempAliasRewriteMap}
+     * (caller must clear it before calling).
+     */
+    private void collectPositionalAliasRemap(
+            ExpressionNode node,
+            QueryModel firstBranch,
+            ObjList<QueryColumn> branchCols
+    ) {
+        if (node == null) {
+            return;
+        }
+        if (node.type == LITERAL) {
+            CharSequence token = node.token;
+            int dot = Chars.indexOfLastUnquoted(token, '.');
+            CharSequence name = dot == -1 ? token : token.subSequence(dot + 1, token.length());
+            int pos = firstBranch.getColumnAliasIndex(name);
+            if (pos >= 0 && pos < branchCols.size()) {
+                CharSequence branchAlias = branchCols.getQuick(pos).getAlias();
+                if (!Chars.equalsIgnoreCase(name, branchAlias)) {
+                    tempAliasRewriteMap.put(name, branchAlias);
+                }
+            }
+        }
+        if (node.paramCount < 3) {
+            collectPositionalAliasRemap(node.lhs, firstBranch, branchCols);
+            collectPositionalAliasRemap(node.rhs, firstBranch, branchCols);
+        } else {
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                collectPositionalAliasRemap(node.args.getQuick(i), firstBranch, branchCols);
+            }
         }
     }
 
@@ -9501,6 +9538,16 @@ public class SqlOptimiser implements Mutable {
                 ExpressionNode clone = deepClone(expressionNodePool, node);
                 traversalAlgo.traverse(clone, literalCheckingVisitor.of(parent.getAliasToColumnMap()));
                 traversalAlgo.traverse(clone, literalRewritingVisitor.of(parent.getAliasToColumnNameMap()));
+                // For non-first branches, remap aliases by position.
+                // In UNION ALL, columns match by position, not name.
+                if (branch != nested) {
+                    ObjList<QueryColumn> branchCols = branch.getBottomUpColumns();
+                    tempAliasRewriteMap.clear();
+                    collectPositionalAliasRemap(clone, nested, branchCols);
+                    if (tempAliasRewriteMap.size() > 0) {
+                        traversalAlgo.traverse(clone, literalRewritingVisitor.of(tempAliasRewriteMap));
+                    }
+                }
                 if (allLiteralsMatchBranch(clone, branch.getAliasToColumnMap())) {
                     addWhereNode(branch, clone);
                 }
