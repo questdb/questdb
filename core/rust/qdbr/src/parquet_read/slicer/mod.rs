@@ -1,5 +1,4 @@
 pub mod dict_decoder;
-pub mod dict_slicer;
 pub mod rle;
 
 #[cfg(test)]

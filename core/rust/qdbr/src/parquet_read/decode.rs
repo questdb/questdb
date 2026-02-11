@@ -126,12 +126,17 @@ impl ColumnChunkStats {
     }
 }
 
-const UUID_NULL: [u8; 16] = unsafe { std::mem::transmute([i64::MIN; 2]) };
-const LONG256_NULL: [u8; 32] = unsafe { std::mem::transmute([i64::MIN; 4]) };
+const UUID_NULL: [u8; 16] = [
+    0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128,
+];
+const LONG256_NULL: [u8; 32] = [
+    0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0,
+    0, 0, 0, 0, 128,
+];
 const INT_NULL: [u8; 4] = i32::MIN.to_le_bytes();
 const SYMBOL_NULL: [u8; 4] = i32::MIN.to_le_bytes();
 const LONG_NULL: [u8; 8] = i64::MIN.to_le_bytes();
-const DOUBLE_NULL: [u8; 8] = unsafe { std::mem::transmute([f64::NAN]) };
+const DOUBLE_NULL: [u8; 8] = [0, 0, 0, 0, 0, 0, 248, 127];
 const TIMESTAMP_96_EMPTY: [u8; 12] = [0; 12];
 
 /// The local positional index as it is stored in parquet.
@@ -201,12 +206,7 @@ impl ParquetDecoder {
                 .unwrap_or((0, None));
 
             if column_top >= row_group_hi as usize + accumulated_size {
-                column_chunk_bufs.data_vec.clear();
-                column_chunk_bufs.data_size = 0;
-                column_chunk_bufs.data_ptr = ptr::null_mut();
-                column_chunk_bufs.aux_vec.clear();
-                column_chunk_bufs.aux_size = 0;
-                column_chunk_bufs.aux_ptr = ptr::null_mut();
+                column_chunk_bufs.reset();
                 continue;
             }
 
@@ -273,12 +273,7 @@ impl ParquetDecoder {
             row_group_bufs.ensure_n_columns(dest_col_offset + columns.len())?;
             for i in 0..columns.len() {
                 let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_offset + i];
-                column_chunk_bufs.data_vec.clear();
-                column_chunk_bufs.data_size = 0;
-                column_chunk_bufs.data_ptr = ptr::null_mut();
-                column_chunk_bufs.aux_vec.clear();
-                column_chunk_bufs.aux_size = 0;
-                column_chunk_bufs.aux_ptr = ptr::null_mut();
+                column_chunk_bufs.reset();
             }
             return Ok(0);
         }
@@ -327,12 +322,7 @@ impl ParquetDecoder {
                 .unwrap_or((0, None));
 
             if column_top >= row_group_hi as usize + accumulated_size {
-                column_chunk_bufs.data_vec.clear();
-                column_chunk_bufs.data_size = 0;
-                column_chunk_bufs.data_ptr = ptr::null_mut();
-                column_chunk_bufs.aux_vec.clear();
-                column_chunk_bufs.aux_size = 0;
-                column_chunk_bufs.aux_ptr = ptr::null_mut();
+                column_chunk_bufs.reset();
                 continue;
             }
 
