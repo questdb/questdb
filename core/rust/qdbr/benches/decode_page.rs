@@ -6,6 +6,8 @@ use parquet2::encoding::Encoding;
 use parquet2::metadata::Descriptor;
 use parquet2::page::{DataPage, DataPageHeader, DataPageHeaderV1, DictPage, Page};
 use parquet2::schema::types::{ParquetType, PrimitiveType};
+use parquet2::statistics::{serialize_statistics, PrimitiveStatistics};
+use parquet2::types::NativeType;
 use parquet2::write::Version;
 use qdb_core::col_type::{encode_array_type, ColumnType, ColumnTypeTag};
 use questdbr::allocator::{MemTracking, QdbAllocator};
@@ -26,7 +28,7 @@ use std::sync::atomic::AtomicUsize;
 
 const ROW_COUNT: usize = 100_000;
 const NULL_PCTS: [u8; 2] = [0, 20];
-const DICT_CARDINALITY: usize = 256;
+const DICT_CARDINALITIES: [usize; 4] = [10, 100, 256, 1000];
 
 const INT_ENCODINGS: [Encoding; 2] = [Encoding::Plain, Encoding::DeltaBinaryPacked];
 const LEN_ENCODINGS: [Encoding; 2] = [Encoding::Plain, Encoding::DeltaLengthByteArray];
@@ -558,8 +560,8 @@ fn make_long256_data(row_count: usize, null_pct: u8) -> Vec<[u8; 32]> {
     data
 }
 
-fn make_byte_dict_data(row_count: usize, null_pct: u8) -> Vec<i32> {
-    let card = DICT_CARDINALITY.min(120);
+fn make_byte_dict_data(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<i32> {
+    let card = cardinality.min(120);
     (0..row_count)
         .map(|i| {
             if is_null_at(i, null_pct) {
@@ -571,61 +573,61 @@ fn make_byte_dict_data(row_count: usize, null_pct: u8) -> Vec<i32> {
         .collect()
 }
 
-fn make_short_dict_data(row_count: usize, null_pct: u8) -> Vec<i32> {
+fn make_short_dict_data(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<i32> {
     (0..row_count)
         .map(|i| {
             if is_null_at(i, null_pct) {
                 0i32
             } else {
-                ((i % DICT_CARDINALITY) + 1) as i32
+                ((i % cardinality) + 1) as i32
             }
         })
         .collect()
 }
 
-fn make_i32_dict_data(row_count: usize, null_pct: u8) -> Vec<i32> {
+fn make_i32_dict_data(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<i32> {
     (0..row_count)
         .map(|i| {
             if is_null_at(i, null_pct) {
                 i32::MIN
             } else {
-                (i % DICT_CARDINALITY) as i32
+                (i % cardinality) as i32
             }
         })
         .collect()
 }
 
-fn make_i64_dict_data(row_count: usize, null_pct: u8) -> Vec<i64> {
+fn make_i64_dict_data(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<i64> {
     (0..row_count)
         .map(|i| {
             if is_null_at(i, null_pct) {
                 i64::MIN
             } else {
-                (i % DICT_CARDINALITY) as i64
+                (i % cardinality) as i64
             }
         })
         .collect()
 }
 
-fn make_f32_dict_data(row_count: usize, null_pct: u8) -> Vec<f32> {
+fn make_f32_dict_data(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<f32> {
     (0..row_count)
         .map(|i| {
             if is_null_at(i, null_pct) {
                 f32::NAN
             } else {
-                (i % DICT_CARDINALITY) as f32
+                (i % cardinality) as f32
             }
         })
         .collect()
 }
 
-fn make_f64_dict_data(row_count: usize, null_pct: u8) -> Vec<f64> {
+fn make_f64_dict_data(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<f64> {
     (0..row_count)
         .map(|i| {
             if is_null_at(i, null_pct) {
                 f64::NAN
             } else {
-                (i % DICT_CARDINALITY) as f64
+                (i % cardinality) as f64
             }
         })
         .collect()
@@ -637,32 +639,63 @@ fn dict_bit_width(max: u64) -> u8 {
 
 /// Build RLE dictionary-encoded DataPage + DictPage for fixed-size values.
 ///
-/// The raw data is reinterpreted as `elem_size`-byte chunks. Null rows
-/// (determined by `null_pct` and `is_null_at`) are excluded from the
-/// dictionary and encoded via definition levels.
-fn build_fixed_rle_dict_pages(
-    raw_data: &[u8],
-    elem_size: usize,
+/// Null rows (determined by `null_pct` and `is_null_at`) are excluded from the
+/// dictionary and encoded via definition levels. Statistics (min/max/null_count)
+/// are computed from the typed values.
+fn build_fixed_rle_dict_pages<T: NativeType>(
+    data: &[T],
     null_pct: u8,
     row_count: usize,
     column_type: ColumnType,
 ) -> (DataPage, DictPage) {
+    let elem_size = std::mem::size_of::<T>();
+    let raw_data: &[u8] = unsafe {
+        std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * elem_size)
+    };
+
     let mut dict_map: HashMap<&[u8], u32> = HashMap::new();
     let mut dict_entries: Vec<&[u8]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
+    let mut null_count = 0usize;
+    let mut min_value: Option<T> = None;
+    let mut max_value: Option<T> = None;
 
     for i in 0..row_count {
         if is_null_at(i, null_pct) {
+            null_count += 1;
             continue;
         }
+
+        let val = data[i];
+        min_value = Some(match min_value {
+            Some(m) => {
+                if val.ord(&m) == std::cmp::Ordering::Less {
+                    val
+                } else {
+                    m
+                }
+            }
+            None => val,
+        });
+        max_value = Some(match max_value {
+            Some(m) => {
+                if val.ord(&m) == std::cmp::Ordering::Greater {
+                    val
+                } else {
+                    m
+                }
+            }
+            None => val,
+        });
+
         let start = i * elem_size;
-        let val = &raw_data[start..start + elem_size];
-        let idx = match dict_map.get(val) {
+        let raw_val = &raw_data[start..start + elem_size];
+        let idx = match dict_map.get(raw_val) {
             Some(&idx) => idx,
             None => {
                 let idx = dict_entries.len() as u32;
-                dict_map.insert(val, idx);
-                dict_entries.push(val);
+                dict_map.insert(raw_val, idx);
+                dict_entries.push(raw_val);
                 idx
             }
         };
@@ -704,12 +737,23 @@ fn build_fixed_rle_dict_pages(
     .unwrap();
 
     let primitive_type = primitive_type_for(column_type);
+
+    let statistics = serialize_statistics(
+        &(PrimitiveStatistics::<T> {
+            primitive_type: primitive_type.clone(),
+            null_count: Some(null_count as i64),
+            distinct_count: None,
+            min_value,
+            max_value,
+        }),
+    );
+
     let header = DataPageHeader::V1(DataPageHeaderV1 {
         num_values: row_count as i32,
         encoding: Encoding::RleDictionary.into(),
         definition_level_encoding: Encoding::Rle.into(),
         repetition_level_encoding: Encoding::Rle.into(),
-        statistics: None,
+        statistics: Some(statistics),
     });
     let data_page = DataPage::new(
         header,
@@ -850,23 +894,26 @@ macro_rules! bytes_cases {
 }
 
 macro_rules! fixed_dict_cases {
-    ($cases:ident, $name:literal, $tag:ident, $elem_size:expr,
-     |$np:ident| $data:expr) => {
-        for &$np in null_pcts(true) {
-            let data = $data;
-            let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
-            let raw = unsafe {
-                std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * $elem_size)
-            };
-            let (page, dict) = build_fixed_rle_dict_pages(raw, $elem_size, $np, ROW_COUNT, ct);
-            $cases.push(build_case(
-                format!(concat!($name, "_dict_n{null_pct}"), null_pct = $np),
-                page,
-                Some(dict),
-                ct,
-                None,
-                ROW_COUNT,
-            ));
+    ($cases:ident, $name:literal, $tag:ident, $T:ty,
+     |$np:ident, $card:ident| $data:expr) => {
+        for &$card in &DICT_CARDINALITIES {
+            for &$np in null_pcts(true) {
+                let data: Vec<$T> = $data;
+                let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
+                let (page, dict) = build_fixed_rle_dict_pages(&data, $np, ROW_COUNT, ct);
+                $cases.push(build_case(
+                    format!(
+                        concat!($name, "_dict_c{card}_n{null_pct}"),
+                        card = $card,
+                        null_pct = $np,
+                    ),
+                    page,
+                    Some(dict),
+                    ct,
+                    None,
+                    ROW_COUNT,
+                ));
+            }
         }
     };
 }
@@ -941,27 +988,29 @@ fn build_cases() -> Vec<BenchCase> {
     });
 
     // RLE dictionary-encoded fixed-size types
-    fixed_dict_cases!(cases, "byte", Byte, 4, |np| make_byte_dict_data(
-        ROW_COUNT, np
+    fixed_dict_cases!(cases, "byte", Byte, i32, |np, card| make_byte_dict_data(
+        ROW_COUNT, np, card
     ));
-    fixed_dict_cases!(cases, "short", Short, 4, |np| make_short_dict_data(
-        ROW_COUNT, np
+    fixed_dict_cases!(cases, "short", Short, i32, |np, card| make_short_dict_data(
+        ROW_COUNT, np, card
     ));
-    fixed_dict_cases!(cases, "int", Int, 4, |np| make_i32_dict_data(ROW_COUNT, np));
-    fixed_dict_cases!(cases, "long", Long, 8, |np| make_i64_dict_data(
-        ROW_COUNT, np
+    fixed_dict_cases!(cases, "int", Int, i32, |np, card| make_i32_dict_data(
+        ROW_COUNT, np, card
     ));
-    fixed_dict_cases!(cases, "date", Date, 8, |np| make_i64_dict_data(
-        ROW_COUNT, np
+    fixed_dict_cases!(cases, "long", Long, i64, |np, card| make_i64_dict_data(
+        ROW_COUNT, np, card
     ));
-    fixed_dict_cases!(cases, "timestamp", Timestamp, 8, |np| make_i64_dict_data(
-        ROW_COUNT, np
+    fixed_dict_cases!(cases, "date", Date, i64, |np, card| make_i64_dict_data(
+        ROW_COUNT, np, card
     ));
-    fixed_dict_cases!(cases, "float", Float, 4, |np| make_f32_dict_data(
-        ROW_COUNT, np
+    fixed_dict_cases!(cases, "timestamp", Timestamp, i64, |np, card| make_i64_dict_data(
+        ROW_COUNT, np, card
     ));
-    fixed_dict_cases!(cases, "double", Double, 8, |np| make_f64_dict_data(
-        ROW_COUNT, np
+    fixed_dict_cases!(cases, "float", Float, f32, |np, card| make_f32_dict_data(
+        ROW_COUNT, np, card
+    ));
+    fixed_dict_cases!(cases, "double", Double, f64, |np, card| make_f64_dict_data(
+        ROW_COUNT, np, card
     ));
 
     // Variable-length types — each uses a different page function with different args
