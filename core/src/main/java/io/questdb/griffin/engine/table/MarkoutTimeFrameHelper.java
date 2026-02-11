@@ -97,19 +97,28 @@ public class MarkoutTimeFrameHelper {
             return Long.MIN_VALUE;
         }
 
-        // Don't scan beyond what we've already scanned
-        // Start from min(startRowId, backwardWatermark - 1)
-        long effectiveStart = startRowId;
-        if (backwardWatermark != Long.MAX_VALUE && backwardWatermark > 0) {
-            effectiveStart = Math.min(startRowId, backwardWatermark - 1);
-        }
-
-        if (backwardWatermark != Long.MAX_VALUE && effectiveStart < backwardWatermark) {
-            // Already scanned this region, just look up in map
+        long effectiveStart;
+        if (backwardWatermark != Long.MAX_VALUE) {
+            // We've done backward scanning before. Check the cache first —
+            // the key might have been added by a previous backward or forward scan.
             MapKey targetKey = keyToRowIdMap.withKey();
             targetKey.put(masterRecord, masterAsOfJoinMapSink);
             MapValue targetValue = targetKey.findValue();
-            return targetValue != null ? targetValue.getLong(0) : Long.MIN_VALUE;
+            if (targetValue != null) {
+                return targetValue.getLong(0);
+            }
+
+            if (backwardWatermark == 0) {
+                // We've scanned all the way to the beginning; key doesn't exist.
+                return Long.MIN_VALUE;
+            }
+
+            // Continue scanning below the backward watermark into unvisited territory.
+            // Start at BWM so that the first loop iteration re-checks BWM (harmless,
+            // since it's already cached) and then moves to BWM-1.
+            effectiveStart = backwardWatermark;
+        } else {
+            effectiveStart = startRowId;
         }
 
         int frameIndex = Rows.toPartitionIndex(effectiveStart);
@@ -315,8 +324,12 @@ public class MarkoutTimeFrameHelper {
                 return Rows.toRowID(timeFrame.getFrameIndex(), searchResult);
             }
 
-            // No match in this frame, try next
-            rowLo = Long.MIN_VALUE;
+            // Binary search found no rows <= target from searchStart onward.
+            // The linear scan confirmed all rows in [rowLo, searchStart) were <= target,
+            // so the ASOF match is the last one: searchStart - 1.
+            final long lastLinearRow = searchStart - 1;
+            bookmarkCurrentFrame(lastLinearRow);
+            return Rows.toRowID(timeFrame.getFrameIndex(), lastLinearRow);
         }
     }
 
