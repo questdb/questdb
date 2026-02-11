@@ -1357,8 +1357,8 @@ public class SqlOptimiser implements Mutable {
         }
         if (node.type == LITERAL) {
             int len = node.token.length();
-            int dot = Chars.indexOf(node.token, 0, len, '.');
-            if (branchColumns.excludes(node.token, dot + 1, len)) {
+            int dotPos = Chars.lastIndexOf(node.token, 0, len, '.');
+            if (branchColumns.excludes(node.token, dotPos + 1, len)) {
                 return false;
             }
         }
