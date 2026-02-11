@@ -24,31 +24,42 @@ Use modern Java features:
 - multiline string literal
 - pattern variables in instanceof checks
 
+Whenever dealing with column data, results of expressions, SQL statements, etc.,
+always consider what the behavior should be when something is NULL. Be careful
+to distinguish NULL as a sentinel value for "not initialized yet" vs. an actual
+NULL value.
+
+### Tests
+
+- write all tests using assertMemoryLeak()
+- use assertQueryNoLeakCheck() to assert the results of queries
+- use execute() to run non-queries (DDL)
+- use UPPERCASE for SQL keywords (CREATE TABLE, INSERT, SELECT ... AS ... FROM,
+  etc.)
+- use a single INSERT statement to insert multiple rows
+- use multiline strings for longer statements (multiple INSERT rows, complex
+  queries), as well as to assert multiline query results
+- use underscore to separate thousands in numbers with 5 digits or more
+
 ### QuestDB's SQL dialect
 
 - QuestDB supports multidimensional arrays (e.g., `DOUBLE[]`, `DOUBLE[][]`).
   Dimensionality is encoded in the column type itself, so `DOUBLE[]` and
   `DOUBLE[][]` are distinct column types.
-- QuestDB does not support DELETE.
+- QuestDB supports the expr::TYPE syntax for casts. Always prefer it to
+  CAST(expr, type)
+- QuestDB supports underscores as thousands separator: 1_000_000. Always use
+  them in numbers of 5 digits or more, and always have that in mind when writing
+  implementation code. `Numbers.parseInt()` / `parseLong()` already support
+  underscore separators.
+- QuestDB does not support DELETE. Rows can only be soft-deleted through
+  application logic rules, such as a "deleted BOOLEAN" column.
+- QuestDB does support ALTER TABLE DROP PARTITION to mass-delete data.
 
 ### Error Position Convention
 
 `SqlException.$(position, msg)` — the position should point at the specific
 offending character, not the start of the expression.
-
-### Code Style
-
-- PR titles follow Conventional Commits: `feat(sql):`, `fix(core):`,
-  `test(ilp):`
-- Commit titles do NOT use Conventional Commits prefixes. Keep them short (up to
-  50 chars) and descriptive in plain English.
-
-### Writing Style
-
-- Prefer active voice over passive voice in commit messages, PR descriptions,
-  and comments.
-    - Good: "The owner thread waits for the latch"
-    - Avoid: "The latch is waited on by the owner thread"
 
 ## Git & PR Conventions
 
@@ -75,7 +86,14 @@ offending character, not the start of the expression.
 - Common PR labels: `Bug`, `CI`, `Compatibility`, `Core`, `Documentation`,
   `Enhancement`, `Flaky Test`, `ILP`, `Materialized View`, `New feature`,
   `Performance`, `Postgres Wire`, `REST API`, `SQL`, `Security`, `UI`, `WAL`,
-  `Windows`, `regression`, `rust`, `storage`.=======
+  `Windows`, `regression`, `rust`, `storage`.
+
+## Writing Style
+
+- Prefer active voice over passive voice in commit messages, PR descriptions,
+  and comments.
+  - Good: "The owner thread waits for the latch"
+  - Avoid: "The latch is waited on by the owner thread"
 
 ## Build Commands
 
@@ -84,18 +102,6 @@ offending character, not the start of the expression.
 - Java 11+ (64-bit)
 - Maven 3
 - `JAVA_HOME` environment variable set
-
-## Coding guidelines
-
-Java class members are grouped by kind and sorted alphabetically. When adding
-new methods or fields, insert them in the correct alphabetical position among
-existing members of the same kind. Don't insert comments as "section headings"
-because methods won't stay together after auto-sorting.
-
-Use modern Java features:
-
-- enhanced switch
-- multiline string literal
 
 ### Building
 
