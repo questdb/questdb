@@ -1396,11 +1396,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * Computes the array of offset values from HorizonJoinContext RANGE or LIST configuration.
      * Offsets are in microseconds (matching QuestDB's default timestamp precision).
      */
-    private LongList computeHorizonOffsets(
-            HorizonJoinContext context,
-            RecordMetadata masterMetadata,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
+    private LongList computeHorizonOffsets(HorizonJoinContext context, RecordMetadata masterMetadata) throws SqlException {
         final TimestampDriver timestampDriver = getTimestampDriver(masterMetadata.getTimestampType());
 
         if (context.getMode() == HorizonJoinContext.MODE_RANGE) {
@@ -1424,26 +1420,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return offsets;
         } else if (context.getMode() == HorizonJoinContext.MODE_LIST) {
             // LIST (offset1, offset2, ...)
-            // LIST values are in microseconds and converted to master's timestamp resolution
             final ObjList<ExpressionNode> offsetExpressions = context.getListOffsets();
             final LongList offsets = new LongList(offsetExpressions.size());
             for (int i = 0, n = offsetExpressions.size(); i < n; i++) {
                 ExpressionNode expr = offsetExpressions.getQuick(i);
-                Function func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, executionContext);
-                try {
-                    if (!func.isConstant()) {
-                        throw SqlException.position(expr.position).put("LIST offset must be a constant");
-                    }
-                    // Convert from microseconds to master's timestamp resolution
-                    long offsetValue = timestampDriver.fromMicros(func.getLong(null));
-                    // Validate monotonically increasing
-                    if (offsets.size() > 0 && offsetValue <= offsets.getLast()) {
-                        throw SqlException.position(expr.position).put("LIST offsets must be monotonically increasing");
-                    }
-                    offsets.add(offsetValue);
-                } finally {
-                    Misc.free(func);
+                long offsetValue = evalHorizonTimeValue(expr, timestampDriver);
+                // Validate monotonically increasing
+                if (offsets.size() > 0 && offsetValue <= offsets.getLast()) {
+                    throw SqlException.position(expr.position).put("LIST offsets must be monotonically increasing");
                 }
+                offsets.add(offsetValue);
             }
             return offsets;
         } else {
@@ -2050,12 +2036,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     /**
      * Evaluates a horizon interval literal (e.g., "5s", "-2m", "+10h").
      */
-    private long evalHorizonTimeValue(
-            ExpressionNode expr,
-            TimestampDriver timestampDriver
-    ) throws SqlException {
+    private long evalHorizonTimeValue(ExpressionNode expr, TimestampDriver timestampDriver) throws SqlException {
         CharSequence token = expr.token;
         int unitIndex = TimestampSamplerFactory.findIntervalEndIndex(token, expr.position);
+        if (unitIndex == -1) {
+            // Unitless zero (e.g. "0")
+            return 0;
+        }
         char unit = token.charAt(unitIndex);
         long value = TimestampSamplerFactory.parseInterval(token, unitIndex, expr.position);
         return switch (unit) {
@@ -3218,7 +3205,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         // Compute offsets from RANGE or LIST clause
-        final LongList offsets = computeHorizonOffsets(horizonContext, masterMetadata, executionContext);
+        final LongList offsets = computeHorizonOffsets(horizonContext, masterMetadata);
 
         // Check if master factory supports page frames - required for parallel execution
         CompiledFilter compiledFilter = null;

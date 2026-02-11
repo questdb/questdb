@@ -1886,7 +1886,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             }
             if (tableNameExpr != null) {
                 tableNameExpr.toSink(sink);
-            } else {
+            } else if (nestedModel != null) {
                 sink.putAscii('(');
                 nestedModel.toSink0(sink, false, showOrderBy);
                 sink.putAscii(')');
@@ -2054,7 +2054,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                         }
 
                         HorizonJoinContext hjc = model.getHorizonJoinContext();
-                        if (model.joinType == JOIN_HORIZON) {
+                        if (hjc.getMode() != HorizonJoinContext.MODE_NONE) {
                             if (hjc.getMode() == HorizonJoinContext.MODE_RANGE) {
                                 sink.putAscii(" range from ");
                                 hjc.getRangeFrom().toSink(sink);

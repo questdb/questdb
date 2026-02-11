@@ -64,9 +64,14 @@ public class TimestampSamplerFactoryTest {
         Assert.assertEquals(2, TimestampSamplerFactory.findIntervalEndIndex("10m", 0));
         Assert.assertEquals(3, TimestampSamplerFactory.findIntervalEndIndex("100h", 0));
 
-        // Valid cases - zero values
+        // Valid cases - zero values with unit
         Assert.assertEquals(1, TimestampSamplerFactory.findIntervalEndIndex("0s", 0));
         Assert.assertEquals(2, TimestampSamplerFactory.findIntervalEndIndex("00m", 0));
+
+        // Valid cases - unitless zero (returns -1 sentinel)
+        Assert.assertEquals(-1, TimestampSamplerFactory.findIntervalEndIndex("0", 0));
+        Assert.assertEquals(-1, TimestampSamplerFactory.findIntervalEndIndex("+0", 0));
+        Assert.assertEquals(-1, TimestampSamplerFactory.findIntervalEndIndex("-0", 0));
 
         // Valid cases - negative values
         Assert.assertEquals(2, TimestampSamplerFactory.findIntervalEndIndex("-5s", 0));
@@ -78,11 +83,18 @@ public class TimestampSamplerFactoryTest {
         Assert.assertEquals(2, TimestampSamplerFactory.findIntervalEndIndex("+5s", 0));
         Assert.assertEquals(3, TimestampSamplerFactory.findIntervalEndIndex("+10m", 0));
 
-        // Error cases
+        // Error cases - missing units on non-zero values
         assertFindIntervalEndIndexFailure(1, "missing interval", null, 1);
         assertFindIntervalEndIndexFailure(42, "expected interval qualifier", "", 42);
+        assertFindIntervalEndIndexFailure(1001, "expected interval qualifier", "1", 1000);
         assertFindIntervalEndIndexFailure(1002, "expected interval qualifier", "45", 1000);
+        assertFindIntervalEndIndexFailure(1002, "expected interval qualifier", "-1", 1000);
         assertFindIntervalEndIndexFailure(1003, "expected interval qualifier", "-45", 1000);
+        assertFindIntervalEndIndexFailure(1002, "expected interval qualifier", "+1", 1000);
+        assertFindIntervalEndIndexFailure(1003, "expected interval qualifier", "+45", 1000);
+        // multi-zero without unit still requires a qualifier
+        assertFindIntervalEndIndexFailure(1002, "expected interval qualifier", "00", 1000);
+        // other error cases
         assertFindIntervalEndIndexFailure(50, "expected single letter qualifier", "1bar", 49);
         assertFindIntervalEndIndexFailure(51, "expected single letter qualifier", "-1bar", 49);
         assertFindIntervalEndIndexFailure(100, "expected interval qualifier", "-", 100);

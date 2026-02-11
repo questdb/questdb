@@ -3368,7 +3368,7 @@ public class SqlParser {
                 lexer.unparseLast();
 
                 while (true) {
-                    ExpressionNode offsetExpr = expectExpr(lexer, sqlParserCallback, model.getDecls());
+                    ExpressionNode offsetExpr = expectIntervalLiteral(lexer);
                     context.addListOffset(offsetExpr);
 
                     tok = tok(lexer, "',' or ')'");

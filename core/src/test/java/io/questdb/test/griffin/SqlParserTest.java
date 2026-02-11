@@ -6002,6 +6002,108 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testHorizonJoinListEmpty() throws Exception {
+        assertSyntaxError(
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) LIST () AS h",
+                87,
+                "at least one offset expression expected",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinListIntervalLiterals() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h list (0s, 1s, 2s) as h) t",
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) LIST (0s, 1s, 2s) AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinListNegativeValues() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h list (-2s, -1s, 0s) as h) t",
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) LIST (-2s, -1s, 0s) AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinListUnitlessZero() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h list (0, 1s) as h) t",
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) LIST (0, 1s) AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinListVariousUnits() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h list (100T, 1s, 1m, 1h, 1d) as h) t",
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) LIST (100T, 1s, 1m, 1h, 1d) AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinMissingRangeOrList() throws Exception {
+        assertSyntaxError(
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) AS h",
+                81,
+                "'range' or 'list' expected",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinRangeBasic() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h range from 0s to 2s step 1s as h) t",
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) RANGE FROM 0s TO 2s STEP 1s AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinRangeNegativeFrom() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h range from -1s to 1s step 1s as h) t",
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) RANGE FROM -1s TO 1s STEP 1s AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinRangeUnitlessZero() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h range from 0 to 2s step 1s as h) t",
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) RANGE FROM 0 TO 2s STEP 1s AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinRangeVariousUnits() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h range from 0s to 3d step 1h as h) t",
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) RANGE FROM 0s TO 3d STEP 1h AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
     public void testInnerJoin() throws Exception {
         assertQuery(
                 "select-choose a.x x from (select [x] from a a join select [x] from b on b.x = a.x) a",

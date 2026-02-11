@@ -78,6 +78,11 @@ public final class TimestampSamplerFactory {
         }
 
         if (k == -1) {
+            // Allow unitless zero ("0", "+0", "-0") as a special case.
+            // Return -1 as a sentinel value; the caller must handle this.
+            if (len - start == 1 && cs.charAt(start) == '0') {
+                return -1;
+            }
             throw SqlException.$(position + len, "expected interval qualifier");
         }
 

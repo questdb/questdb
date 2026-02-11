@@ -1139,14 +1139,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             """
             );
 
-            // LIST with explicit offsets in microseconds: 0, 1000000 (1s)
+            // LIST with interval offsets: 0s, 1s
             // For trade at 1s:
             //   offset=0: look at 1s+0=1s -> ASOF to price at 1s -> 20
-            //   offset=1000000: look at 1s+1s=2s -> ASOF to price at 2s -> 30
+            //   offset=1s: look at 1s+1s=2s -> ASOF to price at 2s -> 30
             String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price) " +
                     "FROM trades AS t " +
                     "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                    "LIST (0, 1000000) AS h " +
+                    "LIST (0s, 1s) AS h " +
                     "ORDER BY sec_offs";
 
             assertQueryNoLeakCheck(
@@ -1679,14 +1679,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             """
             );
 
-            // LIST (1000000) - single offset of 1 second
+            // LIST (1s) - single offset of 1 second
             // For trade at 1s: offset=1s -> ASOF to 2s -> 30
             // For trade at 2s: offset=1s -> ASOF to 3s -> 40
             // avg: (30+40)/2 = 35
             String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price) " +
                     "FROM trades AS t " +
                     "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                    "LIST (1000000) AS h " +
+                    "LIST (1s) AS h " +
                     "ORDER BY sec_offs";
 
             assertQueryNoLeakCheck(
@@ -1775,14 +1775,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             """
             );
 
-            // LIST (-1000000) - single negative offset of -1 second
+            // LIST (-1s) - single negative offset of -1 second
             // For trade at 2s: offset=-1s -> ASOF to 1s -> 20
             // For trade at 3s: offset=-1s -> ASOF to 2s -> 30
             // avg: 25, sum qty: 300
             String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
                     "FROM trades AS t " +
                     "HORIZON JOIN prices AS p " +
-                    "LIST (-1000000) AS h " +
+                    "LIST (-1s) AS h " +
                     "ORDER BY sec_offs";
 
             assertQueryNoLeakCheck(
