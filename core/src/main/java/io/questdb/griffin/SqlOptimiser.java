@@ -2068,7 +2068,7 @@ public class SqlOptimiser implements Mutable {
                 return true;
             }
             // Check for dateadd that doesn't reference the timestamp
-            if (Chars.equalsLowerCaseAscii(node.token, "dateadd")) {
+            if (SqlKeywords.isDateaddKeyword(node.token)) {
                 if (!isDateaddWithTimestamp(node, timestampColumn)) {
                     return true;
                 }
@@ -3948,7 +3948,7 @@ public class SqlOptimiser implements Mutable {
         if (ast == null || ast.type != FUNCTION) {
             return false;
         }
-        if (!Chars.equalsLowerCaseAscii(ast.token, "dateadd")) {
+        if (!SqlKeywords.isDateaddKeyword(ast.token)) {
             return false;
         }
         if (ast.paramCount != 3) {
@@ -4013,7 +4013,7 @@ public class SqlOptimiser implements Mutable {
         if (node == null || node.type != FUNCTION) {
             return false;
         }
-        if (!Chars.equalsLowerCaseAscii(node.token, "dateadd")) {
+        if (!SqlKeywords.isDateaddKeyword(node.token)) {
             return false;
         }
         // dateadd has 3 arguments: unit, amount, timestamp
