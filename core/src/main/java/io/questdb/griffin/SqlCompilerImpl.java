@@ -390,6 +390,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         isSingleQueryMode = true;
 
         compileInner(executionContext, sqlText, true);
+
+        // Verify all input was consumed — reject trailing content.
+        // Skip in validation-only mode: handlers may return early without consuming all tokens.
+        if (!executionContext.isValidationOnly()) {
+            CharSequence tok = SqlUtil.fetchNext(lexer);
+            if (tok != null && !isSemicolon(tok)) {
+                throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+            }
+        }
+
         return compiledQuery;
     }
 
@@ -452,7 +462,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                     // consume residual text, such as semicolon
                     goToQueryEnd();
-                    // We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
+                    // We've to move lexer because some query handlers don't consume all tokens
                     // some code in postCompile might need full text of current query
                     try {
                         batchCallback.postCompile(this, compiledQuery, sqlText);
@@ -2359,7 +2369,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
     }
 
-    private void compileBegin(SqlExecutionContext executionContext, @Transient CharSequence sqlText) {
+    private void compileBegin(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        // BEGIN [TRANSACTION] — consume the optional keyword
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isTransactionKeyword(tok)) {
+            lexer.unparseLast();
+        }
         compiledQuery.ofBegin();
     }
 
@@ -2412,7 +2427,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void compileCommit(SqlExecutionContext executionContext, @Transient CharSequence sqlText) {
+    private void compileCommit(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        // COMMIT [TRANSACTION] — consume the optional keyword
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isTransactionKeyword(tok)) {
+            lexer.unparseLast();
+        }
         compiledQuery.ofCommit();
     }
 
@@ -3125,6 +3145,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    // PG compatibility no-op: RESET ALL, CLOSE ALL, UNLISTEN *, DISCARD ALL — consume exactly one argument.
+    private void compileNoOp(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        expectToken(lexer, "argument");
+        compiledQuery.ofSet();
+    }
+
     private void compileRefresh(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         CharSequence tok = expectToken(lexer, "'materialized'");
         if (!isMaterializedKeyword(tok)) {
@@ -3280,11 +3306,41 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofRepair();
     }
 
-    private void compileRollback(SqlExecutionContext executionContext, @Transient CharSequence sqlText) {
+    private void compileRollback(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        // ROLLBACK [TRANSACTION] — consume the optional keyword
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isTransactionKeyword(tok)) {
+            lexer.unparseLast();
+        }
         compiledQuery.ofRollback();
     }
 
-    private void compileSet(SqlExecutionContext executionContext, @Transient CharSequence sqlText) {
+    private void compileSet(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        // SET [SESSION | LOCAL] name { = | TO } value [, value]*
+        // PG compatibility no-op — validate syntax, then discard.
+        CharSequence tok = expectToken(lexer, "parameter name");
+
+        // skip optional SESSION / LOCAL prefix
+        if (Chars.equalsLowerCaseAscii("session", tok) || Chars.equalsLowerCaseAscii("local", tok)) {
+            expectToken(lexer, "parameter name");
+        }
+
+        tok = expectToken(lexer, "'=' or 'TO'");
+        if (Chars.equals(tok, '=') || isToKeyword(tok)) {
+            // Standard form: validate value [, value]*
+            do {
+                expectToken(lexer, "value");
+            } while ((tok = SqlUtil.fetchNext(lexer)) != null && !isSemicolon(tok) && Chars.equals(tok, ','));
+        } else {
+            // Non-standard form (e.g., SET TIME ZONE 'UTC'): consume remaining tokens
+            //noinspection StatementWithEmptyBody
+            while ((tok = SqlUtil.fetchNext(lexer)) != null && !isSemicolon(tok)) {
+            }
+        }
+
+        if (tok != null) {
+            lexer.unparseLast();
+        }
         compiledQuery.ofSet();
     }
 
@@ -4751,6 +4807,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'materialized' or 'view' expected");
     }
 
+    protected void compileBackup(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        throw SqlException.$(lexer.lastTokenPosition(),
+                "incremental backup is supported in QuestDB enterprise version only, please use SNAPSHOT backup"
+        );
+    }
+
     protected void compileCreate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         int rollbackPosition = lexer.lastTokenPosition();
         CharSequence tok = expectToken(lexer, "'atomic' or 'table' or 'batch' or 'materialized' or 'view' or 'or replace'");
@@ -4798,12 +4860,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final String viewSql = parser.parseViewSql(lexer, this);
 
         alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
-    }
-
-    protected void compileBackup(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
-        throw SqlException.$(lexer.lastTokenPosition(),
-                "incremental backup is supported in QuestDB enterprise version only, please use SNAPSHOT backup"
-        );
     }
 
     protected void compileDropExt(
@@ -4875,20 +4931,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     protected void registerKeywordBasedExecutors() {
         // For each 'this::method' reference java compiles a class
         // We need to minimize repetition of this syntax as each site generates garbage
-        final KeywordBasedExecutor compileSet = this::compileSet;
+        final KeywordBasedExecutor compileNoOp = this::compileNoOp;
 
         keywordBasedExecutors.put("truncate", this::compileTruncate);
         keywordBasedExecutors.put("alter", this::compileAlter);
         keywordBasedExecutors.put("create", this::compileCreate);
         keywordBasedExecutors.put("reindex", this::compileReindex);
-        keywordBasedExecutors.put("set", compileSet);
+        keywordBasedExecutors.put("set", this::compileSet);
         keywordBasedExecutors.put("begin", this::compileBegin);
         keywordBasedExecutors.put("commit", this::compileCommit);
         keywordBasedExecutors.put("rollback", this::compileRollback);
-        keywordBasedExecutors.put("discard", compileSet);
-        keywordBasedExecutors.put("close", compileSet); // no-op
-        keywordBasedExecutors.put("unlisten", compileSet);  // no-op
-        keywordBasedExecutors.put("reset", compileSet);  // no-op
+        keywordBasedExecutors.put("discard", compileNoOp);
+        keywordBasedExecutors.put("close", compileNoOp);
+        keywordBasedExecutors.put("unlisten", compileNoOp);
+        keywordBasedExecutors.put("reset", compileNoOp);
         keywordBasedExecutors.put("drop", this::compileDrop);
         keywordBasedExecutors.put("vacuum", this::compileVacuum);
         keywordBasedExecutors.put("checkpoint", this::compileCheckpoint);
