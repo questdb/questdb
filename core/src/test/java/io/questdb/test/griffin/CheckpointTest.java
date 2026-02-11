@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,10 +24,15 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.Bootstrap;
+import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropertyKey;
+import io.questdb.cairo.BitmapIndexUtils;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -38,8 +43,10 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
@@ -48,9 +55,12 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SimpleWaitingLock;
+import io.questdb.preferences.SettingsStore;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -61,8 +71,10 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestServerMain;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -71,8 +83,15 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import static io.questdb.PropertyKey.CAIRO_CHECKPOINT_RECOVERY_ENABLED;
-import static io.questdb.PropertyKey.CAIRO_LEGACY_SNAPSHOT_RECOVERY_ENABLED;
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.FileVisitResult;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.HashMap;
+import java.util.Map;
+
+import static io.questdb.PropertyKey.*;
 
 public class CheckpointTest extends AbstractCairoTest {
     private static final TestFilesFacade testFilesFacade = new TestFilesFacade();
@@ -427,28 +446,29 @@ public class CheckpointTest extends AbstractCairoTest {
                 }
             };
 
-            engine.setWalPurgeJobRunLock(lock);
-            Assert.assertFalse(lock.isLocked());
-            execute("checkpoint create");
-            Assert.assertTrue(lock.isLocked());
             try {
-                assertExceptionNoLeakCheck("checkpoint create");
-            } catch (SqlException ex) {
+                engine.setWalPurgeJobRunLock(lock);
+                Assert.assertFalse(lock.isLocked());
+                execute("checkpoint create");
                 Assert.assertTrue(lock.isLocked());
-                Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for CHECKPOINT RELEASE to be called"));
+                try {
+                    assertExceptionNoLeakCheck("checkpoint create");
+                } catch (SqlException ex) {
+                    Assert.assertTrue(lock.isLocked());
+                    Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for CHECKPOINT RELEASE to be called"));
+                }
+                execute("checkpoint release");
+                Assert.assertFalse(lock.isLocked());
+
+                //DB is empty
+                execute("checkpoint release");
+                Assert.assertFalse(lock.isLocked());
+
+                execute("checkpoint release");
+                Assert.assertFalse(lock.isLocked());
+            } finally {
+                engine.setWalPurgeJobRunLock(null);
             }
-            execute("checkpoint release");
-            Assert.assertFalse(lock.isLocked());
-
-
-            //DB is empty
-            execute("checkpoint release");
-            Assert.assertFalse(lock.isLocked());
-            lock.lock();
-            execute("checkpoint release");
-            Assert.assertFalse(lock.isLocked());
-
-            engine.setWalPurgeJobRunLock(null);
         });
     }
 
@@ -552,6 +572,302 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRecoveryTornKeyEntry_rebuildFalse() throws Exception {
+        testCheckpointRecoveryTornKeyEntry(false);
+    }
+
+    @Test
+    public void testCheckpointRecoveryTornKeyEntry_rebuildTrue() throws Exception {
+        testCheckpointRecoveryTornKeyEntry(true);
+    }
+
+    @Test
+    public void testCheckpointRecoveryWithStaleIndex_rebuildFalse() throws Exception {
+        testCheckpointRecoveryWithStaleIndex(false);
+    }
+
+    @Test
+    public void testCheckpointRecoveryWithStaleIndex_rebuildTrue() throws Exception {
+        testCheckpointRecoveryWithStaleIndex(true);
+    }
+
+    @Test
+    public void testCheckpointRestoreIndexNonPartitioned() throws Exception {
+        final String snapshotId = "00000000-0000-0000-0000-000000000000";
+        final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            final String tableName = getTestTableName();
+            execute(
+                    "create table " + tableName + " as (" +
+                            "select rnd_symbol('A','B','C') sym1, " +
+                            "rnd_symbol('X','Y','Z') sym2, " +
+                            "x " +
+                            "from long_sequence(1000)" +
+                            "), index(sym1), index(sym2)"
+            );
+
+            // Query using indexes before checkpoint to get expected counts
+            sink.clear();
+            printSql("select count() from " + tableName + " where sym1 = 'A'");
+            final String sym1ACountBefore = sink.toString();
+
+            sink.clear();
+            printSql("select count() from " + tableName + " where sym2 = 'X'");
+            final String sym2XCountBefore = sink.toString();
+
+            execute("checkpoint create");
+
+            // Insert more data after checkpoint
+            execute(
+                    "insert into " + tableName +
+                            " select rnd_symbol('A','B','C') sym1, " +
+                            "rnd_symbol('X','Y','Z') sym2, " +
+                            "x + 1000 " +
+                            "from long_sequence(500)"
+            );
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+
+            // Verify index queries return correct results (pre-checkpoint data only)
+            assertSql(sym1ACountBefore, "select count() from " + tableName + " where sym1 = 'A'");
+            assertSql(sym2XCountBefore, "select count() from " + tableName + " where sym2 = 'X'");
+
+            // Verify new inserts work correctly with rebuilt indexes
+            execute("insert into " + tableName + " values('A', 'X', 9999)");
+
+            final long expectedSym1A = Long.parseLong(sym1ACountBefore.split("\n")[1].trim()) + 1;
+            final long expectedSym2X = Long.parseLong(sym2XCountBefore.split("\n")[1].trim()) + 1;
+            assertSql("count\n" + expectedSym1A + "\n", "select count() from " + tableName + " where sym1 = 'A'");
+            assertSql("count\n" + expectedSym2X + "\n", "select count() from " + tableName + " where sym2 = 'X'");
+
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreIndexWithColumnTop() throws Exception {
+        final String snapshotId = "00000000-0000-0000-0000-000000000000";
+        final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            final String tableName = getTestTableName();
+            // Create table without indexed columns initially
+            execute(
+                    "create table " + tableName + " as (" +
+                            "select x, " +
+                            "timestamp_sequence(0, 100000000000) ts " +
+                            "from long_sequence(500)" +
+                            ") timestamp(ts) PARTITION BY DAY"
+            );
+
+            // Add indexed symbol columns (creates column top)
+            execute("alter table " + tableName + " add column sym1 symbol index");
+            execute("alter table " + tableName + " add column sym2 symbol index");
+
+            // Insert data with the new columns
+            execute(
+                    "insert into " + tableName +
+                            " select x + 500, " +
+                            "timestamp_sequence(50000000000000, 100000000000) ts, " +
+                            "rnd_symbol('A','B','C') sym1, " +
+                            "rnd_symbol('X','Y','Z') sym2 " +
+                            "from long_sequence(500)"
+            );
+
+            // Query using indexes before checkpoint to get expected counts
+            sink.clear();
+            printSql("select count() from " + tableName + " where sym1 = 'A'");
+            final String sym1ACountBefore = sink.toString();
+
+            sink.clear();
+            printSql("select count() from " + tableName + " where sym2 = 'X'");
+            final String sym2XCountBefore = sink.toString();
+
+            execute("checkpoint create");
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+
+            // Verify index queries return correct results
+            assertSql(sym1ACountBefore, "select count() from " + tableName + " where sym1 = 'A'");
+            assertSql(sym2XCountBefore, "select count() from " + tableName + " where sym2 = 'X'");
+
+            // Verify new inserts work correctly with rebuilt indexes
+            execute("insert into " + tableName + " values(9999, now(), 'A', 'X')");
+
+            final long expectedSym1A = Long.parseLong(sym1ACountBefore.split("\n")[1].trim()) + 1;
+            final long expectedSym2X = Long.parseLong(sym2XCountBefore.split("\n")[1].trim()) + 1;
+            assertSql("count\n" + expectedSym1A + "\n", "select count() from " + tableName + " where sym1 = 'A'");
+            assertSql("count\n" + expectedSym2X + "\n", "select count() from " + tableName + " where sym2 = 'X'");
+
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreOrphanDirRemovalFailure() throws Exception {
+        final String snapshotId = "id1";
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean rmdir(Path name, boolean lazy) {
+                if (Utf8s.containsAscii(name, "tiesto~")) {
+                    return false;
+                }
+                return super.rmdir(name, lazy);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            // 1. Create base table with data
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
+            drainWalQueue();
+
+            // 2. Checkpoint
+            execute("checkpoint create");
+
+            // 3. Drop table and create a new one after checkpoint
+            execute("drop table test");
+            drainWalQueue();
+            drainPurgeJob();
+
+            execute("create table tiesto (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+
+
+            // 4. Restore from the checkpoint - rmdir for tiesto will fail but restore should complete
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            try {
+                engine.checkpointRecover();
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Aborting QuestDB startup; could not remove orphan table directory, remove it manually to continue");
+                TestUtils.assertContains(e.getFlyweightMessage(), "dbRoot/tiesto~");
+            } finally {
+                execute("checkpoint release");
+            }
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsBitmapIndexes() throws Exception {
+        final String snapshotId = "00000000-0000-0000-0000-000000000000";
+        final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            final String tableName = getTestTableName();
+            execute(
+                    "create table " + tableName + " as (" +
+                            "select rnd_symbol('A','B','C') sym1, " +
+                            "rnd_symbol('X','Y','Z') sym2, " +
+                            "x, " +
+                            "timestamp_sequence(0, 100000000000) ts " +
+                            "from long_sequence(1000)" +
+                            "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY"
+            );
+
+            // Query using indexes before checkpoint to get expected counts
+            sink.clear();
+            printSql("select count() from " + tableName + " where sym1 = 'A'");
+            final String sym1ACountBefore = sink.toString();
+
+            sink.clear();
+            printSql("select count() from " + tableName + " where sym2 = 'X'");
+            final String sym2XCountBefore = sink.toString();
+
+            execute("checkpoint create");
+
+            // Insert more data after checkpoint
+            execute(
+                    "insert into " + tableName +
+                            " select rnd_symbol('A','B','C') sym1, " +
+                            "rnd_symbol('X','Y','Z') sym2, " +
+                            "x + 1000, " +
+                            "timestamp_sequence(100000000000000, 100000000000) ts " +
+                            "from long_sequence(500)"
+            );
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+
+            // Verify index queries return correct results (pre-checkpoint data only)
+            assertSql(sym1ACountBefore, "select count() from " + tableName + " where sym1 = 'A'");
+            assertSql(sym2XCountBefore, "select count() from " + tableName + " where sym2 = 'X'");
+
+            // Verify new inserts work correctly with rebuilt indexes
+            execute("insert into " + tableName + " values('A', 'X', 9999, now())");
+
+            // Count should increase by 1 for both
+            final long expectedSym1A = Long.parseLong(sym1ACountBefore.split("\n")[1].trim()) + 1;
+            final long expectedSym2X = Long.parseLong(sym2XCountBefore.split("\n")[1].trim()) + 1;
+            assertSql("count\n" + expectedSym1A + "\n", "select count() from " + tableName + " where sym1 = 'A'");
+            assertSql("count\n" + expectedSym2X + "\n", "select count() from " + tableName + " where sym2 = 'X'");
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoresDroppedView() throws Exception {
+        final String snapshotId = "id1";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
+            drainWalQueue();
+
+            execute("create view v as select * from test where val > 0;");
+
+            drainViewQueue();
+
+            // sanity check: the view exists and works
+            assertSql("count\n1\n", "select count() from views() where view_name = 'v';");
+            assertSql("count\n1\n", "select count() from v;");
+
+            execute("checkpoint create;");
+
+            // drop the view after checkpoint
+            execute("drop view v;");
+            drainWalAndViewQueues();
+
+            assertSql("count\n0\n", "select count() from views() where view_name = 'v';");
+
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            engine.checkpointRecover();
+            engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
+
+            // the dropped view should be restored
+            assertSql("count\n1\n", "select count() from views() where view_name = 'v';");
+            assertSql(
+                    """
+                            ts\tname\tval
+                            2023-09-20T12:39:01.933062Z\tfoobar\t42
+                            """,
+                    "v;"
+            );
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
     public void testCheckpointRestoresDroppedWalTable() throws Exception {
         final String snapshotId = "id1";
         final String restartedId = "id2";
@@ -590,6 +906,216 @@ public class CheckpointTest extends AbstractCairoTest {
             );
             engine.checkpointRelease();
         });
+    }
+
+    @Test
+    public void testCheckpointRestoresMatViewMetaFiles() throws Exception {
+        assertMemoryLeak(() -> {
+            testCheckpointCreateCheckTableMetadataFiles(
+                    "create table base_price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL",
+                    null,
+                    "base_price"
+            );
+            String viewSql = "select sym, last(price) as price, ts from base_price sample by 1h";
+            String sql = "create materialized view price_1h as (" + viewSql + ") partition by DAY";
+
+            execute(sql);
+
+            assertSql(
+                    """
+                            view_name\trefresh_type\tbase_table_name
+                            price_1h\timmediate\tbase_price
+                            """,
+                    "select view_name,refresh_type,base_table_name from materialized_views();"
+            );
+
+            execute("checkpoint create");
+
+            execute("alter materialized view price_1h SET REFRESH MANUAL");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            view_name\trefresh_type\tbase_table_name
+                            price_1h\tmanual\tbase_price
+                            """,
+                    "select view_name,refresh_type,base_table_name from materialized_views();"
+            );
+
+
+            // Release readers, writers and table name registry files, but keep the snapshot dir around.
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            engine.checkpointRecover();
+            engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
+
+            assertSql(
+                    """
+                            view_name\trefresh_type\tbase_table_name
+                            price_1h\timmediate\tbase_price
+                            """,
+                    "select view_name,refresh_type,base_table_name from materialized_views();"
+            );
+
+
+            execute("checkpoint release");
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoresNestedViews() throws Exception {
+        final String snapshotId = "id1";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            // 1. Create base table with data
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
+            execute("insert into test values ('2023-09-20T13:00:00.000000Z', 'b', 20);");
+            execute("insert into test values ('2023-09-20T14:00:00.000000Z', 'c', 30);");
+            drainWalQueue();
+
+            // 2. Create view_a: selects rows with val > 5 (returns a, b, c)
+            execute("create view view_a as select name, val from test where val > 5;");
+            drainViewQueue();
+
+            // 3. Create view_b: selects from view_a with val > 15 (returns b, c)
+            execute("create view view_b as select name, val from view_a where val > 15;");
+            drainViewQueue();
+
+            // 4. Verify both views work correctly
+            assertSql(
+                    """
+                            name\tval
+                            a\t10
+                            b\t20
+                            c\t30
+                            """,
+                    "view_a;"
+            );
+            assertSql(
+                    """
+                            name\tval
+                            b\t20
+                            c\t30
+                            """,
+                    "view_b;"
+            );
+
+            // 5. Checkpoint
+            execute("checkpoint create;");
+
+            // 6. Drop both views
+            execute("drop view view_b;");
+            execute("drop view view_a;");
+            drainViewQueue();
+
+            // 7. Verify neither view exists
+            assertSql("count\n0\n", "select count() from views() where view_name = 'view_a';");
+            assertSql("count\n0\n", "select count() from views() where view_name = 'view_b';");
+
+            // 8. Restore from checkpoint
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            engine.checkpointRecover();
+            engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
+
+            // 9. Verify both views are restored
+            assertSql("count\n1\n", "select count() from views() where view_name = 'view_a';");
+            assertSql("count\n1\n", "select count() from views() where view_name = 'view_b';");
+
+            // 10. Verify view_a returns correct data (a, b, c)
+            assertSql(
+                    """
+                            name\tval
+                            a\t10
+                            b\t20
+                            c\t30
+                            """,
+                    "view_a;"
+            );
+
+            // 11. Verify view_b returns correct data (b, c) - the nested view chain works
+            assertSql(
+                    """
+                            name\tval
+                            b\t20
+                            c\t30
+                            """,
+                    "view_b;"
+            );
+
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoresPreferencesStore() throws Exception {
+        File dir1 = temp.newFolder("server1_prefs");
+        File dir2 = temp.newFolder("server2_prefs");
+
+        // Server 1: Set preferences and create checkpoint
+        try (TestServerMain server1 = startServerMain(dir1.getAbsolutePath())) {
+            SettingsStore settingsStore = server1.getEngine().getSettingsStore();
+
+            // Set preferences
+            try (DirectUtf8Sink preferencesJson = new DirectUtf8Sink(128)) {
+                preferencesJson.put("{\"instance_name\":\"My Test Instance\",\"instance_type\":\"production\"}");
+                settingsStore.save(preferencesJson, SettingsStore.Mode.OVERWRITE, 0L);
+            }
+
+            // Verify preferences were saved (using observe() to avoid registering persistent listener)
+            Assert.assertEquals(1, settingsStore.getVersion());
+            settingsStore.observe(prefs -> {
+                Assert.assertEquals("My Test Instance", prefs.get("instance_name").toString());
+                Assert.assertEquals("production", prefs.get("instance_type").toString());
+            });
+
+            server1.execute("CHECKPOINT CREATE");
+            copyDirectory(dir1, dir2);
+            server1.execute("CHECKPOINT RELEASE");
+
+            // Modify preferences after checkpoint (in source dir - won't affect dir2)
+            try (DirectUtf8Sink preferencesJson = new DirectUtf8Sink(128)) {
+                preferencesJson.put("{\"instance_name\":\"Modified Instance\",\"instance_type\":\"development\"}");
+                settingsStore.save(preferencesJson, SettingsStore.Mode.OVERWRITE, 1L);
+            }
+            Assert.assertEquals(2, settingsStore.getVersion());
+        }
+
+        // Manually modify the preferences file in dir2 to simulate post-checkpoint changes
+        try (SettingsStore tempStore = new SettingsStore(
+                new DefaultCairoConfiguration(dir2.getAbsolutePath() + Files.SEPARATOR + "db"))) {
+            tempStore.init();
+            try (DirectUtf8Sink preferencesJson = new DirectUtf8Sink(128)) {
+                preferencesJson.put("{\"instance_name\":\"Modified Instance\",\"instance_type\":\"development\"}");
+                tempStore.save(preferencesJson, SettingsStore.Mode.OVERWRITE, 1L);
+            }
+            Assert.assertEquals(2, tempStore.getVersion());
+        }
+
+        // Create trigger file to force checkpoint recovery in dir2
+        try (Path triggerPath = new Path().of(dir2.getAbsolutePath()).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME)) {
+            Files.touch(triggerPath.$());
+        }
+
+        // Server 2: Start with trigger file - should restore preferences from checkpoint
+        try (TestServerMain server2 = startServerMain(dir2.getAbsolutePath())) {
+            SettingsStore settingsStore = server2.getEngine().getSettingsStore();
+
+            // Verify preferences were restored to checkpoint state
+            Assert.assertEquals("Preferences version should be restored", 1, settingsStore.getVersion());
+            settingsStore.registerListener(prefs -> {
+                Assert.assertEquals("My Test Instance", prefs.get("instance_name").toString());
+                Assert.assertEquals("production", prefs.get("instance_type").toString());
+            });
+        }
     }
 
     @Test
@@ -662,6 +1188,126 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoresViewDefinition() throws Exception {
+        final String snapshotId = "id1";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            // 1. Create base table with data
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
+            execute("insert into test values ('2023-09-20T13:00:00.000000Z', 'b', 20);");
+            execute("insert into test values ('2023-09-20T14:00:00.000000Z', 'c', 30);");
+            drainWalQueue();
+
+            // 2. Create view with predicate (val > 15) - should return 'b' and 'c'
+            execute("create view v as select name, val from test where val > 15;");
+            drainViewQueue();
+
+            // Validate the view returns expected data
+            assertSql(
+                    """
+                            name\tval
+                            b\t20
+                            c\t30
+                            """,
+                    "v;"
+            );
+
+            // 3. Checkpoint
+            execute("checkpoint create;");
+
+            // 4. Drop the view and create a new one with the same name but different predicate (val > 25)
+            execute("drop view v;");
+            drainViewQueue();
+
+            execute("create view v as select name, val from test where val > 25;");
+            drainViewQueue();
+
+            // 5. Validate the new view returns different data (only 'c')
+            assertSql(
+                    """
+                            name\tval
+                            c\t30
+                            """,
+                    "v;"
+            );
+
+            // 6. Restore from the checkpoint
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            engine.checkpointRecover();
+            engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
+
+            // 7. Validate the view uses the predicate from before the checkpoint (val > 15)
+            assertSql(
+                    """
+                            name\tval
+                            b\t20
+                            c\t30
+                            """,
+                    "v;"
+            );
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoresViewWithBaseTableData() throws Exception {
+        final String snapshotId = "id1";
+        final String restartedId = "id2";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
+            execute("insert into test values ('2023-09-20T13:00:00.000000Z', 'b', 20);");
+            drainWalQueue();
+
+            execute("create view test_view as select name, val from test where val > 15;");
+
+            assertSql(
+                    """
+                            name\tval
+                            b\t20
+                            """,
+                    "test_view;"
+            );
+
+            execute("checkpoint create;");
+
+            // insert more data after checkpoint
+            execute("insert into test values ('2023-09-20T14:00:00.000000Z', 'c', 30);");
+            drainWalQueue();
+
+            // view should now show 2 rows
+            assertSql("count\n2\n", "select count() from test_view;");
+
+            // Recover from checkpoint
+            engine.clear();
+            engine.closeNameRegistry();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+            engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
+
+            // After recovery, view should only show data from checkpoint time (1 row)
+            assertSql(
+                    """
+                            name\tval
+                            b\t20
+                            """,
+                    "test_view;"
+            );
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
     public void testCheckpointStatus() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
@@ -704,6 +1350,133 @@ public class CheckpointTest extends AbstractCairoTest {
                     11,
                     "'create' or 'release' expected"
             );
+        });
+    }
+
+    @Test
+    public void testCheckpointViewMetadataFiles() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("create view test_view as select * from test;");
+
+            execute("checkpoint create;");
+
+            // view directory exists in checkpoint
+            TableToken viewToken = engine.getTableTokenIfExists("test_view");
+            Assert.assertNotNull(viewToken);
+
+            path.trimTo(rootLen).concat(viewToken.getDirName()).slash$();
+            Assert.assertTrue("View directory should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+
+            // _view file exists
+            path.trimTo(rootLen).concat(viewToken.getDirName()).concat("_view").$();
+            Assert.assertTrue("_view file should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+
+            // check txn_seq directory exists (views have sequencers)
+            path.trimTo(rootLen).concat(viewToken.getDirName()).concat(WalUtils.SEQ_DIR).slash$();
+            Assert.assertTrue("txn_seq directory should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+
+            // check txn_seq/_meta file exists
+            path.trimTo(rootLen).concat(viewToken.getDirName()).concat(WalUtils.SEQ_DIR).concat(TableUtils.META_FILE_NAME).$();
+            Assert.assertTrue("txn_seq/_meta file should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+
+            execute("checkpoint release;");
+        });
+    }
+
+    @Test
+    public void testCheckpointWithTableDropAndTableCreate() throws Exception {
+        final String snapshotId = "id1";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            // 1. Create base table with data
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
+            execute("insert into test values ('2023-09-20T13:00:00.000000Z', 'b', 20);");
+            execute("insert into test values ('2023-09-20T14:00:00.000000Z', 'c', 30);");
+            drainWalQueue();
+
+            // 2. Checkpoint
+            execute("checkpoint create;");
+
+            // 3. Drop table and create a new one after checkpoint
+            execute("drop table test;");
+            drainWalQueue();
+            drainPurgeJob();
+
+            execute("create table tiesto (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+
+            // 4. Restore from the checkpoint
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            engine.checkpointRecover();
+            engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
+
+            execute("CHECKPOINT RELEASE;");
+
+            // 5. Validate the restored table exists and new table does not
+            assertSql(
+                    """
+                            ts	name	val
+                            2023-09-20T12:00:00.000000Z	a	10
+                            2023-09-20T13:00:00.000000Z	b	20
+                            2023-09-20T14:00:00.000000Z	c	30
+                            """,
+                    "test;"
+            );
+
+            assertException("tiesto;", 0, "table does not exist [table=tiesto]");
+        });
+    }
+
+    @Test
+    public void testCheckpointWithViewAlters() throws Exception {
+        final String snapshotId = "id1";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
+            execute("create view v as select * from test where val > 0;");
+            drainWalAndViewQueues();
+
+            execute("alter view v as select * from test where val > 18;");
+            drainWalAndViewQueues();
+
+            // sanity check: the view exists and works
+            assertSql("count\n1\n", "select count() from views() where view_name = 'v';");
+            assertSql("count\n1\n", "select count() from v;");
+
+            execute("checkpoint create;");
+
+            execute("alter view v as select * from test where val > 100;");
+            drainWalAndViewQueues();
+
+            assertSql("count\n0\n", "select count() from v;");
+
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            engine.checkpointRecover();
+            engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
+
+            // the dropped view should be restored
+            assertSql("count\n1\n", "select count() from v;");
+
+            final TableToken viewToken = engine.getTableTokenIfExists("v");
+            final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(viewToken);
+            Assert.assertNotNull(viewDefinition);
+            Assert.assertEquals("select * from test where val > 18;", viewDefinition.getViewSql());
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(viewToken));
+
+            engine.checkpointRelease();
+            assertSql("count\n1\n", "select count() from v;");
         });
     }
 
@@ -751,7 +1524,7 @@ public class CheckpointTest extends AbstractCairoTest {
                 engine.checkpointRecover();
                 Assert.fail("Exception expected");
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "could not remove registry file");
+                TestUtils.assertContains(e.getMessage(), "Could not remove registry file");
             } finally {
                 testFilesFacade.errorOnRegistryFileRemoval = false;
             }
@@ -813,21 +1586,97 @@ public class CheckpointTest extends AbstractCairoTest {
                             "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
             );
 
-            execute("checkpoint create");
-
-            path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
-            FilesFacade ff = configuration.getFilesFacade();
-            ff.removeQuiet(path.concat(TableUtils.CHECKPOINT_META_FILE_NAME).$());
-
-            engine.clear();
-            createTriggerFile();
+            SimpleWaitingLock lock = new SimpleWaitingLock();
             try {
-                engine.checkpointRecover();
-                Assert.fail("Exception expected");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "checkpoint metadata file does not exist");
+                engine.setWalPurgeJobRunLock(lock);
+                execute("checkpoint create");
+
+                Assert.assertTrue(lock.isLocked());
+
+                path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
+                FilesFacade ff = configuration.getFilesFacade();
+                ff.removeQuiet(path.concat(TableUtils.CHECKPOINT_META_FILE_NAME).$());
+
+                engine.clear();
+                createTriggerFile();
+                try {
+                    engine.checkpointRecover();
+                    Assert.fail("Exception expected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getMessage(), "checkpoint metadata file does not exist");
+                }
+                engine.checkpointRelease();
+
+                Assert.assertFalse(lock.isLocked());
+            } finally {
+                engine.setWalPurgeJobRunLock(null);
             }
-            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testIncrementalCheckpointPrepareRefreshesMatViewIntervals() throws Exception {
+        assertMemoryLeak(() -> {
+
+            // Create base table and mat view
+            execute("create table base_price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            String viewSql = "select sym, last(price) as price, ts from base_price sample by 1h";
+            execute("create materialized view price_1h as (" + viewSql + ") partition by DAY");
+            drainWalQueue();
+
+            // Insert data into base table and refresh mat view
+            execute("insert into base_price values ('BTC', 100.0, '2024-01-01T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            TableToken baseTableToken = engine.verifyTableName("base_price");
+            TableToken matViewToken = engine.verifyTableName("price_1h");
+
+            // Insert more data without refreshing the mat view
+            execute("insert into base_price values ('BTC', 200.0, '2024-01-01T01:00:00.000000Z')");
+            execute("insert into base_price values ('BTC', 300.0, '2024-01-01T02:00:00.000000Z')");
+            drainWalQueue();
+
+            // Get the base table's seqTxn after additional inserts
+            long seqTxnAfterMoreInserts = engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getSeqTxn();
+
+            SimpleWaitingLock lock = new SimpleWaitingLock();
+            try {
+                engine.setWalPurgeJobRunLock(lock);
+
+                // Create incremental checkpoint
+                engine.checkpointCreate(sqlExecutionContext.getCircuitBreaker(), true);
+
+                // Check that WAL purge job lock is released after checkpoint is done, no need to keep it until checkpiont release
+                Assert.assertFalse(lock.isLocked());
+
+                // Read the mat view state from the checkpoint
+                try (
+                        Path checkpointPath = new Path();
+                        io.questdb.cairo.file.BlockFileReader reader = new io.questdb.cairo.file.BlockFileReader(configuration)
+                ) {
+                    checkpointPath.of(configuration.getCheckpointRoot())
+                            .concat(configuration.getDbDirectory())
+                            .concat(matViewToken)
+                            .concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
+
+                    reader.of(checkpointPath.$());
+                    io.questdb.cairo.mv.MatViewStateReader stateReader = new io.questdb.cairo.mv.MatViewStateReader();
+                    stateReader.of(reader, matViewToken);
+
+                    // Verify that the checkpoint mat view state has updated refreshIntervalsBaseTxn
+                    // It should match the base table's seqTxn at checkpoint time
+                    Assert.assertEquals("Checkpoint mat view state should have refreshIntervalsBaseTxn updated to checkpoint base table txn",
+                            seqTxnAfterMoreInserts, stateReader.getRefreshIntervalsBaseTxn());
+
+                    // Verify that refresh intervals were loaded (should not be empty since we have unrefreshed data)
+                    Assert.assertTrue("Checkpoint mat view state should have refresh intervals",
+                            stateReader.getRefreshIntervals().size() > 0);
+                }
+
+                execute("checkpoint release");
+            } finally {
+                engine.setWalPurgeJobRunLock(null);
+            }
         });
     }
 
@@ -1217,6 +2066,16 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testViewDoesNotObstructCheckpointCreation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (ts timestamp, name symbol, val int)");
+            execute("create view test_view as select * from test");
+            execute("checkpoint create");
+            execute("checkpoint release");
+        });
+    }
+
+    @Test
     public void testWalMetadataRecovery() throws Exception {
         final String snapshotId = "id1";
         final String restartedId = "id2";
@@ -1383,8 +2242,94 @@ public class CheckpointTest extends AbstractCairoTest {
         };
     }
 
+    private static void copyDirectory(File source, File target) throws IOException {
+        java.nio.file.Files.walkFileTree(source.toPath(), new SimpleFileVisitor<>() {
+            @Override
+            public @NotNull FileVisitResult preVisitDirectory(java.nio.file.@NotNull Path dir, @NotNull BasicFileAttributes attrs) throws IOException {
+                java.nio.file.Path targetDir = target.toPath().resolve(source.toPath().relativize(dir));
+                java.nio.file.Files.createDirectories(targetDir);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public @NotNull FileVisitResult visitFile(java.nio.file.@NotNull Path file, @NotNull BasicFileAttributes attrs) throws IOException {
+                java.nio.file.Files.copy(file, target.toPath().resolve(source.toPath().relativize(file)),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                return FileVisitResult.CONTINUE;
+            }
+        });
+    }
+
+    private static void corruptIndexKeyEntry(String dbRoot, String tableDirName) {
+        File tableDir = new File(dbRoot, "db/" + tableDirName);
+        File partDir = new File(tableDir, "1970");
+        File[] keyFiles = partDir.listFiles((dir, name) -> name.startsWith("sym" + ".k"));
+        if (keyFiles == null || keyFiles.length == 0) {
+            throw new IllegalStateException("No key file found for column: " + "sym");
+        }
+        File keyFile = keyFiles[0];
+
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+        try (
+                Path keyPath = new Path().of(keyFile.getAbsolutePath());
+                MemoryCMARW mem = Vm.getCMARWInstance()
+        ) {
+            mem.of(ff, keyPath.$(), ff.getMapPageSize(), keyFile.length(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
+
+            // Key 1 entry starts at offset 64 (header) + 32 (key 0) = 96
+            long keyEntryOffset = BitmapIndexUtils.KEY_FILE_RESERVED + BitmapIndexUtils.KEY_ENTRY_SIZE;
+
+            // Read current valueCount (at offset 0 within key entry)
+            long valueCount = mem.getLong(keyEntryOffset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
+
+            // Increment valueCount but NOT countCheck - creates inconsistency
+            mem.putLong(keyEntryOffset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, valueCount + 1);
+
+            // countCheck at offset +24 remains unchanged
+            // This creates: valueCount=11, countCheck=10 (torn write simulation)
+        }
+    }
+
     private static void createTriggerFile() {
         Files.touch(triggerFilePath.$());
+    }
+
+    private static LongList longList(long... values) {
+        LongList list = new LongList(values.length);
+        for (long v : values) {
+            list.add(v);
+        }
+        return list;
+    }
+
+    private static TestServerMain startServerMain(String root, String... envKeyValues) {
+        Map<String, String> env = new HashMap<>(System.getenv());
+        for (int i = 0; i < envKeyValues.length; i += 2) {
+            env.put(envKeyValues[i], envKeyValues[i + 1]);
+        }
+        env.put(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED.getEnvVarName(), "false");
+        // Disable HTTP and PG servers to avoid port conflicts
+        env.put(PropertyKey.HTTP_ENABLED.getEnvVarName(), "false");
+        env.put(PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false");
+        env.put(PropertyKey.PG_ENABLED.getEnvVarName(), "false");
+        env.put(PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false");
+
+        TestServerMain serverMain = new TestServerMain(new Bootstrap(
+                new PropBootstrapConfiguration() {
+                    @Override
+                    public Map<String, String> getEnv() {
+                        return env;
+                    }
+                },
+                Bootstrap.getServerMainArgs(root)
+        ));
+        try {
+            serverMain.start();
+            return serverMain;
+        } catch (Throwable th) {
+            serverMain.close();
+            throw th;
+        }
     }
 
     private String getTestTableName() {
@@ -1559,6 +2504,235 @@ public class CheckpointTest extends AbstractCairoTest {
         });
     }
 
+    private void testCheckpointRecoveryTornKeyEntry(boolean rebuildColumnIndexes) throws Exception {
+        assertMemoryLeak(() -> {
+            // Test that checkpoint recovery correctly handles corrupted (torn) index key entries.
+            //
+            // Scenario: Simulate a torn write by corrupting the .k index file such that
+            // valueCount != countCheck for a key entry. This represents an incomplete write
+            // that could occur during a crash.
+            //
+            // - When rebuildColumnIndexes=TRUE: Index is rebuilt from scratch, corruption fixed
+            // - When rebuildColumnIndexes=FALSE: Corrupted index is preserved
+
+            Assume.assumeTrue(Os.type != Os.WINDOWS);
+
+            File dir1 = temp.newFolder("server1_torn_" + rebuildColumnIndexes);
+            File dir2 = temp.newFolder("server2_torn_" + rebuildColumnIndexes);
+            String tableDirName;
+
+            // Server 1: Create data + checkpoint
+            try (TestServerMain server1 = startServerMain(dir1.getAbsolutePath())) {
+                server1.execute("CREATE TABLE t (sym SYMBOL INDEX, x LONG, ts TIMESTAMP) " +
+                        "TIMESTAMP(ts) PARTITION BY YEAR WAL");
+                server1.execute("INSERT INTO t SELECT 'SYM', x, timestamp_sequence(0, 100000000000) " +
+                        "FROM long_sequence(10)");
+
+                // Wait for WAL to flush
+                TestUtils.assertEventually(() -> server1.assertSql(
+                        "SELECT sym, x FROM t ORDER BY x",
+                        """
+                                sym\tx
+                                SYM\t1
+                                SYM\t2
+                                SYM\t3
+                                SYM\t4
+                                SYM\t5
+                                SYM\t6
+                                SYM\t7
+                                SYM\t8
+                                SYM\t9
+                                SYM\t10
+                                """
+                ));
+
+                server1.execute("CHECKPOINT CREATE");
+                tableDirName = server1.getEngine().verifyTableName("t").getDirName();
+                copyDirectory(dir1, dir2);
+                server1.execute("CHECKPOINT RELEASE");
+            }
+
+            // Verify index is valid before corruption
+            IndexSnapshot beforeCorruption = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName);
+            Assert.assertEquals("Index should have 10 entries", 10, beforeCorruption.getRowIds().size());
+            TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9), beforeCorruption.getRowIds());
+
+            // Corrupt the index in dir2: make valueCount != countCheck
+            corruptIndexKeyEntry(dir2.getAbsolutePath(), tableDirName);
+
+            // Verify corruption was applied - IndexSnapshot reads valueCount, which we incremented to 11
+            IndexSnapshot afterCorruption = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName);
+            Assert.assertEquals("Corrupted index should show 11 entries (valueCount)", 11,
+                    afterCorruption.getRowIds().size());
+
+            // Create trigger file to force checkpoint recovery
+            try (Path triggerPath = new Path().of(dir2.getAbsolutePath()).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME)) {
+                Files.touch(triggerPath.$());
+            }
+
+            // Server 2: Start with corrupted index
+            try (TestServerMain server2 = startServerMain(
+                    dir2.getAbsolutePath(),
+                    CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES.getEnvVarName(), String.valueOf(rebuildColumnIndexes)
+            )) {
+                IndexSnapshot afterRecovery = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName);
+
+                if (rebuildColumnIndexes) {
+                    // With rebuild=true, index is rebuilt from data files, corruption fixed
+                    Assert.assertEquals("Rebuilt index should have 10 entries", 10, afterRecovery.getRowIds().size());
+                    TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9), afterRecovery.getRowIds());
+
+                    // Queries should work correctly
+                    server2.assertSql(
+                            "SELECT count() FROM t WHERE sym = 'SYM'",
+                            "count\n10\n"
+                    );
+                } else {
+                    // With rebuild=false, corrupted index is preserved
+                    // valueCount=11 but countCheck=10 - the index file still has the corruption
+                    Assert.assertEquals("Corrupted index should still show 11 entries", 11,
+                            afterRecovery.getRowIds().size());
+
+                    // Query using the corrupted index throws CairoException due to consistency check
+                    try {
+                        server2.assertSql(
+                                "SELECT count() FROM t WHERE sym = 'SYM'",
+                                "count\n10\n"
+                        );
+                        Assert.fail("Expected CairoException due to corrupted index");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getMessage(), "cursor could not consistently read index header [corrupt?]");
+                    }
+                }
+            }
+        });
+    }
+
+    private void testCheckpointRecoveryWithStaleIndex(boolean rebuildColumnIndexes) throws Exception {
+        // Test that checkpoint recovery correctly handles stale index entries.
+        //
+        // Scenario: User creates checkpoint, then more data is written to the db.
+        // User copies the ENTIRE db directory (with stale index files that contain
+        // entries beyond the checkpoint's row_count). On restore, the index state
+        // depends on the CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES setting:
+        //
+        // - When rebuildColumnIndexes=TRUE: Checkpoint recovery rebuilds the index
+        //   from scratch, so the index immediately has only 10 entries (correct state).
+        //
+        // - When rebuildColumnIndexes=FALSE: The index file on disk retains the stale
+        //   15 entries. However, TableWriter.rollbackIndexes() will clean them up when
+        //   the table is first opened for writing (triggered by the lock file presence).
+        //
+        // This test verifies the index state BEFORE any writes to show the difference.
+
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+
+        File dir1 = temp.newFolder("server1_" + rebuildColumnIndexes);
+        File dir2 = temp.newFolder("server2_" + rebuildColumnIndexes);
+        String tableDirName;
+
+        // Server 1: Create data + checkpoint + more data
+        try (TestServerMain server1 = startServerMain(dir1.getAbsolutePath())) {
+            server1.execute("CREATE TABLE t (sym SYMBOL INDEX, x LONG, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY YEAR WAL");
+            server1.execute("INSERT INTO t SELECT 'OLD_SYM', x, timestamp_sequence(0, 100000000000) " +
+                    "FROM long_sequence(10)");
+
+            // Wait for WAL to flush and assert full data
+            TestUtils.assertEventually(() -> server1.assertSql(
+                    "SELECT sym, x FROM t ORDER BY x",
+                    """
+                            sym\tx
+                            OLD_SYM\t1
+                            OLD_SYM\t2
+                            OLD_SYM\t3
+                            OLD_SYM\t4
+                            OLD_SYM\t5
+                            OLD_SYM\t6
+                            OLD_SYM\t7
+                            OLD_SYM\t8
+                            OLD_SYM\t9
+                            OLD_SYM\t10
+                            """
+            ));
+
+            server1.execute("CHECKPOINT CREATE");
+
+            // Insert MORE of the SAME symbol - this updates the live index
+            // The index now has entries for OLD_SYM pointing to row IDs 0-14
+            server1.execute("INSERT INTO t SELECT 'OLD_SYM', x + 10, timestamp_sequence(1000000000000, 100000000000) " +
+                    "FROM long_sequence(5)");
+
+            // Wait for WAL to flush the new data
+            TestUtils.assertEventually(() -> server1.assertSql(
+                    "SELECT sym, x FROM t ORDER BY x",
+                    """
+                            sym\tx
+                            OLD_SYM\t1
+                            OLD_SYM\t2
+                            OLD_SYM\t3
+                            OLD_SYM\t4
+                            OLD_SYM\t5
+                            OLD_SYM\t6
+                            OLD_SYM\t7
+                            OLD_SYM\t8
+                            OLD_SYM\t9
+                            OLD_SYM\t10
+                            OLD_SYM\t11
+                            OLD_SYM\t12
+                            OLD_SYM\t13
+                            OLD_SYM\t14
+                            OLD_SYM\t15
+                            """
+            ));
+
+            // Get the table directory name for later index reading
+            tableDirName = server1.getEngine().verifyTableName("t").getDirName();
+
+            // Copy entire dir1 to dir2 - this simulates a backup AFTER more writes
+            // The copied db has:
+            // - _txn metadata that says row_count=10 (from checkpoint)
+            // - Index files that have entries for OLD_SYM pointing to row IDs 0-14
+            copyDirectory(dir1, dir2);
+
+            server1.execute("CHECKPOINT RELEASE");
+        }
+
+        // Verify the STALE index state before server2 starts
+        // Key 0 is null symbol, Key 1 is OLD_SYM
+        IndexSnapshot staleIndex = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName);
+        Assert.assertEquals("Stale index should have maxValue=14 (row IDs 0-14)", 14, staleIndex.maxValue);
+        Assert.assertEquals("Stale index should have 2 keys", 2, staleIndex.keyCount);
+        TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14), staleIndex.getRowIds());
+
+        // Create the trigger file in dir2 to force checkpoint recovery on startup
+        try (Path triggerPath = new Path().of(dir2.getAbsolutePath()).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME)) {
+            Files.touch(triggerPath.$());
+        }
+
+        // Server 2: Start with the specified rebuild setting
+        try (TestServerMain ignored = startServerMain(
+                dir2.getAbsolutePath(),
+                CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES.getEnvVarName(), String.valueOf(rebuildColumnIndexes)
+        )) {
+            // Read the index AFTER checkpoint recovery but BEFORE any writes.
+            // This shows the difference between rebuild=true and rebuild=false.
+            IndexSnapshot afterRecoveryIndex = IndexSnapshot.read(dir2.getAbsolutePath(), tableDirName);
+
+            if (rebuildColumnIndexes) {
+                // With rebuild=true, checkpoint recovery rebuilt the index from scratch.
+                // It should have exactly 10 entries (matching the checkpoint row count) and maxValue=9.
+                Assert.assertEquals("With rebuild=true, maxValue should be 9", 9, afterRecoveryIndex.maxValue);
+                TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9), afterRecoveryIndex.getRowIds());
+            } else {
+                // With rebuild=false, the index file on disk STILL has the stale 15 entries.
+                // They will be cleaned up by TableWriter.rollbackIndexes() on first write.
+                Assert.assertEquals("With rebuild=false, maxValue still stale at 14", 14, afterRecoveryIndex.maxValue);
+                TestUtils.assertEquals(longList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14), afterRecoveryIndex.getRowIds());
+            }
+        }
+    }
+
     private void testRecoverCheckpoint(
             String snapshotId,
             String restartedId,
@@ -1649,6 +2823,126 @@ public class CheckpointTest extends AbstractCairoTest {
 
             engine.checkpointRelease();
         });
+    }
+
+    /**
+     * Snapshot of a bitmap index file contents for testing purposes.
+     * Reads the .k and .v files and extracts all key entries with their row IDs.
+     */
+    private static class IndexSnapshot {
+        private static final long MAX_VALUE_OFFSET = 37L;
+
+        final IntObjHashMap<LongList> entries;
+        final int keyCount;
+        final long maxValue;
+        final long sequence;
+
+        private IndexSnapshot(IntObjHashMap<LongList> entries, int keyCount, long sequence, long maxValue) {
+            this.entries = entries;
+            this.keyCount = keyCount;
+            this.sequence = sequence;
+            this.maxValue = maxValue;
+        }
+
+        @Override
+        public String toString() {
+            StringBuilder sb = new StringBuilder();
+            sb.append("IndexSnapshot{keyCount=").append(keyCount)
+                    .append(", sequence=").append(sequence)
+                    .append(", maxValue=").append(maxValue)
+                    .append(", entries={\n");
+            for (int i = 0; i < keyCount; i++) {
+                LongList rowIds = entries.get(i);
+                sb.append("  key ").append(i).append(": ").append(rowIds != null ? rowIds.size() : 0).append(" entries");
+                if (rowIds != null && rowIds.size() > 0) {
+                    sb.append(" [");
+                    for (int j = 0; j < Math.min(rowIds.size(), 20); j++) {
+                        if (j > 0) sb.append(", ");
+                        sb.append(rowIds.get(j));
+                    }
+                    if (rowIds.size() > 20) sb.append(", ...");
+                    sb.append("]");
+                }
+                sb.append("\n");
+            }
+            sb.append("}}");
+            return sb.toString();
+        }
+
+        /**
+         * Reads index from the standard location in a QuestDB data directory.
+         */
+        static IndexSnapshot read(String dbRoot, String tableDirName) {
+            File tableDir = new File(dbRoot, "db/" + tableDirName);
+            File partDir = new File(tableDir, "1970");
+
+            // Find .k file (may have txn suffix)
+            File[] keyFiles = partDir.listFiles((dir, name) -> name.startsWith("sym" + ".k"));
+            if (keyFiles == null || keyFiles.length == 0) {
+                throw new IllegalStateException("No key file found for column: " + "sym" + " in " + partDir);
+            }
+            File keyFile = keyFiles[0];
+            String vFileName = keyFile.getName().replace(".k", ".v");
+            File valueFile = new File(partDir, vFileName);
+
+            try (
+                    MemoryMR keyMem = Vm.getCMRInstance();
+                    MemoryMR valueMem = Vm.getCMRInstance()
+            ) {
+                FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+
+                try (Path keyPath = new Path().of(keyFile.getAbsolutePath())) {
+                    keyMem.of(ff, keyPath.$(), ff.getMapPageSize(), keyFile.length(),
+                            MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
+                }
+
+                long sequence = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
+                int blockValueCount = keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT);
+                int keyCount = keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
+                long maxValue = keyMem.getLong(MAX_VALUE_OFFSET);
+
+                try (Path valuePath = new Path().of(valueFile.getAbsolutePath())) {
+                    valueMem.of(ff, valuePath.$(), valueFile.length(), valueFile.length(), MemoryTag.MMAP_DEFAULT);
+                }
+
+                IntObjHashMap<LongList> entries = new IntObjHashMap<>();
+
+                // Read each key entry
+                for (int key = 0; key < keyCount; key++) {
+                    long keyEntryOffset = BitmapIndexUtils.getKeyEntryOffset(key);
+                    long valueCount = keyMem.getLong(keyEntryOffset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
+                    long firstBlockOffset = keyMem.getLong(keyEntryOffset + BitmapIndexUtils.KEY_ENTRY_OFFSET_FIRST_VALUE_BLOCK_OFFSET);
+
+                    LongList rowIds = new LongList();
+                    if (valueCount > 0 && firstBlockOffset < valueMem.size()) {
+                        long remaining = valueCount;
+                        long blockOffset = firstBlockOffset;
+                        int blockValueCountMod = blockValueCount - 1;
+
+                        while (remaining > 0 && blockOffset < valueMem.size()) {
+                            long cellCount = Math.min(remaining, blockValueCount);
+                            for (int i = 0; i < cellCount; i++) {
+                                long rowId = valueMem.getLong(blockOffset + i * 8L);
+                                rowIds.add(rowId);
+                            }
+                            remaining -= cellCount;
+                            if (remaining > 0) {
+                                // Next block pointer is after the values
+                                long nextBlockPtrOffset = (blockValueCountMod + 1) * 8L + 8;
+                                blockOffset = valueMem.getLong(blockOffset + nextBlockPtrOffset);
+                            }
+                        }
+                    }
+                    entries.put(key, rowIds);
+                }
+
+                return new IndexSnapshot(entries, keyCount, sequence, maxValue);
+            }
+        }
+
+        LongList getRowIds() {
+            return entries.get(1);
+        }
     }
 
     private static class TestFilesFacade extends TestFilesFacadeImpl {

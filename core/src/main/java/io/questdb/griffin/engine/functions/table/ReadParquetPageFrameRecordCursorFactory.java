@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,20 +24,19 @@
 
 package io.questdb.griffin.engine.functions.table;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
+import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
-import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
@@ -45,43 +44,51 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 /**
  * Factory for parallel read_parquet() SQL function.
  */
-public class ReadParquetPageFrameRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final PageFrameRecordCursorImpl cursor;
-    private final ReadParquetPageFrameCursor pageFrameCursor;
+public class ReadParquetPageFrameRecordCursorFactory extends ProjectableRecordCursorFactory {
+    private PageFrameRecordCursorImpl cursor;
+    private ReadParquetPageFrameCursor pageFrameCursor;
     private Path path;
 
     public ReadParquetPageFrameRecordCursorFactory(
-            @NotNull CairoConfiguration configuration,
             @Transient Path path,
             RecordMetadata metadata
     ) {
         super(metadata);
         this.path = new Path().of(path);
-        this.cursor = new PageFrameRecordCursorImpl(
-                configuration,
-                metadata,
-                new PageFrameRowCursorFactory(ORDER_ASC),
-                true,
-                null
-        );
-        this.pageFrameCursor = new ReadParquetPageFrameCursor(configuration.getFilesFacade(), metadata);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+        if (cursor == null) {
+            cursor = new PageFrameRecordCursorImpl(
+                    configuration,
+                    getMetadata(),
+                    new PageFrameRowCursorFactory(ORDER_ASC),
+                    true,
+                    null
+            );
+        }
+        if (pageFrameCursor == null) {
+            pageFrameCursor = new ReadParquetPageFrameCursor(configuration.getFilesFacade(), getMetadata());
+        }
         pageFrameCursor.of(path.$());
         try {
             cursor.of(pageFrameCursor, executionContext);
             return cursor;
-        } catch (Throwable e) {
-            pageFrameCursor.close();
-            throw e;
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
         }
     }
 
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         assert order != ORDER_DESC;
+        if (pageFrameCursor == null) {
+            final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+            pageFrameCursor = new ReadParquetPageFrameCursor(configuration.getFilesFacade(), getMetadata());
+        }
         pageFrameCursor.of(path.$());
         return pageFrameCursor;
     }
@@ -99,6 +106,7 @@ public class ReadParquetPageFrameRecordCursorFactory extends AbstractRecordCurso
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("parquet page frame scan");
+        sink.attr("columns").val(getMetadata());
     }
 
     @Override

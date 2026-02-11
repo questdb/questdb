@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,6 +39,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.QdbrWalLocker;
+import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cutlass.line.AbstractLineSender;
 import io.questdb.cutlass.line.AbstractLineTcpSender;
 import io.questdb.cutlass.line.LineSenderException;
@@ -59,12 +61,10 @@ import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -74,6 +74,7 @@ import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -317,7 +318,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             } else if (i % 25 == 0 && drop) {
                                 TableToken tt = engine.getTableTokenIfExists(tableName);
                                 if (tt != null) {
-                                    engine.dropTableOrMatView(path, tt);
+                                    engine.dropTableOrViewOrMatView(path, tt);
                                     drop = false;
                                 }
                             }
@@ -474,23 +475,24 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 2);
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
         String weather = "weather";
-        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+        final WalLocker walLocker = new QdbrWalLocker() {
             private int count = 1;
 
             @Override
-            public long openRWNoCache(LPSZ name, int opts) {
+            public void setWalSegmentMinId(@NotNull TableToken table, int walId, int segmentId) {
                 if (
-                        Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
-                                && Utf8s.containsAscii(name, weather)
+                        Utf8s.containsAscii(table.getDirNameUtf8(), weather)
+                                && walId == 1
+                                && segmentId == 1
                                 && --count == 0
                 ) {
                     dropWeatherTable();
                 }
-                return super.openRWNoCache(name, opts);
+                super.setWalSegmentMinId(table, walId, segmentId);
             }
         };
 
-        runInContext(filesFacade, (receiver) -> {
+        runInContext(walLocker, (receiver) -> {
             String lineData = weather + ",location=us-midwest temperature=82 1465839830100400200\n" +
                     weather + ",location=us-midwest temperature=83 1465839830100500200\n" +
                     weather + ",location=us-eastcoast temperature=81 1465839830101400200\n" +
@@ -853,23 +855,20 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
         String weather = "weather";
         String meteorology = "meteorology";
-        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+        var walLocker = new QdbrWalLocker() {
             private final AtomicInteger count = new AtomicInteger(1);
 
             @Override
-            public long openRWNoCache(LPSZ name, int opts) {
-                if (
-                        Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
-                                && count.decrementAndGet() == 0
-                ) {
+            public void setWalSegmentMinId(@NotNull TableToken table, int walId, int segmentId) {
+                if (walId == 1 && segmentId == 1 && count.decrementAndGet() == 0) {
                     mayDrainWalQueue();
                     renameTable(weather, meteorology);
                 }
-                return super.openRWNoCache(name, opts);
+                super.setWalSegmentMinId(table, walId, segmentId);
             }
         };
 
-        runInContext(filesFacade, (receiver) -> {
+        runInContext(walLocker, (receiver) -> {
             final String lineData = weather + ",location=west1 temperature=10 1465839830100400200\n" +
                     weather + ",location=west2 temperature=20 1465839830100500200\n" +
                     weather + ",location=east3 temperature=30 1465839830100600200\n" +
@@ -908,29 +907,25 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testRenameTableSameMeta() throws Exception {
-        Assume.assumeTrue(walEnabled && ColumnType.isTimestampNano(timestampType.getTimestampType()));
+        Assume.assumeTrue(walEnabled);
 
         node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 2);
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
         String weather = "weather";
         String meteorology = "meteorology";
-        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+        var walLocker = new QdbrWalLocker() {
             private int count = 1;
 
             @Override
-            public long openRWNoCache(LPSZ name, int opts) {
-                if (
-                        Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
-                                && Utf8s.containsAscii(name, weather)
-                                && --count == 0
-                ) {
+            public void setWalSegmentMinId(@NotNull TableToken table, int walId, int segmentId) {
+                if (Utf8s.containsAscii(table.getDirNameUtf8(), weather) && walId == 1 && segmentId == 1 && --count == 0) {
                     renameTable(weather, meteorology);
                 }
-                return super.openRWNoCache(name, opts);
+                super.setWalSegmentMinId(table, walId, segmentId);
             }
         };
 
-        runInContext(filesFacade, (receiver) -> {
+        runInContext(walLocker, (receiver) -> {
             String lineData = weather + ",location=west1 temperature=10 1465839830100400200\n" +
                     weather + ",location=west2 temperature=20 1465839830100500200\n" +
                     weather + ",location=east3 temperature=30 1465839830100600200\n" +
@@ -940,16 +935,14 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     weather + ",location=south7 temperature=70 1465839830101000200\n" +
                     meteorology + ",location=south8 temperature=80 1465839830101000200\n";
 
-            sendWaitWalReleaseCount(lineData, 3);
+            sendWaitWalReleaseCount(lineData, 2);
 
-            // two of the three commits go to the renamed table
+            // 1 of the three commits go to the renamed table
             final String expected = """
-                    location\ttemperature\ttimestamp
-                    west1\t10.0\t2016-06-13T17:43:50.100400Z
-                    west2\t20.0\t2016-06-13T17:43:50.100500Z
-                    east3\t30.0\t2016-06-13T17:43:50.100600Z
-                    west4\t40.0\t2016-06-13T17:43:50.100700Z
-                    south8\t80.0\t2016-06-13T17:43:50.101000Z
+                    location	temperature	timestamp
+                    west1	10.0	2016-06-13T17:43:50.100400Z
+                    west2	20.0	2016-06-13T17:43:50.100500Z
+                    south8	80.0	2016-06-13T17:43:50.101000Z
                     """;
 
             assertEventually(
@@ -960,12 +953,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     15
             );
 
-            // last commit goes to the recreated table
+            // last 2 commits goes to the recreated table
             final String expected2 = """
-                    location\ttemperature\ttimestamp
-                    west5\t50.0\t2016-06-13T17:43:50.100800Z
-                    east6\t60.0\t2016-06-13T17:43:50.100900Z
-                    south7\t70.0\t2016-06-13T17:43:50.101000Z
+                    location	temperature	timestamp
+                    west5	50.0	2016-06-13T17:43:50.100800Z
+                    east6	60.0	2016-06-13T17:43:50.100900Z
+                    south7	70.0	2016-06-13T17:43:50.101000Z
                     """;
 
             assertEventually(
@@ -2138,7 +2131,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     private void dropWeatherTable() {
-        engine.dropTableOrMatView(path, engine.verifyTableName("weather"));
+        engine.dropTableOrViewOrMatView(path, engine.verifyTableName("weather"));
     }
 
     private void mayDrainWalQueue() {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,7 +45,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     private final Function filter;
     private final RowCursorFactory rowCursorFactory;
     private boolean areCursorsPrepared;
-    private boolean isSkipped;
+    private boolean isExhausted;
     private RowCursor rowCursor;
 
     public PageFrameRecordCursorImpl(
@@ -84,6 +84,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         counter.add(frameCursor.getRemainingRowsInInterval());
 
         frameCursor.calculateSize(counter);
+        isExhausted = true;
     }
 
     public RowCursorFactory getRowCursorFactory() {
@@ -92,6 +93,9 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     @Override
     public boolean hasNext() {
+        if (isExhausted) {
+            return false;
+        }
         prepareRowCursorFactory();
         try {
             if (rowCursor != null && rowCursor.hasNext()) {
@@ -114,9 +118,11 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
                 }
             }
         } catch (NoMoreFramesException ignore) {
+            isExhausted = true;
             return false;
         }
 
+        isExhausted = true;
         return false;
     }
 
@@ -135,8 +141,8 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         recordB.of(frameCursor);
         rowCursorFactory.init(frameCursor, sqlExecutionContext);
         areCursorsPrepared = false;
+        isExhausted = false;
         rowCursor = null;
-        isSkipped = false;
         // prepare for page frame iteration
         super.init();
     }
@@ -153,18 +159,29 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     @Override
     public void skipRows(Counter rowCount) {
-        if (isSkipped) {
-            return;
-        }
-
         prepareRowCursorFactory();
 
+        // Use slow path when:
+        // - filter is present (need to evaluate each row)
+        // - using index (row order may not be sequential)
         if (filter != null || rowCursorFactory.isUsingIndex()) {
             while (rowCount.get() > 0 && hasNext()) {
                 rowCount.dec();
             }
-            isSkipped = true;
             return;
+        }
+
+        // If we're mid-frame after hasNext() calls, exhaust current rowCursor first,
+        // then fall through to the fast path for remaining frames
+        if (rowCursor != null) {
+            while (rowCount.get() > 0 && rowCursor.hasNext()) {
+                rowCursor.next();
+                rowCount.dec();
+            }
+            if (rowCount.get() == 0) {
+                return;
+            }
+            rowCursor = null;
         }
 
         long skipTarget = rowCount.get();
@@ -182,7 +199,6 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         }
 
         final int frameIndex = frameCount - 1;
-        isSkipped = true;
         // page frame is null when table has no partitions so there's nothing to skip
         if (pageFrame != null) {
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
@@ -191,6 +207,8 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             recordA.setRowIndex(0);
             rowCursor = rowCursorFactory.getCursor(pageFrame, frameMemory);
             rowCursor.jumpTo(skipTarget);
+        } else {
+            isExhausted = true;
         }
     }
 
@@ -205,7 +223,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             filter.toTop();
         }
         rowCursor = null;
-        isSkipped = false;
+        isExhausted = false;
         super.toTop();
     }
 

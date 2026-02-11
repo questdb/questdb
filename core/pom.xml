@@ -6,7 +6,7 @@
   ~    \__\_\\__,_|\___||___/\__|____/|____/
   ~
   ~  Copyright (c) 2014-2019 Appsicle
-  ~  Copyright (c) 2019-2024 QuestDB
+  ~  Copyright (c) 2019-2026 QuestDB
   ~
   ~  Licensed under the Apache License, Version 2.0 (the "License");
   ~  you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@
         <argLine>-ea -Dfile.encoding=UTF-8 -XX:+UseParallelGC</argLine>
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
-        <web.console.version>1.1.6</web.console.version>
+        <web.console.version>1.1.13</web.console.version>
         <qdbr.path>rust/qdbr</qdbr.path>
         <qdbr.release>false</qdbr.release>
 
@@ -46,7 +46,7 @@
         <qdbr.rustflags>-D warnings</qdbr.rustflags>
     </properties>
 
-    <version>9.2.2-SNAPSHOT</version>
+    <version>9.3.3-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -70,7 +70,7 @@
     <scm>
         <url>scm:git:https://github.com/questdb/questdb.git</url>
         <connection>scm:git:https://github.com/questdb/questdb.git</connection>
-        <tag>HEAD</tag>
+        <tag>9.3.1</tag>
     </scm>
 
 
@@ -570,7 +570,6 @@
                 <runtime.name>questdb-${project.version}-rt-osx-x86-64</runtime.name>
                 <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
                 <platform.dir.name>darwin-x86-64</platform.dir.name>
-                <jemalloc.so>libjemalloc.dylib</jemalloc.so>
             </properties>
         </profile>
         <profile>
@@ -586,7 +585,6 @@
                 <runtime.name>questdb-${project.version}-rt-osx-aarch64</runtime.name>
                 <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
                 <platform.dir.name>darwin-aarch64</platform.dir.name>
-                <jemalloc.so>libjemalloc.dylib</jemalloc.so>
             </properties>
         </profile>
         <profile>

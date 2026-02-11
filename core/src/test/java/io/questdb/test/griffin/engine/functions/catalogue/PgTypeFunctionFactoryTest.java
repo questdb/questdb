@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -49,7 +49,8 @@ public class PgTypeFunctionFactoryTest extends AbstractCairoTest {
                         "2281\tinternal\t0\t0\t11\tfalse\t0\tb\tP\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n" +
                         "26\toid\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n" +
                         "1022\t_float8\t0\t0\t11\tfalse\t0\tb\tA\tnull\t701\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n" +
-                        "1700\tnumeric\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n",
+                        "1700\tnumeric\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n" +
+                        "1015\t_varchar\t0\t0\t11\tfalse\t0\tb\tA\tnull\t1043\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n",
                 "pg_type;",
                 "create table x(a int)",
                 null,
@@ -77,7 +78,8 @@ public class PgTypeFunctionFactoryTest extends AbstractCairoTest {
                         "2281\tinternal\t0\t0\t11\tfalse\t0\tb\tP\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n" +
                         "26\toid\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n" +
                         "1022\t_float8\t0\t0\t11\tfalse\t0\tb\tA\tnull\t701\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n" +
-                        "1700\tnumeric\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n",
+                        "1700\tnumeric\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n" +
+                        "1015\t_varchar\t0\t0\t11\tfalse\t0\tb\tA\tnull\t1043\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n",
                 "pg_catalog.pg_type;",
                 "create table x(a int)",
                 null,

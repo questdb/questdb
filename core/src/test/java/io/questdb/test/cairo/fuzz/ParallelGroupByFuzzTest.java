@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -91,6 +91,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 1 + rnd.nextInt(PAGE_FRAME_COUNT));
         // Set the sharding threshold to a small value to test sharding.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 1 + rnd.nextInt(50));
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_TOP_K_THRESHOLD, rnd.nextBoolean() ? 4 : Integer.MAX_VALUE);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1 + rnd.nextInt(16));
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(enableParallelGroupBy));
         super.setUp();
@@ -1475,6 +1476,63 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelLongTopK() throws Exception {
+        // ORDER BY aggregate function
+        final String expected = """
+                k\tc
+                0\t400
+                1\t400
+                2\t400
+                3\t400
+                4\t400
+                5\t400
+                6\t400
+                7\t400
+                8\t400
+                9\t400
+                """;
+        testParallelLongTopK(
+                "SELECT * FROM (SELECT short_key k, count() c FROM tab ORDER BY c ASC LIMIT 10) ORDER BY k, c",
+                expected,
+                "Long Top K lo: 10",
+                "SELECT * FROM (SELECT int_key k, count() c FROM tab ORDER BY c ASC LIMIT 10) ORDER BY k, c",
+                expected,
+                "Long Top K lo: 10",
+                "SELECT * FROM (SELECT long_key k, count() c FROM tab ORDER BY c ASC LIMIT 10) ORDER BY k, c",
+                expected,
+                "Long Top K lo: 10",
+                "SELECT * FROM (SELECT varchar_key k, count() c FROM tab ORDER BY c ASC LIMIT 10) ORDER BY k, c",
+                expected,
+                "Long Top K lo: 10"
+        );
+    }
+
+    @Test
+    public void testParallelLongTopK1() throws Exception {
+        // ORDER BY key
+        final String expected = """
+                k\tsum
+                9\t2188
+                8\t2208
+                7\t2159
+                """;
+        testParallelLongTopK(
+                "SELECT short_key::long k, sum(value) FROM tab ORDER BY k DESC LIMIT 3",
+                expected,
+                "Long Top K lo: 3",
+                "SELECT int_key::long k, sum(value) FROM tab ORDER BY k DESC LIMIT 3",
+                expected,
+                "Long Top K lo: 3",
+                "SELECT long_key k, sum(value) FROM tab ORDER BY k DESC LIMIT 3",
+                expected,
+                "Long Top K lo: 3",
+                "SELECT varchar_key::long k, sum(value) FROM tab ORDER BY k DESC LIMIT 3",
+                expected,
+                "Long Top K lo: 3"
+        );
+    }
+
+    @Test
     public void testParallelMultiJsonKeyGroupBy() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
@@ -2436,6 +2494,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         Y\tY
                         """
         );
+    }
+
+    @Test
+    public void testParallelNonKeyedVectGroupByThrowsOnTimeout() throws Exception {
+        // Query owner thread will publish all tasks and then immediately get a CB timeout,
+        // so that if it tries to free shared resources, worker threads will access freed memory => segfault.
+        testParallelGroupByThrowsOnTimeout("select sum(price), avg(quantity) from tab", 2);
     }
 
     @Test
@@ -3784,6 +3849,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelVectGroupByThrowsOnTimeout() throws Exception {
+        // Query owner thread will publish all tasks and then immediately get a CB timeout,
+        // so that if it tries to free shared resources, worker threads will access freed memory => segfault.
+        testParallelGroupByThrowsOnTimeout("select id, sum(price) from tab", 2);
+    }
+
+    @Test
     public void testParallelWeightedGroupByAvg() throws Exception {
         testParallelGroupByAllTypes(
                 "SELECT round(weighted_avg(adouble, adouble), 14) FROM tab", """
@@ -4101,8 +4173,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     private void testParallelGroupByThrowsOnTimeout(String query, long tripWhenTicks) throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         // Validate parallel GROUP BY factories.
         Assume.assumeTrue(enableParallelGroupBy);
         // The test is very sensitive to sharding threshold and page frame sizes.
@@ -4134,18 +4204,20 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
-                        final NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, circuitBreakerConfiguration, MemoryTag.NATIVE_DEFAULT);
+                        final NetworkSqlExecutionCircuitBreaker circuitBreaker =
+                                new NetworkSqlExecutionCircuitBreaker(engine, circuitBreakerConfiguration, MemoryTag.NATIVE_DEFAULT);
                         try {
                             engine.execute(
                                     "CREATE TABLE tab ( " +
                                             "  ts TIMESTAMP, " +
                                             "  price DOUBLE, " +
-                                            "  quantity DOUBLE " +
+                                            "  quantity DOUBLE, " +
+                                            "  id INT " +
                                             ") TIMESTAMP(ts) PARTITION BY DAY;",
                                     sqlExecutionContext
                             );
                             engine.execute(
-                                    "insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + ROW_COUNT + ")",
+                                    "insert into tab select (x * 864000000)::timestamp, x, x % 100, x % 10 from long_sequence(" + ROW_COUNT + ")",
                                     sqlExecutionContext
                             );
                             if (convertToParquet) {
@@ -4230,6 +4302,40 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    // unlike other test methods, this one expects triples, not couples of strings;
+    // the third value may contain a fragment of query plan to assert
+    private void testParallelLongTopK(String... queriesExpectedResultsAndPlans) throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        engine.execute(
+                                "CREATE TABLE tab (" +
+                                        "  ts TIMESTAMP," +
+                                        "  short_key SHORT," +
+                                        "  int_key INT," +
+                                        "  long_key LONG," +
+                                        "  varchar_key VARCHAR," +
+                                        "  value LONG" +
+                                        ") timestamp (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "insert into tab select (x * 864000000)::timestamp, x % 10, x % 10, x % 10, concat('', x % 10), rnd_long(1, 10, 0) " +
+                                        "from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        assertQueriesAndPlans(engine, sqlExecutionContext, queriesExpectedResultsAndPlans);
                     },
                     configuration,
                     LOG

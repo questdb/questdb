@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -41,10 +41,14 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntStack;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjStack;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.MicrosecondClock;
@@ -57,11 +61,16 @@ import org.jetbrains.annotations.Nullable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SqlExecutionContextImpl implements SqlExecutionContext {
+    private static final IntHashSet SKIP_TELEMETRY_EVENTS = new IntHashSet();
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
     private final Decimal128 decimal128 = new Decimal128();
     private final Decimal256 decimal256 = new Decimal256();
     private final Decimal64 decimal64 = new Decimal64();
+    private final int defaultPageFrameMaxRows;
+    private final int defaultPageFrameMinRows;
+    private final IntStack hasIntervalStack = new IntStack();
+    private final ObjStack<RuntimeIntrinsicIntervalModel> intervalModelObjStack = new ObjStack<>();
     private final MicrosecondClock microClock;
     private final NanosecondClock nanoClock;
     private final int sharedQueryWorkerCount;
@@ -84,10 +93,14 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private long nowNanos;
     // Timestamp type only for now() function, used by NowFunctionFactory
     private int nowTimestampType;
+    private int pageFrameMaxRows;
+    private int pageFrameMinRows;
     private boolean parallelFilterEnabled;
     private boolean parallelGroupByEnabled;
     private boolean parallelReadParquetEnabled;
     private boolean parallelTopKEnabled;
+    private boolean parallelWindowJoinEnabled;
+    private QueryFutureUpdateListener queryFutureUpdateListener = QueryFutureUpdateListener.EMPTY;
     private Rnd random;
     private long requestFd = -1;
     private boolean useSimpleCircuitBreaker;
@@ -106,6 +119,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled() && sharedQueryWorkerCount > 0;
         parallelGroupByEnabled = cairoConfiguration.isSqlParallelGroupByEnabled() && sharedQueryWorkerCount > 0;
         parallelTopKEnabled = cairoConfiguration.isSqlParallelTopKEnabled() && sharedQueryWorkerCount > 0;
+        parallelWindowJoinEnabled = cairoConfiguration.isSqlParallelWindowJoinEnabled() && sharedQueryWorkerCount > 0;
         parallelReadParquetEnabled = cairoConfiguration.isSqlParallelReadParquetEnabled() && sharedQueryWorkerCount > 0;
         telemetry = cairoEngine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoOp;
@@ -115,11 +129,21 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.simpleCircuitBreaker = new AtomicBooleanCircuitBreaker(cairoEngine, cairoConfiguration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
+        this.defaultPageFrameMaxRows = cairoConfiguration.getSqlPageFrameMaxRows();
+        this.defaultPageFrameMinRows = cairoConfiguration.getSqlPageFrameMinRows();
+        this.pageFrameMaxRows = defaultPageFrameMaxRows;
+        this.pageFrameMinRows = defaultPageFrameMinRows;
     }
 
     @Override
     public boolean allowNonDeterministicFunctions() {
         return allowNonDeterministicFunction;
+    }
+
+    @Override
+    public void changePageFrameSizes(int minRows, int maxRows) {
+        this.pageFrameMinRows = minRows;
+        this.pageFrameMaxRows = maxRows;
     }
 
     @Override
@@ -157,7 +181,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
                 ordered,
                 orderByDirection,
                 orderByPos,
-                baseSupportsRandomAccess,
                 framingMode,
                 rowsLo,
                 rowsLoUnit,
@@ -256,8 +279,18 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public int getPageFrameMaxRows() {
+        return pageFrameMaxRows;
+    }
+
+    @Override
+    public int getPageFrameMinRows() {
+        return pageFrameMinRows;
+    }
+
+    @Override
     public QueryFutureUpdateListener getQueryFutureUpdateListener() {
-        return QueryFutureUpdateListener.EMPTY;
+        return queryFutureUpdateListener;
     }
 
     @Override
@@ -291,6 +324,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public int hasInterval() {
+        return hasIntervalStack.peek();
+    }
+
+    @Override
     public void initNow() {
         this.nowNanos = nanoClock.getTicks();
         this.nowMicros = microClock.getTicks();
@@ -321,6 +359,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isParallelWindowJoinEnabled() {
+        return parallelWindowJoinEnabled;
+    }
+
+    @Override
     public boolean isTimestampRequired() {
         return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() == 1;
     }
@@ -336,8 +379,33 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public RuntimeIntrinsicIntervalModel peekIntervalModel() {
+        return intervalModelObjStack.peek();
+    }
+
+    @Override
+    public void popHasInterval() {
+        hasIntervalStack.pop();
+    }
+
+    @Override
+    public void popIntervalModel() {
+        intervalModelObjStack.pop();
+    }
+
+    @Override
     public void popTimestampRequiredFlag() {
         timestampRequiredStack.pop();
+    }
+
+    @Override
+    public void pushHasInterval(int hasInterval) {
+        hasIntervalStack.push(hasInterval);
+    }
+
+    @Override
+    public void pushIntervalModel(RuntimeIntrinsicIntervalModel intervalModel) {
+        intervalModelObjStack.push(intervalModel);
     }
 
     @Override
@@ -346,12 +414,22 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void resetFlags() {
+    public void reset() {
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.cacheHit = false;
         this.allowNonDeterministicFunction = true;
         this.validationOnly = false;
+        this.timestampRequiredStack.clear();
+        this.hasIntervalStack.clear();
+        this.intervalModelObjStack.clear();
+        Misc.clear(securityContext);
+    }
+
+    @Override
+    public void restoreToDefaultPageFrameSizes() {
+        this.pageFrameMinRows = defaultPageFrameMinRows;
+        this.pageFrameMaxRows = defaultPageFrameMaxRows;
     }
 
     @Override
@@ -394,6 +472,10 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.clockUseNow = true;
     }
 
+    public void setQueryFutureUpdateListener(QueryFutureUpdateListener listener) {
+        this.queryFutureUpdateListener = listener != null ? listener : QueryFutureUpdateListener.EMPTY;
+    }
+
     @Override
     public void setParallelFilterEnabled(boolean parallelFilterEnabled) {
         this.parallelFilterEnabled = parallelFilterEnabled;
@@ -412,6 +494,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setParallelTopKEnabled(boolean parallelTopKEnabled) {
         this.parallelTopKEnabled = parallelTopKEnabled;
+    }
+
+    @Override
+    public void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled) {
+        this.parallelWindowJoinEnabled = parallelWindowJoinEnabled;
     }
 
     @Override
@@ -442,13 +529,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.securityContext = securityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
-        resetFlags();
+        reset();
         return this;
     }
 
     public void with(long requestFd) {
         this.requestFd = requestFd;
-        resetFlags();
+        reset();
     }
 
     public void with(BindVariableService bindVariableService) {
@@ -468,7 +555,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         return with(securityContext, bindVariableService, null, -1, null);
     }
 
-
     public SqlExecutionContextImpl with(
             @NotNull SecurityContext securityContext,
             @Nullable BindVariableService bindVariableService,
@@ -481,11 +567,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.random = rnd;
         this.requestFd = requestFd;
         this.circuitBreaker = circuitBreaker == null ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
-        resetFlags();
+        this.pageFrameMaxRows = defaultPageFrameMaxRows;
+        this.pageFrameMinRows = defaultPageFrameMinRows;
+        reset();
         return this;
     }
 
     private void doStoreTelemetry(short event, short origin) {
+        if (SKIP_TELEMETRY_EVENTS.contains(event)) {
+            return;
+        }
         TelemetryTask.store(telemetry, origin, event);
     }
 
@@ -495,5 +586,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @FunctionalInterface
     private interface TelemetryFacade {
         void store(short event, short origin);
+    }
+
+    static {
+        SKIP_TELEMETRY_EVENTS.add(CompiledQuery.SET);
+        SKIP_TELEMETRY_EVENTS.add(CompiledQuery.BEGIN);
+        SKIP_TELEMETRY_EVENTS.add(CompiledQuery.COMMIT);
+        SKIP_TELEMETRY_EVENTS.add(CompiledQuery.ROLLBACK);
+        SKIP_TELEMETRY_EVENTS.add(CompiledQuery.DEALLOCATE);
     }
 }

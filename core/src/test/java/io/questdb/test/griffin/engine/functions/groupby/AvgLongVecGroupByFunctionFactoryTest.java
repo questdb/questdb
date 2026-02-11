@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -120,13 +120,12 @@ public class AvgLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimple() throws Exception {
         // fix page frame size, because it affects AVG accuracy
-
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
 
         assertQuery(
                 """
                         avg
-                        4289.100917431191
+                        4289.100917431193
                         """,
                 "select avg(f) from tab",
                 "create table tab as (select rnd_long(-55, 9009, 2) f from long_sequence(131))",

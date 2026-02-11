@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -82,6 +82,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
 import static io.questdb.cairo.wal.WalUtils.*;
+import static io.questdb.test.tools.TestUtils.assertContains;
 import static io.questdb.test.tools.TestUtils.generateRandom;
 
 
@@ -110,6 +111,7 @@ public class MatViewTest extends AbstractCairoTest {
         if (rowsPerQuery > 0) {
             setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
         }
+        setProperty(PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, 1);
     }
 
     @Test
@@ -276,7 +278,10 @@ public class MatViewTest extends AbstractCairoTest {
             execute("alter materialized view price_1h set TTL 2 DAYS;");
             drainQueues();
 
-            // insert future timestamps
+            // advance wall clock to match data timestamps (TTL uses min of maxTimestamp and wall clock)
+            currentMicros = MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2024-09-30T13:00:00.000000Z");
+
+            // insert timestamps at current wall clock time
             execute(
                     "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2024-09-30T12:01')" +
                             ",('gbpusd', 1.323, '2024-09-30T12:02')" +
@@ -1095,7 +1100,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "alter materialized view foobar;",
                     24,
-                    "table does not exist [table=foobar]"
+                    "materialized view does not exist [view=foobar]"
             );
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h",
@@ -1863,7 +1868,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             // revalidate the view
-            execute("refresh materialized view price_1h full;)");
+            execute("refresh materialized view price_1h full");
             drainQueues();
             assertQueryNoLeakCheck(
                     """
@@ -2237,6 +2242,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
             // copy
             assertCannotModifyMatView("copy price_1h from 'test-numeric-headers.csv' with header true");
             // rename table
@@ -2244,7 +2250,7 @@ public class MatViewTest extends AbstractCairoTest {
             // update
             assertCannotModifyMatView("update price_1h set price = 1.1");
             // insert
-            assertCannotModifyMatView("insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')");
+            assertCannotModifyMatView("insert into price_1h values('gbpusd', 1.319, '2024-09-10T12:05')");
             // insert as select
             assertCannotModifyMatView("insert into price_1h select sym, last(price) as price, ts from base_price sample by 1h");
             // alter
@@ -2262,8 +2268,6 @@ public class MatViewTest extends AbstractCairoTest {
             assertCannotModifyMatView("reindex table price_1h");
             // truncate
             assertCannotModifyMatView("truncate table price_1h");
-            // drop
-            assertCannotModifyMatView("drop table price_1h");
             // vacuum
             assertCannotModifyMatView("vacuum table price_1h");
         });
@@ -2603,61 +2607,118 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEstimateRowsPerBucket() {
+    public void testEstimateBucketsForRows() {
+        final long targetRows = 1_000_000L;
+
         // Basic case: 1 billion rows, hourly bucket, daily partitions, 30 partitions
-        // Expected: (1B * 1hour) / (24hours * 30 partitions) = 1B / 720 ≈ 1,388,888
-        testEstimateRowsPerBucket(1_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 1_000_000, 2_000_000);
+        // totalBuckets = (24hours / 1hour) * 30 = 720
+        // rowsPerBucket = 1B / 720 ≈ 1,388,888
+        // bucketsForRows = 1000000 / 1,388,888 ≈ 0.72 -> 1 (minimum)
+        testEstimateBucketsForRows(1_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 1, 2);
 
         // Small table: 1000 rows
-        testEstimateRowsPerBucket(1_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 1, 100);
+        // totalBuckets = 720
+        // rowsPerBucket = 1000 / 720 ≈ 1.39
+        // bucketsForRows = 1000000 / 1.39 ≈ 719400
+        testEstimateBucketsForRows(1_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 500_000, 1000_000);
 
         // Large table: 5 billion rows
-        // Expected: (5B * 1hour) / (24hours * 30 partitions) ≈ 6,944,444
-        testEstimateRowsPerBucket(5_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 5_000_000, 10_000_000);
+        // totalBuckets = 720
+        // rowsPerBucket = 5B / 720 ≈ 6,944,444
+        // bucketsForRows = 1000000 / 6,944,444 ≈ 0.144 -> 1 (minimum)
+        testEstimateBucketsForRows(5_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 1, 2);
 
         // Daily bucket
-        // Expected: (1B * 24hours) / (24hours * 30 partitions) = 1B / 30 ≈ 33,333,333
-        testEstimateRowsPerBucket(1_000_000_000L, Micros.DAY_MICROS, Micros.DAY_MICROS, 30, 30_000_000, 40_000_000);
+        // totalBuckets = (24hours / 24hours) * 30 = 30
+        // rowsPerBucket = 1B / 30 ≈ 33,333,333
+        // bucketsForRows = 1000000 / 33,333,333 ≈ 0.03 -> 1 (minimum)
+        testEstimateBucketsForRows(1_000_000_000L, Micros.DAY_MICROS, Micros.DAY_MICROS, 30, 1, 2);
 
         // Weekly bucket
-        // Expected: (1B * 168hours) / (24hours * 30 partitions) = 1B * 7 / 30 ≈ 233,333,333
-        testEstimateRowsPerBucket(1_000_000_000L, Micros.WEEK_MICROS, Micros.DAY_MICROS, 30, 200_000_000, 300_000_000);
+        // totalBuckets = (24hours / 168hours) * 30 ≈ 4.3
+        // rowsPerBucket = 1B / 4.3 ≈ 233,333,333
+        // bucketsForRows = 1000000 / 233,333,333 ≈ 0.004 -> 1 (minimum)
+        testEstimateBucketsForRows(1_000_000_000L, Micros.WEEK_MICROS, Micros.DAY_MICROS, 30, 1, 2);
 
         // Monthly bucket (30 days)
-        // Expected: (1B * 720hours) / (24hours * 30 partitions) = 1B * 30 / 30 = 1B
-        testEstimateRowsPerBucket(1_000_000_000L, Micros.MONTH_MICROS_APPROX, Micros.DAY_MICROS, 30, 900_000_000, 1_100_000_000);
+        // totalBuckets = (24hours / 720hours) * 30 = 1
+        // rowsPerBucket = 1B / 1 = 1B
+        // bucketsForRows = 1000000 / 1B ≈ 0.001 -> 1 (minimum)
+        testEstimateBucketsForRows(1_000_000_000L, Micros.MONTH_MICROS_APPROX, Micros.DAY_MICROS, 30, 1, 2);
 
         // Edge case: Weekly partitions with hourly bucket
-        // Expected: (1B * 1hour) / (168hours * 4 partitions) ≈ 1,488,095
-        testEstimateRowsPerBucket(1_000_000_000L, Micros.HOUR_MICROS, Micros.WEEK_MICROS, 4, 1_000_000, 2_000_000);
+        // totalBuckets = (168hours / 1hour) * 4 = 672
+        // rowsPerBucket = 1B / 672 ≈ 1,488,095
+        // bucketsForRows = 1000000 / 1,488,095 ≈ 0.67 -> 1 (minimum)
+        testEstimateBucketsForRows(1_000_000_000L, Micros.HOUR_MICROS, Micros.WEEK_MICROS, 4, 1, 2);
 
-        // Edge case: Single partition
-        // Expected: (1B * 1hour) / (720hours * 1 partition) ≈ 1,388,888
-        testEstimateRowsPerBucket(1_000_000_000L, Micros.HOUR_MICROS, Micros.MONTH_MICROS_APPROX, 1, 1_000_000, 2_000_000);
+        // Edge case: Single partition (monthly)
+        // totalBuckets = (720hours / 1hour) * 1 = 720
+        // rowsPerBucket = 1B / 720 ≈ 1,388,888
+        // bucketsForRows = 1000000 / 1,388,888 ≈ 0.72 -> 1 (minimum)
+        testEstimateBucketsForRows(1_000_000_000L, Micros.HOUR_MICROS, Micros.MONTH_MICROS_APPROX, 1, 1, 2);
 
         // Edge case: Many partitions (1000)
-        // Expected: (1B * 1hour) / (24hours * 1000 partitions) ≈ 41,666
-        testEstimateRowsPerBucket(1_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 1000, 30_000, 50_000);
+        // totalBuckets = 24 * 1000 = 24000
+        // rowsPerBucket = 1B / 24000 ≈ 41,666
+        // bucketsForRows = 1000000 / 41,666 ≈ 24
+        testEstimateBucketsForRows(1_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 1000, 20, 30);
 
-        // Edge case: Zero partition count (should return 1)
-        final long result = MatViewRefreshJob.estimateRowsPerBucket(1_000_000_000L, Micros.HOUR_MICROS, Micros.HOUR_MICROS, 0);
+        // Edge case: Zero partition count
+        long result = MatViewRefreshJob.estimateBucketsForRows(targetRows, 1_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 0);
         Assert.assertEquals("expected 1 for zero partitions", 1, result);
 
-        // Overflow prevention test: Very large rows and bucket that would overflow with naive multiplication
-        // Should not overflow, should return a reasonable positive value
-        testEstimateRowsPerBucket(Long.MAX_VALUE / 2, Micros.HOUR_MICROS, Micros.DAY_MICROS, 1, 1, Long.MAX_VALUE / 2);
+        // Edge case: Zero table rows
+        result = MatViewRefreshJob.estimateBucketsForRows(targetRows, 0L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30);
+        Assert.assertEquals("expected 1 for zero tableRows", 1, result);
+
+        // Overflow prevention test: Very large rows
+        // totalBuckets = 24
+        // rowsPerBucket = (Long.MAX_VALUE / 2) / 24 ≈ very large
+        // bucketsForRows = 1000000 / very large -> 1 (minimum)
+        testEstimateBucketsForRows(Long.MAX_VALUE / 2, Micros.HOUR_MICROS, Micros.DAY_MICROS, 1, 1, 2);
 
         // Test with nanoseconds (1000x microseconds)
-        // Expected: same ratio as microseconds ≈ 1,388,888
-        testEstimateRowsPerBucket(1_000_000_000L, Nanos.HOUR_NANOS, Nanos.DAY_NANOS, 30, 1_000_000, 2_000_000);
+        // totalBuckets = 24 * 30 = 720
+        // rowsPerBucket = 1B / 720 ≈ 1,388,888
+        // bucketsForRows = 1000000 / 1,388,888 ≈ 0.72 -> 1 (minimum)
+        testEstimateBucketsForRows(1_000_000_000L, Nanos.HOUR_NANOS, Nanos.DAY_NANOS, 30, 1, 2);
 
-        // Very small bucket compared to partition
-        // Expected: very small number, but at least 1
-        testEstimateRowsPerBucket(1_000_000_000L, Micros.MILLI_MICROS, Micros.DAY_MICROS, 30, 1, 1000);
+        // Very small bucket compared to partition (millisecond bucket)
+        // totalBuckets = (24 * 60 * 60 * 1000) * 30 = 2,592,000,000
+        // rowsPerBucket = 1B / 2,592,000,000 ≈ 0.386
+        // bucketsForRows = 1000000 / 0.386 ≈ 2,590,670
+        testEstimateBucketsForRows(1_000_000_000L, Micros.MILLI_MICROS, Micros.DAY_MICROS, 30, 2_000_000, 3_000_000);
 
-        // Bucket larger than partition duration (unusual but possible)
-        // Expected: (1B * 168hours) / (24hours * 1) = 1B * 7 = 7B
-        testEstimateRowsPerBucket(1_000_000_000L, Micros.WEEK_MICROS, Micros.DAY_MICROS, 1, 6_000_000_000L, 8_000_000_000L);
+        // Bucket larger than partition duration
+        // totalBuckets = (24hours / 168hours) * 1 ≈ 0.14
+        // rowsPerBucket = 1B / 0.14 ≈ 7B
+        // bucketsForRows = 1000000 / 7B ≈ 0.00014 -> 1 (minimum)
+        testEstimateBucketsForRows(1_000_000_000L, Micros.WEEK_MICROS, Micros.DAY_MICROS, 1, 1, 2);
+
+        // Sparse data case: 100 rows, hourly bucket, daily partitions, 10 partitions
+        // totalBuckets = 24 * 10 = 240
+        // rowsPerBucket = 100 / 240 ≈ 0.417 (this is the key case where rowsPerBucket < 1)
+        // bucketsForRows = 1000000 / 0.417 ≈ 2400000
+        testEstimateBucketsForRows(100L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 10, 2_000_000, 3_000_000);
+
+        // Very sparse data: 10 rows spread across many buckets
+        // totalBuckets = 24 * 30 = 720
+        // rowsPerBucket = 10 / 720 ≈ 0.014
+        // bucketsForRows = 1000000 / 0.014 ≈ 72000000
+        testEstimateBucketsForRows(10L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 70_000_000, 80_000_000);
+
+        // Medium density: 1 million rows
+        // totalBuckets = 720
+        // rowsPerBucket = 1M / 720 ≈ 1389
+        // bucketsForRows = 1000000 / 1389 ≈ 720
+        testEstimateBucketsForRows(1_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 700, 800);
+
+        // Medium density: 100 million rows
+        // totalBuckets = (3,600,000,000 / 1) * 30000 = 108,000,000,000,000
+        // rowsPerBucket = 100M / 108T ≈ 0.00000093
+        // bucketsForRows = 1000000 / 0.00000093 ≈ 1,080,000,000,000
+        testEstimateBucketsForRows(100_000_000L, 1, Micros.HOUR_MICROS, 30000, 1070000000000L, 1100000000000L);
     }
 
     @Test
@@ -3106,6 +3167,7 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testIncrementalRefreshRecoversWhenWalSegmentIsGone() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10);
+        setProperty(PropertyKey.DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL, "false");
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price ( " +
@@ -4317,16 +4379,17 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testMatViewTableRename() throws Exception {
-        // Mat views may not support renames, but the table can be renamed
+        // Mat views may not support renames via SQL, but the table can be renamed
         // during replication from a temp name, so the renaming has to be supported on storage level
         assertMemoryLeak(() -> {
+            currentMicros = MicrosTimestampDriver.floor("2024-10-24T17:22:09.842574Z");
+
+            // create base table and insert data
             executeWithRewriteTimestamp(
                     "create table base_price (" +
                             "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
-
-            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
 
             execute(
                     "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
@@ -4334,13 +4397,42 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('jpyusd', 103.21, '2024-09-10T12:02')" +
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
+            drainQueues();
 
-            currentMicros = MicrosTimestampDriver.floor("2024-10-24T17:22:09.842574Z");
+            // test that attempt to rename a mat view which has not been created/registered yet, throws CairoException
+            // this is a valid use case during replication, sometimes registering a mat view is in a race with renaming
+            // it from its temp name to its real name
+            final TableToken noMatViewToken = new TableToken("price_1h_temp", "price_1h~2", null, 2, false, true, true, false, false, false);
+            final TableToken noUpdatedToken = noMatViewToken.renamed("price_1h");
+
+            try {
+                engine.applyTableRename(noMatViewToken, noUpdatedToken);
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "materialized view has not been registered yet [name=price_1h]");
+            }
+
+            // now create the mat view, and check that it exists
+            createMatView("price_1h_temp", "select sym, last(price) as price, ts from base_price sample by 1h");
             drainQueues();
 
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
                     "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
                     "from materialized_views";
+            assertQueryNoLeakCheck(
+                    """
+                            view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\tinvalidation_reason\trefresh_base_table_txn\tbase_table_txn
+                            price_1h_temp\timmediate\tbase_price\t2024-10-24T17:22:09.842574Z\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t\t1\t1
+                            """,
+                    matViewsSql,
+                    null
+            );
+
+            // rename the mat view from its temp name to its real name, and check that it worked
+            TableToken matViewToken = engine.verifyTableName("price_1h_temp");
+            TableToken updatedToken = matViewToken.renamed("price_1h");
+
+            engine.applyTableRename(matViewToken, updatedToken);
+
             assertQueryNoLeakCheck(
                     """
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\tinvalidation_reason\trefresh_base_table_txn\tbase_table_txn
@@ -4350,20 +4442,7 @@ public class MatViewTest extends AbstractCairoTest {
                     null
             );
 
-            TableToken matViewToken = engine.verifyTableName("price_1h");
-            TableToken updatedToken = matViewToken.renamed("price_1h_renamed");
-
-            engine.applyTableRename(matViewToken, updatedToken);
-
-            assertQueryNoLeakCheck(
-                    """
-                            view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\tinvalidation_reason\trefresh_base_table_txn\tbase_table_txn
-                            price_1h_renamed\timmediate\tbase_price\t2024-10-24T17:22:09.842574Z\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t\t1\t1
-                            """,
-                    matViewsSql,
-                    null
-            );
-
+            // insert more data into the base table, and check that the mat view is updated
             execute(
                     "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
                             ",('gbpusd', 1, '2024-09-10T12:02')" +
@@ -4379,7 +4458,7 @@ public class MatViewTest extends AbstractCairoTest {
                             jpyusd\t1.0\t2024-09-10T12:00:00.000000Z
                             gbpusd\t1.0\t2024-09-10T13:00:00.000000Z
                             """),
-                    "price_1h_renamed",
+                    "price_1h",
                     "ts",
                     true,
                     true
@@ -5950,7 +6029,7 @@ public class MatViewTest extends AbstractCairoTest {
             final String viewQuery = "select k, count() c from x sample by 1h align to calendar time zone 'Iran'";
             final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-28T00:15:00.000000Z");
             final long step = timestampType.getDriver().fromMicros(6 * 60000000);
-            final int N = 100;
+            final int N = 110;
             final int K = 5;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
 
@@ -5966,7 +6045,8 @@ public class MatViewTest extends AbstractCairoTest {
                     2021-03-28T11:00:00.000000Z\t10
                     2021-03-28T12:00:00.000000Z\t10
                     2021-03-28T13:00:00.000000Z\t10
-                    2021-03-28T14:00:00.000000Z\t7
+                    2021-03-28T14:00:00.000000Z\t10
+                    2021-03-28T15:00:00.000000Z\t7
                     """;
 
             final String out = "select to_timezone(k, 'Iran') k, c";
@@ -5983,7 +6063,7 @@ public class MatViewTest extends AbstractCairoTest {
             final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-28T00:15:00.000000Z");
             final long step = timestampType.getDriver().fromMicros(6 * 60000000);
             final int N = 100;
-            final int K = 5;
+            final int K = 4;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
 
             final String expected = """
@@ -6701,6 +6781,27 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTryingToDropMatViewAsTable() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            try {
+                execute("drop table price_1h");
+                Assert.fail("Expected exception missing");
+            } catch (SqlException e) {
+                Assert.assertEquals(11, e.getPosition());
+                Assert.assertTrue(e.getMessage().contains("table name expected, got view or materialized view name"));
+            }
+        });
+    }
+
+    @Test
     public void testTtl() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -6948,6 +7049,7 @@ public class MatViewTest extends AbstractCairoTest {
     private static void assertCannotModifyMatView(String updateSql) {
         try {
             execute(updateSql);
+            Assert.fail("Expected exception missing");
         } catch (SqlException e) {
             Assert.assertTrue(e.getMessage().contains("cannot modify materialized view"));
         }
@@ -7299,8 +7401,8 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
-    private void testEstimateRowsPerBucket(long tableRows, long bucket, long partitionDuration, int partitionCount, long expectedLo, long expectedHi) {
-        long result = MatViewRefreshJob.estimateRowsPerBucket(tableRows, bucket, partitionDuration, partitionCount);
+    private void testEstimateBucketsForRows(long tableRows, long bucket, long partitionDuration, int partitionCount, long expectedLo, long expectedHi) {
+        long result = MatViewRefreshJob.estimateBucketsForRows(1000000L, tableRows, bucket, partitionDuration, partitionCount);
         Assert.assertTrue("Expected from " + expectedLo + " to " + expectedHi + ", got " + result, result >= expectedLo && result < expectedHi);
     }
 
@@ -7768,11 +7870,7 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     private void updateViewIncrementally(String viewQuery, long startTs, long step, int N, int K) throws SqlException {
-        updateViewIncrementally(viewQuery, " rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b,", startTs, step, N, K);
-    }
-
-    private void updateViewIncrementally(String viewQuery, String columns, long startTs, long step, int N, int K) throws SqlException {
-        updateViewIncrementally("x_view", viewQuery, columns, null, startTs, step, N, K);
+        updateViewIncrementally("x_view", viewQuery, " rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b,", null, startTs, step, N, K);
     }
 
     private void updateViewIncrementally(String viewName, String viewQuery, String columns, @Nullable String index, long startTs, long step, int N, int K) throws SqlException {

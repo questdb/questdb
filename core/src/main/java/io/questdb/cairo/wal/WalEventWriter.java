@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -41,12 +41,15 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -67,6 +70,7 @@ class WalEventWriter implements Closeable {
     private boolean legacyMatViewFormat;
     private long startOffset = 0;
     private BoolList symbolMapNullFlags;
+    private BoolList symbolMapNullFlagsChanged;
     private int txn = 0;
     private ObjList<DirectCharSequenceIntHashMap> txnSymbolMaps;
 
@@ -237,7 +241,7 @@ class WalEventWriter implements Closeable {
             final var symbolMap = txnSymbolMaps.getQuick(columnIndex);
             if (symbolMap != null) {
                 final int initialCount = initialSymbolCounts.get(columnIndex);
-                if (initialCount > 0 || (initialCount == 0 && symbolMap.size() > 0)) {
+                if (initialCount > 0 || (initialCount == 0 && symbolMap.size() > 0) || symbolMapNullFlagsChanged.get(columnIndex)) {
                     eventMem.putInt(columnIndex);
                     eventMem.putBool(symbolMapNullFlags.get(columnIndex));
                     eventMem.putInt(initialCount);
@@ -401,10 +405,47 @@ class WalEventWriter implements Closeable {
         return txn++;
     }
 
-    void of(ObjList<DirectCharSequenceIntHashMap> txnSymbolMaps, AtomicIntList initialSymbolCounts, BoolList symbolMapNullFlags) {
+    int appendViewDefinition(
+            @NotNull String viewSql,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+    ) {
+        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
+        eventMem.putLong(txn);
+        eventMem.putByte(WalTxnType.VIEW_DEFINITION);
+
+        // add view sql
+        eventMem.putStr(viewSql);
+
+        //add view dependencies
+        final ObjList<CharSequence> tableNames = dependencies.keys();
+        final int numOfDependencies = tableNames.size();
+        eventMem.putInt(numOfDependencies);
+        for (int i = 0; i < numOfDependencies; i++) {
+            final CharSequence tableName = tableNames.getQuick(i);
+            eventMem.putStr(tableName);
+            final LowerCaseCharSequenceHashSet columns = dependencies.get(tableName);
+            eventMem.putInt(columns.size());
+            for (int j = 0; j < columns.getKeyCount(); j++) {
+                final CharSequence key = columns.getKey(j);
+                if (key != null) {
+                    eventMem.putStr(key);
+                }
+            }
+        }
+
+        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
+        eventMem.putInt(-1);
+
+        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
+        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        return txn++;
+    }
+
+    void of(ObjList<DirectCharSequenceIntHashMap> txnSymbolMaps, AtomicIntList initialSymbolCounts, BoolList symbolMapNullFlags, BoolList symbolMapNullFlagsChanged) {
         this.txnSymbolMaps = txnSymbolMaps;
         this.initialSymbolCounts = initialSymbolCounts;
         this.symbolMapNullFlags = symbolMapNullFlags;
+        this.symbolMapNullFlagsChanged = symbolMapNullFlagsChanged;
     }
 
     void openEventFile(Path path, int pathLen, boolean truncate, boolean systemTable) {

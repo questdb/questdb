@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -875,7 +875,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                     "                  intervals: [(\"2025-01-01T00:00:00.000000001Z\",\"MAX\")]\n") +
                             "            SelectedRecord\n" +
                             "                Async " + (JitUtil.isJitSupported() ? "JIT " : "") + "Filter workers: 1\n" +
-                            "                  filter: market_Data_symbol='sym_1'\n" +
+                            "                  filter: market_data_symbol='sym_1'\n" +
                             "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: market_data\n",
@@ -885,7 +885,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                     "    Filter filter: oRdERS.price<MD.bid\n" +
                     "        Filtered AsOf Join Fast\n" +
-                    "          filter: market_Data_symbol='sym_1'\n" +
+                    "          filter: market_data_symbol='sym_1'\n" +
                     "            PageFrame\n" +
                     "                Row forward scan\n" +
                     "                Interval forward scan on: orders\n" +
@@ -1596,7 +1596,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                     "                  intervals: [(\"2025-01-01T00:00:00.000000001Z\",\"MAX\")]\n") +
                             "            SelectedRecord\n" +
                             "                Async " + (JitUtil.isJitSupported() ? "JIT " : "") + "Filter workers: 1\n" +
-                            "                  filter: market_Data_symbol='sym_1'\n" +
+                            "                  filter: market_data_symbol='sym_1'\n" +
                             "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: market_data\n",
@@ -1606,7 +1606,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                     "    Filter filter: oRdERS.price<MD.bid\n" +
                     "        Filtered AsOf Join Fast\n" +
-                    "          filter: market_Data_symbol='sym_1'\n" +
+                    "          filter: market_data_symbol='sym_1'\n" +
                     "            PageFrame\n" +
                     "                Row forward scan\n" +
                     "                Interval forward scan on: orders\n" +
@@ -1706,6 +1706,146 @@ public class AsOfJoinTest extends AbstractCairoTest {
             printSql("EXPLAIN " + query);
             // Linear search should take precedence
             TestUtils.assertContains(sink, "AsOf Join Light");
+        });
+    }
+
+    @Test
+    public void testAsOfJoinWithSymbolAndOtherColumnInOnClause_Dense() throws Exception {
+        // Requires asof_dense hint to trigger this path.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE t1 (
+                                sym SYMBOL,
+                                val INT,
+                                ts #TIMESTAMP
+                            ) timestamp(ts) partition by DAY
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE t2 (
+                                sym SYMBOL,
+                                val INT,
+                                ts #TIMESTAMP
+                            ) timestamp(ts) partition by DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("INSERT INTO t1 VALUES ('A', 1, '2024-01-01T10:00:00.000000Z')");
+            execute("INSERT INTO t2 VALUES ('A', 1, '2024-01-01T09:00:00.000000Z')");
+            execute("INSERT INTO t2 VALUES ('A', 2, '2024-01-01T10:00:00.000000Z')");
+
+            // ASOF JOIN with asof_dense hint + symbol AND val in ON clause
+            String query = "SELECT /*+ asof_dense(t1 t2) */ t1.sym, t1.val, t1.ts, t2.sym as sym2, t2.val as val2, t2.ts as ts2 " +
+                    "FROM t1 ASOF JOIN t2 ON (t1.sym = t2.sym) AND (t1.val = t2.val)";
+
+            String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
+            String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
+            var expected = String.format("""
+                    sym\tval\tts\tsym2\tval2\tts2
+                    A\t1\t2024-01-01T10:00:00.000000%1$s\tA\t1\t2024-01-01T09:00:00.000000%2$s
+                    """, leftSuffix, rightSuffix);
+
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinWithSymbolAndOtherColumnInOnClause_Fast() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE t1 (
+                                sym SYMBOL,
+                                val INT,
+                                ts #TIMESTAMP
+                            ) timestamp(ts) partition by DAY
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE t2 (
+                                sym SYMBOL,
+                                val INT,
+                                ts #TIMESTAMP
+                            ) timestamp(ts) partition by DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+
+            // Insert data where:
+            // - t1 has ('A', 1) at 10:00
+            // - t2 has ('A', 2) at 10:00 - same symbol, DIFFERENT val
+            // - t2 has ('A', 1) at 09:00 - same symbol, same val but earlier
+            execute("INSERT INTO t1 VALUES ('A', 1, '2024-01-01T10:00:00.000000Z')");
+            execute("INSERT INTO t2 VALUES ('A', 1, '2024-01-01T09:00:00.000000Z')");
+            execute("INSERT INTO t2 VALUES ('A', 2, '2024-01-01T10:00:00.000000Z')");
+
+            // ASOF JOIN with symbol AND val in ON clause (no LIMIT = TimeFrameCursor enabled)
+            // Should match t1('A',1) with t2('A',1) at 09:00 (same sym+val, earlier timestamp)
+            // Should NOT match with t2('A',2) at 10:00 (different val)
+            String query = "SELECT t1.sym, t1.val, t1.ts, t2.sym as sym2, t2.val as val2, t2.ts as ts2 " +
+                    "FROM t1 ASOF JOIN t2 ON (t1.sym = t2.sym) AND (t1.val = t2.val)";
+
+            String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
+            String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
+            // Expected: match with ('A', 1) at 09:00
+            var expected = String.format("""
+                    sym\tval\tts\tsym2\tval2\tts2
+                    A\t1\t2024-01-01T10:00:00.000000%1$s\tA\t1\t2024-01-01T09:00:00.000000%2$s
+                    """, leftSuffix, rightSuffix);
+
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinWithSymbolAndOtherColumnInOnClause_Indexed() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE t1 (
+                                sym SYMBOL,
+                                val INT,
+                                ts #TIMESTAMP
+                            ) timestamp(ts) partition by DAY
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE t2 (
+                                sym SYMBOL INDEX,
+                                val INT,
+                                ts #TIMESTAMP
+                            ) timestamp(ts) partition by DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("INSERT INTO t1 VALUES ('A', 1, '2024-01-01T10:00:00.000000Z')");
+            execute("INSERT INTO t2 VALUES ('A', 1, '2024-01-01T09:00:00.000000Z')");
+            execute("INSERT INTO t2 VALUES ('A', 2, '2024-01-01T10:00:00.000000Z')");
+
+            // ASOF JOIN with asof_index hint + symbol AND val in ON clause
+            String query = "SELECT /*+ asof_index(t1 t2) */ t1.sym, t1.val, t1.ts, t2.sym as sym2, t2.val as val2, t2.ts as ts2 " +
+                    "FROM t1 ASOF JOIN t2 ON (t1.sym = t2.sym) AND (t1.val = t2.val)";
+
+            String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
+            String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
+            var expected = String.format("""
+                    sym\tval\tts\tsym2\tval2\tts2
+                    A\t1\t2024-01-01T10:00:00.000000%1$s\tA\t1\t2024-01-01T09:00:00.000000%2$s
+                    """, leftSuffix, rightSuffix);
+
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
         });
     }
 
@@ -2065,6 +2205,46 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     4\t2000-01-01T00:00:04.000000%1$s\t\t
                     """, leftSuffix, rightSuffix);
             assertQueryNoLeakCheck(expected, query, null, false, false);
+        });
+    }
+
+    @Test
+    public void testJoinOnTimestampAndSomethingElseNotAllowed() throws Exception {
+        // Test for https://github.com/questdb/questdb/issues/6637
+        // Using designated timestamp as join key is not allowed for ASOF/LT joins
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE t1 (
+                                sym SYMBOL,
+                                ts #TIMESTAMP
+                            ) timestamp(ts) partition by DAY
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE t2 (
+                                sym SYMBOL,
+                                ts #TIMESTAMP
+                            ) timestamp(ts) partition by DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("INSERT INTO t1 VALUES ('A', '2024-01-01T10:00:00.000000Z')");
+            execute("INSERT INTO t2 VALUES ('A', '2024-01-01T10:00:00.000000Z')");
+
+            // ASOF JOIN with symbol AND timestamp in ON clause - timestamp as join key is not allowed
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM t1 ASOF JOIN (SELECT * FROM t2 LIMIT 1000) t2 ON (t1.sym = t2.sym) AND (t1.ts = t2.ts)",
+                    17,
+                    "ASOF/LT JOIN cannot use designated timestamp as a join key");
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM t1 LT JOIN (SELECT * FROM t2 LIMIT 1000) t2 ON (t1.sym = t2.sym) AND (t1.ts = t2.ts)",
+                    17,
+                    "ASOF/LT JOIN cannot use designated timestamp as a join key");
         });
     }
 

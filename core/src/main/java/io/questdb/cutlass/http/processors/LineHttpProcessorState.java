@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.ConnectionAware;
 import io.questdb.cutlass.line.tcp.AdaptiveRecvBuffer;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
@@ -359,6 +360,13 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 errorRec = LOG.critical();
                 status = Status.INTERNAL_ERROR;
             }
+        } else if (ex instanceof TableReferenceOutOfDateException) {
+            errorId = ERROR_COUNT.incrementAndGet();
+            errorLine = -1;
+            error.put("table renamed during request, retry the operation");
+            LOG.info().$('[').$(fd).$("] table renamed during request, rejecting with retryable error [errorId=")
+                    .$(ERROR_ID).$('-').$(errorId).I$();
+            return Status.TABLE_SCHEMA_CHANGED;
         } else {
             error.put(", error: ").put(ex.getClass().getCanonicalName());
             errorRec = LOG.critical();
@@ -545,7 +553,8 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         MESSAGE_TOO_LARGE("request too large", 413),
         COLUMN_ADD_ERROR("invalid", 400),
         COMMITTED(null, 204),
-        NOT_ACCEPTING_WRITES("not accepting writes", 421);
+        NOT_ACCEPTING_WRITES("not accepting writes", 421),
+        TABLE_SCHEMA_CHANGED("retry operation", 503);
 
         private final String codeStr;
         private final int responseCode;

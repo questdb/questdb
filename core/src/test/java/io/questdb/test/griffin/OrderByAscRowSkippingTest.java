@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -594,7 +594,7 @@ public class OrderByAscRowSkippingTest extends AbstractCairoTest {
     public void testNormalTableSelectWithLimitOffset() throws Exception {
         assertMemoryLeak(() -> {
             prepareNormalTable();
-            assertQuery("l\n8\n9\n10\n", "select l from tab where l > 5 order by ts limit 2, 10", true);
+            assertQuery("l\n8\n9\n10\n", "select l from tab where l > 5 order by ts limit 2, 10", false);
         });
     }
 
@@ -867,7 +867,7 @@ public class OrderByAscRowSkippingTest extends AbstractCairoTest {
         return new PageFrameRecordCursorFactory(
                 engine.getConfiguration(),
                 metadata,
-                new FullPartitionFrameCursorFactory(metadata.getTableToken(), reader.getMetadataVersion(), GenericRecordMetadata.copyOf(metadata), PartitionFrameCursorFactory.ORDER_ASC),
+                new FullPartitionFrameCursorFactory(metadata.getTableToken(), reader.getMetadataVersion(), GenericRecordMetadata.copyOf(metadata), PartitionFrameCursorFactory.ORDER_ASC, null, 0, false),
                 new PageFrameRowCursorFactory(PartitionFrameCursorFactory.ORDER_ASC),
                 false,
                 null,

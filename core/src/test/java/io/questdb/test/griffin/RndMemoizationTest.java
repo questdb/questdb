@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -79,6 +79,27 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         "315515119\t315515120\n" +
                         "1548800834\t1548800835\n",
                 "select rnd_int()+1 x1, x1+1 x12 from long_sequence(3) order by x12;"
+        );
+    }
+
+    @Test
+    public void testRndArray() throws SqlException {
+        allowFunctionMemoization();
+        assertSql(
+                """
+                        arr	first_elem	doubled
+                        [0.2845577791213847,0.20447441837877756]	0.2845577791213847	0.5691155582427694
+                        [0.19202208853547864,0.5093827001617407,0.11427984775756228,0.5243722859289777,null,null,0.7261136209823622,0.4224356661645131,null,0.3100545983862456,0.1985581797355932]	0.19202208853547864	0.3840441770709573
+                        [null,0.021651819007252326,null,null,0.15786635599554755]	null	null
+                        [null,null,0.9687423276940171,null]	null	null
+                        [null,null,0.7883065830055033,null,0.4138164748227684,0.5522494170511608,0.2459345277606021,null,null,0.8847591603509142,0.4900510449885239,null]	null	null
+                        [0.18769708157331322,0.16381374773748514,0.6590341607692226,null,null,null,0.8837421918800907,0.05384400312338511,null,0.7230015763133606]	0.18769708157331322	0.37539416314662644
+                        [0.5406709846540508,null,0.9269068519549879,null,null,null,0.1202416087573498,null,0.6230184956534065,0.42020442539326086,null,null,0.4971342426836798,null,0.5065228336156442]	0.5406709846540508	1.0813419693081017
+                        [0.8940917126581895,0.2879973939681931,null]	0.8940917126581895	1.788183425316379
+                        [0.5797447096307482,0.9455893004802433,null,null,0.2185865835029681,null,0.24079155981438216,0.10643046345788132]	0.5797447096307482	1.1594894192614964
+                        [null,0.3679848625908545]	null	null
+                        """,
+                "select rnd_double_array(1, 2) arr, arr[1] first_elem, first_elem * 2 doubled from long_sequence(10)"
         );
     }
 
@@ -373,6 +394,48 @@ public class RndMemoizationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRndStr() throws SqlException {
+        allowFunctionMemoization();
+        assertSql(
+                """
+                        s	upper	concat
+                        JWCPSWHYRXPEHN	JWCPSWHYRXPEHN	JWCPSWHYRXPEHN_UPPER
+                        GZSXUXIBBTGP	GZSXUXIBBTGP	GZSXUXIBBTGP_UPPER
+                        FFYUD	FFYUD	FFYUD_UPPER
+                        YQEHBHFOWLP	YQEHBHFOWLP	YQEHBHFOWLP_UPPER
+                        YSBEOUOJS	YSBEOUOJS	YSBEOUOJS_UPPER
+                        UEDRQQULOFJ	UEDRQQULOFJ	UEDRQQULOFJ_UPPER
+                        TJRSZSRYRFB	TJRSZSRYRFB	TJRSZSRYRFB_UPPER
+                        MHGOOZZVDZJMY	MHGOOZZVDZJMY	MHGOOZZVDZJMY_UPPER
+                        CXZOUIC	CXZOUIC	CXZOUIC_UPPER
+                        KGHVUVSD	KGHVUVSD	KGHVUVSD_UPPER
+                        """,
+                "select rnd_str(5, 17, 0) s, upper(s) upper, upper || '_UPPER' concat from long_sequence(10)"
+        );
+    }
+
+    @Test
+    public void testRndSymbol() throws SqlException {
+        allowFunctionMemoization();
+        assertSql(
+                """
+                        sym	upper	concat
+                        apple	APPLE	APPLE_FRUIT
+                        apple	APPLE	APPLE_FRUIT
+                        banana	BANANA	BANANA_FRUIT
+                        cherry	CHERRY	CHERRY_FRUIT
+                        cherry	CHERRY	CHERRY_FRUIT
+                        cherry	CHERRY	CHERRY_FRUIT
+                        cherry	CHERRY	CHERRY_FRUIT
+                        banana	BANANA	BANANA_FRUIT
+                        apple	APPLE	APPLE_FRUIT
+                        banana	BANANA	BANANA_FRUIT
+                        """,
+                "select rnd_symbol('apple', 'banana', 'cherry') sym, upper(sym) upper, upper || '_FRUIT' concat from long_sequence(10)"
+        );
+    }
+
+    @Test
     public void testRndUuid() throws Exception {
         allowFunctionMemoization();
         assertSql(
@@ -381,6 +444,27 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         "9f9b2131-d49f-4d1d-ab81-39815c50d341\t9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
                         "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n",
                 "select rnd_uuid4() u, u::string from long_sequence(3)"
+        );
+    }
+
+    @Test
+    public void testRndVarchar() throws SqlException {
+        allowFunctionMemoization();
+        assertSql(
+                """
+                        v	upper	concat
+                        &򗺘|񙈄۲	&򗺘|񙈄۲	&򗺘|񙈄۲_UPPER
+                        ǈ2Lg񦯙	Ǉ2LG񦯙	Ǉ2LG񦯙_UPPER
+                        ZzV	ZZV	ZZV_UPPER
+                        BO^2Y9}#	BO^2Y9}#	BO^2Y9}#_UPPER
+                        и򲞤~2󁫓ڎBH뤻䰭	И򲞤~2󁫓ڎBH뤻䰭	И򲞤~2󁫓ڎBH뤻䰭_UPPER
+                        :}w?5J8A.m	:}W?5J8A.M	:}W?5J8A.M_UPPER
+                        ~Wb	~WB	~WB_UPPER
+                        Ɛ㙎ᯤ\\篸{򅿥	Ɛ㙎ᯤ\\篸{򅿥	Ɛ㙎ᯤ\\篸{򅿥_UPPER
+                        (OFг󻤒ɜ|\\軦	(OFГ󻤒Ɜ|\\軦	(OFГ󻤒Ɜ|\\軦_UPPER
+                        㒾񷚧K裷򃉳+	㒾񷚧K裷򃉳+	㒾񷚧K裷򃉳+_UPPER
+                        """,
+                "select rnd_varchar(2, 10, 0) v, upper(v) upper, upper || '_UPPER' concat from long_sequence(10)"
         );
     }
 

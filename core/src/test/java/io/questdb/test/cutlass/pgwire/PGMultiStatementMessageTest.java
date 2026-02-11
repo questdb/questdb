@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,9 +28,6 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
-import io.questdb.network.SuspendEvent;
-import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -50,8 +47,6 @@ import java.util.Arrays;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.test.cutlass.pgwire.BasePGTest.Mode.EXTENDED_FOR_PREPARED;
 import static io.questdb.test.cutlass.pgwire.BasePGTest.Mode.SIMPLE;
@@ -376,13 +371,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
-            boolean hasResult = statement.execute("CLOSE");
-            assertResults(statement, hasResult, Result.ZERO);
-
-            hasResult = statement.execute("CLOSE;");
-            assertResults(statement, hasResult, Result.ZERO);
-
-            hasResult = statement.execute("CLOSE ALL");
+            boolean hasResult = statement.execute("CLOSE ALL");
             assertResults(statement, hasResult, Result.ZERO);
 
             hasResult = statement.execute("CLOSE ALL;");
@@ -398,14 +387,10 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCloseThenSelectReturnsSelectResult() throws Exception {
-        // legacy code fails in quirks mode, include quirks when legacy is removed
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("CLOSE ALL; select 6");
             assertResults(statement, hasResult, Result.ZERO, data(row(6L)));
-
-            hasResult = statement.execute("CLOSE; select 7");
-            assertResults(statement, hasResult, Result.ZERO, data(row(7L)));
         });
     }
 
@@ -835,13 +820,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
-            boolean hasResult = statement.execute("DISCARD");
-            assertResults(statement, hasResult, Result.ZERO);
-
-            hasResult = statement.execute("DISCARD;");
-            assertResults(statement, hasResult, Result.ZERO);
-
-            hasResult = statement.execute("DISCARD ALL");
+            boolean hasResult = statement.execute("DISCARD ALL");
             assertResults(statement, hasResult, Result.ZERO);
 
             hasResult = statement.execute("DISCARD PLANS");
@@ -925,65 +904,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     "UNLISTEN *; " +
                     "RESET ALL;");
             assertResults(statement, result, data(row((String) null)), Result.ZERO, Result.ZERO, Result.ZERO);
-        });
-    }
-
-    @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
-        maxQueryTime = 100;
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
-            TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-
-            try (Statement statement = connection.createStatement()) {
-                statement.execute(
-                        "select * from test_data_unavailable(1, 10); " +
-                                "select * from test_data_unavailable(1, 10);");
-            } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
-            } finally {
-                // Make sure to close the event on the producer side.
-                Misc.free(eventRef.get());
-            }
-        });
-    }
-
-    @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredImmediatelyLegacy() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            int totalRows = 3;
-            int backoffCount = 10;
-
-            final AtomicInteger totalEvents = new AtomicInteger();
-            TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                event.trigger();
-                event.close();
-                totalEvents.incrementAndGet();
-            };
-
-            try (Statement statement = connection.createStatement()) {
-                boolean hasResult = statement.execute(
-                        "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + "); " +
-                                "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ");"
-                );
-                assertResults(
-                        statement,
-                        hasResult,
-                        data(
-                                row(1L, 1L, 1L),
-                                row(2L, 2L, 2L),
-                                row(3L, 3L, 3L)
-
-                        ),
-                        data(
-                                row(1L, 1L, 1L),
-                                row(2L, 2L, 2L),
-                                row(3L, 3L, 3L)
-
-                        )
-                );
-            }
-            Assert.assertEquals(2 * totalRows * backoffCount, totalEvents.get());
         });
     }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -94,8 +94,8 @@ public class JsonExtractSupportingState implements QuietCloseable {
     }
 
     public void reopen() {
-        if (this.destUtf8Sink != null) {
-            this.destUtf8Sink.reopen();
+        if (destUtf8Sink != null) {
+            destUtf8Sink.reopen();
         }
     }
 

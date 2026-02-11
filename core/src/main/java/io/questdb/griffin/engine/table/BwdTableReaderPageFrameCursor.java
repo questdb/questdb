@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,16 +43,20 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit;
+
 public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final int columnCount;
     private final IntList columnIndexes;
     private final LongList columnPageAddresses = new LongList();
     private final IntList columnSizeShifts;
     private final TableReaderPageFrame frame = new TableReaderPageFrame();
-    private final int pageFrameMaxRows;
-    private final int pageFrameMinRows;
     private final LongList pageSizes = new LongList();
     private final int sharedQueryWorkerCount;
+    // Track the highest partition index that has not been released yet
+    private int highestOpenPartitionIndex = -1;
+    private int pageFrameMaxRows;
+    private int pageFrameMinRows;
     private PartitionFrameCursor partitionFrameCursor;
     private TableReader reader;
     private long reenterPageFrameRowLimit;
@@ -66,16 +70,12 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     public BwdTableReaderPageFrameCursor(
             IntList columnIndexes,
             IntList columnSizeShifts,
-            int sharedQueryWorkerCount,
-            int pageFrameMinRows,
-            int pageFrameMaxRows
+            int sharedQueryWorkerCount
     ) {
         this.columnIndexes = columnIndexes;
         this.columnSizeShifts = columnSizeShifts;
         this.columnCount = columnIndexes.size();
         this.sharedQueryWorkerCount = sharedQueryWorkerCount;
-        this.pageFrameMinRows = pageFrameMinRows;
-        this.pageFrameMaxRows = pageFrameMaxRows;
     }
 
     @Override
@@ -118,13 +118,18 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         if (reenterPartitionFrame) {
             if (reenterParquetDecoder != null) {
                 return computeParquetFrame(reenterPartitionLo, reenterPartitionHi);
+            } else {
+                return computeNativeFrame(reenterPartitionLo, reenterPartitionHi);
             }
-            return computeNativeFrame(reenterPartitionLo, reenterPartitionHi);
         }
 
         final PartitionFrame partitionFrame = partitionFrameCursor.next(skipTarget);
         if (partitionFrame != null) {
             reenterPartitionIndex = partitionFrame.getPartitionIndex();
+            // Track highest partition index seen (for backward cursor, first partition seen has highest index)
+            if (highestOpenPartitionIndex < 0) {
+                highestOpenPartitionIndex = reenterPartitionIndex;
+            }
             final long lo = partitionFrame.getRowLo();
             final long hi = partitionFrame.getRowHi();
 
@@ -140,11 +145,28 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
-    public TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor) {
+    public TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor, int pageFrameMinRows, int pageFrameMaxRows) {
         this.partitionFrameCursor = partitionFrameCursor;
         reader = partitionFrameCursor.getTableReader();
+        this.pageFrameMinRows = pageFrameMinRows;
+        this.pageFrameMaxRows = pageFrameMaxRows;
         toTop();
         return this;
+    }
+
+    @Override
+    public void releaseOpenPartitions() {
+        // Guard against being called before next() or after toTop() when no partitions are open.
+        // highestOpenPartitionIndex is -1 until the first partition is opened by next().
+        if (highestOpenPartitionIndex < 0 || highestOpenPartitionIndex <= reenterPartitionIndex) {
+            return;
+        }
+        // Close all partitions from highestOpenPartitionIndex down to (but not including) current partition
+        // Backward cursor scans from high to low partition indices
+        for (int i = highestOpenPartitionIndex; i > reenterPartitionIndex; i--) {
+            reader.closePartitionByIndex(i);
+        }
+        highestOpenPartitionIndex = reenterPartitionIndex;
     }
 
     @Override
@@ -162,6 +184,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         partitionFrameCursor.toTop();
         reenterPartitionFrame = false;
         reenterParquetDecoder = null;
+        highestOpenPartitionIndex = -1;
         clearAddresses();
     }
 
@@ -248,7 +271,6 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         frame.partitionLo = adjustedLo;
         frame.partitionHi = partitionHi;
         frame.format = PartitionFormat.NATIVE;
-        frame.parquetAddr = 0;
         frame.rowGroupIndex = -1;
         frame.rowGroupLo = -1;
         frame.rowGroupHi = -1;
@@ -283,8 +305,6 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         frame.partitionLo = adjustedLo;
         frame.partitionHi = partitionHi;
         frame.format = PartitionFormat.PARQUET;
-        frame.parquetAddr = reenterParquetDecoder.getFileAddr();
-        frame.parquetFileSize = reenterParquetDecoder.getFileSize();
         frame.rowGroupIndex = rowGroupIndex;
         frame.rowGroupLo = (int) (adjustedLo - rowCount);
         frame.rowGroupHi = (int) (partitionHi - rowCount);
@@ -303,17 +323,12 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         assert format == PartitionFormat.NATIVE;
         reenterParquetDecoder = null;
-        reenterPageFrameRowLimit = Math.min(
-                pageFrameMaxRows,
-                Math.max(pageFrameMinRows, (hi - lo) / Math.max(sharedQueryWorkerCount, 1))
-        );
+        reenterPageFrameRowLimit = calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
         return computeNativeFrame(lo, hi);
     }
 
     private class TableReaderPageFrame implements PageFrame {
         private byte format;
-        private long parquetAddr;
-        private long parquetFileSize;
         private long partitionHi;
         private int partitionIndex;
         private long partitionLo;
@@ -357,15 +372,9 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
-        public long getParquetAddr() {
-            assert parquetAddr != 0 || format != PartitionFormat.PARQUET;
-            return parquetAddr;
-        }
-
-        @Override
-        public long getParquetFileSize() {
-            assert parquetFileSize > 0 || format != PartitionFormat.PARQUET;
-            return parquetFileSize;
+        public PartitionDecoder getParquetPartitionDecoder() {
+            assert reenterParquetDecoder != null || format != PartitionFormat.PARQUET;
+            return reenterParquetDecoder;
         }
 
         @Override

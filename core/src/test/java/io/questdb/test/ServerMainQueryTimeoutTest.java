@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -66,6 +66,8 @@ public class ServerMainQueryTimeoutTest extends AbstractBootstrapTest {
                 // we want more reduce tasks, hence smaller page frames
                 PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS + "=1000",
                 PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS + "=10000",
+                PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS + "=100",
+                PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS + "=1000",
                 // with 10ms timeout queries have a small chance to execute successfully
                 PropertyKey.QUERY_TIMEOUT + "=10ms",
                 // the scoreboard has to be small to simplify detecting table reader leak

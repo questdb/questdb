@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,127 +35,163 @@ public class DoubleArrayRoundFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLargeNegScale() throws SqlException {
-        assertSqlWithTypes("round\n" +
-                        "[null]:DOUBLE[]\n",
+        assertSqlWithTypes("""
+                        round
+                        [null]:DOUBLE[]
+                        """,
                 "select round(array[14.7778], -18)");
     }
 
     @Test
     public void testLargePosScale() throws SqlException {
-        assertSqlWithTypes("round\n" +
-                        "[null]:DOUBLE[]\n",
+        assertSqlWithTypes("""
+                        round
+                        [null]:DOUBLE[]
+                        """,
                 "select round(array[14.7778], 17)");
     }
 
     @Test
     public void testLeftNan() throws SqlException {
-        assertSqlWithTypes("round\n" +
-                        "[null]:DOUBLE[]\n",
+        assertSqlWithTypes("""
+                        round
+                        [null]:DOUBLE[]
+                        """,
                 "select round(array[NaN], 5)");
     }
 
     @Test
     public void testMultiDimensional() throws SqlException {
-        assertSqlWithTypes("round\n" +
-                        "[[1.2000000000000002,4.6000000000000005],[7.9,10.100000000000001]]:DOUBLE[][]\n",
+        assertSqlWithTypes("""
+                        round
+                        [[1.2000000000000002,4.6000000000000005],[7.9,10.100000000000001]]:DOUBLE[][]
+                        """,
                 "select round(array[ [ 1.23, 4.56 ], [ 7.89, 10.1112 ] ], 1)");
     }
 
     @Test
     public void testNegScaleHigherThanNumber() throws SqlException {
-        assertSqlWithTypes("round\n" +
-                        "[0.0]:DOUBLE[]\n",
+        assertSqlWithTypes("""
+                        round
+                        [0.0]:DOUBLE[]
+                        """,
                 "select round(array[14.7778], -5)");
     }
 
     @Test
     public void testNegScaleNegValue() throws SqlException {
-        assertSqlWithTypes("round\n" +
-                        "[-100.0]:DOUBLE[]\n",
+        assertSqlWithTypes("""
+                        round
+                        [-100.0]:DOUBLE[]
+                        """,
                 "select round(array[-104.9], -1)");
     }
 
     @Test
     public void testNegScaleNegValue2() throws SqlException {
-        assertSqlWithTypes("round\n" +
-                        "[-110.0]:DOUBLE[]\n",
+        assertSqlWithTypes("""
+                        round
+                        [-110.0]:DOUBLE[]
+                        """,
                 "select round(array[-106.1], -1)");
     }
 
     @Test
     public void testNegScaleNull() throws SqlException {
-        assertSqlWithTypes("round\n" +
-                        "null:DOUBLE[]\n",
+        assertSqlWithTypes("""
+                        round
+                        null:DOUBLE[]
+                        """,
                 "select round(null::double[], -3)");
     }
 
     @Test
     public void testNegScalePosValue() throws SqlException {
-        assertSqlWithTypes("round\n" +
-                        "[100.0]:DOUBLE[]\n",
+        assertSqlWithTypes("""
+                        round
+                        [100.0]:DOUBLE[]
+                        """,
                 "select round(array[104.9], -1)");
     }
 
     @Test
     public void testNegScalePosValue2() throws SqlException {
-        assertSqlWithTypes("round\n" +
-                        "[110.0]:DOUBLE[]\n",
+        assertSqlWithTypes("""
+                        round
+                        [110.0]:DOUBLE[]
+                        """,
                 "select round(array[106.1], -1)");
     }
 
     @Test
     public void testOKNegScale() throws SqlException {
-        assertSqlWithTypes("round\n" +
-                        "[0.0]:DOUBLE[]\n",
+        assertSqlWithTypes("""
+                        round
+                        [0.0]:DOUBLE[]
+                        """,
                 "select round(array[14.7778], -13)");
     }
 
     @Test
     public void testOKPosScale() throws SqlException {
-        assertSqlWithTypes("round\n" +
-                        "[14.7778]:DOUBLE[]\n",
+        assertSqlWithTypes("""
+                        round
+                        [14.7778]:DOUBLE[]
+                        """,
                 "select round(array[14.7778], 11)");
     }
 
     @Test
     public void testPosScaleHigherThanNumber() throws SqlException {
-        assertSqlWithTypes("round\n" +
-                        "[14.7778]:DOUBLE[]\n",
+        assertSqlWithTypes("""
+                        round
+                        [14.7778]:DOUBLE[]
+                        """,
                 "select round(array[14.7778], 7)");
     }
 
     @Test
     public void testPosScaleNegValue() throws SqlException {
-        assertSqlWithTypes("round\n" +
-                        "[-100.5]:DOUBLE[]\n",
+        assertSqlWithTypes("""
+                        round
+                        [-100.5]:DOUBLE[]
+                        """,
                 "select round(array[-100.54], 1)");
     }
 
     @Test
     public void testPosScaleNegValue2() throws SqlException {
-        assertSqlWithTypes("round\n" +
-                        "[-100.60000000000001]:DOUBLE[]\n",
+        assertSqlWithTypes("""
+                        round
+                        [-100.60000000000001]:DOUBLE[]
+                        """,
                 "select round(array[-100.56], 1)");
     }
 
     @Test
     public void testPosScaleNull() throws SqlException {
-        assertSqlWithTypes("round\n" +
-                        "null:DOUBLE[]\n",
+        assertSqlWithTypes("""
+                        round
+                        null:DOUBLE[]
+                        """,
                 "select round(null::double[], 1)");
     }
 
     @Test
     public void testPosScalePosValue() throws SqlException {
-        assertSqlWithTypes("round\n" +
-                        "[100.4]:DOUBLE[]\n",
+        assertSqlWithTypes("""
+                        round
+                        [100.4]:DOUBLE[]
+                        """,
                 "select round(array[100.44], 1)");
     }
 
     @Test
     public void testPosScalePosValue2() throws SqlException {
-        assertSqlWithTypes("round\n" +
-                        "[100.5]:DOUBLE[]\n",
+        assertSqlWithTypes("""
+                        round
+                        [100.5]:DOUBLE[]
+                        """,
                 "select round(array[100.45], 1)");
     }
 
@@ -173,10 +209,12 @@ public class DoubleArrayRoundFunctionFactoryTest extends AbstractCairoTest {
                                 sqlExecutionContext,
                                 sql,
                                 sink,
-                                "sym\tround\n" +
-                                        "a\t9688.69\n" +
-                                        "b\t9938.03\n" +
-                                        "v\t9898.59\n"
+                                """
+                                        sym\tround
+                                        a\t9688.69
+                                        b\t9938.03
+                                        v\t9898.59
+                                        """
                         );
 
                         TestUtils.assertSql(
@@ -184,18 +222,20 @@ public class DoubleArrayRoundFunctionFactoryTest extends AbstractCairoTest {
                                 sqlExecutionContext,
                                 "explain " + sql,
                                 sink,
-                                "QUERY PLAN\n" +
-                                        "Sort light\n" +
-                                        "  keys: [sym]\n" +
-                                        "    VirtualRecord\n" +
-                                        "      functions: [sym,round(sum,-2)]\n" +
-                                        "        Async Group By workers: 4\n" +
-                                        "          keys: [sym]\n" +
-                                        "          values: [sum(array_sum(roundbook))]\n" +
-                                        "          filter: null\n" +
-                                        "            PageFrame\n" +
-                                        "                Row forward scan\n" +
-                                        "                Frame forward scan on: tmp\n"
+                                """
+                                        QUERY PLAN
+                                        Sort light
+                                          keys: [sym]
+                                            VirtualRecord
+                                              functions: [sym,round(sum,2)]
+                                                Async Group By workers: 4
+                                                  keys: [sym]
+                                                  values: [sum(array_sum(roundbook))]
+                                                  filter: null
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: tmp
+                                        """
                         );
                     },
                     configuration,
@@ -206,22 +246,28 @@ public class DoubleArrayRoundFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testRightNan() throws SqlException {
-        assertSqlWithTypes("round\n" +
-                        "[null]:DOUBLE[]\n",
+        assertSqlWithTypes("""
+                        round
+                        [null]:DOUBLE[]
+                        """,
                 "select round(array[123.65], null)");
     }
 
     @Test
     public void testSimple() throws SqlException {
-        assertSqlWithTypes("round\n" +
-                        "[14.778]:DOUBLE[]\n",
+        assertSqlWithTypes("""
+                        round
+                        [14.778]:DOUBLE[]
+                        """,
                 "select round(array[14.7778], 3)");
     }
 
     @Test
     public void testSimpleZeroScale() throws SqlException {
-        assertSqlWithTypes("round\n" +
-                        "[15.0]:DOUBLE[]\n",
+        assertSqlWithTypes("""
+                        round
+                        [15.0]:DOUBLE[]
+                        """,
                 "select round(array[14.7778],0)");
     }
 }

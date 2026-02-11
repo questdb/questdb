@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
+import io.questdb.cairo.view.ViewCompilerJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlCodeGenerator;
@@ -106,25 +107,38 @@ public class AbstractTest {
         return new MatViewRefreshJob(0, engine, 1);
     }
 
+    protected static ViewCompilerJob createViewCompilerJob(CairoEngine engine) {
+        return new ViewCompilerJob(0, engine);
+    }
+
     protected static ApplyWal2TableJob createWalApplyJob(CairoEngine engine) {
         return new ApplyWal2TableJob(engine, 0);
     }
 
     @SuppressWarnings("StatementWithEmptyBody")
     protected static void drainMatViewQueue(MatViewRefreshJob refreshJob) {
-        while (refreshJob.run(0)) {
-        }
+        while (refreshJob.run(0)) ;
     }
 
     protected static void drainMatViewQueue(CairoEngine engine) {
-        try (var refreshJob = createMatViewRefreshJob(engine)) {
+        try (MatViewRefreshJob refreshJob = createMatViewRefreshJob(engine)) {
             drainMatViewQueue(refreshJob);
         }
     }
 
     @SuppressWarnings("StatementWithEmptyBody")
     protected static void drainMatViewTimerQueue(MatViewTimerJob timerJob) {
-        while (timerJob.run(0)) {
+        while (timerJob.run(0)) ;
+    }
+
+    @SuppressWarnings("StatementWithEmptyBody")
+    protected static void drainViewQueue(ViewCompilerJob compilerJob) {
+        while (compilerJob.run(0)) ;
+    }
+
+    protected static void drainViewQueue(CairoEngine engine) {
+        try (ViewCompilerJob compilerJob = createViewCompilerJob(engine)) {
+            drainViewQueue(compilerJob);
         }
     }
 
@@ -140,30 +154,24 @@ public class AbstractTest {
         drainWalQueue(engine);
     }
 
+    protected static void drainWalAndViewQueues(CairoEngine engine) {
+        drainWalQueue(engine);
+        drainViewQueue(engine);
+    }
+
     protected static void drainWalQueue(CairoEngine engine) {
         try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
             drainWalQueue(walApplyJob, engine);
         }
     }
 
+    @SuppressWarnings("StatementWithEmptyBody")
     protected static void drainWalQueue(ApplyWal2TableJob walApplyJob, CairoEngine engine) {
-        var checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-        //noinspection StatementWithEmptyBody
+        CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
         while (walApplyJob.run(0)) ;
         if (checkWalTransactionsJob.run(0)) {
-            //noinspection StatementWithEmptyBody
             while (walApplyJob.run(0)) ;
         }
-    }
-
-    protected static HttpQueryTestBuilder getExportTester() {
-        return new HttpQueryTestBuilder()
-                .withTempFolder(root)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .withCopyExportRoot(root + "/export")
-                .withCopyInputRoot(root + "/export");
     }
 
     protected static String[] getServerMainArgs(CharSequence root) {

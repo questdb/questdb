@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -63,6 +63,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     private static final String TABLE1 = "table1";
     private static final String TABLE2 = "table2";
     private static final String TABLE3 = "table3";
+    private static final String VIEW1 = "view1";
 
     @Before
     public void setUp() {
@@ -79,7 +80,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
 
-            final int iterations = 25;
+            final int iterations = 50;
             final CyclicBarrier barrier = new CyclicBarrier(2);
             final AtomicInteger errorCounter = new AtomicInteger();
             final AtomicInteger createCounter = new AtomicInteger();
@@ -121,6 +122,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         if (knownCount > droppedAt) {
                             execute("drop materialized view if exists price_1h", executionContext);
                             droppedAt = createCounter.get();
+                            drainWalQueue();
                         } else {
                             Os.sleep(1);
                         }
@@ -215,7 +217,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final String sql = "with t as (select ts, avg(v) as avgv from " + TABLE2 + ") select ts, avgv from t sample by 30s";
             assertExceptionNoLeakCheck(
                     "create materialized view test with base " + TABLE1 + " as (" + sql + ") partition by day",
-                    108,
+                    40,
                     "base table is not referenced in materialized view query"
             );
             assertNull(getMatViewDefinition("test"));
@@ -230,6 +232,63 @@ public class CreateMatViewTest extends AbstractCairoTest {
     @Test
     public void testCreateMatViewBaseTableSelfUnionWithNanos() throws Exception {
         testCreateMatViewBaseTableSelfUnion("timestamp_ns");
+    }
+
+    @Test
+    public void testCreateMatViewBasedOnView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            execute("create view " + VIEW1 + " as select ts, avg(v) as v from " + TABLE1 + " sample by 1m");
+            final String sql = "select ts, max(v) from " + VIEW1 + " sample by 1h";
+            assertExceptionNoLeakCheck(
+                    "create materialized view test with base " + VIEW1 + " as (" + sql + ") partition by day",
+                    40,
+                    "base table should be a physical table, cannot be a view: view1"
+            );
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewBasedOnViewReferencesMultipleTables() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createTable(TABLE2);
+
+            execute("create view " + VIEW1 + " as select t1.ts, avg(t1.v) as v from " + TABLE1 + " as t1 join " + TABLE2 + " as t2 on v sample by 1m");
+
+            // view references multiple physical tables, and no base table selected
+            // error expected
+            assertExceptionNoLeakCheck(
+                    "create materialized view test as (select ts, min(v) from " + VIEW1 + " sample by 1h) partition by day",
+                    34,
+                    "query references multiple tables (views are expanded to their underlying physical tables), use 'WITH BASE' to explicitly select the base table"
+            );
+            assertNull(getMatViewDefinition("test"));
+
+            // view references multiple physical tables, and the view selected as base table
+            // error expected, base table has to be a physical table
+            assertExceptionNoLeakCheck(
+                    "create materialized view test with base " + VIEW1 + " as (select ts, min(v) from " + VIEW1 + " sample by 1h) partition by day",
+                    40,
+                    "base table should be a physical table, cannot be a view: view1"
+            );
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewBasedOnViewReferencesSingleTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            execute("create view " + VIEW1 + " as select ts, avg(v) as v from " + TABLE1 + " sample by 1m");
+
+            // view references a single physical table which becomes the base table for the mat view
+            // no error expected
+            execute("create materialized view test as (select ts, min(v) from " + VIEW1 + " sample by 1h) partition by day");
+            assertNotNull(getMatViewDefinition("test"));
+        });
     }
 
     @Test
@@ -577,7 +636,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     "create materialized view test as (select t1.ts, avg(t1.v) from " + TABLE1 + " as t1 " +
                             "join " + TABLE2 + " as t2 on v sample by 30s) partition by day",
                     34,
-                    "more than one table used in query, base table has to be set using 'WITH BASE'"
+                    "query references multiple tables (views are expanded to their underlying physical tables), use 'WITH BASE' to explicitly select the base table"
             );
             assertNull(getMatViewDefinition("test"));
 
@@ -585,7 +644,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     "create materialized view test as (select ts, avg(v) from " + TABLE3 + " sample by 30s " +
                             "union select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day",
                     34,
-                    "more than one table used in query, base table has to be set using 'WITH BASE'"
+                    "query references multiple tables (views are expanded to their underlying physical tables), use 'WITH BASE' to explicitly select the base table"
             );
             assertNull(getMatViewDefinition("test"));
 
@@ -594,7 +653,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                             "union select t1.ts, avg(t1.v) from " + TABLE1 + " as t1 join " + TABLE2 +
                             " as t2 on v sample by 30s) partition by day",
                     34,
-                    "more than one table used in query, base table has to be set using 'WITH BASE'"
+                    "query references multiple tables (views are expanded to their underlying physical tables), use 'WITH BASE' to explicitly select the base table"
             );
             assertNull(getMatViewDefinition("test"));
         });
@@ -621,14 +680,16 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day WAL");
 
             final String query =
-                    "  WITH t1 AS (\n" +
-                            "    SELECT ts, ticker, greatest(close, close + 1) as close\n" +
-                            "    FROM stocks_d1_ohlcv\n" +
-                            "  )\n" +
-                            "  SELECT ts, ticker, avg(close)\n" +
-                            "  FROM t1\n" +
-                            "  SAMPLE BY 1d\n" +
-                            "  ORDER BY ticker, ts\n";
+                    """
+                              WITH t1 AS (
+                                SELECT ts, ticker, greatest(close, close + 1) as close
+                                FROM stocks_d1_ohlcv
+                              )
+                              SELECT ts, ticker, avg(close)
+                              FROM t1
+                              SAMPLE BY 1d
+                              ORDER BY ticker, ts
+                            """;
             assertExceptionNoLeakCheck(
                     "create materialized view test_view as (" + query + ") partition by month",
                     39,
@@ -825,6 +886,17 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertQuery0("ts\tavg\n", "test", "ts");
             assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 30, 's', null, null);
             assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 30, 's', null, null);
+
+            assertQuery(
+                    """
+                            id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type
+                            2\ttest\tts\tWEEK\t1000\t-1\ttrue\ttest~2\tfalse\t0\tHOUR\tM
+                            1\ttable1\tts\tDAY\t1000\t300000000\ttrue\ttable1~1\tfalse\t0\tHOUR\tT
+                            """,
+                    "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag,walEnabled,directoryName,dedup,ttlValue,ttlUnit,table_type from tables()",
+                    false,
+                    true
+            );
         });
     }
 
@@ -865,6 +937,17 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertFalse(metadata.isDedupKey(2));
                 assertEquals(0, metadata.getTtlHoursOrMonths());
             }
+
+            assertQuery(
+                    """
+                            id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type
+                            2\ttest\tts\tWEEK\t1000\t-1\ttrue\ttest~2\tfalse\t0\tHOUR\tM
+                            1\ttable1\tts\tDAY\t1000\t300000000\ttrue\ttable1~1\tfalse\t0\tHOUR\tT
+                            """,
+                    "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag,walEnabled,directoryName,dedup,ttlValue,ttlUnit,table_type from tables()",
+                    false,
+                    true
+            );
         });
     }
 
@@ -1191,13 +1274,13 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "create materialized view " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day",
                     25,
-                    "table with the requested name already exists"
+                    "table or view with the requested name already exists"
             );
 
             assertExceptionNoLeakCheck(
                     "create materialized view if not exists " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day",
                     39,
-                    "table with the requested name already exists"
+                    "table or view with the requested name already exists"
             );
 
             final String query = "select ts, avg(v) from " + TABLE2 + " sample by 4h";
@@ -2007,18 +2090,22 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 new DdlSerializationTest(
                         "test1",
                         "create materialized view test1 as (" + query + ") partition by day TTL 3 WEEKS",
-                        "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test1' WITH BASE 'table1' REFRESH IMMEDIATE AS (\n" +
-                                "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
-                                ") PARTITION BY DAY TTL 3 WEEKS;\n"
+                        """
+                                ddl
+                                CREATE MATERIALIZED VIEW 'test1' WITH BASE 'table1' REFRESH IMMEDIATE AS (
+                                select ts, v+v doubleV, avg(v) from table1 sample by 30s
+                                ) PARTITION BY DAY TTL 3 WEEKS;
+                                """
                 ),
                 new DdlSerializationTest(
                         "test2",
                         "create materialized view test2 refresh immediate deferred as (" + query + ") partition by day TTL 3 WEEKS",
-                        "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test2' WITH BASE 'table1' REFRESH IMMEDIATE DEFERRED AS (\n" +
-                                "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
-                                ") PARTITION BY DAY TTL 3 WEEKS;\n"
+                        """
+                                ddl
+                                CREATE MATERIALIZED VIEW 'test2' WITH BASE 'table1' REFRESH IMMEDIATE DEFERRED AS (
+                                select ts, v+v doubleV, avg(v) from table1 sample by 30s
+                                ) PARTITION BY DAY TTL 3 WEEKS;
+                                """
                 ),
         };
         testShowCreateMaterializedView(tests, "timestamp");
@@ -2031,18 +2118,22 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 new DdlSerializationTest(
                         "test1",
                         "create materialized view test1 refresh manual as " + query,
-                        "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test1' WITH BASE 'table1' REFRESH MANUAL AS (\n" +
-                                "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
-                                ") PARTITION BY DAY;\n"
+                        """
+                                ddl
+                                CREATE MATERIALIZED VIEW 'test1' WITH BASE 'table1' REFRESH MANUAL AS (
+                                select ts, v+v doubleV, avg(v) from table1 sample by 30s
+                                ) PARTITION BY DAY;
+                                """
                 ),
                 new DdlSerializationTest(
                         "test2",
                         "create materialized view test2 refresh manual deferred as " + query,
-                        "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test2' WITH BASE 'table1' REFRESH MANUAL DEFERRED AS (\n" +
-                                "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
-                                ") PARTITION BY DAY;\n"
+                        """
+                                ddl
+                                CREATE MATERIALIZED VIEW 'test2' WITH BASE 'table1' REFRESH MANUAL DEFERRED AS (
+                                select ts, v+v doubleV, avg(v) from table1 sample by 30s
+                                ) PARTITION BY DAY;
+                                """
                 ),
         };
         testShowCreateMaterializedView(tests, "timestamp");
@@ -2188,18 +2279,22 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 new DdlSerializationTest(
                         "test1",
                         "create materialized view test1 refresh every 7d start '2020-01-01T02:23:59.900000Z' time zone 'Europe/Paris' as " + query,
-                        "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test1' WITH BASE 'table1' REFRESH EVERY 7d START '2020-01-01T02:23:59.900000Z' TIME ZONE 'Europe/Paris' AS (\n" +
-                                "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
-                                ") PARTITION BY DAY;\n"
+                        """
+                                ddl
+                                CREATE MATERIALIZED VIEW 'test1' WITH BASE 'table1' REFRESH EVERY 7d START '2020-01-01T02:23:59.900000Z' TIME ZONE 'Europe/Paris' AS (
+                                select ts, v+v doubleV, avg(v) from table1 sample by 30s
+                                ) PARTITION BY DAY;
+                                """
                 ),
                 new DdlSerializationTest(
                         "test2",
                         "create materialized view 'test2' refresh every 7d deferred start '2020-01-01T02:23:59.900000Z' time zone 'Europe/Paris' as " + query,
-                        "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test2' WITH BASE 'table1' REFRESH EVERY 7d DEFERRED START '2020-01-01T02:23:59.900000Z' TIME ZONE 'Europe/Paris' AS (\n" +
-                                "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
-                                ") PARTITION BY DAY;\n"
+                        """
+                                ddl
+                                CREATE MATERIALIZED VIEW 'test2' WITH BASE 'table1' REFRESH EVERY 7d DEFERRED START '2020-01-01T02:23:59.900000Z' TIME ZONE 'Europe/Paris' AS (
+                                select ts, v+v doubleV, avg(v) from table1 sample by 30s
+                                ) PARTITION BY DAY;
+                                """
                 ),
         };
         testShowCreateMaterializedView(tests, "timestamp");
@@ -2212,18 +2307,22 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 new DdlSerializationTest(
                         "test1",
                         "create materialized view test1 refresh every 7d start '2020-01-01T02:23:59.900000Z' time zone 'Europe/Paris' as " + query,
-                        "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test1' WITH BASE 'table1' REFRESH EVERY 7d START '2020-01-01T02:23:59.900000Z' TIME ZONE 'Europe/Paris' AS (\n" +
-                                "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
-                                ") PARTITION BY DAY;\n"
+                        """
+                                ddl
+                                CREATE MATERIALIZED VIEW 'test1' WITH BASE 'table1' REFRESH EVERY 7d START '2020-01-01T02:23:59.900000Z' TIME ZONE 'Europe/Paris' AS (
+                                select ts, v+v doubleV, avg(v) from table1 sample by 30s
+                                ) PARTITION BY DAY;
+                                """
                 ),
                 new DdlSerializationTest(
                         "test2",
                         "create materialized view 'test2' refresh every 7d deferred start '2020-01-01T02:23:59.900000000Z' time zone 'Europe/Paris' as " + query,
-                        "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test2' WITH BASE 'table1' REFRESH EVERY 7d DEFERRED START '2020-01-01T02:23:59.900000Z' TIME ZONE 'Europe/Paris' AS (\n" +
-                                "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
-                                ") PARTITION BY DAY;\n"
+                        """
+                                ddl
+                                CREATE MATERIALIZED VIEW 'test2' WITH BASE 'table1' REFRESH EVERY 7d DEFERRED START '2020-01-01T02:23:59.900000Z' TIME ZONE 'Europe/Paris' AS (
+                                select ts, v+v doubleV, avg(v) from table1 sample by 30s
+                                ) PARTITION BY DAY;
+                                """
                 ),
         };
         testShowCreateMaterializedView(tests, "timestamp_ns");
@@ -2569,8 +2668,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                             " timestamp(ts) partition by day wal;"
             );
 
-            for (int i = 0, n = queries.length; i < n; i++) {
-                execute(queries[i]);
+            for (String query : queries) {
+                execute(query);
             }
         });
     }
@@ -2581,7 +2680,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 for (DdlSerializationTest test : tests) {
                     sink.clear();
-                    final ExecutionModel model = compiler.testCompileModel(test.ddl, sqlExecutionContext);
+                    final ExecutionModel model = compiler.generateExecutionModel(test.ddl, sqlExecutionContext);
                     assertEquals(ExecutionModel.CREATE_MAT_VIEW, model.getModelType());
                     ((Sinkable) model).toSink(sink);
                     TestUtils.assertEquals(
@@ -2609,21 +2708,9 @@ public class CreateMatViewTest extends AbstractCairoTest {
         });
     }
 
-    private static class DdlSerializationTest {
-        final String ddl;
-        final String expected;
-        final @Nullable String viewName;
-
+    private record DdlSerializationTest(@Nullable String viewName, String ddl, String expected) {
         public DdlSerializationTest(String ddl, String expected) {
-            this.viewName = null;
-            this.ddl = ddl;
-            this.expected = expected;
-        }
-
-        public DdlSerializationTest(@Nullable String viewName, String ddl, String expected) {
-            this.viewName = viewName;
-            this.ddl = ddl;
-            this.expected = expected;
+            this(null, ddl, expected);
         }
     }
 }

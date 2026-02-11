@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,50 +31,50 @@ namespace questdb::avx2 {
     using namespace asmjit;
     using namespace asmjit::x86;
 
-    inline Xmm get_low(Compiler &c, const Ymm &x) {
+    inline Vec get_low(Compiler &c, const Vec &x) {
         return x.half();
     }
 
-    inline Xmm get_high(Compiler &c, const Ymm &x) {
-        Xmm y = c.newXmm();
+    inline Vec get_high(Compiler &c, const Vec &x) {
+        Vec y = c.new_xmm();
         c.vextracti128(y, x, 1);
         return y;
     }
 
-    inline Gpd to_bits32(Compiler &c, const Ymm &x) {
+    inline Gp to_bits32(Compiler &c, const Vec &x) {
         //   return (uint32_t)_mm256_movemask_epi8(x);
-        Gp r = c.newInt32();
+        Gp r = c.new_gp32();
         c.vpmovmskb(r, x);
-        return r.as<Gpd>();
+        return r.as<Gp>();
     }
 
-    inline Gpd to_bits16(Compiler &c, const Ymm &x) {
+    inline Gp to_bits16(Compiler &c, const Vec &x) {
         //    __m128i a = _mm_packs_epi16(x.get_low(), x.get_high());  // 16-bit words to bytes
         //    return (uint16_t)_mm_movemask_epi8(a);
-        Gp r = c.newInt32();
-        Xmm l = get_low(c, x);
-        Xmm h = get_high(c, x);
+        Gp r = c.new_gp32();
+        Vec l = get_low(c, x);
+        Vec h = get_high(c, x);
         c.packsswb(l, h); // 16-bit words to bytes
         c.pmovmskb(r, l);
         c.and_(r, 0xffff);
-        return r.as<Gpd>();
+        return r.as<Gp>();
     }
 
-    inline Gpd to_bits8(Compiler &c, const Ymm &x) {
-        Gp r = c.newInt32();
+    inline Gp to_bits8(Compiler &c, const Vec &x) {
+        Gp r = c.new_gp32();
         c.vmovmskps(r, x);
-        return r.as<Gpd>();
+        return r.as<Gp>();
     }
 
-    inline Gpd to_bits4(Compiler &c, const Ymm &mask) {
-        Gp r = c.newInt32();
+    inline Gp to_bits4(Compiler &c, const Vec &mask) {
+        Gp r = c.new_gp32();
         c.vmovmskpd(r, mask);
-        return r.as<Gpd>();
+        return r.as<Gp>();
     }
 
-    inline Gpd to_bits2(Compiler &c, const Ymm &mask) {
+    inline Gp to_bits2(Compiler &c, const Vec &mask) {
         Gp r = to_bits4(c, mask);
-        Gp lo = c.newInt32();
+        Gp lo = c.new_gp32();
         c.mov(lo, r);
         c.and_(lo, 1);
 
@@ -82,10 +82,10 @@ namespace questdb::avx2 {
         c.and_(r, 2);
         c.or_(r, lo);
 
-        return r.as<Gpd>();
+        return r.as<Gp>();
     }
 
-    inline Gpd to_bits(Compiler &c, const Ymm &mask, uint32_t step) {
+    inline Gp to_bits(Compiler &c, const Vec &mask, uint32_t step) {
         switch (step) {
             case 32:
                 return to_bits32(c, mask);
@@ -103,16 +103,16 @@ namespace questdb::avx2 {
     }
 
     // https://stackoverflow.com/questions/36932240/avx2-what-is-the-most-efficient-way-to-pack-left-based-on-a-mask
-    inline Ymm compress_register(Compiler &c, const Ymm &ymm0, const Ymm &mask) {
+    inline Vec compress_register(Compiler &c, const Vec &ymm0, const Vec &mask) {
         c.comment("compress_register");
         x86::Gp bits = to_bits32(c, mask);
-        Gp identity_indices = c.newUInt64("identity_indices");
+        Gp identity_indices = c.new_gp64("identity_indices");
         c.mov(identity_indices.r32(), 0x76543210);
         c.pext(identity_indices.r32(), identity_indices.r32(), bits.r32());
-        Gp expanded_indices = c.newUInt64("expanded_indices");
+        Gp expanded_indices = c.new_gp64("expanded_indices");
         c.movabs(expanded_indices, 0x0F0F0F0F0F0F0F0F);
         c.pdep(identity_indices, identity_indices, expanded_indices);
-        Ymm ymm1 = c.newYmm();
+        Vec ymm1 = c.new_ymm();
         c.vmovq(ymm1.xmm(), identity_indices);
         c.vpmovzxbd(ymm1, ymm1.xmm());
         c.vpermps(ymm1, ymm1, ymm0);
@@ -121,22 +121,22 @@ namespace questdb::avx2 {
 
     inline Mem vec_long_null(Compiler &c) {
         int64_t nulls[4] = {LONG_NULL, LONG_NULL, LONG_NULL, LONG_NULL};
-        return c.newConst(ConstPool::kScopeLocal, &nulls, 32);
+        return c.new_const(ConstPoolScope::kLocal, &nulls, 32);
     }
 
     inline Mem vec_int_null(Compiler &c) {
         int32_t nulls[8] = {INT_NULL, INT_NULL, INT_NULL, INT_NULL, INT_NULL, INT_NULL, INT_NULL, INT_NULL};
-        return c.newConst(ConstPool::kScopeLocal, &nulls, 32);
+        return c.new_const(ConstPoolScope::kLocal, &nulls, 32);
     }
 
     inline Mem vec_float_null(Compiler &c) {
         int32_t nulls[8] = {0x7fc00000, 0x7fc00000, 0x7fc00000, 0x7fc00000, 0x7fc00000, 0x7fc00000, 0x7fc00000, 0x7fc00000};
-        return c.newConst(ConstPool::kScopeLocal, &nulls, 32);
+        return c.new_const(ConstPoolScope::kLocal, &nulls, 32);
     }
 
     inline Mem vec_double_null(Compiler &c) {
         int64_t nulls[4] = {0x7ff8000000000000LL, 0x7ff8000000000000LL, 0x7ff8000000000000LL, 0x7ff8000000000000LL};
-        return c.newConst(ConstPool::kScopeLocal, &nulls, 32);
+        return c.new_const(ConstPoolScope::kLocal, &nulls, 32);
     }
 
     inline Mem vec_sign_mask(Compiler &c, data_type_t type) {
@@ -144,24 +144,24 @@ namespace questdb::avx2 {
             case data_type_t::i8: {
                 uint8_t mask[32] = {};
                 memset(mask, 0x7fu, 32);
-                return c.newConst(ConstPool::kScopeLocal, &mask, 32);
+                return c.new_const(ConstPoolScope::kLocal, &mask, 32);
             }
                 break;
             case data_type_t::i16: {
                 uint16_t mask[16] = {0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu };
-                return c.newConst(ConstPool::kScopeLocal, &mask, 32);
+                return c.new_const(ConstPoolScope::kLocal, &mask, 32);
             }
                 break;
             case data_type_t::i32:
             case data_type_t::f32: {
                 uint32_t mask[] = {0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu};
-                return c.newConst(ConstPool::kScopeLocal, &mask, 32);
+                return c.new_const(ConstPoolScope::kLocal, &mask, 32);
             }
                 break;
             case data_type_t::i64:
             case data_type_t::f64: {
                 uint64_t mask[] = {0x7fffffffffffffffu, 0x7fffffffffffffffu, 0x7fffffffffffffffu, 0x7fffffffffffffffu};
-                return c.newConst(ConstPool::kScopeLocal, &mask, 32);
+                return c.new_const(ConstPoolScope::kLocal, &mask, 32);
             }
                 break;
             default:
@@ -173,24 +173,24 @@ namespace questdb::avx2 {
         return null_check && (t == data_type_t::i32 || t == data_type_t::i64);
     }
 
-    inline Ymm is_nan(Compiler &c, data_type_t type, const Ymm &x) {
-        Ymm sub = c.newYmm();
-        Ymm dst = c.newYmm();
+    inline Vec is_nan(Compiler &c, data_type_t type, const Vec &x) {
+        Vec sub = c.new_ymm();
+        Vec dst = c.new_ymm();
         switch (type) {
             case data_type_t::f32:
                 c.vsubps(sub, x, x); // x - x = 0.0, NaN - NaN = NaN, Inf - Inf = NaN, -Inf - -Inf = NaN
-                c.vcmpps(dst, sub, sub, Predicate::kCmpUNORD);
+                c.vcmpps(dst, sub, sub, CmpImm::kUNORD);
                 break;
             default:
                 c.vsubpd(sub, x, x);
-                c.vcmppd(dst, sub, sub, Predicate::kCmpUNORD);
+                c.vcmppd(dst, sub, sub, CmpImm::kUNORD);
                 break;
         }
         return dst;
     }
 
-    inline Ymm cmp_eq_null(Compiler &c, data_type_t type, const Ymm &x) {
-        Ymm dst = c.newYmm();
+    inline Vec cmp_eq_null(Compiler &c, data_type_t type, const Vec &x) {
+        Vec dst = c.new_ymm();
         switch (type) {
             case data_type_t::i8:
             case data_type_t::i16:
@@ -211,106 +211,106 @@ namespace questdb::avx2 {
         return dst;
     }
 
-    inline Ymm select_bytes(Compiler &c, const Ymm &mask, const Ymm &a, const Ymm &b) {
-        Ymm dst = c.newYmm();
+    inline Vec select_bytes(Compiler &c, const Vec &mask, const Vec &a, const Vec &b) {
+        Vec dst = c.new_ymm();
         c.vpblendvb(dst, a, b, mask);
         return dst;
     }
 
-    inline Ymm select_bytes(Compiler &c, const Ymm &mask, const Ymm &a, const Mem &b) {
-        Ymm dst = c.newYmm();
+    inline Vec select_bytes(Compiler &c, const Vec &mask, const Vec &a, const Mem &b) {
+        Vec dst = c.new_ymm();
         c.vpblendvb(dst, a, b, mask);
         return dst;
     }
 
-    inline Ymm mask_not(Compiler &c, const Ymm &rhs) {
-        Ymm dst = c.newYmm();
-        Ymm mask = c.newYmm();
+    inline Vec mask_not(Compiler &c, const Vec &rhs) {
+        Vec dst = c.new_ymm();
+        Vec mask = c.new_ymm();
         c.vpcmpeqd(mask, mask, mask);
         c.vpxor(dst, rhs, mask);
         return dst;
     }
 
-    inline Ymm mask_and(Compiler &c, const Ymm &lhs, const Ymm &rhs) {
-        Ymm dst = c.newYmm();
+    inline Vec mask_and(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Vec dst = c.new_ymm();
         c.vpand(dst, lhs, rhs);
         return dst;
     }
 
-    inline Ymm mask_and(Compiler &c, const Ymm &lhs, const Mem &rhs) {
-        Ymm dst = c.newYmm();
+    inline Vec mask_and(Compiler &c, const Vec &lhs, const Mem &rhs) {
+        Vec dst = c.new_ymm();
         c.vpand(dst, lhs, rhs);
         return dst;
     }
 
-    inline Ymm mask_or(Compiler &c, const Ymm &lhs, const Ymm &rhs) {
-        Ymm dst = c.newYmm();
+    inline Vec mask_or(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Vec dst = c.new_ymm();
         c.vpor(dst, lhs, rhs);
         return dst;
     }
 
-    inline Ymm mask_xor(Compiler &c, const Ymm &lhs, const Ymm &rhs) {
-        Ymm dst = c.newYmm();
+    inline Vec mask_xor(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Vec dst = c.new_ymm();
         c.vpxor(dst, lhs, rhs);
         return dst;
     }
 
-    inline Ymm nulls_mask(Compiler &c, data_type_t &type, const Ymm &lhs, const Ymm &rhs) {
-        Ymm lhs_nulls = cmp_eq_null(c, type, lhs);
-        Ymm rhs_nulls = cmp_eq_null(c, type, rhs);
+    inline Vec nulls_mask(Compiler &c, data_type_t &type, const Vec &lhs, const Vec &rhs) {
+        Vec lhs_nulls = cmp_eq_null(c, type, lhs);
+        Vec rhs_nulls = cmp_eq_null(c, type, rhs);
         return mask_or(c, lhs_nulls, rhs_nulls);
     }
 
-    inline Ymm not_nulls_mask(Compiler &c, data_type_t &type, const Ymm &lhs, const Ymm &rhs) {
+    inline Vec not_nulls_mask(Compiler &c, data_type_t &type, const Vec &lhs, const Vec &rhs) {
         return mask_not(c, nulls_mask(c, type, lhs, rhs));
     }
 
-    inline Ymm xor_nulls_mask(Compiler &c, data_type_t &type, const Ymm &lhs, const Ymm &rhs) {
-        Ymm lhs_nulls = cmp_eq_null(c, type, lhs);
-        Ymm rhs_nulls = cmp_eq_null(c, type, rhs);
+    inline Vec xor_nulls_mask(Compiler &c, data_type_t &type, const Vec &lhs, const Vec &rhs) {
+        Vec lhs_nulls = cmp_eq_null(c, type, lhs);
+        Vec rhs_nulls = cmp_eq_null(c, type, rhs);
         return mask_xor(c, lhs_nulls, rhs_nulls);
     }
 
-    inline Ymm not_xor_nulls_mask(Compiler &c, data_type_t &type, const Ymm &lhs, const Ymm &rhs) {
+    inline Vec not_xor_nulls_mask(Compiler &c, data_type_t &type, const Vec &lhs, const Vec &rhs) {
         return mask_not(c, xor_nulls_mask(c, type, lhs, rhs));
     }
 
-    inline Ymm cmp_eq_float(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
-        Ymm lhs_copy = c.newYmm();
-        Ymm rhs_copy = c.newYmm();
+    inline Vec cmp_eq_float(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs) {
+        Vec lhs_copy = c.new_ymm();
+        Vec rhs_copy = c.new_ymm();
         c.vmovaps(lhs_copy, lhs);
         c.vmovaps(rhs_copy, rhs);
-        Ymm dst = c.newYmm();
-        Ymm nans = mask_and(c, is_nan(c, type, lhs_copy), is_nan(c, type, rhs_copy));
+        Vec dst = c.new_ymm();
+        Vec nans = mask_and(c, is_nan(c, type, lhs_copy), is_nan(c, type, rhs_copy));
         Mem sign_mask = vec_sign_mask(c, type);
-        c.vsubps(lhs_copy, lhs_copy, rhs_copy); //(lhs - rhs)
+        c.vsubps(lhs_copy, lhs_copy, rhs_copy); // (lhs - rhs)
         c.vpand(lhs_copy, lhs_copy, sign_mask); // abs(lhs - rhs)
         float eps[8] = {FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON};
-        Mem epsilon = c.newConst(ConstPool::kScopeLocal, &eps, 32);
-        c.vcmpps(dst, lhs_copy, epsilon, Predicate::kCmpLT);
+        Mem epsilon = c.new_const(ConstPoolScope::kLocal, &eps, 32);
+        c.vcmpps(dst, lhs_copy, epsilon, CmpImm::kLT);
         c.vpor(dst, dst, nans);
         return dst;
     }
 
-    inline Ymm cmp_eq_double(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
-        Ymm lhs_copy = c.newYmm();
-        Ymm rhs_copy = c.newYmm();
+    inline Vec cmp_eq_double(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs) {
+        Vec lhs_copy = c.new_ymm();
+        Vec rhs_copy = c.new_ymm();
         c.vmovapd(lhs_copy, lhs);
         c.vmovapd(rhs_copy, rhs);
-        Ymm dst = c.newYmm();
-        Ymm nans = mask_and(c, is_nan(c, type, lhs_copy), is_nan(c, type, rhs_copy));
+        Vec dst = c.new_ymm();
+        Vec nans = mask_and(c, is_nan(c, type, lhs_copy), is_nan(c, type, rhs_copy));
         Mem sign_mask = vec_sign_mask(c, type);
-        c.vsubpd(lhs_copy, lhs_copy, rhs_copy); //(lhs - rhs)
+        c.vsubpd(lhs_copy, lhs_copy, rhs_copy); // (lhs - rhs)
         c.vpand(lhs_copy, lhs_copy, sign_mask); // abs(lhs - rhs)
         double eps[4] = {DOUBLE_EPSILON, DOUBLE_EPSILON, DOUBLE_EPSILON, DOUBLE_EPSILON};
-        Mem epsilon = c.newConst(ConstPool::kScopeLocal, &eps, 32);
-        c.vcmppd(dst, lhs_copy, epsilon, Predicate::kCmpLT);
+        Mem epsilon = c.new_const(ConstPoolScope::kLocal, &eps, 32);
+        c.vcmppd(dst, lhs_copy, epsilon, CmpImm::kLT);
         c.vpor(dst, dst, nans);
         return dst;
     }
 
-    inline Ymm cmp_eq(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
-        Ymm dst = c.newYmm();
+    inline Vec cmp_eq(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs) {
+        Vec dst = c.new_ymm();
         switch (type) {
             case data_type_t::i8: {
                 c.vpcmpeqb(dst, lhs, rhs);
@@ -344,12 +344,12 @@ namespace questdb::avx2 {
         return dst;
     }
 
-    inline Ymm cmp_ne(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
+    inline Vec cmp_ne(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs) {
         return mask_not(c, cmp_eq(c, type, lhs, rhs));
     }
 
-    inline Ymm cmp_lt(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
-        Ymm dst = c.newYmm();
+    inline Vec cmp_lt(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs) {
+        Vec dst = c.new_ymm();
         switch (type) {
             case data_type_t::i8:
                 c.vpcmpgtb(dst, rhs, lhs);
@@ -364,13 +364,13 @@ namespace questdb::avx2 {
                 c.vpcmpgtq(dst, rhs, lhs);
                 break;
             case data_type_t::f32: {
-                Ymm neq = mask_not(c, cmp_eq_float(c, type, lhs, rhs));
-                c.vcmpps(dst, lhs, rhs, Predicate::kCmpLT);
+                Vec neq = mask_not(c, cmp_eq_float(c, type, lhs, rhs));
+                c.vcmpps(dst, lhs, rhs, CmpImm::kLT);
                 return mask_and(c, dst, neq);
             }
             case data_type_t::f64: {
-                Ymm neq = mask_not(c, cmp_eq_double(c, type, lhs, rhs));
-                c.vcmppd(dst, lhs, rhs, Predicate::kCmpLT);
+                Vec neq = mask_not(c, cmp_eq_double(c, type, lhs, rhs));
+                c.vcmppd(dst, lhs, rhs, CmpImm::kLT);
                 return mask_and(c, dst, neq);
             }
             default:
@@ -379,57 +379,57 @@ namespace questdb::avx2 {
         return dst;
     }
 
-    inline Ymm cmp_gt(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
+    inline Vec cmp_gt(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs) {
         return cmp_lt(c, type, rhs, lhs);
     }
 
-    inline Ymm cmp_gt(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs, bool null_check) {
+    inline Vec cmp_gt(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
         if(!is_check_for_null(type, null_check)) {
             return cmp_gt(c, type, lhs, rhs);
         } else {
-            Ymm r = cmp_gt(c, type, lhs, rhs);
-            Ymm not_nulls = not_nulls_mask(c, type, lhs, rhs);
+            Vec r = cmp_gt(c, type, lhs, rhs);
+            Vec not_nulls = not_nulls_mask(c, type, lhs, rhs);
             return mask_and(c, r, not_nulls);
         }
     }
 
-    inline Ymm cmp_lt(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs, bool null_check) {
+    inline Vec cmp_lt(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
         if(!is_check_for_null(type, null_check)) {
             return cmp_lt(c, type, lhs, rhs);
         } else {
-            Ymm r = cmp_lt(c, type, lhs, rhs);
-            Ymm not_nulls = not_nulls_mask(c, type, lhs, rhs);
+            Vec r = cmp_lt(c, type, lhs, rhs);
+            Vec not_nulls = not_nulls_mask(c, type, lhs, rhs);
             return mask_and(c, r, not_nulls);
         }
     }
 
-    inline Ymm cmp_le(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs, bool null_check);
+    inline Vec cmp_le(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check);
 
-    inline Ymm cmp_ge(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs, bool null_check) {
+    inline Vec cmp_ge(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
         switch (type) {
             case data_type_t::f32:
             case data_type_t::f64:
                 return cmp_le(c, type, rhs, lhs, null_check);
             default: {
-                Ymm mask = mask_not(c, cmp_lt(c, type, lhs, rhs));
-                Ymm not_xor_nulls = not_xor_nulls_mask(c, type, lhs, rhs);
+                Vec mask = mask_not(c, cmp_lt(c, type, lhs, rhs));
+                Vec not_xor_nulls = not_xor_nulls_mask(c, type, lhs, rhs);
                 return mask_and(c, mask, not_xor_nulls);
             }
         }
     }
 
-    inline Ymm cmp_le(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs, bool null_check) {
+    inline Vec cmp_le(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
         switch (type) {
             case data_type_t::f32: {
-                Ymm eq = cmp_eq_float(c, type, lhs, rhs);
-                Ymm dst = c.newYmm();
-                c.vcmpps(dst.ymm(), lhs.ymm(), rhs.ymm(), Predicate::kCmpLE);
+                Vec eq = cmp_eq_float(c, type, lhs, rhs);
+                Vec dst = c.new_ymm();
+                c.vcmpps(dst.ymm(), lhs.ymm(), rhs.ymm(), CmpImm::kLE);
                 return mask_or(c, dst, eq);
             }
             case data_type_t::f64: {
-                Ymm eq = cmp_eq_double(c, type, lhs, rhs);
-                Ymm dst = c.newYmm();
-                c.vcmppd(dst.ymm(), lhs.ymm(), rhs.ymm(), Predicate::kCmpLE);
+                Vec eq = cmp_eq_double(c, type, lhs, rhs);
+                Vec dst = c.new_ymm();
+                c.vcmppd(dst.ymm(), lhs.ymm(), rhs.ymm(), CmpImm::kLE);
                 return mask_or(c, dst, eq);
             }
             default:
@@ -437,8 +437,8 @@ namespace questdb::avx2 {
         }
     }
 
-    inline Ymm add(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
-        Ymm dst = c.newYmm();
+    inline Vec add(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs) {
+        Vec dst = c.new_ymm();
         switch (type) {
             case data_type_t::i8:
                 c.vpaddb(dst, lhs, rhs);
@@ -464,23 +464,23 @@ namespace questdb::avx2 {
         return dst;
     }
 
-    inline Ymm blend_with_nulls(Compiler &c, data_type_t &type, const Ymm &t, const Ymm &lhs, const Ymm &rhs) {
-        Ymm nulls_msk = nulls_mask(c, type, lhs, rhs);
+    inline Vec blend_with_nulls(Compiler &c, data_type_t &type, const Vec &t, const Vec &lhs, const Vec &rhs) {
+        Vec nulls_msk = nulls_mask(c, type, lhs, rhs);
         Mem nulls_const =  (type == data_type_t::i32) ? vec_int_null(c) : vec_long_null(c);
         return select_bytes(c, nulls_msk, t, nulls_const);
     }
 
-    inline Ymm add(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs, bool null_check) {
+    inline Vec add(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
         if(!is_check_for_null(type, null_check)) {
             return add(c, type, lhs, rhs);
         } else {
-            Ymm t = add(c, type, lhs, rhs);
+            Vec t = add(c, type, lhs, rhs);
             return blend_with_nulls(c, type, t, lhs, rhs);
         }
     }
 
-    inline Ymm sub(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
-        Ymm dst = c.newYmm();
+    inline Vec sub(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs) {
+        Vec dst = c.new_ymm();
         switch (type) {
             case data_type_t::i8:
                 c.vpsubb(dst, lhs, rhs);
@@ -506,17 +506,17 @@ namespace questdb::avx2 {
         return dst;
     }
 
-    inline Ymm sub(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs, bool null_check) {
+    inline Vec sub(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
         if(!is_check_for_null(type, null_check)) {
             return sub(c, type, lhs, rhs);
         } else {
-            Ymm t = sub(c, type, lhs, rhs);
+            Vec t = sub(c, type, lhs, rhs);
             return blend_with_nulls(c, type, t, lhs, rhs);
         }
     }
 
-    inline Ymm mul(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
-        Ymm dst = c.newYmm();
+    inline Vec mul(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs) {
+        Vec dst = c.new_ymm();
         switch (type) {
             case data_type_t::i8:
                 // There is no 8-bit multiply in AVX2. Split into two 16-bit multiplications
@@ -529,9 +529,9 @@ namespace questdb::avx2 {
                 //            __m256i product = _mm256_blendv_epdata_type_t::i8(mask,muleven,mulodd);        // interleave even and odd
                 //            return product
             {
-                Ymm aodd = c.newYmm();
+                Vec aodd = c.new_ymm();
                 c.vpsrlw(aodd, lhs, 8);
-                Ymm bodd = c.newYmm();
+                Vec bodd = c.new_ymm();
                 c.vpsrlw(bodd, rhs, 8);
                 c.vpmullw(lhs, lhs, rhs); // muleven
                 c.vpmullw(aodd, aodd, bodd); // mulodd
@@ -539,8 +539,8 @@ namespace questdb::avx2 {
                 uint8_t array[] = {255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255,
                                    0,
                                    255, 0, 255, 0, 255, 0, 255, 0, 255, 0};
-                Mem c0 = c.newConst(asmjit::ConstPool::kScopeLocal, &array, 32);
-                Ymm mask = c.newYmm();
+                Mem c0 = c.new_const(asmjit::ConstPoolScope::kLocal, &array, 32);
+                Vec mask = c.new_ymm();
                 c.vmovdqa(mask, c0);
                 c.vpblendvb(dst, aodd, lhs, mask);
             }
@@ -561,10 +561,10 @@ namespace questdb::avx2 {
                 //            __m256i prod    = _mm256_add_epdata_type_t::i64(prodll,prodlh3);    // a0Lb0L+(a0Lb0H+a0Hb0L)<<32, a1Lb1L+(a1Lb1H+a1Hb1L)<<32
                 //            return  prod;
             {
-                Ymm t = c.newYmm();
+                Vec t = c.new_ymm();
                 c.vpshufd(t, rhs, 0xB1);
                 c.vpmulld(t, t, lhs);
-                Ymm z = c.newYmm();
+                Vec z = c.new_ymm();
                 c.vpxor(z, z, z);
                 c.vphaddd(t, t, z);
                 c.vpshufd(t, t, 0x73);
@@ -584,27 +584,27 @@ namespace questdb::avx2 {
         return dst;
     }
 
-    inline Ymm mul(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs, bool null_check) {
+    inline Vec mul(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
         if(!is_check_for_null(type, null_check)) {
             return mul(c, type, lhs, rhs);
         } else {
-            Ymm t = mul(c, type, lhs, rhs);
+            Vec t = mul(c, type, lhs, rhs);
             return blend_with_nulls(c, type, t, lhs, rhs);
         }
     }
 
-    inline Ymm div_unrolled(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
-        Ymm dst = c.newYmm();
+    inline Vec div_unrolled(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs) {
+        Vec dst = c.new_ymm();
         switch (type) {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
             case data_type_t::i64: {
-                Mem lhs_m = c.newStack(32, 32);
-                Mem rhs_m = c.newStack(32, 32);
+                Mem lhs_m = c.new_stack(32, 32);
+                Mem rhs_m = c.new_stack(32, 32);
 
-                lhs_m.setSize(32);
-                rhs_m.setSize(32);
+                lhs_m.set_size(32);
+                rhs_m.set_size(32);
 
                 c.vmovdqu(lhs_m, lhs);
                 c.vmovdqu(rhs_m, rhs);
@@ -614,15 +614,15 @@ namespace questdb::avx2 {
                         auto size = 1;
                         auto step = 32;
 
-                        Gp a = c.newGpd();
-                        Gp b = c.newGpd();
+                        Gp a = c.new_gp32();
+                        Gp b = c.new_gp32();
 
-                        lhs_m.setSize(size);
-                        rhs_m.setSize(size);
+                        lhs_m.set_size(size);
+                        rhs_m.set_size(size);
                         for (int32_t i = 0; i < step; ++i) {
-                            lhs_m.setOffset(i * size);
+                            lhs_m.set_offset(i * size);
                             c.movsx(a.r32(), lhs_m);
-                            rhs_m.setOffset(i * size);
+                            rhs_m.set_offset(i * size);
                             c.movsx(b.r32(), rhs_m);
                             Gp r = x86::int32_div(c, a.r32(), b.r32(), true);
                             c.mov(lhs_m, r.r8());
@@ -634,16 +634,16 @@ namespace questdb::avx2 {
                         auto size = 2;
                         auto step = 16;
 
-                        Gp a = c.newGpd();
-                        Gp b = c.newGpd();
+                        Gp a = c.new_gp32();
+                        Gp b = c.new_gp32();
 
-                        lhs_m.setSize(size);
-                        rhs_m.setSize(size);
+                        lhs_m.set_size(size);
+                        rhs_m.set_size(size);
 
                         for (int32_t i = 0; i < step; ++i) {
-                            lhs_m.setOffset(i * size);
+                            lhs_m.set_offset(i * size);
                             c.movsx(a.r32(), lhs_m);
-                            rhs_m.setOffset(i * size);
+                            rhs_m.set_offset(i * size);
                             c.movsx(b.r32(), rhs_m);
 
                             Gp r = x86::int32_div(c, a.r32(), b.r32(), true);
@@ -655,16 +655,16 @@ namespace questdb::avx2 {
                         auto size = 4;
                         auto step = 8;
 
-                        Gp a = c.newGpd();
-                        Gp b = c.newGpd();
+                        Gp a = c.new_gp32();
+                        Gp b = c.new_gp32();
 
-                        lhs_m.setSize(size);
-                        rhs_m.setSize(size);
+                        lhs_m.set_size(size);
+                        rhs_m.set_size(size);
 
                         for (int32_t i = 0; i < step; ++i) {
-                            lhs_m.setOffset(i * size);
+                            lhs_m.set_offset(i * size);
                             c.mov(a.r32(), lhs_m);
-                            rhs_m.setOffset(i * size);
+                            rhs_m.set_offset(i * size);
                             c.mov(b.r32(), rhs_m);
                             Gp r = x86::int32_div(c, a.r32(), b.r32(), true);
                             c.mov(lhs_m, r.r32());
@@ -675,15 +675,15 @@ namespace questdb::avx2 {
                         auto size = 8;
                         auto step = 4;
 
-                        Gp a = c.newGpq();
-                        Gp b = c.newGpq();
+                        Gp a = c.new_gp64();
+                        Gp b = c.new_gp64();
 
-                        lhs_m.setSize(size);
-                        rhs_m.setSize(size);
+                        lhs_m.set_size(size);
+                        rhs_m.set_size(size);
 
                         for (int32_t i = 0; i < step; ++i) {
-                            lhs_m.setOffset(i * size);
-                            rhs_m.setOffset(i * size);
+                            lhs_m.set_offset(i * size);
+                            rhs_m.set_offset(i * size);
                             c.mov(a, lhs_m);
                             c.mov(b, rhs_m);
                             Gp r = x86::int64_div(c, a.r64(), b.r64(), true);
@@ -693,8 +693,8 @@ namespace questdb::avx2 {
                         break;
                 }
 
-                lhs_m.resetOffset();
-                lhs_m.setSize(32);
+                lhs_m.reset_offset();
+                lhs_m.set_size(32);
                 c.vmovdqu(dst, lhs_m);
             }
                 break;
@@ -710,71 +710,71 @@ namespace questdb::avx2 {
         return dst;
     }
 
-    inline Ymm div(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs, bool null_check) {
+    inline Vec div(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
         if(!is_check_for_null(type, null_check)) {
             return div_unrolled(c, type, lhs, rhs);
         } else {
-            Ymm t = div_unrolled(c, type, lhs, rhs);
+            Vec t = div_unrolled(c, type, lhs, rhs);
             return blend_with_nulls(c, type, t, lhs, rhs);
         }
     }
 
-    inline Ymm neg(Compiler &c, data_type_t type, const Ymm &rhs) {
-        Ymm zero = c.newYmm();
+    inline Vec neg(Compiler &c, data_type_t type, const Vec &rhs) {
+        Vec zero = c.new_ymm();
         c.vxorps(zero, zero, zero);
         return sub(c, type, zero, rhs);
     }
 
-    inline Ymm neg(Compiler &c, data_type_t type, const Ymm &rhs, bool null_check) {
+    inline Vec neg(Compiler &c, data_type_t type, const Vec &rhs, bool null_check) {
         if(!is_check_for_null(type, null_check)) {
             return neg(c, type, rhs);
         } else {
-            Ymm r = neg(c, type, rhs);
-            Ymm nulls = cmp_eq_null(c, type, rhs);
+            Vec r = neg(c, type, rhs);
+            Vec nulls = cmp_eq_null(c, type, rhs);
             return select_bytes(c, nulls, r, rhs);
         }
     }
 
-    inline Ymm abs(Compiler &c, data_type_t type, const Ymm &rhs) {
+    inline Vec abs(Compiler &c, data_type_t type, const Vec &rhs) {
         return mask_and(c, rhs, vec_sign_mask(c, type));
     }
 
-    inline Ymm cvt_itof(Compiler &c, const Ymm &rhs, bool null_check) {
-        Ymm dst = c.newYmm();
+    inline Vec cvt_itof(Compiler &c, const Vec &rhs, bool null_check) {
+        Vec dst = c.new_ymm();
         c.vcvtdq2ps(dst, rhs);
         if(null_check) {
-            Ymm int_nulls_mask = cmp_eq_null(c, data_type_t::i32, rhs);
-            Ymm nans = c.newYmm();
+            Vec int_nulls_mask = cmp_eq_null(c, data_type_t::i32, rhs);
+            Vec nans = c.new_ymm();
             c.vmovups(nans, vec_float_null(c));
             return select_bytes(c, int_nulls_mask, dst, nans);
         }
         return dst;
     }
 
-    inline Ymm cvt_ltod(Compiler &c, const Ymm &rhs, bool null_check) {
-        Ymm dst = c.newYmm();
+    inline Vec cvt_ltod(Compiler &c, const Vec &rhs, bool null_check) {
+        Vec dst = c.new_ymm();
 
-        Xmm xmm1 = c.newXmm();
-        Xmm xmm2 = c.newXmm();
-        Xmm xmm3 = c.newXmm();
-        Xmm xmm4 = c.newXmm();
-        Xmm xmm5 = c.newXmm();
-        Xmm xmm6 = c.newXmm();
+        Vec xmm1 = c.new_xmm();
+        Vec xmm2 = c.new_xmm();
+        Vec xmm3 = c.new_xmm();
+        Vec xmm4 = c.new_xmm();
+        Vec xmm5 = c.new_xmm();
+        Vec xmm6 = c.new_xmm();
 
         c.vxorpd(xmm1, xmm1, xmm1);
         c.vxorpd(xmm2, xmm2, xmm2);
         c.vxorpd(xmm3, xmm3, xmm3);
         c.vxorpd(xmm4, xmm4, xmm4);
 
-        Mem mem = c.newStack(32, 32);
+        Mem mem = c.new_stack(32, 32);
         c.vmovdqu(mem, rhs);
-        mem.setSize(8);
+        mem.set_size(8);
         c.vcvtsi2sd(xmm1, xmm1, mem);
-        mem.addOffset(8);
+        mem.add_offset(8);
         c.vcvtsi2sd(xmm2, xmm2, mem);
-        mem.addOffset(8);
+        mem.add_offset(8);
         c.vcvtsi2sd(xmm3, xmm3, mem);
-        mem.addOffset(8);
+        mem.add_offset(8);
         c.vcvtsi2sd(xmm4, xmm4, mem);
 
         c.vunpcklpd(xmm5, xmm1, xmm2);
@@ -782,8 +782,8 @@ namespace questdb::avx2 {
         c.vinsertf128(dst, xmm5.ymm(), xmm6, 1);
 
         if (null_check) {
-            Ymm int_nulls_mask = cmp_eq_null(c, data_type_t::i64, rhs);
-            Ymm nans = c.newYmm();
+            Vec int_nulls_mask = cmp_eq_null(c, data_type_t::i64, rhs);
+            Vec nans = c.new_ymm();
             c.vmovups(nans, vec_double_null(c));
             return select_bytes(c, int_nulls_mask, dst, nans);
         }

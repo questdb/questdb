@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -131,9 +131,11 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
 
             try {
                 assertSql(
-                        "query\twas_cancelled\n" +
-                                "select 1 t from long_sequence(1) where sleep(120000)\ttrue\n" +
-                                "select 1 t from long_sequence(1) where sleep(120000)\ttrue\n",
+                        """
+                                query\twas_cancelled
+                                select 1 t from long_sequence(1) where sleep(120000)\ttrue
+                                select 1 t from long_sequence(1) where sleep(120000)\ttrue
+                                """,
                         "select query, cancel_query(query_id) was_cancelled from query_activity() where query = '" + query + "'"
                 );
             } finally {

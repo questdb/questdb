@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -271,7 +271,7 @@ public class FailureFileFacade implements FilesFacade {
     @Override
     public long length(long fd) {
         if (checkForFailure()) {
-            throw CairoException.critical(Os.errno()).put("Checking file size failed");
+            throw CairoException.critical(Os.errno()).put("[failure-facade] checking file size failed");
         }
         return ff.length(fd);
     }
@@ -317,6 +317,14 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     @Override
+    public long mmapNoCache(long fd, long len, long offset, int flags, int memoryTag) {
+        if (checkForFailure()) {
+            return -1;
+        }
+        return ff.mmapNoCache(fd, len, offset, flags, memoryTag);
+    }
+
+    @Override
     public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
         if (newSize != previousSize) {
             if (checkForFailure()) {
@@ -325,6 +333,14 @@ public class FailureFileFacade implements FilesFacade {
             return ff.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
         }
         return addr;
+    }
+
+    @Override
+    public long mremapNoCache(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+        if (checkForFailure()) {
+            return -1;
+        }
+        return ff.mremapNoCache(fd, addr, previousSize, newSize, offset, mode, memoryTag);
     }
 
     @Override
@@ -433,7 +449,7 @@ public class FailureFileFacade implements FilesFacade {
     @Override
     public void remove(LPSZ name) {
         if (checkForFailure()) {
-            throw CairoException.critical(errno()).put("could not remove [file=").put(name).put(']');
+            throw CairoException.critical(errno()).put("[failure-facade] could not remove [file=").put(name).put(']');
         }
         ff.remove(name);
     }

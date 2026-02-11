@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
                         "select cast(x as symbol) as id, cast(x as double) as reading  from long_sequence(9)), index(id)",
                 null,
                 true,
-                true
+                false
         );
     }
 
@@ -54,7 +54,7 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
                         "select cast(x as symbol) as id, cast(x as double) as reading  from long_sequence(9)), index(id)",
                 null,
                 true,
-                true
+                false
         );
     }
 
@@ -74,9 +74,11 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testDistinctOnIndexedSymbolColumnWithOrderByLimitInInnerQuery() throws Exception {
         assertQuery(
-                "id\n" +
-                        "9\n" +
-                        "8\n",
+                """
+                        id
+                        9
+                        8
+                        """,
                 "SELECT DISTINCT id from ( select id FROM test ORDER BY id desc LIMIT 2 ) order by 1 desc",
                 "CREATE TABLE test as (" +
                         "select cast(x as symbol) as id, rnd_double() as reading  from long_sequence(9) order by 2), index(id)",
@@ -102,9 +104,11 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testDistinctOnNonIndexedColumnWithLimit() throws Exception {
         assertQuery(
-                "id\treading\n" +
-                        "8\t8.0\n" +
-                        "9\t9.0\n",
+                """
+                        id\treading
+                        8\t8.0
+                        9\t9.0
+                        """,
                 "select DISTINCT id, reading FROM limtest LIMIT -2",
                 "CREATE TABLE limtest as (" +
                         "select x as id, cast(x as double) as reading  from long_sequence(9))",
@@ -117,15 +121,17 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testDistinctOnNonIndexedColumnWithLimitAndVirtualColumn() throws Exception {
         assertQuery(
-                "id\treading\tthe_answer\n" +
-                        "1\t1.0\t1764\n" +
-                        "2\t2.0\t1764\n",
+                """
+                        id\treading\tthe_answer
+                        1\t1.0\t1764
+                        2\t2.0\t1764
+                        """,
                 "select DISTINCT id, reading, 42*42 the_answer FROM limtest LIMIT 2",
                 "CREATE TABLE limtest as (" +
                         "select x as id, cast(x as double) as reading  from long_sequence(9))",
                 null,
                 true,
-                true
+                false
         );
     }
 
@@ -164,7 +170,7 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
                         "select cast(x as symbol) as id, cast(x as double) as reading  from long_sequence(9))",
                 null,
                 true,
-                true
+                false
         );
     }
 
@@ -177,7 +183,7 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
                         "select cast(x as symbol) as id, cast(x as double) as reading  from long_sequence(9))",
                 null,
                 true,
-                true
+                false
         );
     }
 
@@ -270,10 +276,12 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testDistinctOnThreeNonIndexedColumnsWithLimitOrderByChangingInOuterQuery() throws Exception {
         assertQuery(
-                "id\treading\tst\n" +
-                        "4\t0.0\ts1\n" +
-                        "3\t0.0\ts1\n" +
-                        "2\t1.0\ts1\n",
+                """
+                        id\treading\tst
+                        4\t0.0\ts1
+                        3\t0.0\ts1
+                        2\t1.0\ts1
+                        """,
                 "select DISTINCT id, reading, st from " +
                         "( select *  from test order by st desc, reading asc, id desc  LIMIT 5) " + // 1,0,3 1,0,4 1,1,2 1,1,1 1,2,0
                         "order by id desc, reading asc LIMIT 3",
@@ -289,9 +297,11 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testDistinctOnTwoNonIndexedColumnsWithLimitOrderByAsc() throws Exception {
         assertQuery(
-                "id\treading\n" +
-                        "1\t1.0\n" +
-                        "2\t2.0\n",
+                """
+                        id\treading
+                        1\t1.0
+                        2\t2.0
+                        """,
                 "select DISTINCT id, reading FROM limtest order by id asc, reading asc LIMIT 2",
                 "CREATE TABLE limtest as (" +
                         "select x as id, cast(x as double) as reading  from long_sequence(9))",
@@ -304,9 +314,11 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testDistinctOnTwoNonIndexedColumnsWithLimitOrderByAscAndDesc() throws Exception {
         assertQuery(
-                "id\treading\n" +
-                        "0\t1.0\n" +
-                        "1\t1.0\n",
+                """
+                        id\treading
+                        0\t1.0
+                        1\t1.0
+                        """,
                 "select DISTINCT id, reading FROM limtest order by id asc, reading desc LIMIT 2",
                 "CREATE TABLE limtest as (" +
                         "select x%5 as id, cast(x%2 as double) as reading  from long_sequence(9))",
@@ -319,9 +331,11 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testDistinctOnTwoNonIndexedColumnsWithLimitOrderByDesc() throws Exception {
         assertQuery(
-                "id\treading\n" +
-                        "9\t9.0\n" +
-                        "8\t8.0\n",
+                """
+                        id\treading
+                        9\t9.0
+                        8\t8.0
+                        """,
                 "select DISTINCT id, reading FROM limtest order by id desc, reading desc LIMIT 2",
                 "CREATE TABLE limtest as (" +
                         "select x as id, cast(x as double) as reading  from long_sequence(9))",
@@ -334,9 +348,11 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testDistinctOnTwoNonIndexedColumnsWithLimitOrderByDescAndAsc() throws Exception {
         assertQuery(
-                "id\treading\n" +
-                        "4\t0.0\n" +
-                        "4\t1.0\n",
+                """
+                        id\treading
+                        4\t0.0
+                        4\t1.0
+                        """,
                 "select DISTINCT id, reading FROM limtest order by id desc, reading asc LIMIT 2",
                 "CREATE TABLE limtest as (" +
                         "select x%5 as id, cast(x%2 as double) as reading  from long_sequence(9))",
@@ -401,8 +417,14 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testMultiLimitAndOrderOnDifferentDepth() throws Exception {
         assertQuery(
-                "id\n" +
-                        "9\n8\n7\n6\n5\n",
+                """
+                        id
+                        9
+                        8
+                        7
+                        6
+                        5
+                        """,
                 "select id from " +
                         "( select id from  " +
                         "  ( select id from " +
@@ -420,8 +442,14 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testMultiOrderAndLimitOnDifferentDepth() throws Exception {
         assertQuery(
-                "id\n" +
-                        "5\n4\n3\n2\n1\n",
+                """
+                        id
+                        5
+                        4
+                        3
+                        2
+                        1
+                        """,
                 "select id from " +
                         "( select id from  " +
                         "  ( select id from " +
@@ -439,9 +467,11 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testMultilevelDistinct() throws Exception {
         assertQuery(
-                "id\treading\n" +
-                        "3\t1.0\n" +
-                        "2\t0.0\n",
+                """
+                        id\treading
+                        3\t1.0
+                        2\t0.0
+                        """,
                 "select DISTINCT id, reading from " +
                         "( select distinct id, reading  from test order by reading asc, id desc  LIMIT 3) " + //  2,0 0,0 3,1 1,1
                         "order by id desc, reading asc LIMIT 2",
@@ -457,8 +487,14 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testMultilevelLimit() throws Exception {
         assertQuery(
-                "id\n" +
-                        "1\n2\n3\n4\n5\n",
+                """
+                        id
+                        1
+                        2
+                        3
+                        4
+                        5
+                        """,
                 "select id from " +
                         "( select id from  " +
                         "  ( select id from " +
@@ -476,9 +512,11 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testMultilevelOrderBy() throws Exception {
         assertQuery(
-                "id\treading\n" +
-                        "0\t0.0\n" +
-                        "0\t0.0\n",
+                """
+                        id\treading
+                        0\t0.0
+                        0\t0.0
+                        """,
                 "select id, reading from " + // 0,0 0,0 2,0 2,0
                         "( select id, reading  from test order by reading asc, id desc  LIMIT 4) " + // 2,0 2,0 0,0 0,0 3,1 3,1 1,1 1,1 1,1
                         "order by id asc, reading asc LIMIT 2",
@@ -494,9 +532,11 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testMultilevelOrderByWithInnerQueryUsingTableOrder() throws Exception {
         assertQuery(
-                "id\n" +
-                        "5\n" +
-                        "4\n",
+                """
+                        id
+                        5
+                        4
+                        """,
                 "select id from " +
                         "( select id from test LIMIT 5) " +
                         "order by id desc LIMIT 2",
@@ -510,8 +550,14 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testMultilevelOrderByWithLimit() throws Exception {
         assertQuery(
-                "id\n" +
-                        "3\n4\n5\n6\n7\n",
+                """
+                        id
+                        3
+                        4
+                        5
+                        6
+                        7
+                        """,
                 "select id from " +
                         "( select id from  " +
                         "  ( select id from " +
@@ -529,16 +575,18 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testMultilevelOrderByWithOuterQueryUsingCurrentOrder() throws Exception {
         assertQuery(
-                "id\n" +
-                        "9\n" +
-                        "8\n",
+                """
+                        id
+                        9
+                        8
+                        """,
                 "select id from " +
                         "( select id from test order by id desc LIMIT 5) " +
                         " LIMIT 2",
                 "CREATE TABLE test as ( select x as id from long_sequence(9) )",
                 null,
                 true,
-                true
+                false
         );
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,13 +34,37 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 
 
+/**
+ * Abstract base class for generate_series record cursor factories.
+ */
 public abstract class AbstractGenerateSeriesRecordCursorFactory extends AbstractRecordCursorFactory {
+    /**
+     * The end function for the series.
+     */
     public final Function endFunc;
+    /**
+     * The start function for the series.
+     */
     public final Function startFunc;
+    /**
+     * The step function for the series.
+     */
     public final Function stepFunc;
+    /**
+     * The step argument position for error reporting.
+     */
     int stepPosition;
 
-
+    /**
+     * Constructs a new generate series record cursor factory.
+     *
+     * @param metadata     the record metadata
+     * @param startFunc    the start function
+     * @param endFunc      the end function
+     * @param stepFunc     the step function
+     * @param argPositions the argument positions for error reporting
+     * @throws SqlException if arguments are invalid
+     */
     public AbstractGenerateSeriesRecordCursorFactory(RecordMetadata metadata, Function startFunc, Function endFunc, Function stepFunc, IntList argPositions) throws SqlException {
         super(metadata);
 
@@ -74,11 +98,30 @@ public abstract class AbstractGenerateSeriesRecordCursorFactory extends Abstract
                 .meta("step").val(stepFunc);
     }
 
+    /**
+     * Abstract base class for generate_series record cursors.
+     */
     public abstract static class AbstractGenerateSeriesRecordCursor implements NoRandomAccessRecordCursor {
+        /**
+         * The end function for the series.
+         */
         public final Function endFunc;
+        /**
+         * The start function for the series.
+         */
         public final Function startFunc;
+        /**
+         * The step function for the series.
+         */
         public final Function stepFunc;
 
+        /**
+         * Constructs a new generate series record cursor.
+         *
+         * @param startFunc the start function
+         * @param endFunc   the end function
+         * @param stepFunc  the step function
+         */
         public AbstractGenerateSeriesRecordCursor(Function startFunc, Function endFunc, Function stepFunc) {
             this.startFunc = startFunc;
             this.endFunc = endFunc;

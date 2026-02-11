@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -63,7 +63,7 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         // Passing zero as TTL, because SqlCompiler instances are expected to be returned to the pool immediately
         // after usage. The `releaseInactive()` method is also overridden to return with hardcoded 'false' for the
         // same reason. It is not meant to be called.
-        super(engine.getConfiguration(), (engine.getConfiguration().getSqlCompilerPoolCapacity() / ENTRY_SIZE) + 1, 0L);
+        super(engine.getConfiguration(), (engine.getConfiguration().getSqlCompilerPoolCapacity() / engine.getConfiguration().getPoolSegmentSize()) + 1, 0L);
         this.engine = engine;
     }
 
@@ -87,11 +87,12 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
     }
 
     @Override
-    protected C newTenant(TableToken tableToken, Entry<C> entry, int index, @Nullable ResourcePoolSupervisor<C> supervisor) {
+    protected C newTenant(TableToken tableToken, Entry<C> rootEntry, Entry<C> entry, int index, @Nullable ResourcePoolSupervisor<C> supervisor) {
         return new C(
                 engine.getSqlCompilerFactory().getInstance(engine),
                 this,
                 tableToken,
+                rootEntry,
                 entry,
                 index
         );
@@ -100,6 +101,7 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
     public static class C implements SqlCompiler, PoolTenant<C> {
         private final SqlCompiler delegate;
         private final int index;
+        private final Entry<C> rootEntry;
         private Entry<C> entry;
         private AbstractMultiTenantPool<C> pool;
         private TableToken tableToken;
@@ -108,12 +110,14 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
                 SqlCompiler delegate,
                 AbstractMultiTenantPool<C> pool,
                 TableToken tableToken,
+                Entry<C> rootEntry,
                 Entry<C> entry,
                 int index
         ) {
             this.delegate = delegate;
             this.pool = pool;
             this.tableToken = tableToken;
+            this.rootEntry = rootEntry;
             this.entry = entry;
             this.index = index;
         }
@@ -152,6 +156,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
+        public ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
+            return delegate.generateExecutionModel(sqlText, executionContext);
+        }
+
+        @Override
         public RecordCursorFactory generateSelectWithRetries(
                 QueryModel queryModel,
                 @Nullable InsertModel insertModel,
@@ -186,6 +195,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
+        public Entry<C> getRootEntry() {
+            return rootEntry;
+        }
+
+        @Override
         public TableToken getTableToken() {
             return tableToken;
         }
@@ -214,11 +228,6 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         @Override
         public void setFullFatJoins(boolean fullFatJoins) {
             delegate.setFullFatJoins(fullFatJoins);
-        }
-
-        @Override
-        public ExecutionModel testCompileModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
-            return delegate.testCompileModel(sqlText, executionContext);
         }
 
         @Override

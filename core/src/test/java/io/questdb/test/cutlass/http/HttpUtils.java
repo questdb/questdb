@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,9 +26,7 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.cutlass.http.HttpCookie;
 import io.questdb.cutlass.http.HttpSessionStore;
-import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
-import io.questdb.cutlass.http.client.Response;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -49,13 +47,15 @@ public final class HttpUtils {
     public static void assertChunkedBody(HttpClient.ResponseHeaders responseHeaders, String expectedBody) {
         StringSink sink = tlSink.get();
         sink.clear();
-
-        Response chunkedResponse = responseHeaders.getResponse();
-        Fragment fragment;
-        while ((fragment = chunkedResponse.recv()) != null) {
-            Utf8s.utf8ToUtf16(fragment.lo(), fragment.hi(), sink);
-        }
+        responseHeaders.getResponse().copyTextTo(sink);
         TestUtils.assertEquals(expectedBody, sink);
+    }
+
+    public static void assertChunkedBodyContains(HttpClient.ResponseHeaders responseHeaders, String term) {
+        StringSink sink = tlSink.get();
+        sink.clear();
+        responseHeaders.getResponse().copyTextTo(sink);
+        TestUtils.assertContains(sink, term);
     }
 
     public static void assertNoSessionCookie(HttpClient.ResponseHeaders responseHeaders) {

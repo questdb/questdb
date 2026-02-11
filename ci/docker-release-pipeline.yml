@@ -48,10 +48,18 @@ jobs:
         displayName: 'Validate semantic version format'
         condition: and(startsWith(variables['Build.SourceBranch'], 'refs/tags/'), ne(variables['SKIP_VALIDATION'], 'true'))
 
+      - task: CmdLine@2
+        displayName: Download latest openshift-preflight tool
+        inputs:
+          script: |
+            wget https://github.com/redhat-openshift-ecosystem/openshift-preflight/releases/latest/download/preflight-linux-amd64 -O /usr/local/bin/preflight
+            chmod +x /usr/local/bin/preflight
+            which preflight
+
       - task: Docker@2
         inputs:
           command: 'login'
-          containerRegistry: quest_docker_hub
+          containerRegistry: serviceaccountquestdb
 
       - task: CmdLine@2
         displayName: Setup docker buildx
@@ -67,6 +75,7 @@ jobs:
           script: |
             docker buildx build --platform linux/amd64,linux/arm64 --push -t questdb/questdb:nightly .
             docker buildx build --platform linux/amd64,linux/arm64 --push -t questdb/questdb:nightly-rhel --target rhel  .
+            preflight check container questdb/questdb:nightly-rhel
           workingDirectory: core
         condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
 
@@ -87,6 +96,7 @@ jobs:
               docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$tag_name .
             fi
             docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$tag_name-rhel --target rhel  .
+            preflight check container questdb/questdb:$tag_name-rhel
           workingDirectory: core
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
 
@@ -103,5 +113,17 @@ jobs:
             echo $docker_tag_name
             docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:${docker_tag_name} .
             docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:${docker_tag_name}-rhel --target rhel .
+            preflight check container questdb/questdb:${docker_tag_name}-rhel
           workingDirectory: core
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
+
+      - task: CmdLine@2
+        displayName: Notify Slack on Failure
+        inputs:
+          script: |
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{"text":"🚨 *Docker Build Failed (OSS)*\n\nBranch: `$(Build.SourceBranchName)`\nBuild: <$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)|#$(Build.BuildId)>\nCommit: `$(Build.SourceVersion)`"}' \
+              "$(BUILDS_SLACK_HOOK_URL)"
+        condition: failed()
+        env:
+          BUILDS_SLACK_HOOK_URL: $(BUILDS_SLACK_HOOK_URL)

@@ -33,9 +33,13 @@ fn extract_qdb_meta(file_metadata: &FileMetaData) -> ParquetResult<Option<QdbMet
     Ok(Some(qdb_meta))
 }
 
-impl<R: Read + Seek> ParquetDecoder<R> {
-    pub fn read(allocator: QdbAllocator, mut reader: R, file_size: u64) -> ParquetResult<Self> {
-        let metadata = read_metadata_with_size(&mut reader, file_size)?;
+impl ParquetDecoder {
+    pub fn read<R: Read + Seek>(
+        allocator: QdbAllocator,
+        reader: &mut R,
+        file_size: u64,
+    ) -> ParquetResult<Self> {
+        let metadata = read_metadata_with_size(reader, file_size)?;
         let col_len = metadata.schema_descr.columns().len();
         let qdb_meta = extract_qdb_meta(&metadata)?;
         let mut row_group_sizes: AcVec<u32> =
@@ -70,7 +74,9 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                 Self::descriptor_to_column_type(column, index, qdb_meta.as_ref())
             {
                 if column_type.is_designated() {
-                    timestamp_index = NonMaxU32::new(index as u32);
+                    if column_type.is_designated_timestamp_ascending() {
+                        timestamp_index = NonMaxU32::new(index as u32);
+                    }
                     // Clear the bit as designated timestamp is reported in timestamp_index.
                     column_type = column_type.into_non_designated()?;
                 }
@@ -142,10 +148,8 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             row_group_sizes_ptr: row_group_sizes.as_ptr(),
             row_group_sizes,
             timestamp_index,
-            reader,
             metadata,
             qdb_meta,
-            decompress_buffer: vec![],
             columns_ptr: columns.as_ptr(),
             columns,
             row_group_sizes_acc,
@@ -377,9 +381,9 @@ mod tests {
             .expect("Failed to write to temp file");
 
         let path = temp_file.path().to_str().unwrap();
-        let file = File::open(Path::new(path)).unwrap();
+        let mut file = File::open(Path::new(path)).unwrap();
         let file_len = file.len();
-        let meta = ParquetDecoder::read(allocator, file, file_len).unwrap();
+        let meta = ParquetDecoder::read(allocator, &mut file, file_len).unwrap();
 
         assert_eq!(meta.columns.len(), column_count);
         assert_eq!(meta.row_count, row_count);
@@ -433,6 +437,7 @@ mod tests {
                 0,
                 null(),
                 0,
+                false,
                 false,
             )
             .unwrap(),

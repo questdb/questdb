@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,9 @@
 package io.questdb.tasks;
 
 import io.questdb.Telemetry;
+import io.questdb.TelemetryConfiguration;
+import io.questdb.TelemetryConfigurationWrapper;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.QueryBuilder;
@@ -42,7 +45,7 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
         final String tableName = configuration.getSystemTableNamePrefix() + TABLE_NAME;
         return new Telemetry.TelemetryType<>() {
             @Override
-            public QueryBuilder getCreateSql(QueryBuilder builder) {
+            public QueryBuilder getCreateSql(QueryBuilder builder, int ttlWeeks) {
                 return builder.$("CREATE TABLE IF NOT EXISTS '")
                         .$(tableName)
                         .$("' (" +
@@ -52,8 +55,9 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
                                 "base_table_txn LONG, " + // -1 stands for range refresh
                                 "invalidation_reason VARCHAR, " +
                                 "latency FLOAT " +
-                                ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK BYPASS WAL"
-                        );
+                                ") TIMESTAMP(created) PARTITION BY DAY TTL ")
+                        .$(ttlWeeks > 0 ? ttlWeeks : 1)
+                        .$(" WEEKS BYPASS WAL");
             }
 
             @Override
@@ -69,6 +73,24 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
             @Override
             public ObjectFactory<TelemetryMatViewTask> getTaskFactory() {
                 return TelemetryMatViewTask::new;
+            }
+
+            // Hardcoded configuration for telemetry_mat_view table:
+            // - Throttling disabled (0L) to record every mat view event without rate limiting
+            // - TTL fixed at 1 week
+            @Override
+            public TelemetryConfiguration getTelemetryConfiguration(@NotNull CairoConfiguration configuration) {
+                return new TelemetryConfigurationWrapper(configuration.getTelemetryConfiguration()) {
+                    @Override
+                    public long getThrottleIntervalMicros() {
+                        return 0L;
+                    }
+
+                    @Override
+                    public int getTtlWeeks() {
+                        return 1;
+                    }
+                };
             }
         };
     };
@@ -101,6 +123,11 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
             task.latency = latencyUs / 1000.0f; // millis
             telemetry.store(task);
         }
+    }
+
+    @Override
+    public int getEventKey() {
+        return ((event & 0xFFFF) << 20) | (viewTableId & 0xFFFFF);
     }
 
     public long getQueueCursor() {

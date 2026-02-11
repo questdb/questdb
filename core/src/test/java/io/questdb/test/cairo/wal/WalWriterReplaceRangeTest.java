@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ package io.questdb.test.cairo.wal;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.WalWriter;
@@ -38,9 +39,54 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.PropertyKey.CAIRO_WAL_MAX_LAG_SIZE;
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 public class WalWriterReplaceRangeTest extends AbstractCairoTest {
+
+    @Test
+    public void testManyTransactionsSkippedWhenTruncateIfFound() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(CAIRO_WAL_MAX_LAG_SIZE, 1);
+
+            execute("create table stress (id long, ts timestamp, value long) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("stress");
+
+            long lastMinuteStart = MicrosTimestampDriver.floor("2022-02-24T23:59");
+
+            for (int i = 0; i < 100; i++) {
+                try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                    // Add a new row with the current replace value
+                    TableWriter.Row row = ww.newRow(lastMinuteStart + 30_000_000); // Middle of the last minute
+                    row.putLong(0, i);
+                    row.putLong(2, i * 100);
+                    row.append();
+                    ww.commit();
+                }
+            }
+            execute("truncate table stress");
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                // Add a new row with the current replace value
+                TableWriter.Row row = ww.newRow(lastMinuteStart + 30_000_000); // Middle of the last minute
+                row.putLong(0, 1001);
+                row.putLong(2, (1001) * 100);
+                row.append();
+                ww.commit();
+            }
+
+            // Apply any remaining WAL entries
+            drainWalQueue();
+
+            // Verify the total count
+            // Expected: rows before 23:00 + 3 rows in the replace ranges
+            // Based on the test run, the original data has rows from 23:00 to 23:19:26 that get replaced
+            assertSql("count\n1\n", "select count(*) from stress");
+            try (TableReader rdr = engine.getReader(tableToken)) {
+                var txn = rdr.getTxn();
+                Assert.assertEquals(3, txn); // Expecting many transactions to be skipped
+            }
+        });
+    }
 
     @Test
     public void testRemovesFirstPartitionNoRowsAdded() throws Exception {
@@ -265,41 +311,48 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("min\tmax\tcount\n" +
-                    "2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t47\n", "select min(ts), max(ts), count(*) from rg");
+            assertSql("""
+                    min\tmax\tcount
+                    2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t47
+                    """, "select min(ts), max(ts), count(*) from rg");
 
             Utf8StringSink sink = new Utf8StringSink();
 
             insertRowsWithRangeReplace(tableToken, sink, "2022-02-24T14:45", "2022-02-24T12:45", "2022-02-24T23", true);
             drainWalQueue();
 
-            assertSql("min\tmax\tcount\n" +
-                    "2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t6\n", "select min(ts), max(ts), count(*) from rg");
+            assertSql("""
+                    min\tmax\tcount
+                    2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t6
+                    """, "select min(ts), max(ts), count(*) from rg");
 
-            assertSql("id\tts\ty\ts\tv\tm\n" +
-                            "1\t2022-02-24T12:30:00.000000Z\t0\t1\t&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\ta\n" +
-                            "100\t2022-02-24T14:45:00.000000Z\t1000\thello\tw\tw\n" +
-                            "44\t2022-02-24T23:15:00.000000Z\t22\t44\t\uDAB1\uDC25J\uD969\uDF86gǢ\uDA97\uDEDC\t\n" +
-                            "45\t2022-02-24T23:30:00.000000Z\t22\t45\tHEZqUhE\ta\n" +
-                            "46\t2022-02-24T23:45:00.000000Z\t23\t46\tL^bE);P\tc\n" +
-                            "47\t2022-02-25T00:00:00.000000Z\t23\t47\t阇1(rոҊG\uD9A6\uDD42\uDB48\uDC78\tb\n",
+            assertSql("""
+                            id\tts\ty\ts\tv\tm
+                            1\t2022-02-24T12:30:00.000000Z\t0\t1\t&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\ta
+                            100\t2022-02-24T14:45:00.000000Z\t1000\thello\tw\tw
+                            44\t2022-02-24T23:15:00.000000Z\t22\t44\t\uDAB1\uDC25J\uD969\uDF86gǢ\uDA97\uDEDC\t
+                            45\t2022-02-24T23:30:00.000000Z\t22\t45\tHEZqUhE\ta
+                            46\t2022-02-24T23:45:00.000000Z\t23\t46\tL^bE);P\tc
+                            47\t2022-02-25T00:00:00.000000Z\t23\t47\t阇1(rոҊG\uD9A6\uDD42\uDB48\uDC78\tb
+                            """,
                     "select * from rg"
             );
 
 
             // Check _txn file makes sense, min, max timestamps, row counts etc.
             Assert.assertEquals(
-                    "{txn: 2, attachedPartitions: [\n" +
-                            "{ts: '2022-02-24T00:00:00.000Z', rowCount: 5},\n" +
-                            "{ts: '2022-02-25T00:00:00.000Z', rowCount: 1}\n" +
-                            "], transientRowCount: 1, fixedRowCount: 5, " +
-                            "minTimestamp: '2022-02-24T12:30:00.000Z', " +
-                            "maxTimestamp: '2022-02-25T00:00:00.000Z', " +
-                            "dataVersion: 0, structureVersion: 0, " +
-                            "columnVersion: 0, truncateVersion: 0, seqTxn: 2, " +
-                            "symbolColumnCount: 1, lagRowCount: 0, " +
-                            "lagMinTimestamp: '294247-01-10T04:00:54.775Z', " +
-                            "lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}",
+                    """
+                            {txn: 2, attachedPartitions: [
+                            {ts: '2022-02-24T00:00:00.000Z', rowCount: 5},
+                            {ts: '2022-02-25T00:00:00.000Z', rowCount: 1}
+                            ], transientRowCount: 1, fixedRowCount: 5, \
+                            minTimestamp: '2022-02-24T12:30:00.000Z', \
+                            maxTimestamp: '2022-02-25T00:00:00.000Z', \
+                            dataVersion: 0, structureVersion: 0, \
+                            columnVersion: 0, truncateVersion: 0, seqTxn: 2, \
+                            symbolColumnCount: 1, lagRowCount: 0, \
+                            lagMinTimestamp: '294247-01-10T04:00:54.775Z', \
+                            lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}""",
                     readTxnToString(tableToken, true, true)
             );
         });
@@ -317,40 +370,47 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("min\tmax\tcount\n" +
-                    "2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t47\n", "select min(ts), max(ts), count(*) from rg");
+            assertSql("""
+                    min\tmax\tcount
+                    2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t47
+                    """, "select min(ts), max(ts), count(*) from rg");
 
             Utf8StringSink sink = new Utf8StringSink();
 
             insertRowsWithRangeReplace(tableToken, sink, "2022-02-24T14:30", "2022-02-24", "2022-02-24T23", true);
             drainWalQueue();
 
-            assertSql("min\tmax\tcount\n" +
-                    "2022-02-24T14:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t5\n", "select min(ts), max(ts), count(*) from rg");
+            assertSql("""
+                    min\tmax\tcount
+                    2022-02-24T14:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t5
+                    """, "select min(ts), max(ts), count(*) from rg");
 
-            assertSql("id\tts\ty\ts\tv\tm\n" +
-                            "100\t2022-02-24T14:30:00.000000Z\t1000\thello\tw\tw\n" +
-                            "44\t2022-02-24T23:15:00.000000Z\t22\t44\t\uDAB1\uDC25J\uD969\uDF86gǢ\uDA97\uDEDC\t\n" +
-                            "45\t2022-02-24T23:30:00.000000Z\t22\t45\tHEZqUhE\ta\n" +
-                            "46\t2022-02-24T23:45:00.000000Z\t23\t46\tL^bE);P\tc\n" +
-                            "47\t2022-02-25T00:00:00.000000Z\t23\t47\t阇1(rոҊG\uD9A6\uDD42\uDB48\uDC78\tb\n",
+            assertSql("""
+                            id\tts\ty\ts\tv\tm
+                            100\t2022-02-24T14:30:00.000000Z\t1000\thello\tw\tw
+                            44\t2022-02-24T23:15:00.000000Z\t22\t44\t\uDAB1\uDC25J\uD969\uDF86gǢ\uDA97\uDEDC\t
+                            45\t2022-02-24T23:30:00.000000Z\t22\t45\tHEZqUhE\ta
+                            46\t2022-02-24T23:45:00.000000Z\t23\t46\tL^bE);P\tc
+                            47\t2022-02-25T00:00:00.000000Z\t23\t47\t阇1(rոҊG\uD9A6\uDD42\uDB48\uDC78\tb
+                            """,
                     "select * from rg"
             );
 
 
             // Check _txn file makes sense, min, max timestamps, row counts etc.
             Assert.assertEquals(
-                    "{txn: 2, attachedPartitions: [\n" +
-                            "{ts: '2022-02-24T00:00:00.000Z', rowCount: 4},\n" +
-                            "{ts: '2022-02-25T00:00:00.000Z', rowCount: 1}\n" +
-                            "], transientRowCount: 1, fixedRowCount: 4, " +
-                            "minTimestamp: '2022-02-24T14:30:00.000Z', " +
-                            "maxTimestamp: '2022-02-25T00:00:00.000Z', " +
-                            "dataVersion: 0, structureVersion: 0, " +
-                            "columnVersion: 0, truncateVersion: 0, seqTxn: 2, " +
-                            "symbolColumnCount: 1, lagRowCount: 0, " +
-                            "lagMinTimestamp: '294247-01-10T04:00:54.775Z', " +
-                            "lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}",
+                    """
+                            {txn: 2, attachedPartitions: [
+                            {ts: '2022-02-24T00:00:00.000Z', rowCount: 4},
+                            {ts: '2022-02-25T00:00:00.000Z', rowCount: 1}
+                            ], transientRowCount: 1, fixedRowCount: 4, \
+                            minTimestamp: '2022-02-24T14:30:00.000Z', \
+                            maxTimestamp: '2022-02-25T00:00:00.000Z', \
+                            dataVersion: 0, structureVersion: 0, \
+                            columnVersion: 0, truncateVersion: 0, seqTxn: 2, \
+                            symbolColumnCount: 1, lagRowCount: 0, \
+                            lagMinTimestamp: '294247-01-10T04:00:54.775Z', \
+                            lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}""",
                     readTxnToString(tableToken, true, true)
             );
         });
@@ -368,37 +428,44 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("min\tmax\tcount\n" +
-                    "2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t47\n", "select min(ts), max(ts), count(*) from rg");
+            assertSql("""
+                    min\tmax\tcount
+                    2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t47
+                    """, "select min(ts), max(ts), count(*) from rg");
 
             Utf8StringSink sink = new Utf8StringSink();
 
             insertRowsWithRangeReplace(tableToken, sink, "2022-02-24T14:45", "2022-02-24T12:45", "2022-02-24T23:59:59.999999", true);
             drainWalQueue();
 
-            assertSql("min\tmax\tcount\n" +
-                    "2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t3\n", "select min(ts), max(ts), count(*) from rg");
+            assertSql("""
+                    min\tmax\tcount
+                    2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t3
+                    """, "select min(ts), max(ts), count(*) from rg");
 
-            assertSql("id\tts\ty\ts\tv\tm\n" +
-                            "1\t2022-02-24T12:30:00.000000Z\t0\t1\t&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\ta\n" +
-                            "100\t2022-02-24T14:45:00.000000Z\t1000\thello\tw\tw\n" +
-                            "47\t2022-02-25T00:00:00.000000Z\t23\t47\t阇1(rոҊG\uD9A6\uDD42\uDB48\uDC78\tb\n",
+            assertSql("""
+                            id\tts\ty\ts\tv\tm
+                            1\t2022-02-24T12:30:00.000000Z\t0\t1\t&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\ta
+                            100\t2022-02-24T14:45:00.000000Z\t1000\thello\tw\tw
+                            47\t2022-02-25T00:00:00.000000Z\t23\t47\t阇1(rոҊG\uD9A6\uDD42\uDB48\uDC78\tb
+                            """,
                     "select * from rg"
             );
 
             // Check _txn file makes sense, min, max timestamps, row counts etc.
             Assert.assertEquals(
-                    "{txn: 2, attachedPartitions: [\n" +
-                            "{ts: '2022-02-24T00:00:00.000Z', rowCount: 2},\n" +
-                            "{ts: '2022-02-25T00:00:00.000Z', rowCount: 1}\n" +
-                            "], transientRowCount: 1, fixedRowCount: 2, " +
-                            "minTimestamp: '2022-02-24T12:30:00.000Z', " +
-                            "maxTimestamp: '2022-02-25T00:00:00.000Z', " +
-                            "dataVersion: 0, structureVersion: 0, " +
-                            "columnVersion: 0, truncateVersion: 0, seqTxn: 2, " +
-                            "symbolColumnCount: 1, lagRowCount: 0, " +
-                            "lagMinTimestamp: '294247-01-10T04:00:54.775Z', " +
-                            "lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}",
+                    """
+                            {txn: 2, attachedPartitions: [
+                            {ts: '2022-02-24T00:00:00.000Z', rowCount: 2},
+                            {ts: '2022-02-25T00:00:00.000Z', rowCount: 1}
+                            ], transientRowCount: 1, fixedRowCount: 2, \
+                            minTimestamp: '2022-02-24T12:30:00.000Z', \
+                            maxTimestamp: '2022-02-25T00:00:00.000Z', \
+                            dataVersion: 0, structureVersion: 0, \
+                            columnVersion: 0, truncateVersion: 0, seqTxn: 2, \
+                            symbolColumnCount: 1, lagRowCount: 0, \
+                            lagMinTimestamp: '294247-01-10T04:00:54.775Z', \
+                            lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}""",
                     readTxnToString(tableToken, true, true)
             );
         });
@@ -459,17 +526,19 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Verify the row content
-            assertSql("id\tts\ty\ts\tv\tm\tc4\tc5\n" +
-                            "999\t2022-02-24T09:00:00.000000Z\t9999\treplaced\treplaced_varchar\treplaced_sym\t42\treplaced_string\n" +
-                            "378\t2022-02-24T10:00:22.000000Z\t189\t378\tNUZ[\tc\tnull\t\n" +
-                            "379\t2022-02-24T10:01:48.000000Z\t189\t379\t@xbR>i@s\ta\tnull\t\n" +
-                            "380\t2022-02-24T10:03:14.000000Z\t190\t380\t;WS\tc\tnull\t\n" +
-                            "381\t2022-02-24T10:04:40.000000Z\t190\t381\tV1IF \t\tnull\t\n" +
-                            "382\t2022-02-24T10:06:06.000000Z\t191\t382\t14wddTh&))\tb\tnull\t\n" +
-                            "383\t2022-02-24T10:07:32.000000Z\t191\t383\t#<Y达\u197F亙ጾ燇Ȉc\ta\tnull\t\n" +
-                            "384\t2022-02-24T10:08:58.000000Z\t192\t384\t\uDB9E\uDD3D\uF29Ec+ɫwՊ毷걭\ta\tnull\t\n" +
-                            "385\t2022-02-24T10:10:24.000000Z\t192\t385\tsoMv* !Em>\ta\tnull\t\n" +
-                            "386\t2022-02-24T10:11:50.000000Z\t193\t386\t@1oq.w%V\tb\tnull\t\n",
+            assertSql("""
+                            id\tts\ty\ts\tv\tm\tc4\tc5
+                            999\t2022-02-24T09:00:00.000000Z\t9999\treplaced\treplaced_varchar\treplaced_sym\t42\treplaced_string
+                            378\t2022-02-24T10:00:22.000000Z\t189\t378\tNUZ[\tc\tnull\t
+                            379\t2022-02-24T10:01:48.000000Z\t189\t379\t@xbR>i@s\ta\tnull\t
+                            380\t2022-02-24T10:03:14.000000Z\t190\t380\t;WS\tc\tnull\t
+                            381\t2022-02-24T10:04:40.000000Z\t190\t381\tV1IF \t\tnull\t
+                            382\t2022-02-24T10:06:06.000000Z\t191\t382\t14wddTh&))\tb\tnull\t
+                            383\t2022-02-24T10:07:32.000000Z\t191\t383\t#<Y达\u197F亙ጾ燇Ȉc\ta\tnull\t
+                            384\t2022-02-24T10:08:58.000000Z\t192\t384\t\uDB9E\uDD3D\uF29Ec+ɫwՊ毷걭\ta\tnull\t
+                            385\t2022-02-24T10:10:24.000000Z\t192\t385\tsoMv* !Em>\ta\tnull\t
+                            386\t2022-02-24T10:11:50.000000Z\t193\t386\t@1oq.w%V\tb\tnull\t
+                            """,
                     "select * from rg limit 10");
         });
     }
@@ -492,6 +561,194 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     @Test
     public void testReplaceTruncatesAllDataNoRowsCommit() throws Exception {
         testReplaceTruncatesAllData(true);
+    }
+
+    @Test
+    public void testStressReplaceLastMinuteRepeatedly() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
+
+            execute("create table stress (id long, ts timestamp, value long) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("stress");
+
+            // Insert 100k rows spanning 1 day, so that partition is reasonably big to rewrite
+            execute("insert into stress select x, cast('2022-02-24T00:00' as timestamp) + (x / 60) * 840000 * 60, x * 10 from long_sequence(100000)");
+            drainWalQueue();
+
+            // Verify initial state
+            assertSql("count\n100000\n", "select count(*) from stress");
+
+            // Get the timestamp of the last minute (last row timestamp)
+            long lastMinuteStart = MicrosTimestampDriver.floor("2022-02-24T23:59");
+            long lastMinuteEnd = lastMinuteStart + 60 * 1_000_000; // 1 minute in microseconds
+
+            // Perform 1,000 replace commits, each replacing the last minute with a new value
+            long replaceValue = 1000L;
+            long lastValue = 0;
+            for (int i = 0; i < 1_000; i++) {
+                try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                    // Add a new row with the current replace value
+                    TableWriter.Row row = ww.newRow(lastMinuteStart + 30_000_000); // Middle of the last minute
+                    row.putLong(0, replaceValue + i);
+                    row.putLong(2, (replaceValue + i) * 100);
+                    row.append();
+
+                    // Commit with replace range for the last minute
+                    ww.commitWithParams(lastMinuteStart, lastMinuteEnd, WAL_DEDUP_MODE_REPLACE_RANGE);
+                    lastValue = (replaceValue + i) * 100;
+                }
+            }
+
+            // Apply WAL
+            drainWalQueue();
+
+            // Verify the final state
+            assertSql("count\n100001\n", "select count(*) from stress");
+
+            // Check the results of the last minute
+            assertSql("count\n1\n", "select count(*) from stress where ts >= '2022-02-24T23:59' and ts < '2022-02-25T00:00'");
+
+            // Verify the value is from the last replace operation
+            assertSql("value\n" + lastValue + "\n", "select value from stress where ts >= '2022-02-24T23:59' and ts < '2022-02-25T00:00'");
+        });
+    }
+
+    @Test
+    public void testStressReplaceLastMinuteRepeatedlyWithSkippableTransactions() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
+
+            execute("create table stress (id long, ts timestamp, value long) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("stress");
+
+            // Insert 100k rows spanning 1 day, so that partition is reasonably big to rewrite
+            execute("insert into stress select x, cast('2022-02-24T00:00' as timestamp) + (x / 60) * 840000 * 60, x * 10 from long_sequence(100000)");
+            drainWalQueue();
+
+            // Verify initial state
+            assertSql("count\n100000\n", "select count(*) from stress");
+
+            // Base timestamp ranges - we'll vary these to create overlapping and non-overlapping replace ranges
+            long baseHour = MicrosTimestampDriver.floor("2022-02-24T23:00");
+            long minuteInMicros = 60 * 1_000_000L;
+
+            // Perform 1000 replace commits with randomly varying replace ranges
+            // Some transactions will replace the same time range (and can be skipped)
+            // Others will replace different ranges (and cannot be skipped)
+            long replaceValue = 1000L;
+            java.util.Random rnd = new java.util.Random(42); // Fixed seed for reproducibility
+            long[] lastValues = new long[3];
+
+            for (int i = 0; i < 1_000; i++) {
+                try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                    // Randomly choose one of 3 different time ranges to replace
+                    // This creates overlaps where ~33% of transactions can be skipped
+                    int rangeSelector = rnd.nextInt(3);
+                    long rangeStart = baseHour + rangeSelector * 20 * minuteInMicros; // 23:00, 23:20, or 23:40
+                    long rangeEnd = rangeStart + 20 * minuteInMicros; // 20 minute ranges
+
+                    // Insert a row within the replace range
+                    long insertTs = rangeStart + 10 * minuteInMicros; // Middle of the range
+                    TableWriter.Row row = ww.newRow(insertTs);
+                    row.putLong(0, replaceValue + i);
+                    long currentValue = (replaceValue + i) * 100;
+                    row.putLong(2, currentValue);
+                    row.append();
+
+                    // Commit with replace range
+                    ww.commitWithParams(rangeStart, rangeEnd, WAL_DEDUP_MODE_REPLACE_RANGE);
+                    lastValues[rangeSelector] = currentValue;
+                }
+
+                // Drain periodically to allow some batching and transaction skipping
+                if (i % 10 == 9) {
+                    drainWalQueue();
+                }
+            }
+
+            // Apply any remaining WAL entries
+            drainWalQueue();
+
+            assertSql("value\tts\n" +
+                            lastValues[0] + "\t2022-02-24T23:10:00.000000Z\n" +
+                            lastValues[1] + "\t2022-02-24T23:30:00.000000Z\n" +
+                            lastValues[2] + "\t2022-02-24T23:50:00.000000Z\n",
+                    "select value, ts from stress where ts >= '2022-02-24T23:00'"
+            );
+        });
+    }
+
+    @Test
+    public void testStressReplaceWithInterleavedSkipsAndApplies() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
+
+            execute("create table stress (id long, ts timestamp, value long) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("stress");
+
+            // Insert 100k rows spanning 1 day
+            execute("insert into stress select x, cast('2022-02-24T00:00' as timestamp) + (x / 60) * 840000 * 60, x * 10 from long_sequence(100000)");
+            drainWalQueue();
+
+            // Verify initial state
+            assertSql("count\n100000\n", "select count(*) from stress");
+
+            long baseHour = MicrosTimestampDriver.floor("2022-02-24T23:00");
+            long minuteInMicros = 60 * 1_000_000L;
+
+            // Create a pattern that forces: skip -> apply -> skip -> apply within a single batch
+            // Pattern: A, A, B, C, C, D, A, C, E, F (where A-F are different time ranges)
+            // Within this batch:
+            // - Txns 0-1 (A,A) -> skipped (replaced by txn 6 which is the last A)
+            // - Txn 2 (B) -> APPLIED (only B, not replaced by any later transaction)
+            // - Txns 3-4 (C,C) -> skipped (replaced by txn 7 which is the last C)
+            // - Txn 5 (D) -> APPLIED (only D, not replaced)
+            // - Txn 6 (A) -> APPLIED (last A)
+            // - Txn 7 (C) -> APPLIED (last C)
+            // - Txn 8 (E) -> APPLIED (only E)
+            // - Txn 9 (F) -> APPLIED (only F)
+            // This creates: skip(0-1) -> APPLY(2) -> skip(3-4) -> APPLY(5) -> APPLY(6-9)
+            // We use 6 different ranges (0-5) to ensure some are unique and must be applied
+            int[] pattern = {0, 0, 1, 2, 2, 3, 0, 2, 4, 5}; // 0-5 represent 6 different time ranges
+            long replaceValue = 1000L;
+            long[] lastValues = new long[6];
+
+            for (int batch = 0; batch < 10; batch++) {
+                for (int i = 0; i < pattern.length; i++) {
+                    try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                        int rangeSelector = pattern[i];
+                        // Create 6 different 10-minute ranges to spread transactions across more ranges
+                        long rangeStart = baseHour + rangeSelector * 10 * minuteInMicros; // 23:00, 23:10, 23:20, 23:30, 23:40, 23:50
+                        long rangeEnd = rangeStart + 10 * minuteInMicros; // 10 minute ranges
+
+                        // Insert a row within the replace range
+                        long insertTs = rangeStart + 5 * minuteInMicros; // Middle of the range
+                        TableWriter.Row row = ww.newRow(insertTs);
+                        row.putLong(0, replaceValue);
+                        row.putLong(2, replaceValue * 100);
+                        row.append();
+
+                        // Commit with replace range
+                        ww.commitWithParams(rangeStart, rangeEnd, WAL_DEDUP_MODE_REPLACE_RANGE);
+                        lastValues[rangeSelector] = replaceValue * 100;
+                        replaceValue++;
+                    }
+                }
+                // Drain after each complete pattern to allow skipping within the batch
+                drainWalQueue();
+            }
+
+            // Verify we have exactly one row in each of the six 10-minute ranges
+            assertSql("value\tts\n" +
+                            lastValues[0] + "\t2022-02-24T23:05:00.000000Z\n" +
+                            lastValues[1] + "\t2022-02-24T23:15:00.000000Z\n" +
+                            lastValues[2] + "\t2022-02-24T23:25:00.000000Z\n" +
+                            lastValues[3] + "\t2022-02-24T23:35:00.000000Z\n" +
+                            lastValues[4] + "\t2022-02-24T23:45:00.000000Z\n" +
+                            lastValues[5] + "\t2022-02-24T23:55:00.000000Z\n",
+                    "select value, ts from stress where ts >= '2022-02-24T23:00'"
+            );
+        });
     }
 
     private static void commitNoRowsWithRangeReplace(

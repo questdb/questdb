@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -70,7 +70,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
@@ -99,7 +98,6 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.network.ServerDisconnectException;
-import io.questdb.network.SuspendEvent;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -124,7 +122,6 @@ import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.AbstractTest;
@@ -134,8 +131,6 @@ import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.cutlass.NetUtils;
-import io.questdb.test.cutlass.suspend.TestCase;
-import io.questdb.test.cutlass.suspend.TestCases;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestMicroClock;
@@ -238,12 +233,6 @@ public class IODispatcherTest extends AbstractTest {
         SharedRandom.RANDOM.set(new Rnd());
         testHttpClient.setKeepConnection(false);
         Metrics.ENABLED.clear();
-    }
-
-    @Override
-    public void tearDown() throws Exception {
-        super.tearDown();
-        TestDataUnavailableFunctionFactory.eventCallback = null;
     }
 
     @Test
@@ -453,6 +442,11 @@ public class IODispatcherTest extends AbstractTest {
                     @Override
                     public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return null;
+                    }
+
+                    @Override
+                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                        return select(header);
                     }
                 };
 
@@ -2320,7 +2314,7 @@ public class IODispatcherTest extends AbstractTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, baseDir, false);
             final WorkerPool workerPool = new TestWorkerPool(3, httpConfiguration.getMetrics());
             try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir)); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
-                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));
                 httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
                     public ObjHashSet<String> getUrls() {
@@ -2900,7 +2894,7 @@ public class IODispatcherTest extends AbstractTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, nf, baseDir, 256, false, false);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir)); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
-                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));
                 httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
                 workerPool.start(LOG);
@@ -3494,35 +3488,6 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testJsonQueryDataUnavailableClientDisconnectsBeforeEventFired() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).withQueryTimeout(60_000) // use a large value for query timeout
-                .run((engine, sqlExecutionContext) -> {
-                    AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
-                    TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-
-                    final String query = "select * from test_data_unavailable(1, 10)";
-                    final String request = "GET /query?query=" + urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n" + SendAndReceiveRequestBuilder.RequestHeaders;
-
-                    final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-                    long fd = -1;
-                    try {
-                        fd = new SendAndReceiveRequestBuilder().connectAndSendRequest(request);
-                        assertEventually(() -> Assert.assertNotNull(eventRef.get()), 10);
-                        nf.close(fd);
-                        fd = -1;
-                        // Check that I/O dispatcher closes the event once it detects the disconnect.
-                        assertEventually(() -> assertTrue(eventRef.get().isClosedByAtLeastOneSide()), 10);
-                    } finally {
-                        if (fd > -1) {
-                            nf.close(fd);
-                        }
-                        // Make sure to close the event on the producer side.
-                        Misc.free(eventRef.get());
-                    }
-                });
-    }
-
-    @Test
     public void testJsonQueryDropTable() throws Exception {
         testJsonQuery(20, """
                 GET /query?query=drop%20table%20x HTTP/1.1\r
@@ -3619,13 +3584,6 @@ public class IODispatcherTest extends AbstractTest {
                 00\r
                 \r
                 """);
-    }
-
-    @Test
-    public void testJsonQueryErrorOnDataUnavailableEventNeverFired() throws Exception {
-        TestDataUnavailableFunctionFactory.eventCallback = SuspendEvent::close;
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).withQueryTimeout(100).run((engine, sqlExecutionContext) -> testHttpClient.assertGetRegexp("/query", "\\{\"query\":\"select \\* from test_data_unavailable\\(1, 10\\)\",\"error\":\"timeout, query aborted \\[fd=\\d+, runtime=\\d+ms, timeout=\\d+ms\\]\",\"position\":0\\}", "select * from test_data_unavailable(1, 10)", null, null, null, null, "400" // Request Timeout
-        ));
     }
 
     @Test
@@ -4474,23 +4432,11 @@ public class IODispatcherTest extends AbstractTest {
                 """, 2, true);
 
         final String expected = """
-                100\t1
-                1\t2
-                1\t2
-                101\t1
+                100	1
+                1	2
+                101	1
                 """;
         assertTelemetryEventAndOrigin(expected);
-    }
-
-    /**
-     * Cold storage may lead to the initiation of suspend events when data is inaccessible to the local database instance.
-     * This disruption affects both the state machine's flow and the factory's data provision process. This test
-     * replicates a suspend event, comparing the query output after resumption with the output of a query that
-     * hasn't been suspended.
-     */
-    @Test
-    public void testJsonQuerySuspend() throws Exception {
-        testSuspend("/query");
     }
 
     @Test
@@ -4500,7 +4446,7 @@ public class IODispatcherTest extends AbstractTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(1);
             try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir)); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
-                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));
                 httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
                 workerPool.start(LOG);
@@ -4659,7 +4605,7 @@ public class IODispatcherTest extends AbstractTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, nf, baseDir, 256, false, true);
             final WorkerPool workerPool = new TestWorkerPool(2);
             try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir)); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
-                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));
                 httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
                 workerPool.start(LOG);
@@ -4706,7 +4652,7 @@ public class IODispatcherTest extends AbstractTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, nf, baseDir, 4096, false, true);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir)); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
-                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));
                 httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
                 workerPool.start(LOG);
@@ -4765,7 +4711,7 @@ public class IODispatcherTest extends AbstractTest {
             WorkerPool workerPool = new TestWorkerPool(1);
 
             try (CairoEngine engine = new CairoEngine(cairoConfiguration); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
-                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));
                 httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
                 TestUtils.setupWorkerPool(workerPool, engine);
@@ -5055,6 +5001,11 @@ public class IODispatcherTest extends AbstractTest {
                     @Override
                     public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return null;
+                    }
+
+                    @Override
+                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                        return select(header);
                     }
                 }) {
 
@@ -5399,79 +5350,6 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableChunkedResponse() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(256)).withTelemetry(false).run((engine, sqlExecutionContext) -> {
-            int totalRows = 32;
-            int backoffCount = 10;
-
-            final AtomicInteger totalEvents = new AtomicInteger();
-            TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                event.trigger();
-                event.close();
-                totalEvents.incrementAndGet();
-            };
-
-            final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
-            new SendAndReceiveRequestBuilder().executeWithStandardHeaders("GET /query?query=" + urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n", """
-                    0100\r
-                    {"query":"select * from test_data_unavailable(32, 10)","columns":[{"name":"x","type":"LONG"},{"name":"y","type":"LONG"},{"name":"z","type":"LONG"}],"timestamp":-1,"dataset":[[1,1,1],[2,2,2],[3,3,3],[4,4,4],[5,5,5],[6,6,6],[7,7,7],[8,8,8],[9,9,9],[10,10,10]\r
-                    ff\r
-                    ,[11,11,11],[12,12,12],[13,13,13],[14,14,14],[15,15,15],[16,16,16],[17,17,17],[18,18,18],[19,19,19],[20,20,20],[21,21,21],[22,22,22],[23,23,23],[24,24,24],[25,25,25],[26,26,26],[27,27,27],[28,28,28],[29,29,29],[30,30,30],[31,31,31],[32,32,32]],"count":32}\r
-                    00\r
-                    \r
-                    """);
-
-            Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
-        });
-    }
-
-    @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredAfterDelay() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).run((engine, sqlExecutionContext) -> {
-            int totalRows = 3;
-            int backoffCount = 3;
-
-            final AtomicInteger totalEvents = new AtomicInteger();
-            final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
-            final AtomicBoolean stopDelayThread = new AtomicBoolean();
-
-            final Thread delayThread = createDelayThread(stopDelayThread, eventRef, totalEvents);
-
-            TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-            testHttpClient.assertGet("{\"query\":\"select * from test_data_unavailable(3, 3)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1,1,1],[2,2,2],[3,3,3]],\"count\":3}", "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")");
-            stopDelayThread.set(true);
-            delayThread.join();
-
-            Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
-        });
-    }
-
-    @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).run((engine, sqlExecutionContext) -> {
-            int totalRows = 3;
-            int backoffCount = 10;
-
-            final AtomicInteger totalEvents = new AtomicInteger();
-            TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                event.trigger();
-                event.close();
-                totalEvents.incrementAndGet();
-            };
-
-            final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
-            new SendAndReceiveRequestBuilder().executeWithStandardHeaders("GET /query?query=" + urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n", """
-                    d0\r
-                    {"query":"select * from test_data_unavailable(3, 10)","columns":[{"name":"x","type":"LONG"},{"name":"y","type":"LONG"},{"name":"z","type":"LONG"}],"timestamp":-1,"dataset":[[1,1,1],[2,2,2],[3,3,3]],"count":3}\r
-                    00\r
-                    \r
-                    """);
-
-            Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
-        });
-    }
-
-    @Test
     public void testQueryImplicitCastExceptionInWindowFunctionFirstRecord() throws Exception {
         getSimpleTester().run((engine, sqlExecutionContext) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
@@ -5523,8 +5401,8 @@ public class IODispatcherTest extends AbstractTest {
             final String baseDir = root;
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(2);
-            try (HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
-                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+            try (CairoEngine engine = new CairoEngine(configuration); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
+                httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));
 
                 workerPool.start(LOG);
 
@@ -5633,8 +5511,8 @@ public class IODispatcherTest extends AbstractTest {
             final String baseDir = root;
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(2);
-            try (HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
-                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+            try (CairoEngine engine = new CairoEngine(configuration); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
+                httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));
 
                 workerPool.start(LOG);
 
@@ -5741,8 +5619,8 @@ public class IODispatcherTest extends AbstractTest {
             NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, nf, baseDir, 16 * 1024, false, false, false, "HTTP/1.0 ");
             WorkerPool workerPool = new TestWorkerPool(2);
-            try (HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
-                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+            try (CairoEngine engine = new CairoEngine(configuration); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
+                httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));
 
                 workerPool.start(LOG);
 
@@ -5935,6 +5813,11 @@ public class IODispatcherTest extends AbstractTest {
                             }
                         };
                     }
+
+                    @Override
+                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                        return select(header);
+                    }
                 };
 
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
@@ -6106,6 +5989,11 @@ public class IODispatcherTest extends AbstractTest {
                             }
                         };
                     }
+
+                    @Override
+                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                        return select(header);
+                    }
                 };
 
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
@@ -6254,6 +6142,11 @@ public class IODispatcherTest extends AbstractTest {
                             }
                         };
                     }
+
+                    @Override
+                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                        return select(header);
+                    }
                 };
 
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
@@ -6313,158 +6206,6 @@ public class IODispatcherTest extends AbstractTest {
 
                 Assert.assertEquals(1, closeCount.get());
             }
-        });
-    }
-
-    @Test
-    public void testTextExportDisconnectOnDataUnavailableEventNeverFired() throws Exception {
-        getSimpleTester().withWorkerCount(2).withQueryTimeout(100).run((engine, sqlExecutionContext) -> {
-            AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
-            TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-            try {
-                testHttpClient.assertGetRegexp("/query", ".*timeout, query aborted.*", "select * from test_data_unavailable(1, 10)", null, null, "400");
-            } finally {
-                Misc.free(eventRef.get());
-            }
-        });
-    }
-
-    @Test
-    public void testTextExportEventuallySucceedsOnDataUnavailableChunkedResponse() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(256)).withTelemetry(false).run((engine, sqlExecutionContext) -> {
-            TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                event.trigger();
-                event.close();
-            };
-
-            final String select = "select * from test_data_unavailable(32, 10)";
-            new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders("GET /exp?query=" + urlEncodeQuery(select) + "&count=true HTTP/1.1\r\n", """
-                    HTTP/1.1 200 OK\r
-                    Server: questDB/1.0\r
-                    Date: Thu, 1 Jan 1970 00:00:00 GMT\r
-                    Transfer-Encoding: chunked\r
-                    Content-Type: text/csv; charset=utf-8\r
-                    Content-Disposition: attachment; filename="questdb-query-0.csv"\r
-                    Keep-Alive: timeout=5, max=10000\r
-                    \r
-                    0100\r
-                    "x","y","z"\r
-                    1,1,1\r
-                    2,2,2\r
-                    3,3,3\r
-                    4,4,4\r
-                    5,5,5\r
-                    6,6,6\r
-                    7,7,7\r
-                    8,8,8\r
-                    9,9,9\r
-                    10,10,10\r
-                    11,11,11\r
-                    12,12,12\r
-                    13,13,13\r
-                    14,14,14\r
-                    15,15,15\r
-                    16,16,16\r
-                    17,17,17\r
-                    18,18,18\r
-                    19,19,19\r
-                    20,20,20\r
-                    21,21,21\r
-                    22,22,22\r
-                    23,23,23\r
-                    24,24,24\r
-                    25,25,25\r
-                    26,26,26\r
-                    27,27,27\r
-                    \r
-                    32\r
-                    28,28,28\r
-                    29,29,29\r
-                    30,30,30\r
-                    31,31,31\r
-                    32,32,32\r
-                    \r
-                    00\r
-                    \r
-                    """);
-        });
-    }
-
-    @Test
-    public void testTextExportEventuallySucceedsOnDataUnavailableEventTriggeredAfterDelay() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).run((engine, sqlExecutionContext) -> {
-            int totalRows = 3;
-            int backoffCount = 3;
-
-            final AtomicInteger totalEvents = new AtomicInteger();
-            final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
-            final AtomicBoolean stopDelayThread = new AtomicBoolean();
-
-            final Thread delayThread = createDelayThread(stopDelayThread, eventRef, totalEvents);
-
-            TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-
-            final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
-            new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders("GET /exp?query=" + urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n", """
-                    HTTP/1.1 200 OK\r
-                    Server: questDB/1.0\r
-                    Date: Thu, 1 Jan 1970 00:00:00 GMT\r
-                    Transfer-Encoding: chunked\r
-                    Content-Type: text/csv; charset=utf-8\r
-                    Content-Disposition: attachment; filename="questdb-query-0.csv"\r
-                    Keep-Alive: timeout=5, max=10000\r
-                    \r
-                    22\r
-                    "x","y","z"\r
-                    1,1,1\r
-                    2,2,2\r
-                    3,3,3\r
-                    \r
-                    00\r
-                    \r
-                    """);
-
-            stopDelayThread.set(true);
-            delayThread.join();
-
-            Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
-        });
-    }
-
-    @Test
-    public void testTextExportEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).run((engine, sqlExecutionContext) -> {
-            int totalRows = 3;
-            int backoffCount = 10;
-
-            final AtomicInteger totalEvents = new AtomicInteger();
-            TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                event.trigger();
-                event.close();
-                totalEvents.incrementAndGet();
-            };
-
-            final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
-            new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders("GET /exp?query=" + urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n", """
-                    HTTP/1.1 200 OK\r
-                    Server: questDB/1.0\r
-                    Date: Thu, 1 Jan 1970 00:00:00 GMT\r
-                    Transfer-Encoding: chunked\r
-                    Content-Type: text/csv; charset=utf-8\r
-                    Content-Disposition: attachment; filename="questdb-query-0.csv"\r
-                    Keep-Alive: timeout=5, max=10000\r
-                    \r
-                    22\r
-                    "x","y","z"\r
-                    1,1,1\r
-                    2,2,2\r
-                    3,3,3\r
-                    \r
-                    00\r
-                    \r
-                    """);
-
-            Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
         });
     }
 
@@ -6799,17 +6540,6 @@ public class IODispatcherTest extends AbstractTest {
         });
     }
 
-    /**
-     * Cold storage may lead to the initiation of suspend events when data is inaccessible to the local database instance.
-     * This disruption affects both the state machine's flow and the factory's data provision process. This test
-     * replicates a suspend event, comparing the query output after resumption with the output of a query that
-     * hasn't been suspended.
-     */
-    @Test
-    public void testTextQuerySuspend() throws Exception {
-        testSuspend("/exp");
-    }
-
     @Test
     public void testTextQueryTimeout() throws Exception {
         new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).withQueryTimeout(SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK).run((engine, sqlExecutionContext) -> {
@@ -7105,6 +6835,11 @@ public class IODispatcherTest extends AbstractTest {
                                 public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                                     return processor;
                                 }
+
+                                @Override
+                                public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                                    return processor;
+                                }
                             }) {
 
                                 try {
@@ -7310,7 +7045,7 @@ public class IODispatcherTest extends AbstractTest {
             WorkerPool workerPool = new TestWorkerPool(1);
 
             try (CairoEngine engine = new CairoEngine(cairoConfiguration); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE); SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));
                 httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
                 WorkerPoolUtils.setupQueryJobs(workerPool, engine);
@@ -7459,29 +7194,6 @@ public class IODispatcherTest extends AbstractTest {
         }
     }
 
-    @NotNull
-    private static Thread createDelayThread(AtomicBoolean stopDelayThread, AtomicReference<SuspendEvent> eventRef, AtomicInteger totalEvents) {
-        final Thread delayThread = new Thread(() -> {
-            while (!stopDelayThread.get()) {
-                SuspendEvent event = eventRef.getAndSet(null);
-                if (event != null) {
-                    Os.sleep(1);
-                    try {
-                        event.trigger();
-                        event.close();
-                        totalEvents.incrementAndGet();
-                    } catch (Exception e) {
-                        LOG.critical().$(e).$();
-                    }
-                } else {
-                    Os.pause();
-                }
-            }
-        });
-        delayThread.start();
-        return delayThread;
-    }
-
     private static HttpServer createHttpServer(ServerConfiguration serverConfiguration, CairoEngine cairoEngine, WorkerPool workerPool) {
         return Services.INSTANCE.createHttpServer(serverConfiguration, cairoEngine, workerPool, workerPool.getWorkerCount());
     }
@@ -7535,37 +7247,6 @@ public class IODispatcherTest extends AbstractTest {
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
     }
 
-    private static void testSuspend(String url) throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).run((engine, sqlExecutionContext) -> {
-            Utf8StringSink expected = new Utf8StringSink();
-            Utf8StringSink actual = new Utf8StringSink();
-            final TestCases testCases = new TestCases();
-
-            // create tables
-            testHttpClient.assertGet("{\"ddl\":\"OK\"}", testCases.getDdlX());
-            testHttpClient.assertGet("{\"ddl\":\"OK\"}", testCases.getDdlY());
-
-            for (int i = 0, n = testCases.size(); i < n; i++) {
-                TestCase testCase = testCases.getQuick(i);
-                // http does not support bind variables yet
-                if (testCase.getBindVariableValues().length == 0) {
-                    engine.releaseAllReaders();
-                    engine.setReaderListener(null);
-
-                    expected.clear();
-                    testHttpClient.toSink(url, testCase.getQuery(), expected);
-
-                    engine.releaseAllReaders();
-                    engine.setReaderListener(testCases.getSuspendingListener());
-
-                    actual.clear();
-                    testHttpClient.toSink(url, testCase.getQuery(), actual);
-                    TestUtils.assertEquals(expected, actual);
-                }
-            }
-        });
-    }
-
     private void assertMetadataAndData(String tableName, long expectedO3MaxLag, int expectedMaxUncommittedRows, int expectedImportedRows, String expectedData, boolean mangleTableDirNames) {
         final String baseDir = root;
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
@@ -7588,8 +7269,11 @@ public class IODispatcherTest extends AbstractTest {
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
         String telemetry = TelemetryTask.TABLE_NAME;
-        TableToken telemetryTableName = new TableToken(telemetry, telemetry, null, 0, false, false, false, false, true);
-        try (TableReader reader = new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, telemetryTableName, new TxnScoreboardPoolV2(configuration)); TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()) {
+        TableToken telemetryTableName = new TableToken(telemetry, telemetry, null, 0, false, false, false, false, false, true);
+        try (
+                TableReader reader = new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, telemetryTableName, new TxnScoreboardPoolV2(configuration));
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
+        ) {
             cursor.of(reader);
             final StringSink sink = new StringSink();
             sink.clear();

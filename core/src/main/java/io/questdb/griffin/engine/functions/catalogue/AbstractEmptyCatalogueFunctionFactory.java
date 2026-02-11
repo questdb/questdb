@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,10 +34,25 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
+/**
+ * Abstract base class for catalogue function factories that return empty results.
+ */
 public abstract class AbstractEmptyCatalogueFunctionFactory implements FunctionFactory {
+    /**
+     * The record metadata for the empty table.
+     */
     private final RecordMetadata metadata;
+    /**
+     * The function signature.
+     */
     private final String signature;
 
+    /**
+     * Constructs a new empty catalogue function factory.
+     *
+     * @param signature the function signature
+     * @param metadata  the record metadata
+     */
     public AbstractEmptyCatalogueFunctionFactory(String signature, RecordMetadata metadata) {
         this.signature = signature;
         this.metadata = metadata;

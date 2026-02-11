@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.FactoryProvider;
+import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -48,6 +49,10 @@ public interface JsonQueryProcessorConfiguration {
     MillisecondClock getMillisecondClock();
 
     NanosecondClock getNanosecondClock();
+
+    default QueryFutureUpdateListener getQueryFutureUpdateListener() {
+        return QueryFutureUpdateListener.EMPTY;
+    }
 
     default byte getRequiredAuthType() {
         return AUTH_TYPE_CREDENTIALS;

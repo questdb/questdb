@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,7 +28,6 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
@@ -94,7 +93,7 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean hasNext() throws DataUnavailableException {
+        public boolean hasNext() {
             while (++entryIndex < size) {
                 if (copyExportContext.getAndCopyEntry(entryIds.get(entryIndex), entry)) {
                     if (isAdmin || Objects.equals(entry.getPrincipal(), principal)) {
@@ -102,7 +101,6 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
                     }
                 }
             }
-
             return false;
         }
 
@@ -126,7 +124,7 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long size() throws DataUnavailableException {
+        public long size() {
             return -1;
         }
 
@@ -177,14 +175,18 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
                         switch (entry.getPhase()) {
                             case POPULATING_TEMP_TABLE:
                                 msgSink.clear();
-                                msgSink.put("rows: ").put(entry.getPopulatedRowCount());
+                                msgSink.putAscii("rows: ").put(entry.getPopulatedRowCount());
                                 if (entry.getTotalRowCount() > 0) {
-                                    msgSink.put(" / ").put(entry.getTotalRowCount());
+                                    msgSink.putAscii(" / ").put(entry.getTotalRowCount());
                                 }
                                 return msgSink;
                             case CONVERTING_PARTITIONS:
                                 msgSink.clear();
-                                msgSink.put("finish partition count: ").put(entry.getFinishedPartitionCount()).put(" / ").put(entry.getTotalPartitionCount());
+                                msgSink.putAscii("finish partition count: ").put(entry.getFinishedPartitionCount()).putAscii(" / ").put(entry.getTotalPartitionCount());
+                                return msgSink;
+                            case STREAM_SENDING_DATA:
+                                msgSink.clear();
+                                msgSink.putAscii("exported rows: ").put(entry.getStreamingSendRowCount());
                                 return msgSink;
                             default:
                                 return null;

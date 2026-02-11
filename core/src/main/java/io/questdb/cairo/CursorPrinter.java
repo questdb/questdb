@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
+import io.questdb.log.LogError;
 import io.questdb.log.LogRecord;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
@@ -225,14 +226,26 @@ public class CursorPrinter {
         if (printHeader) {
             LogRecord line = sink.xDebugW();
             printHeader(metadata, logRecSink.of(line));
-            line.$();
+            try {
+                line.$();
+            } catch (LogError e) {
+                // We're logging data we don't control, it could be invalid UTF-8.
+                // Let's not break the test when this happens.
+                sink.xDebugW().$("LogError: ").$(e.getMessage()).$();
+            }
         }
 
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             LogRecord line = sink.xDebugW();
             print(record, metadata, logRecSink.of(line), false);
-            line.$();
+            try {
+                line.$();
+            } catch (LogError e) {
+                // We're logging data we don't control, it could be invalid UTF-8.
+                // Let's not break the test when this happens.
+                sink.xDebugW().$("LogError: ").$(e.getMessage()).$();
+            }
         }
     }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -119,7 +119,8 @@ public class Constants {
             "when",
             "where",
             "with",
-            "writer"
+            "writer",
+            "window"
     };
     public static final String PG_COMPATIBLE_VERSION = "12.3";
     public static final StrConstant PG_CATALOG_VERSION_CONSTANT = new StrConstant("PostgreSQL " + PG_COMPATIBLE_VERSION + ", compiled by Visual C++ build 1914, 64-bit, QuestDB");

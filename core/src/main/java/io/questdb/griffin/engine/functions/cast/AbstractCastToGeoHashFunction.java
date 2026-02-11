@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,11 +33,30 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 
 import static io.questdb.cairo.ColumnType.GEOLONG_MAX_BITS;
 
+/**
+ * Abstract base class for functions that cast values to geohash.
+ */
 public abstract class AbstractCastToGeoHashFunction extends GeoByteFunction implements UnaryFunction {
+    /**
+     * The function argument to cast.
+     */
     protected final Function arg;
+    /**
+     * The bits precision for the geohash.
+     */
     protected final int bitsPrecision;
+    /**
+     * The position in the SQL statement.
+     */
     protected final int position;
 
+    /**
+     * Constructs a new cast to geohash function.
+     *
+     * @param geoType  the target geohash type
+     * @param arg      the function argument to cast
+     * @param position the position in the SQL statement
+     */
     public AbstractCastToGeoHashFunction(int geoType, Function arg, int position) {
         super(geoType);
         this.arg = arg;
@@ -80,5 +99,11 @@ public abstract class AbstractCastToGeoHashFunction extends GeoByteFunction impl
         sink.val(arg).val("::geohash");
     }
 
+    /**
+     * Returns the geohash value as a long.
+     *
+     * @param rec the record to read from
+     * @return the geohash value
+     */
     protected abstract long getGeoHashLong0(Record rec);
 }

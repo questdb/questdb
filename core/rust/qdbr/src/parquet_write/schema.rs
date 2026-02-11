@@ -19,15 +19,26 @@ pub fn column_type_to_parquet_type(
     column_name: &str,
     column_type: ColumnType,
     designated_timestamp: bool,
+    required: bool,
     raw_array_encoding: bool,
 ) -> ParquetResult<ParquetType> {
     let name = column_name.to_string();
+    // Types that don't have null values in QuestDB always use Required repetition
+    let is_notnull_type = matches!(
+        column_type.tag(),
+        ColumnTypeTag::Boolean | ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Char
+    );
+    let repetition = if designated_timestamp || required || is_notnull_type {
+        Repetition::Required
+    } else {
+        Repetition::Optional
+    };
 
     match column_type.tag() {
         ColumnTypeTag::Boolean => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::Boolean,
-            Repetition::Required,
+            repetition,
             None,
             None,
             Some(column_id),
@@ -35,7 +46,7 @@ pub fn column_type_to_parquet_type(
         ColumnTypeTag::Byte => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::Int32,
-            Repetition::Required,
+            repetition,
             Some(PrimitiveConvertedType::Int8),
             Some(PrimitiveLogicalType::Integer(IntegerType::Int8)),
             Some(column_id),
@@ -43,7 +54,7 @@ pub fn column_type_to_parquet_type(
         ColumnTypeTag::Short => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::Int32,
-            Repetition::Required,
+            repetition,
             Some(PrimitiveConvertedType::Int16),
             Some(PrimitiveLogicalType::Integer(IntegerType::Int16)),
             Some(column_id),
@@ -51,7 +62,7 @@ pub fn column_type_to_parquet_type(
         ColumnTypeTag::Char => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::Int32,
-            Repetition::Required,
+            repetition,
             Some(PrimitiveConvertedType::Int16),
             Some(PrimitiveLogicalType::Integer(IntegerType::UInt16)),
             Some(column_id),
@@ -59,7 +70,7 @@ pub fn column_type_to_parquet_type(
         ColumnTypeTag::Int => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::Int32,
-            Repetition::Optional,
+            repetition,
             None,
             None,
             Some(column_id),
@@ -67,7 +78,7 @@ pub fn column_type_to_parquet_type(
         ColumnTypeTag::Long => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::Int64,
-            Repetition::Optional,
+            repetition,
             None,
             None,
             Some(column_id),
@@ -75,7 +86,7 @@ pub fn column_type_to_parquet_type(
         ColumnTypeTag::Date => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::Int64,
-            Repetition::Optional,
+            repetition,
             Some(PrimitiveConvertedType::TimestampMillis),
             Some(PrimitiveLogicalType::Timestamp {
                 unit: TimeUnit::Milliseconds,
@@ -84,12 +95,6 @@ pub fn column_type_to_parquet_type(
             Some(column_id),
         )?),
         ColumnTypeTag::Timestamp => {
-            let repetition = if designated_timestamp {
-                Repetition::Required
-            } else {
-                Repetition::Optional
-            };
-
             if column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG) {
                 Ok(ParquetType::try_from_primitive(
                     name,
@@ -119,7 +124,7 @@ pub fn column_type_to_parquet_type(
         ColumnTypeTag::Float => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::Float,
-            Repetition::Optional,
+            repetition,
             None,
             None,
             Some(column_id),
@@ -127,7 +132,7 @@ pub fn column_type_to_parquet_type(
         ColumnTypeTag::Double => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::Double,
-            Repetition::Optional,
+            repetition,
             None,
             None,
             Some(column_id),
@@ -135,7 +140,7 @@ pub fn column_type_to_parquet_type(
         ColumnTypeTag::Binary => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::ByteArray,
-            Repetition::Optional,
+            repetition,
             None,
             None,
             Some(column_id),
@@ -144,7 +149,7 @@ pub fn column_type_to_parquet_type(
             Ok(ParquetType::try_from_primitive(
                 name,
                 PhysicalType::ByteArray,
-                Repetition::Optional,
+                repetition,
                 Some(PrimitiveConvertedType::Utf8),
                 Some(PrimitiveLogicalType::String),
                 Some(column_id),
@@ -156,7 +161,7 @@ pub fn column_type_to_parquet_type(
                 Ok(ParquetType::try_from_primitive(
                     name,
                     PhysicalType::ByteArray,
-                    Repetition::Optional,
+                    repetition,
                     None,
                     None,
                     Some(column_id),
@@ -218,7 +223,7 @@ pub fn column_type_to_parquet_type(
         ColumnTypeTag::Long256 => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::FixedLenByteArray(32),
-            Repetition::Optional,
+            repetition,
             None,
             None,
             Some(column_id),
@@ -226,7 +231,7 @@ pub fn column_type_to_parquet_type(
         ColumnTypeTag::GeoByte => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::Int32,
-            Repetition::Optional,
+            repetition,
             Some(PrimitiveConvertedType::Int8),
             Some(PrimitiveLogicalType::Integer(IntegerType::Int8)),
             Some(column_id),
@@ -234,7 +239,7 @@ pub fn column_type_to_parquet_type(
         ColumnTypeTag::GeoShort => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::Int32,
-            Repetition::Optional,
+            repetition,
             Some(PrimitiveConvertedType::Int16),
             Some(PrimitiveLogicalType::Integer(IntegerType::Int16)),
             Some(column_id),
@@ -242,7 +247,7 @@ pub fn column_type_to_parquet_type(
         ColumnTypeTag::GeoInt => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::Int32,
-            Repetition::Optional,
+            repetition,
             Some(PrimitiveConvertedType::Int32),
             Some(PrimitiveLogicalType::Integer(IntegerType::Int32)),
             Some(column_id),
@@ -250,7 +255,7 @@ pub fn column_type_to_parquet_type(
         ColumnTypeTag::GeoLong => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::Int64,
-            Repetition::Optional,
+            repetition,
             Some(PrimitiveConvertedType::Int64),
             Some(PrimitiveLogicalType::Integer(IntegerType::Int64)),
             Some(column_id),
@@ -258,7 +263,7 @@ pub fn column_type_to_parquet_type(
         ColumnTypeTag::Long128 => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::FixedLenByteArray(16),
-            Repetition::Optional,
+            repetition,
             None,
             None,
             Some(column_id),
@@ -266,7 +271,7 @@ pub fn column_type_to_parquet_type(
         ColumnTypeTag::Uuid => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::FixedLenByteArray(16),
-            Repetition::Optional,
+            repetition,
             None,
             Some(PrimitiveLogicalType::Uuid),
             Some(column_id),
@@ -274,7 +279,7 @@ pub fn column_type_to_parquet_type(
         ColumnTypeTag::IPv4 => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::Int32,
-            Repetition::Optional,
+            repetition,
             None,
             None,
             Some(column_id),
@@ -294,6 +299,10 @@ pub struct Column {
     pub secondary_data: &'static [u8],
     pub symbol_offsets: &'static [u64],
     pub designated_timestamp: bool,
+    /// Passed by QuestDB during writes to indicate that the column contains no null values.
+    /// Currently only Symbol dataType columns support this flag.
+    pub required: bool,
+    pub designated_timestamp_ascending: bool,
 }
 
 impl Column {
@@ -311,6 +320,7 @@ impl Column {
         symbol_offsets_ptr: *const u64,
         symbol_offsets_size: usize,
         designated_timestamp: bool,
+        designated_timestamp_ascending: bool,
     ) -> ParquetResult<Self> {
         assert!(
             !primary_data_ptr.is_null() || primary_data_size == 0,
@@ -325,7 +335,8 @@ impl Column {
             "symbol_offsets_ptr inconsistent with symbol_offsets_size"
         );
 
-        let column_type: ColumnType = column_type.try_into()?;
+        let required = column_type < 0;
+        let column_type: ColumnType = (column_type & 0x7FFFFFFF).try_into()?;
 
         let primary_data = if primary_data_ptr.is_null() {
             &[]
@@ -353,6 +364,8 @@ impl Column {
             secondary_data,
             symbol_offsets,
             designated_timestamp,
+            required,
+            designated_timestamp_ascending,
         })
     }
 }
@@ -375,6 +388,7 @@ pub fn to_parquet_schema(
                 c.name,
                 c.data_type,
                 c.designated_timestamp,
+                c.required,
                 raw_array_encoding,
             )
         })
@@ -389,7 +403,9 @@ pub fn to_parquet_schema(
         };
 
         let column_type = if column.designated_timestamp {
-            column.data_type.into_designated()?
+            column
+                .data_type
+                .into_designated_with_order(column.designated_timestamp_ascending)?
         } else {
             column.data_type
         };

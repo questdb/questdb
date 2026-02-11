@@ -1,0 +1,85 @@
+version: "1.0"
+linter: jetbrains/qodana-jvm-community:latest
+
+# Use Default profile to include test sources (qodana.recommended excludes tests)
+profile:
+  name: Default
+
+# Enable specific inspections
+include:
+  - name: UnusedImport
+
+# Exclude paths and inspections not applicable for QuestDB
+exclude:
+  # Exclude all inspections for vendored/third-party code
+  - name: All
+    paths:
+      - core/src/main/java/io/questdb/std/histogram/org/HdrHistogram
+      - core/src/test/java/io/questdb/test/std/histogram/org/HdrHistogram
+      - core/src/main/java/io/questdb/std/ConcurrentHashMap.java
+      - core/src/main/java/io/questdb/std/ConcurrentIntHashMap.java
+      - core/src/main/java/io/questdb/std/ConcurrentLongHashMap.java
+  # Benchmark code patterns - intentional for measurement
+  - name: MismatchedArrayReadWrite
+    paths:
+      - benchmarks
+  - name: MismatchedCollectionQueryUpdate
+    paths:
+      - benchmarks
+  - name: IgnoreResultOfCall
+    paths:
+      - benchmarks
+  - name: InfiniteLoopStatement
+    paths:
+      - benchmarks
+  - name: IntegerDivisionInFloatingPointContext
+    paths:
+      - benchmarks
+  - name: unused
+    paths:
+      - benchmarks
+      - core/src/main/java/io/questdb/cairo/TickCalendarService.java
+      - core/src/main/java/io/questdb/griffin/SqlCompilerImpl.java
+  # Exclude noisy style/migration inspections globally
+  - name: EmptyMethod
+  - name: JavadocBlankLines
+  - name: TextBlockMigration
+  - name: CodeBlock2Expr
+  - name: EnhancedSwitchMigration
+  - name: ForCanBeForeach
+  - name: HtmlUnknownTag
+  - name: HtmlUnknownAttribute
+  - name: MavenModelInspection
+  - name: JsonStandardCompliance
+  - name: ReassignedToPlainText
+  - name: StringRepeatCanBeUsed
+  # Exclude inspections that produce too many false positives for test code
+  - name: ClassEscapesItsScope
+    paths:
+      - core/src/test
+  - name: SizeReplaceableByIsEmpty
+    paths:
+      - core/src/test
+  - name: ClassCanBeRecord
+    paths:
+      - core/src/test
+  - name: SameParameterValue
+    paths:
+      - core/src/test
+      - compat/src/test
+  - name: SameReturnValue
+    paths:
+      - core/src/test
+      - core/src/main/java/io/questdb/cairo/TickCalendarService.java
+      - core/src/main/java/io/questdb/cairo/TickCalendarServiceFactory.java
+      - core/src/main/java/io/questdb/FactoryProvider.java
+  - name: BooleanMethodIsAlwaysInverted
+  - name: ThrowablePrintStackTrace
+    paths:
+      - core/src/test
+  - name: ExtractMethodRecommender
+  - name: RedundantMethodOverride
+  - name: AutoCloseableResource
+    paths:
+      - core/src/test/java/io/questdb/test/cutlass/http/ConcurrentParquetExportTest.java
+  - name: RedundantSuppression

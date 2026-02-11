@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -104,7 +104,6 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
                             HTTP_ENABLED.getEnvVarName(), "false",
                             LINE_TCP_ENABLED.getEnvVarName(), "false",
                             TELEMETRY_DISABLE_COMPLETELY.getEnvVarName(), "true",
-                            CAIRO_SQL_BACKUP_ROOT.getEnvVarName(), testResourcePath,
                             CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED.getEnvVarName(), String.valueOf(parallelReadParquet)
                     );
                     serverMain.start();

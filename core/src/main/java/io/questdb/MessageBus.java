@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -40,6 +40,7 @@ import io.questdb.mp.SPSequence;
 import io.questdb.tasks.ColumnIndexerTask;
 import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.tasks.ColumnTask;
+import io.questdb.tasks.GroupByLongTopKTask;
 import io.questdb.tasks.GroupByMergeShardTask;
 import io.questdb.tasks.LatestByTask;
 import io.questdb.tasks.O3CopyTask;
@@ -87,6 +88,12 @@ public interface MessageBus extends Closeable {
     SCSequence getCopyImportRequestSubSeq();
 
     MCSequence getCopyImportSubSeq();
+
+    MPSequence getGroupByLongTopKPubSeq();
+
+    RingQueue<GroupByLongTopKTask> getGroupByLongTopKQueue();
+
+    MCSequence getGroupByLongTopKSubSeq();
 
     MPSequence getGroupByMergeShardPubSeq();
 

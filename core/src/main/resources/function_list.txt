@@ -6,7 +6,7 @@
 #    \__\_\\__,_|\___||___/\__|____/|____/
 #
 #  Copyright (c) 2014-2019 Appsicle
-#  Copyright (c) 2019-2024 QuestDB
+#  Copyright (c) 2019-2026 QuestDB
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -543,11 +543,14 @@ io.questdb.griffin.engine.functions.cast.VarcharCastHelperFunctionFactory
 
 # 'in'
 io.questdb.griffin.engine.functions.bool.InSymbolCursorFunctionFactory
+io.questdb.griffin.engine.functions.bool.InStrVarcharArrayFunctionFactory
 io.questdb.griffin.engine.functions.bool.InStrFunctionFactory
+io.questdb.griffin.engine.functions.bool.InVarcharVarcharArrayFunctionFactory
 io.questdb.griffin.engine.functions.bool.InVarcharFunctionFactory
 io.questdb.griffin.engine.functions.bool.InCharFunctionFactory
 io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory
 io.questdb.griffin.engine.functions.bool.InLongFunctionFactory
+io.questdb.griffin.engine.functions.bool.InSymbolVarcharArrayFunctionFactory
 io.questdb.griffin.engine.functions.bool.InSymbolFunctionFactory
 io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory
 io.questdb.griffin.engine.functions.bool.BetweenTimestampFunctionFactory
@@ -842,18 +845,10 @@ io.questdb.griffin.engine.functions.str.RTrimVarcharFunctionFactory
 
 # window functions
 io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory
-io.questdb.griffin.engine.functions.window.RankFunctionFactory
-io.questdb.griffin.engine.functions.window.DenseRankFunctionFactory
-io.questdb.griffin.engine.functions.window.AvgDoubleWindowFunctionFactory
-io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory
-io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory
 io.questdb.griffin.engine.functions.window.CountConstWindowFunctionFactory
 io.questdb.griffin.engine.functions.window.CountDoubleWindowFunctionFactory
 io.questdb.griffin.engine.functions.window.CountSymbolWindowFunctionFactory
 io.questdb.griffin.engine.functions.window.CountVarcharWindowFunctionFactory
-io.questdb.griffin.engine.functions.window.MaxDoubleWindowFunctionFactory
-io.questdb.griffin.engine.functions.window.MinDoubleWindowFunctionFactory
-io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionFactory
 
 # Bitwise operators
 io.questdb.griffin.engine.functions.math.BitwiseAndLongFunctionFactory

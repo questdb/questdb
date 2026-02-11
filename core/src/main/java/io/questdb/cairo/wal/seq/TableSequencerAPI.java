@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.ex.PoolClosedException;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -289,6 +290,9 @@ public class TableSequencerAPI implements QuietCloseable {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             long txn;
             try {
+                if (!tableSequencer.getTableToken().equals(tableToken)) {
+                    throw TableReferenceOutOfDateException.of(tableToken);
+                }
                 txn = tableSequencer.nextTxn(expectedSchemaVersion, walId, segmentId, segmentTxn, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
             } finally {
                 tableSequencer.unlockWrite();
@@ -531,7 +535,7 @@ public class TableSequencerAPI implements QuietCloseable {
             if (sequencer != null && deadline >= sequencer.releaseTime && !sequencer.isClosed()) {
                 // Remove from registry only if this thread closed the instance
                 if (sequencer.checkClose()) {
-                    LOG.info().$("releasing idle table sequencer [tableDir=").$safe(tableDir).I$();
+                    LOG.debug().$("releasing idle table sequencer [tableDir=").$safe(tableDir).I$();
                     iterator.remove();
                     removed = true;
                 }

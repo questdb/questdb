@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,8 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -38,6 +40,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -77,11 +80,13 @@ public class LatestByTest extends AbstractCairoTest {
                             ") timestamp(ts);\n"
             );
             assertQuery(
-                    "x\tohoh\n" +
-                            "15\t29\n" +
-                            "17\t26\n" +
-                            "9\t29\n" +
-                            "7\t25\n",
+                    """
+                            x\tohoh
+                            15\t29
+                            17\t26
+                            9\t29
+                            7\t25
+                            """,
                     "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 3 latest on ts partition by x;",
                     true
             );
@@ -91,23 +96,25 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByAllFilteredResolvesSymbol() throws Exception {
         executeWithRewriteTimestamp(
-                "CREATE TABLE history_P4v (\n" +
-                        "  devid SYMBOL,\n" +
-                        "  address SHORT,\n" +
-                        "  value SHORT,\n" +
-                        "  value_decimal BYTE,\n" +
-                        "  created_at DATE,\n" +
-                        "  ts #TIMESTAMP\n" +
-                        ") timestamp(ts) PARTITION BY DAY;",
+                """
+                        CREATE TABLE history_P4v (
+                          devid SYMBOL,
+                          address SHORT,
+                          value SHORT,
+                          value_decimal BYTE,
+                          created_at DATE,
+                          ts #TIMESTAMP
+                        ) timestamp(ts) PARTITION BY DAY;""",
                 timestampType.getTypeName()
         );
 
         assertQuery(
                 "devid\taddress\tvalue\tvalue_decimal\tcreated_at\tts\n",
-                "SELECT * FROM history_P4v\n" +
-                        "WHERE\n" +
-                        "  devid = 'LLLAHFZHYA'\n" +
-                        "LATEST ON ts PARTITION BY address",
+                """
+                        SELECT * FROM history_P4v
+                        WHERE
+                          devid = 'LLLAHFZHYA'
+                        LATEST ON ts PARTITION BY address""",
                 "ts",
                 true,
                 false
@@ -118,19 +125,21 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByAllIndexedIndexReaderGetsReloaded() throws Exception {
         final int iterations = 100;
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("CREATE TABLE e ( \n" +
-                            "  ts #TIMESTAMP, \n" +
-                            "  sym SYMBOL CAPACITY 32768 INDEX CAPACITY 4 \n" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY",
+            executeWithRewriteTimestamp("""
+                            CREATE TABLE e (\s
+                              ts #TIMESTAMP,\s
+                              sym SYMBOL CAPACITY 32768 INDEX CAPACITY 4\s
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
                     timestampType.getTypeName()
             );
-            executeWithRewriteTimestamp("CREATE TABLE p ( \n" +
-                            "  ts #TIMESTAMP, \n" +
-                            "  sym SYMBOL CAPACITY 32768 CACHE INDEX CAPACITY 4, \n" +
-                            "  lon FLOAT, \n" +
-                            "  lat FLOAT, \n" +
-                            "  g3 geohash(3c) \n" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY",
+            executeWithRewriteTimestamp("""
+                            CREATE TABLE p (\s
+                              ts #TIMESTAMP,\s
+                              sym SYMBOL CAPACITY 32768 CACHE INDEX CAPACITY 4,\s
+                              lon FLOAT,\s
+                              lat FLOAT,\s
+                              g3 geohash(3c)\s
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
                     timestampType.getTypeName()
             );
 
@@ -162,8 +171,10 @@ public class LatestByTest extends AbstractCairoTest {
                         ") \n" +
                         "ON (sym)";
                 assertQuery(
-                        "count\n" +
-                                "1\n",
+                        """
+                                count
+                                1
+                                """,
                         query,
                         null,
                         false,
@@ -181,12 +192,13 @@ public class LatestByTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
-                    "create table pos_test\n" +
-                            "( \n" +
-                            "  ts #TIMESTAMP,\n" +
-                            "  device_id symbol index,\n" +
-                            "  g8c geohash(8c)\n" +
-                            ") timestamp(ts) partition by day;",
+                    """
+                            create table pos_test
+                            (\s
+                              ts #TIMESTAMP,
+                              device_id symbol index,
+                              g8c geohash(8c)
+                            ) timestamp(ts) partition by day;""",
                     timestampType.getTypeName()
             );
 
@@ -197,12 +209,13 @@ public class LatestByTest extends AbstractCairoTest {
                             "('2021-09-02T00:00:00.000002', 'device_1', #46swgj12)"
             );
 
-            String query = "SELECT *\n" +
-                    "FROM pos_test\n" +
-                    "WHERE g8c within(#46swgj10)\n" +
-                    "and ts in '2021-09-02'\n" +
-                    "LATEST ON ts \n" +
-                    "PARTITION BY device_id";
+            String query = """
+                    SELECT *
+                    FROM pos_test
+                    WHERE g8c within(#46swgj10)
+                    and ts in '2021-09-02'
+                    LATEST ON ts\s
+                    PARTITION BY device_id""";
 
             assertPlanNoLeakCheck(
                     query,
@@ -253,6 +266,107 @@ public class LatestByTest extends AbstractCairoTest {
                     "select ts, s from t " +
                             "where s in ('a', 'b') " +
                             "latest on ts partition by s",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testLatestByInsertNullSymbols() throws Exception {
+        assertMemoryLeak(() -> {
+            Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
+            execute("create table t (ts timestamp, s symbol, s2 symbol) timestamp (ts) partition by month");
+            execute("insert into t(ts) values ('2025-01-01'),('2025-01-02'),('2025-01-03')");
+            execute("insert into t values ('2025-01-04', 'symSA', 'symS2A')");
+            assertQuery(
+                    """
+                            ts\ts2\ts
+                            2025-01-03T00:00:00.000000Z\t\t
+                            2025-01-04T00:00:00.000000Z\tsymS2A\tsymSA
+                            """,
+                    "select ts, s2, s from t " +
+                            "latest on ts partition by s, s2",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testLatestByInsertNullSymbolsOnWal() throws Exception {
+        assertMemoryLeak(() -> {
+            Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
+            execute("create table t (ts timestamp, s symbol, s2 symbol) timestamp (ts) partition by month wal");
+            execute("insert into t(ts) values ('2025-01-01'),('2025-01-02'),('2025-01-03')");
+            execute("insert into t values ('2025-01-04', 'symSA', 'symS2A')");
+            drainWalQueue();
+            assertQuery(
+                    """
+                            ts\ts2\ts
+                            2025-01-03T00:00:00.000000Z\t\t
+                            2025-01-04T00:00:00.000000Z\tsymS2A\tsymSA
+                            """,
+                    "select ts, s2, s from t " +
+                            "latest on ts partition by s, s2",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testLatestByMultipleChangedColSymbols() throws Exception {
+        assertMemoryLeak(() -> {
+            Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
+            execute("create table t (ts timestamp, s string, s2 string) timestamp (ts)" +
+                    " partition by month"
+            );
+            execute("insert into t values('2025-01-01', null, null), " +
+                    "('2025-01-02', null, null)," +
+                    " ('2025-01-03', null, null), " +
+                    "('2025-01-04', 'symSA', 'symS2A')");
+            execute("alter table t alter column s type symbol");
+            execute("alter table t alter column s2 type symbol");
+            assertQuery(
+                    """
+                            ts\ts2\ts
+                            2025-01-03T00:00:00.000000Z\t\t
+                            2025-01-04T00:00:00.000000Z\tsymS2A\tsymSA
+                            """,
+                    "select ts, s2, s from t " +
+                            "latest on ts partition by s, s2",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testLatestByMultipleColTopSymbols() throws Exception {
+        assertMemoryLeak(() -> {
+            Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
+            execute("create table t (ts timestamp) timestamp (ts)" +
+                    " partition by month"
+            );
+            execute("insert into t values('2025-01-01'), " +
+                    "('2025-01-02')," +
+                    " ('2025-01-03'), " +
+                    "('2025-01-04')");
+            execute("alter table t add column s symbol, s2 symbol");
+            execute("insert into t values('2025-01-05', 'symSA', 'symS2A');");
+            assertQuery(
+                    """
+                            ts\ts2\ts
+                            2025-01-04T00:00:00.000000Z\t\t
+                            2025-01-05T00:00:00.000000Z\tsymS2A\tsymSA
+                            """,
+                    "select ts, s2, s from t " +
+                            "latest on ts partition by s, s2",
                     "ts",
                     true,
                     true
@@ -662,7 +776,7 @@ public class LatestByTest extends AbstractCairoTest {
                 // with the same value for the parameter as was injected into the global binding variable service
                 try (SqlExecutionContextImpl localContext = new SqlExecutionContextImpl(engine, 1)) {
                     BindVariableServiceImpl localBindings = new BindVariableServiceImpl(configuration);
-                    localContext.with(localBindings);
+                    localContext.with(AllowAllSecurityContext.INSTANCE, localBindings);
                     localBindings.setStr("sym", "c");
                     assertFactoryCursor(
                             "ts\ts\n" +
@@ -680,7 +794,7 @@ public class LatestByTest extends AbstractCairoTest {
                 // this must yield a different result
                 try (SqlExecutionContextImpl localContext = new SqlExecutionContextImpl(engine, 1)) {
                     BindVariableServiceImpl localBindings = new BindVariableServiceImpl(configuration);
-                    localContext.with(localBindings);
+                    localContext.with(AllowAllSecurityContext.INSTANCE, localBindings);
                     localBindings.setStr("sym", "a");
 
                     assertFactoryCursor(
@@ -927,16 +1041,19 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByWithDeferredNonExistingSymbolOnNonEmptyTableDoesNotThrowException() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE tab (ts #TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n", timestampType.getTypeName());
-            execute("insert into tab\n" +
-                    "select dateadd('h', -x::int, now()), rnd_symbol('ap', 'btc'), rnd_int(1,1000,0)\n" +
-                    "from long_sequence(1000);");
+            execute("""
+                    insert into tab
+                    select dateadd('h', -x::int, now()), rnd_symbol('ap', 'btc'), rnd_int(1,1000,0)
+                    from long_sequence(1000);""");
 
             assertQuery("id\tv\tr_1M\n",
-                    "with r as (select id, value v from tab where id = 'apc' || rnd_int() LATEST ON ts PARTITION BY id),\n" +
-                            "     rr as (select id, value v from tab where id = 'apc' || rnd_int() and ts <= dateadd('d', -7, now())  LATEST ON ts PARTITION BY id)\n" +
-                            "        select r.id, r.v, cast((r.v - rr.v) as float) r_1M\n" +
-                            "        from r\n" +
-                            "        join rr on id\n", null, false, false
+                    """
+                            with r as (select id, value v from tab where id = 'apc' || rnd_int() LATEST ON ts PARTITION BY id),
+                                 rr as (select id, value v from tab where id = 'apc' || rnd_int() and ts <= dateadd('d', -7, now())  LATEST ON ts PARTITION BY id)
+                                    select r.id, r.v, cast((r.v - rr.v) as float) r_1M
+                                    from r
+                                    join rr on id
+                            """, null, false, false
             );
         });
     }
@@ -1249,16 +1366,19 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByWithStaticNonExistingSymbolOnNonEmptyTableDoesNotThrowException() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
-            execute("insert into tab\n" +
-                    "select dateadd('h', -x::int, now()), rnd_symbol('ap', 'btc'), rnd_int(1,1000,0)\n" +
-                    "from long_sequence(1000);");
+            execute("""
+                    insert into tab
+                    select dateadd('h', -x::int, now()), rnd_symbol('ap', 'btc'), rnd_int(1,1000,0)
+                    from long_sequence(1000);""");
 
             assertQuery("id\tv\tr_1M\n",
-                    "with r as (select id, value v from tab where id = 'apc' LATEST ON ts PARTITION BY id),\n" +
-                            "     rr as (select id, value v from tab where id = 'apc' and ts <= dateadd('d', -7, now())  LATEST ON ts PARTITION BY id)\n" +
-                            "        select r.id, r.v, cast((r.v - rr.v) as float) r_1M\n" +
-                            "        from r\n" +
-                            "        join rr on id\n", null, false, false
+                    """
+                            with r as (select id, value v from tab where id = 'apc' LATEST ON ts PARTITION BY id),
+                                 rr as (select id, value v from tab where id = 'apc' and ts <= dateadd('d', -7, now())  LATEST ON ts PARTITION BY id)
+                                    select r.id, r.v, cast((r.v - rr.v) as float) r_1M
+                                    from r
+                                    join rr on id
+                            """, null, false, false
             );
         });
     }
@@ -1269,11 +1389,13 @@ public class LatestByTest extends AbstractCairoTest {
             execute("CREATE TABLE tab (ts TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
 
             assertQuery("id\tv\tr_1M\n",
-                    "with r as (select id, value v from tab where id = 'apc' LATEST ON ts PARTITION BY id),\n" +
-                            "        rr as (select id, value v from tab where id = 'apc' and ts <= dateadd('d', -7, now())  LATEST ON ts PARTITION BY id)\n" +
-                            "        select r.id, r.v, cast((r.v - rr.v) as float) r_1M\n" +
-                            "        from r\n" +
-                            "        join rr on id\n", null, false, false
+                    """
+                            with r as (select id, value v from tab where id = 'apc' LATEST ON ts PARTITION BY id),
+                                    rr as (select id, value v from tab where id = 'apc' and ts <= dateadd('d', -7, now())  LATEST ON ts PARTITION BY id)
+                                    select r.id, r.v, cast((r.v - rr.v) as float) r_1M
+                                    from r
+                                    join rr on id
+                            """, null, false, false
             );
         });
     }
@@ -1502,9 +1624,10 @@ public class LatestByTest extends AbstractCairoTest {
             String suffix = getTimestampSuffix(timestampType.getTypeName());
             String expected = "symbol\tside\ttimestamp\n" +
                     "BTC\tbuy\t2020-12-31T23:59:59.000000" + suffix + "\n";
-            String query = "SELECT * FROM trades\n" +
-                    "WHERE symbol in ('BTC') and side in 'buy'\n" +
-                    "LATEST ON timestamp PARTITION BY symbol;";
+            String query = """
+                    SELECT * FROM trades
+                    WHERE symbol in ('BTC') and side in 'buy'
+                    LATEST ON timestamp PARTITION BY symbol;""";
             assertSql(expected, query);
         });
     }
@@ -1560,15 +1683,18 @@ public class LatestByTest extends AbstractCairoTest {
                     (indexed ? ", index(symbol) " : " ") + "timestamp(ts) partition by day", timestampType.getTypeName());
             execute("insert into t values ('xyz', 42, '2022-11-02T01:01:01')");
 
-            String query = "with r as (select symbol, value v from r where symbol = 'xyz' latest on ts partition by symbol),\n" +
-                    " t as (select symbol, value v from t where symbol = 'xyz' latest on ts partition by symbol)\n" +
-                    "select r.symbol, r.v subscribers, t.v followers\n" +
-                    "from r\n" +
-                    "join t on symbol";
+            String query = """
+                    with r as (select symbol, value v from r where symbol = 'xyz' latest on ts partition by symbol),
+                     t as (select symbol, value v from t where symbol = 'xyz' latest on ts partition by symbol)
+                    select r.symbol, r.v subscribers, t.v followers
+                    from r
+                    join t on symbol""";
             try (RecordCursorFactory factory = select(query)) {
                 assertCursor(
-                        "symbol\tsubscribers\tfollowers\n" +
-                                "xyz\t1\t42\n",
+                        """
+                                symbol\tsubscribers\tfollowers
+                                xyz\t1\t42
+                                """,
                         factory,
                         false,
                         false

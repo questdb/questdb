@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class LastNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
@@ -54,6 +55,20 @@ public class LastNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
     private static class Func extends LastIPv4GroupByFunction {
         public Func(@NotNull Function arg) {
             super(arg);
+        }
+
+        @Override
+        public void computeBatch(MapValue mapValue, long ptr, int count) {
+            if (count > 0) {
+                long hi = ptr + (count - 1) * 4L;
+                for (; hi >= ptr; hi -= 4L) {
+                    int value = Unsafe.getUnsafe().getInt(hi);
+                    if (value != Numbers.IPv4_NULL) {
+                        mapValue.putInt(valueIndex + 1, value);
+                        break;
+                    }
+                }
+            }
         }
 
         @Override
@@ -83,4 +98,3 @@ public class LastNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
         }
     }
 }
-

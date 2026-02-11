@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
@@ -32,20 +33,26 @@ import io.questdb.cairo.MillsTimestampDriver;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DoubleArrayParser;
+import io.questdb.cairo.arr.VarcharArrayParser;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
+import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.AbstractLowerCaseCharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
+import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256FromCharSequenceDecoder;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -63,12 +70,12 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.std.GenericLexer.unquote;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_FORMAT;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT;
 
 public class SqlUtil {
-
     static final LowerCaseCharSequenceHashSet disallowedAliases = new LowerCaseCharSequenceHashSet();
     private static final DateFormat[] IMPLICIT_CAST_FORMATS;
     private static final int IMPLICIT_CAST_FORMATS_SIZE;
@@ -94,19 +101,166 @@ public class SqlUtil {
         throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getTimestampType());
     }
 
-    public static CharSequence createExprColumnAlias(
-            CharacterStore store,
-            CharSequence base,
-            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
-            int maxLength
+    public static void collectAllTableAndViewNames(
+            @NotNull QueryModel model,
+            @NotNull ObjList<CharSequence> outTableNames,
+            boolean viewsOnly
     ) {
-        return createExprColumnAlias(store, base, aliasToColumnMap, maxLength, false);
+        QueryModel m = model;
+        do {
+            if (!viewsOnly) {
+                final ExpressionNode tableNameExpr = m.getTableNameExpr();
+                if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
+                    outTableNames.add(unquote(tableNameExpr.token));
+                }
+            }
+
+            final ExpressionNode viewNameExpr = m.getOriginatingViewNameExpr();
+            if (viewNameExpr != null) {
+                outTableNames.add(unquote(viewNameExpr.token));
+            }
+
+            final ObjList<QueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final QueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel == m) {
+                    continue;
+                }
+                collectAllTableAndViewNames(joinModel, outTableNames, viewsOnly);
+            }
+
+            final QueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                collectAllTableAndViewNames(unionModel, outTableNames, viewsOnly);
+            }
+
+            m = m.getNestedModel();
+        } while (m != null);
     }
 
+    public static void collectAllTableNames(
+            @NotNull QueryModel model,
+            @NotNull LowerCaseCharSequenceHashSet outTableNames,
+            @Nullable IntList outTableNamePositions
+    ) {
+        QueryModel m = model;
+        do {
+            final ExpressionNode tableNameExpr = m.getTableNameExpr();
+            if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
+                if (outTableNames.add(unquote(tableNameExpr.token)) && outTableNamePositions != null) {
+                    outTableNamePositions.add(tableNameExpr.position);
+                }
+            }
+
+            final ObjList<QueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final QueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel == m) {
+                    continue;
+                }
+                collectAllTableNames(joinModel, outTableNames, outTableNamePositions);
+            }
+
+            final QueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                collectAllTableNames(unionModel, outTableNames, outTableNamePositions);
+            }
+
+            m = m.getNestedModel();
+        } while (m != null);
+    }
+
+    public static void collectTableAndColumnReferences(
+            @NotNull CairoEngine engine,
+            @NotNull QueryModel model,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
+    ) {
+        QueryModel m = model;
+        do {
+            // Process columns in SELECT clause
+            final ObjList<QueryColumn> columns = m.getColumns();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final QueryColumn column = columns.getQuick(i);
+                if (column != null && column.getAst() != null) {
+                    collectColumnReferencesFromExpression(engine, column.getAst(), m, depMap);
+                }
+            }
+
+            // Process WHERE clause
+            final ExpressionNode whereClause = m.getWhereClause();
+            if (whereClause != null) {
+                collectColumnReferencesFromExpression(engine, whereClause, m, depMap);
+            }
+
+            // Process JOIN conditions
+            final ObjList<ExpressionNode> joinColumns = m.getJoinColumns();
+            collectColumnReferencesFromJoinColumns(engine, joinColumns, m, depMap);
+
+            // Process GROUP BY
+            final ObjList<ExpressionNode> groupBy = m.getGroupBy();
+            for (int i = 0, n = groupBy.size(); i < n; i++) {
+                final ExpressionNode groupByExpr = groupBy.getQuick(i);
+                if (groupByExpr != null) {
+                    collectColumnReferencesFromExpression(engine, groupByExpr, m, depMap);
+                }
+            }
+
+            // Process ORDER BY
+            final ObjList<ExpressionNode> orderBy = m.getOrderBy();
+            for (int i = 0, n = orderBy.size(); i < n; i++) {
+                final ExpressionNode orderByExpr = orderBy.getQuick(i);
+                if (orderByExpr != null) {
+                    collectColumnReferencesFromExpression(engine, orderByExpr, m, depMap);
+                }
+            }
+
+            // Process tables directly referenced
+            final ExpressionNode tableNameExpr = m.getTableNameExpr();
+            if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
+                String tableName = unquote(tableNameExpr.token).toString();
+                if (!depMap.contains(tableName)) {
+                    depMap.put(tableName, new LowerCaseCharSequenceHashSet());
+                }
+            }
+
+            // Process views
+            final ExpressionNode viewNameExpr = m.getOriginatingViewNameExpr();
+            if (viewNameExpr != null) {
+                String viewName = unquote(viewNameExpr.token).toString();
+                if (!depMap.contains(viewName)) {
+                    depMap.put(viewName, new LowerCaseCharSequenceHashSet());
+                }
+            }
+
+            // Process join models
+            final ObjList<QueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final QueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel != m) {
+                    collectColumnReferencesFromJoinColumns(engine, joinModel.getJoinColumns(), m, depMap);
+                    collectTableAndColumnReferences(engine, joinModel, depMap);
+                }
+            }
+
+            // Process union models
+            final QueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                collectTableAndColumnReferences(engine, unionModel, depMap);
+            }
+
+            m = m.getNestedModel();
+        } while (m != null);
+    }
+
+    /**
+     * Creates a unique column alias for expressions with O(1) amortized complexity by tracking
+     * the next sequence number for each base alias in the provided map.
+     */
     public static CharSequence createExprColumnAlias(
             CharacterStore store,
             CharSequence base,
-            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
+            AbstractLowerCaseCharSequenceHashSet aliasToColumnMap,
+            LowerCaseCharSequenceIntHashMap nextAliasSequenceMap,
             int maxLength,
             boolean nonLiteral
     ) {
@@ -134,13 +288,22 @@ public class SqlUtil {
         }
         entry.put(base, start, baseLen);
 
-        int sequence = 1;
+        final int truncatedLen = Math.min(len, maxLength - (quote ? 1 : 0));
+        // Save the base entry length for sequence tracking (before any sequence suffix)
+        final int baseEntryLen = entry.length();
+
+        // Look up the starting sequence for this base alias
+        int sequence = nextAliasSequenceMap.get(entry.toImmutable());
+        if (sequence == -1) {
+            sequence = 1;
+        }
+
         int seqSize = 0;
         while (true) {
             if (sequence > 1) {
                 seqSize = (int) Math.log10(sequence) + 2; // Remember the _
             }
-            len = Math.min(len, maxLength - seqSize - (quote ? 1 : 0));
+            len = Math.min(truncatedLen, maxLength - seqSize - (quote ? 1 : 0));
 
             // We don't want the alias to finish with a space.
             if (!quote && len > 0 && base.charAt(start + len - 1) == ' ') {
@@ -158,9 +321,15 @@ public class SqlUtil {
             if (quote) {
                 entry.put('"');
             }
-            CharSequence alias = entry.toImmutable();
+            final CharSequence alias = entry.toImmutable();
             if (len > 0 && aliasToColumnMap.excludes(alias)) {
-                return alias;
+                // Update the sequence tracker for next time
+                final int aliasLen = entry.length();
+                entry.trimTo(baseEntryLen);
+                nextAliasSequenceMap.put(entry.toImmutable(), sequence + 1);
+                // Revert entry to the alias
+                entry.trimTo(aliasLen);
+                return entry.toImmutable();
             }
             sequence++;
         }
@@ -287,6 +456,22 @@ public class SqlUtil {
             if (lineComment) {
                 if (Chars.equals(cs, '\n') || Chars.equals(cs, '\r')) {
                     lineComment = false;
+                } else {
+                    // Check if token contains a newline (can happen with unbalanced quotes in comments)
+                    for (int i = 0, n = cs.length(); i < n; i++) {
+                        char c = cs.charAt(i);
+                        if (c == '\n' || c == '\r') {
+                            // Found newline inside token - reposition lexer to after newline
+                            int newPos = lexer.lastTokenPosition() + i + 1;
+                            // Skip \r\n sequence
+                            if (c == '\r' && i + 1 < n && cs.charAt(i + 1) == '\n') {
+                                newPos++;
+                            }
+                            lexer.backTo(newPos, null);
+                            lineComment = false;
+                            break;
+                        }
+                    }
                 }
                 continue;
             }
@@ -354,6 +539,22 @@ public class SqlUtil {
             if (lineComment) {
                 if (Chars.equals(cs, '\n') || Chars.equals(cs, '\r')) {
                     lineComment = false;
+                } else {
+                    // Check if token contains a newline (can happen with unbalanced quotes in comments)
+                    for (int i = 0, n = cs.length(); i < n; i++) {
+                        char c = cs.charAt(i);
+                        if (c == '\n' || c == '\r') {
+                            // Found newline inside token - reposition lexer to after newline
+                            int newPos = lexer.lastTokenPosition() + i + 1;
+                            // Skip \r\n sequence
+                            if (c == '\r' && i + 1 < n && cs.charAt(i + 1) == '\n') {
+                                newPos++;
+                            }
+                            lexer.backTo(newPos, null);
+                            lineComment = false;
+                            break;
+                        }
+                    }
                 }
                 continue;
             }
@@ -393,6 +594,12 @@ public class SqlUtil {
             }
         }
         return null;
+    }
+
+    public static RecordCursorFactory generateFactory(SqlCompiler compiler, ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
+        final QueryModel queryModel = model.getQueryModel();
+        assert queryModel != null;
+        return compiler.generateSelectWithRetries(queryModel, null, executionContext, false);
     }
 
     public static byte implicitCastAsByte(long value, int fromType) {
@@ -869,6 +1076,15 @@ public class SqlUtil {
         return parser;
     }
 
+    public static ArrayView implicitCastStringAsVarcharArray(CharSequence value, VarcharArrayParser parser, int expectedType) {
+        try {
+            parser.of(value, ColumnType.decodeWeakArrayDimensionality(expectedType));
+        } catch (IllegalArgumentException e) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
+        }
+        return parser;
+    }
+
     public static boolean implicitCastUuidAsStr(long lo, long hi, CharSink<?> sink) {
         if (Uuid.isNull(lo, hi)) {
             return false;
@@ -1101,6 +1317,73 @@ public class SqlUtil {
         throw SqlException.$(tokPosition, "non-persisted type: ").put(tok);
     }
 
+    // tableName and columnName have to be string objects,
+    // they will be used in the view definition
+    private static void addDependency(@NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap, String tableName, String columnName) {
+        LowerCaseCharSequenceHashSet columns = depMap.get(tableName);
+        if (columns == null) {
+            columns = new LowerCaseCharSequenceHashSet();
+            depMap.put(tableName, columns);
+        }
+        columns.add(columnName);
+    }
+
+    private static void collectColumnReferencesFromExpression(
+            @NotNull CairoEngine engine,
+            @NotNull ExpressionNode expr,
+            @NotNull QueryModel model,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
+    ) {
+        // Handle column literals (e.g., table.column or column)
+        if (expr.type == ExpressionNode.LITERAL) {
+            CharSequence token = expr.token;
+            if (token != null) {
+                int dot = Chars.indexOfLastUnquoted(token, '.');
+                if (dot > -1) {
+                    // This is a qualified column reference: table.column
+                    String tableName = unquote(token.subSequence(0, dot)).toString();
+                    String columnName = unquote(token.subSequence(dot + 1, token.length())).toString();
+                    if (engine.getTableTokenIfExists(tableName) != null) {
+                        addDependency(depMap, tableName, columnName);
+                    }
+                } else {
+                    final QueryModel nestedModel = model.getNestedModel();
+                    final CharSequence tableName = nestedModel != null ? nestedModel.getTableName() : model.getTableName();
+                    if (tableName != null && engine.getTableTokenIfExists(tableName) != null) {
+                        addDependency(depMap, tableName.toString(), expr.token.toString());
+                    }
+                }
+            }
+        }
+
+        // Recursively process function arguments and operators
+        for (int i = 0, n = expr.args.size(); i < n; i++) {
+            collectColumnReferencesFromExpression(engine, expr.args.getQuick(i), model, depMap);
+        }
+
+        // Process left and right hand sides for operators
+        if (expr.lhs != null) {
+            collectColumnReferencesFromExpression(engine, expr.lhs, model, depMap);
+        }
+        if (expr.rhs != null) {
+            collectColumnReferencesFromExpression(engine, expr.rhs, model, depMap);
+        }
+    }
+
+    private static void collectColumnReferencesFromJoinColumns(
+            @NotNull CairoEngine engine,
+            @NotNull ObjList<ExpressionNode> joinColumns,
+            @NotNull QueryModel model,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
+    ) {
+        for (int i = 0, n = joinColumns.size(); i < n; i++) {
+            final ExpressionNode joinColumn = joinColumns.getQuick(i);
+            if (joinColumn != null) {
+                collectColumnReferencesFromExpression(engine, joinColumn, model, depMap);
+            }
+        }
+    }
+
     private static int findEndOfDigitsPos(CharSequence tok, int tokLen, int tokPosition) throws SqlException {
         int k = -1;
         // look for end of digits
@@ -1118,25 +1401,29 @@ public class SqlUtil {
         return k;
     }
 
+    /**
+     * Creates a unique column alias with O(1) amortized complexity by tracking the next sequence
+     * number for each base alias in the provided map.
+     *
+     * @param store                character store for creating the alias string
+     * @param base                 base name for the alias
+     * @param indexOfDot           index of the last dot in base, or -1 if none
+     * @param aliasToColumnMap     set of existing aliases to check for uniqueness
+     * @param nextAliasSequenceMap map tracking next sequence number for each base alias (updated in place)
+     * @param nonLiteral           whether this is a non-literal expression
+     * @return unique alias
+     */
     static CharSequence createColumnAlias(
             CharacterStore store,
             CharSequence base,
             int indexOfDot,
-            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap
-    ) {
-        return createColumnAlias(store, base, indexOfDot, aliasToColumnMap, false);
-    }
-
-    static CharSequence createColumnAlias(
-            CharacterStore store,
-            CharSequence base,
-            int indexOfDot,
-            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
+            AbstractLowerCaseCharSequenceHashSet aliasToColumnMap,
+            LowerCaseCharSequenceIntHashMap nextAliasSequenceMap,
             boolean nonLiteral
     ) {
         final boolean disallowed = nonLiteral && disallowedAliases.contains(base);
 
-        // short and sweet version
+        // early exit for simple cases
         if (indexOfDot == -1 && !disallowed && aliasToColumnMap.excludes(base)) {
             return base;
         }
@@ -1157,17 +1444,28 @@ public class SqlUtil {
             }
         }
 
-        int len = characterStoreEntry.length();
-        int sequence = 0;
+        final int baseAliasLen = characterStoreEntry.length();
+
+        // Look up the starting sequence for this base alias
+        int sequence = nextAliasSequenceMap.get(characterStoreEntry.toImmutable());
+        if (sequence == -1) {
+            sequence = 0;
+        }
+
         while (true) {
             if (sequence > 0) {
-                characterStoreEntry.trimTo(len);
+                characterStoreEntry.trimTo(baseAliasLen);
                 characterStoreEntry.put(sequence);
             }
             sequence++;
-            CharSequence alias = characterStoreEntry.toImmutable();
-            if (aliasToColumnMap.excludes(alias)) {
-                return alias;
+            if (aliasToColumnMap.excludes(characterStoreEntry.toImmutable())) {
+                // Update the sequence tracker for next time
+                final int aliasLen = characterStoreEntry.length();
+                characterStoreEntry.trimTo(baseAliasLen);
+                nextAliasSequenceMap.put(characterStoreEntry.toImmutable(), sequence);
+                // Revert entry to the alias
+                characterStoreEntry.trimTo(aliasLen);
+                return characterStoreEntry.toImmutable();
             }
         }
     }

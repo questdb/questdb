@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -42,6 +42,7 @@ import io.questdb.std.Misc;
 import io.questdb.tasks.ColumnIndexerTask;
 import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.tasks.ColumnTask;
+import io.questdb.tasks.GroupByLongTopKTask;
 import io.questdb.tasks.GroupByMergeShardTask;
 import io.questdb.tasks.LatestByTask;
 import io.questdb.tasks.O3CopyTask;
@@ -72,6 +73,9 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<CopyImportRequestTask> copyImportRequestQueue;
     private final SCSequence copyImportRequestSubSeq;
     private final MCSequence copyImportSubSeq;
+    private final MPSequence groupByLongTopKPubSeq;
+    private final RingQueue<GroupByLongTopKTask> groupByLongTopKQueue;
+    private final MCSequence groupByLongTopKSubSeq;
     private final MPSequence groupByMergeShardPubSeq;
     private final RingQueue<GroupByMergeShardTask> groupByMergeShardQueue;
     private final MCSequence groupByMergeShardSubSeq;
@@ -219,6 +223,11 @@ public class MessageBusImpl implements MessageBus {
             this.groupByMergeShardSubSeq = new MCSequence(groupByMergeShardQueue.getCycle());
             groupByMergeShardPubSeq.then(groupByMergeShardSubSeq).then(groupByMergeShardPubSeq);
 
+            this.groupByLongTopKQueue = new RingQueue<>(GroupByLongTopKTask::new, configuration.getGroupByTopKQueueCapacity());
+            this.groupByLongTopKPubSeq = new MPSequence(groupByLongTopKQueue.getCycle());
+            this.groupByLongTopKSubSeq = new MCSequence(groupByLongTopKQueue.getCycle());
+            groupByLongTopKPubSeq.then(groupByLongTopKSubSeq).then(groupByLongTopKPubSeq);
+
             this.queryCacheEventPubSeq = new MPSequence(configuration.getQueryCacheEventQueueCapacity());
             this.queryCacheEventSubSeq = new MCSequence(configuration.getQueryCacheEventQueueCapacity());
             queryCacheEventPubSeq.then(queryCacheEventSubSeq).then(queryCacheEventPubSeq);
@@ -265,6 +274,7 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public void close() {
         // We need to close only queues with native backing memory.
+        Misc.free(copyExportRequestQueue);
         Misc.free(tableWriterEventQueue);
         Misc.free(pageFrameReduceQueue);
         Misc.free(latestByQueue);
@@ -353,6 +363,21 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MCSequence getCopyImportSubSeq() {
         return copyImportSubSeq;
+    }
+
+    @Override
+    public MPSequence getGroupByLongTopKPubSeq() {
+        return groupByLongTopKPubSeq;
+    }
+
+    @Override
+    public RingQueue<GroupByLongTopKTask> getGroupByLongTopKQueue() {
+        return groupByLongTopKQueue;
+    }
+
+    @Override
+    public MCSequence getGroupByLongTopKSubSeq() {
+        return groupByLongTopKSubSeq;
     }
 
     @Override

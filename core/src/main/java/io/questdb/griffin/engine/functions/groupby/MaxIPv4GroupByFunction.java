@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class MaxIPv4GroupByFunction extends IPv4Function implements GroupByFunction, UnaryFunction {
@@ -42,6 +43,21 @@ public class MaxIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     public MaxIPv4GroupByFunction(@NotNull Function arg) {
         super();
         this.arg = arg;
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            final long hi = ptr + count * (long) Integer.BYTES;
+            long max = Numbers.ipv4ToLong(Numbers.IPv4_NULL);
+            for (; ptr < hi; ptr += Integer.BYTES) {
+                long value = Numbers.ipv4ToLong(Unsafe.getUnsafe().getInt(ptr));
+                if (value > max) {
+                    max = value;
+                }
+            }
+            mapValue.putInt(valueIndex, (int) max);
+        }
     }
 
     @Override
@@ -116,6 +132,11 @@ public class MaxIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putInt(valueIndex, Numbers.IPv4_NULL);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return true;
     }
 
     @Override

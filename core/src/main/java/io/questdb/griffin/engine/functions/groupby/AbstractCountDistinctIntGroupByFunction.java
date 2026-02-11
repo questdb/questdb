@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,13 +36,38 @@ import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
 import io.questdb.std.Numbers;
 
+/**
+ * Abstract base class for count distinct group by functions on int values.
+ */
 public abstract class AbstractCountDistinctIntGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
+    /**
+     * The function argument.
+     */
     protected final Function arg;
+    /**
+     * Primary hash set for counting distinct values.
+     */
     protected final GroupByIntHashSet setA;
+    /**
+     * Secondary hash set for counting distinct values.
+     */
     protected final GroupByIntHashSet setB;
+    /**
+     * The cardinality counter.
+     */
     protected long cardinality;
+    /**
+     * The value index in the map.
+     */
     protected int valueIndex;
 
+    /**
+     * Constructs a new count distinct int group by function.
+     *
+     * @param arg  the function argument
+     * @param setA the primary hash set
+     * @param setB the secondary hash set
+     */
     public AbstractCountDistinctIntGroupByFunction(Function arg, GroupByIntHashSet setA, GroupByIntHashSet setB) {
         this.arg = arg;
         this.setA = setA;

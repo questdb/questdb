@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,18 +24,12 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cutlass.http.client.HttpClient;
-import io.questdb.std.Files;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
 
 public class QueryExportTest extends AbstractCairoTest {
@@ -131,80 +125,6 @@ public class QueryExportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExportParquetFuzz() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
-        getExportTester()
-                .withForceRecvFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
-                .withForceSendFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
-                .withSendBufferSize(Math.max(1024, rnd.nextInt(4099)))
-                .run((HttpQueryTestBuilder.HttpClientCode) (engine, sqlExecutionContext) -> {
-                            engine.execute("""
-                                    create table xyz as (select
-                                        rnd_int() a,
-                                        rnd_double() b,
-                                        timestamp_sequence(0,1000) ts
-                                        from long_sequence(1000)
-                                    ) timestamp(ts) partition by hour""");
-
-                            String[] queries = new String[]{
-                                    "select count() from xyz",
-                                    "select a from xyz limit 1",
-                                    "select b from xyz limit 5",
-                                    "select ts, b from xyz limit 15",
-                            };
-
-                            String[] hostnames = {"localhost", "127.0.0.1"};
-                            int hostnameIndex = 0;
-                            try (TestHttpClient testHttpClient = new TestHttpClient();
-                                 var sink = new DirectUtf8Sink(16_384)
-                            ) {
-                                testHttpClient.setKeepConnection(true);
-                                for (int i = 0; i < 100; i++) {
-                                    int index = rnd.nextInt(queries.length);
-                                    if (rnd.nextInt(100) < 5) {
-                                        hostnameIndex = 1 - hostnameIndex;
-                                    }
-
-                                    // Export to Parquet
-                                    HttpClient.Request req = testHttpClient.getHttpClient().newRequest(hostnames[hostnameIndex], 9001);
-                                    req.GET().url("/exp");
-                                    String query = queries[index];
-                                    req.query("query", query);
-                                    req.query("fmt", "parquet");
-                                    if (rnd.nextBoolean()) {
-                                        req.query("rmode", "nodelay");
-                                    }
-                                    sink.clear();
-                                    testHttpClient.reqToSink(req, sink, null, null, null, null);
-                                    int bytesReceived = sink.size();
-
-                                    // Save to file
-                                    String filename = "test_export_" + i + ".parquet";
-                                    Path path = Path.getThreadLocal(root);
-                                    path.concat("export").concat(filename).$();
-                                    long fd = Files.openRW(path.$(), CairoConfiguration.O_NONE);
-                                    try {
-                                        Files.truncate(fd, bytesReceived);
-                                        long bytesWritten = Files.write(fd, sink.ptr(), bytesReceived, 0);
-                                        Assert.assertEquals(bytesReceived, bytesWritten);
-                                    } finally {
-                                        Files.close(fd);
-                                    }
-
-                                    // Read back using read_parquet() and compare with result of direct query
-                                    String selectFromParquet = "read_parquet('" + filename + "')";
-                                    var expectedSink = new StringSink();
-                                    var actualSink = new StringSink();
-                                    TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
-                                    TestUtils.printSql(engine, sqlExecutionContext, selectFromParquet, actualSink);
-                                    TestUtils.assertEquals(expectedSink, actualSink);
-                                }
-                            }
-                        }
-                );
-    }
-
-    @Test
     public void testExportParquetFuzzDisabled() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         getSimpleTester()
@@ -222,10 +142,6 @@ public class QueryExportTest extends AbstractCairoTest {
                                     ) timestamp(ts) partition by hour""");
 
                             var requestResponse = new Object[][]{
-                                    {"select count() from xyz", """
-                                        {"query":"select count() from xyz","error":"parquet export is disabled ['cairo.sql.copy.export.root' is not set]","position":0}"""},
-                                    {"select * from xyz", """
-                                        {"query":"select * from xyz","error":"parquet export is disabled ['cairo.sql.copy.export.root' is not set]","position":0}"""},
                                     {"create table abc (ts TIMESTAMP)", """
                                         {"query":"create table abc (ts TIMESTAMP)","error":"/exp endpoint only accepts SELECT","position":0}"""}
                             };

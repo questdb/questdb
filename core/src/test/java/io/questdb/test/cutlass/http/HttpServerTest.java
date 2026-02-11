@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,10 +32,8 @@ import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.cutlass.http.client.Response;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -44,15 +42,12 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.ThreadLocal;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -65,7 +60,6 @@ import static org.junit.Assert.assertTrue;
 public class HttpServerTest extends AbstractTest {
     private static final String SUCCESS = "Success";
     private static final Utf8String SUCCESS_UTF8 = new Utf8String(SUCCESS);
-    private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
 
     @Test
     public void testHttpServerBind() {
@@ -117,21 +111,8 @@ public class HttpServerTest extends AbstractTest {
                 final Utf8Sequence value = responseHeaders.getHeader(new Utf8String(expectedHeaders[i]));
                 assertTrue(Utf8s.equals(new Utf8String(expectedHeaders[i + 1]), value));
             }
-
             Assert.assertEquals(isChunked, responseHeaders.isChunked());
-
-            final StringSink sink = tlSink.get();
-
-            Fragment fragment;
-            final Response chunkedResponse = responseHeaders.getResponse();
-            while ((fragment = chunkedResponse.recv()) != null) {
-                Utf8s.utf8ToUtf16(fragment.lo(), fragment.hi(), sink);
-            }
-
-            if (expectedHttpResponse != null) {
-                TestUtils.assertEquals(expectedHttpResponse, sink);
-            }
-            sink.clear();
+            HttpUtils.assertChunkedBody(responseHeaders, expectedHttpResponse);
         }
     }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -84,7 +84,7 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
             final RecordMetadata metadata = base.getMetadata();
             // sink will be storing record columns to map key
             columnFilter.of(metadata.getColumnCount());
-            mapSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter);
+            mapSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter, configuration);
             cursor = new DistinctRecordCursor(configuration, metadata, limitLoFunction, limitHiFunction);
         } catch (Throwable th) {
             close();

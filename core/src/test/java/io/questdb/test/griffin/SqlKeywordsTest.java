@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -176,6 +176,17 @@ public class SqlKeywordsTest {
     }
 
     @Test
+    public void testIsWindowKeywordIsCaseInsensitive() {
+        Assert.assertTrue(isWindowKeyword("window"));
+        Assert.assertTrue(isWindowKeyword("WINDOW"));
+        Assert.assertTrue(isWindowKeyword("Window"));
+        Assert.assertTrue(isWindowKeyword("wINDOW"));
+        Assert.assertFalse(isWindowKeyword("windo"));
+        Assert.assertFalse(isWindowKeyword("windoww"));
+        Assert.assertFalse(isWindowKeyword("windox"));
+    }
+
+    @Test
     public void testLinear() {
         Assert.assertFalse(isLinearKeyword("12345"));
         Assert.assertFalse(isLinearKeyword("123456"));
@@ -244,6 +255,12 @@ public class SqlKeywordsTest {
         specialCases.put("isIgnoreWord", "ignore");
         specialCases.put("isNullsWord", "nulls");
         specialCases.put("isTimestampNsKeyword", "timestamp_ns");
+        specialCases.put("isDefaultTransactionReadOnly", "default_transaction_read_only");
+        specialCases.put("isExcluding", "excluding");
+        specialCases.put("isIncluding", "including");
+        specialCases.put("isComma", ",");
+        specialCases.put("isRightParen", ")");
+        specialCases.put("isCurrentTimestampKeyword", "current_timestamp");
 
         excludedCases.add("isPublicKeyword");
     }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,7 +29,6 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -317,9 +316,6 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
                 frameIndex++;
             }
-        } catch (DataUnavailableException e) {
-            // We're not yet done, so no need to cancel the circuit breaker. 
-            throw e;
         } catch (Throwable th) {
             sharedCircuitBreaker.cancel();
             throw th;

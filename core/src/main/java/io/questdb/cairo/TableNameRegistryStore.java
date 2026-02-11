@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -49,8 +50,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.Map;
 
-import static io.questdb.cairo.TableUtils.META_FILE_NAME;
-import static io.questdb.cairo.TableUtils.isMatViewDefinitionFileExists;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.std.Files.DT_FILE;
 
@@ -310,9 +310,18 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
     }
 
     private int readTableId(Path path, CharSequence dirName, FilesFacade ff) {
-        path.of(configuration.getDbRoot()).concat(dirName).concat(META_FILE_NAME);
+        path.of(configuration.getDbRoot()).concat(dirName);
+        int pathLen = path.size();
+        path.concat(META_FILE_NAME);
         long fd = ff.openRO(path.$());
         if (fd < 1) {
+            // check if it is a view
+            path.trimTo(pathLen).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME);
+            if (ff.exists(path.$())) {
+                // negative table id means WAL table,
+                // views are considered to be WAL tables
+                return -getTableIdFromTableDir(dirName);
+            }
             return 0;
         }
 
@@ -376,8 +385,9 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                             boolean isSystem = tableFlagResolver.isSystem(tableName);
                             boolean isPublic = tableFlagResolver.isPublic(tableName);
                             boolean isMatView = isMatViewDefinitionFileExists(configuration, path, dirName);
+                            boolean isView = isViewDefinitionFileExists(configuration, path, dirName);
                             String dbLogName = configuration.getDbLogName();
-                            TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
+                            TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
                             TableToken existingTableToken = tableNameToTableTokenMap.get(tableName);
 
                             if (existingTableToken != null) {
@@ -474,16 +484,17 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                         boolean isProtected = tableFlagResolver.isProtected(tableName);
                         boolean isSystem = tableFlagResolver.isSystem(tableName);
                         boolean isPublic = tableFlagResolver.isPublic(tableName);
-                        boolean isMatView = tableType == TableUtils.TABLE_TYPE_MAT;
-                        boolean isWal = tableType == TableUtils.TABLE_TYPE_WAL || isMatView;
+                        boolean isView = tableType == TABLE_TYPE_VIEW;
+                        boolean isMatView = tableType == TABLE_TYPE_MAT;
+                        boolean isWal = tableType == TABLE_TYPE_WAL || isView || isMatView;
                         String dbLogName = configuration.getDbLogName();
-                        token = new TableToken(tableName, dirName, dbLogName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
+                        token = new TableToken(tableName, dirName, dbLogName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
                     }
                     dirNameToTableTokenMap.put(dirName, ReverseTableMapItem.ofDropped(token));
                 }
             } else {
                 assert operation == OPERATION_ADD;
-                if (TableUtils.exists(ff, path, configuration.getDbRoot(), dirName) != TableUtils.TABLE_EXISTS) {
+                if (TableUtils.exists(ff, path, configuration.getDbRoot(), dirName) != TABLE_EXISTS) {
                     // This can be BAU, remove record will follow
                     tableToCompact++;
                 } else {
@@ -503,10 +514,11 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                     boolean isProtected = tableFlagResolver.isProtected(tableName);
                     boolean isSystem = tableFlagResolver.isSystem(tableName);
                     boolean isPublic = tableFlagResolver.isPublic(tableName);
+                    boolean isView = tableType == TABLE_TYPE_VIEW;
                     boolean isMatView = tableType == TableUtils.TABLE_TYPE_MAT;
-                    boolean isWal = tableType == TableUtils.TABLE_TYPE_WAL || isMatView;
+                    boolean isWal = tableType == TableUtils.TABLE_TYPE_WAL || isView || isMatView;
                     String dbLogName = configuration.getDbLogName();
-                    final TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
+                    final TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
                     tableNameToTableTokenMap.put(tableName, token);
                     if (!Chars.startsWith(token.getDirName(), token.getTableName())) {
                         // This table is renamed, log system to real table name mapping

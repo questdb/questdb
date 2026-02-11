@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -188,10 +188,10 @@ public class WalEventReader implements Closeable {
             // by adding more data at the footer of each record
             final int version = eventMem.getInt(WAL_FORMAT_OFFSET_32);
             final short formatVersion = Numbers.decodeLowShort(version);
-            if (formatVersion != WALE_FORMAT_VERSION && formatVersion != WALE_MAT_VIEW_FORMAT_VERSION) {
+            if (formatVersion != WALE_FORMAT_VERSION && formatVersion != WALE_MAT_VIEW_FORMAT_VERSION && formatVersion != WALE_VIEW_FORMAT_VERSION) {
                 throw TableUtils.validationException()
                         .put("WAL events file version does not match runtime version [expected=")
-                        .put(WALE_FORMAT_VERSION).put(" or ").put(WALE_MAT_VIEW_FORMAT_VERSION)
+                        .put(WALE_FORMAT_VERSION).put(", ").put(WALE_MAT_VIEW_FORMAT_VERSION).put(" or ").put(WALE_VIEW_FORMAT_VERSION)
                         .put(", actual=").put(formatVersion)
                         .put(']');
             }

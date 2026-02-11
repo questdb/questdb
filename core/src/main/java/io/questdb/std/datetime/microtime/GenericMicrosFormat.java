@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -468,7 +468,7 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     break;
 
                 case MicrosFormatCompiler.OP_NANOS_GREEDY:
-                    pos += Numbers.decodeHighInt(Numbers.parseIntSafely(in, pos, hi));
+                    pos += Numbers.decodeHighInt(Numbers.parseInt000Greedy(in, pos, hi));
                     break;
 
                 // MILLIS

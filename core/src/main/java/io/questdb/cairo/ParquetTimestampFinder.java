@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -164,11 +164,8 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
 
     @Override
     public void prepare() {
-        partitionDecoder.of(
-                reader.getParquetAddr(partitionIndex),
-                reader.getParquetFileSize(partitionIndex),
-                MemoryTag.NATIVE_PARQUET_PARTITION_DECODER
-        );
+        PartitionDecoder decoder = reader.getAndInitParquetPartitionDecoders(partitionIndex);
+        partitionDecoder.of(decoder);
         rowGroupBuffers.reopen();
         statBuffers.reopen();
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -62,7 +62,6 @@ final class Unordered4MapRecord implements MapRecord {
             long valueSize,
             long[] valueOffsets,
             Unordered4MapValue value,
-            @NotNull @Transient ColumnTypes keyTypes,
             @Nullable @Transient ColumnTypes valueTypes
     ) {
         this.valueSize = valueSize;
@@ -74,37 +73,18 @@ final class Unordered4MapRecord implements MapRecord {
         int keyIndexOffset;
         if (valueTypes != null) {
             keyIndexOffset = valueTypes.getColumnCount();
-            nColumns = keyTypes.getColumnCount() + valueTypes.getColumnCount();
+            nColumns = valueTypes.getColumnCount() + 1;
         } else {
             keyIndexOffset = 0;
-            nColumns = keyTypes.getColumnCount();
+            nColumns = 1;
         }
 
         columnOffsets = new long[nColumns];
 
         Long256Impl[] long256A = null;
         Long256Impl[] long256B = null;
-        long offset = 0;
-        for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
-            final int columnType = keyTypes.getColumnType(i);
-            if (ColumnType.tagOf(columnType) == ColumnType.LONG256) {
-                if (long256A == null) {
-                    long256A = new Long256Impl[nColumns];
-                    long256B = new Long256Impl[nColumns];
-                }
-                long256A[i + keyIndexOffset] = new Long256Impl();
-                long256B[i + keyIndexOffset] = new Long256Impl();
-            }
-            final int size = ColumnType.sizeOf(columnType);
-            if (size <= 0) {
-                throw CairoException.nonCritical().put("key type is not supported: ").put(ColumnType.nameOf(columnType));
-            }
-            columnOffsets[i + keyIndexOffset] = offset;
-            offset += size;
-        }
-
-        assert offset <= Unordered4Map.KEY_SIZE;
-        offset = Unordered4Map.KEY_SIZE;
+        columnOffsets[keyIndexOffset] = 0;
+        long offset = Unordered4Map.KEY_SIZE;
         if (valueTypes != null) {
             for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
                 int columnType = valueTypes.getColumnType(i);
@@ -171,7 +151,7 @@ final class Unordered4MapRecord implements MapRecord {
     @Override
     public void copyToKey(MapKey destKey) {
         Unordered4Map.Key destBaseKey = (Unordered4Map.Key) destKey;
-        destBaseKey.copyFromRawKey(startAddress);
+        destBaseKey.copyFromRawKey(Unsafe.getUnsafe().getInt(startAddress));
     }
 
     @Override

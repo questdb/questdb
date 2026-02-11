@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,10 +25,8 @@
 package io.questdb.compat;
 
 import io.questdb.DefaultHttpClientConfiguration;
-import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.cutlass.http.client.Response;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.eclipse.jetty.http.HttpMethod;
@@ -94,12 +92,8 @@ public class HttpClientCompatTest {
         Assert.assertEquals(MimeTypes.Type.APPLICATION_JSON.toString(), Utf8s.toString(respHeaders.getContentType()));
 
         Assert.assertFalse(respHeaders.isChunked());
-        Response resp = respHeaders.getResponse();
         Utf8StringSink sink = new Utf8StringSink();
-        Fragment fragment;
-        while ((fragment = resp.recv()) != null) {
-            Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
-        }
+        respHeaders.getResponse().copyTextTo(sink);
         Assert.assertEquals(expectedResponseA, sink.toString());
     }
 

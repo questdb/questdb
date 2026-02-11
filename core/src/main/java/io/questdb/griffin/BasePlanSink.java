@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
@@ -44,6 +45,7 @@ public abstract class BasePlanSink implements PlanSink {
     protected final EscapingStringSink textSink;
     protected int depth;
     protected SqlExecutionContext executionContext;
+    protected RecordMetadata metadata;
     protected int order;
     protected EscapingStringSink sink;
     protected boolean useBaseMetadata;
@@ -156,9 +158,17 @@ public abstract class BasePlanSink implements PlanSink {
         if (useBaseMetadata) {
             putBaseColumnName(columnIndex);
         } else {
-            val(factoryStack.peek().getMetadata().getColumnName(columnIndex));
+            if (metadata != null) {
+                val(metadata.getColumnName(columnIndex));
+            } else {
+                val(factoryStack.peek().getMetadata().getColumnName(columnIndex));
+            }
         }
         return this;
+    }
+
+    public void setMetadata(RecordMetadata metadata) {
+        this.metadata = metadata;
     }
 
     @Override

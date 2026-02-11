@@ -1,0 +1,124 @@
+statement ok
+CREATE TABLE Cities(Country VARCHAR, Name VARCHAR, Year INT, Population INT);
+
+statement ok
+INSERT INTO Cities VALUES ('NL', 'Amsterdam', 2000, 1005);
+
+statement ok
+INSERT INTO Cities VALUES ('NL', 'Amsterdam', 2010, 1065);
+
+statement ok
+INSERT INTO Cities VALUES ('NL', 'Amsterdam', 2020, 1158);
+
+statement ok
+INSERT INTO Cities VALUES ('US', 'Seattle', 2000, 564);
+
+statement ok
+INSERT INTO Cities VALUES ('US', 'Seattle', 2010, 608);
+
+statement ok
+INSERT INTO Cities VALUES ('US', 'Seattle', 2020, 738);
+
+statement ok
+INSERT INTO Cities VALUES ('US', 'New York City', 2000, 8015);
+
+statement ok
+INSERT INTO Cities VALUES ('US', 'New York City', 2010, 8175);
+
+statement ok
+INSERT INTO Cities VALUES ('US', 'New York City', 2020, 8772);
+
+#PIVOT Cities ON Country || '_' || Name USING SUM(Population) GROUP BY Year;
+query IIII rowsort
+WITH tbl AS (
+  SELECT Year, Population, concat(Country, '_', Name) Name FROM Cities
+)
+SELECT * FROM tbl
+PIVOT (
+  SUM(Population)
+  FOR Name IN (SELECT DISTINCT Name FROM tbl ORDER BY Name)
+  GROUP BY Year
+) ORDER BY Year;
+----
+2000	1005	8015	564
+2010	1065	8175	608
+2020	1158	8772	738
+
+#PIVOT Cities ON (CASE WHEN Country='NL' THEN NULL ELSE Country END) USING SUM(Population) GROUP BY Year;
+query II rowsort
+Cities PIVOT (SUM(Population) FOR Country IN (SELECT DISTINCT Country FROM Cities WHERE Country != 'NL') GROUP BY Year);
+----
+2000	8579
+2010	8783
+2020	9510
+
+## we allow expressions in the aggregate as well
+#PIVOT Cities ON Country || '_' || Name USING COALESCE(SUM(Population), 0) GROUP BY Year;
+query IIII rowsort
+WITH tbl AS (
+  SELECT Year, Population, concat(Country, '_', Name) Name FROM Cities
+)
+SELECT * FROM tbl
+PIVOT (
+  COALESCE(SUM(Population), 0)
+  FOR Name IN (SELECT DISTINCT Name FROM tbl ORDER BY Name)
+  GROUP BY Year
+) ORDER BY Year;
+----
+2000	1005	8015	564
+2010	1065	8175	608
+2020	1158	8772	738
+
+#
+## casts
+#query IIII rowsort
+#PIVOT Cities ON Country || '_' || Name USING SUM(Population)::VARCHAR GROUP BY Year;
+query IIII rowsort
+WITH tbl AS (
+  SELECT Year, Population, concat(Country, '_', Name) Name FROM Cities
+)
+SELECT * FROM tbl
+PIVOT (
+  SUM(Population)::varchar
+  FOR Name IN (SELECT DISTINCT Name FROM tbl ORDER BY Name)
+  GROUP BY Year
+) ORDER BY Year;
+----
+2000	1005	8015	564
+2010	1065	8175	608
+2020	1158	8772	738
+
+#
+## functions
+#query IIII rowsort
+#PIVOT Cities ON Country || '_' || Name USING SUM(Population) + 42 GROUP BY Year;
+query IIII rowsort
+WITH tbl AS (
+  SELECT Year, Population, concat(Country, '_', Name) Name FROM Cities
+)
+SELECT * FROM tbl
+PIVOT (
+  SUM(Population) + 42
+  FOR Name IN (SELECT DISTINCT Name FROM tbl ORDER BY Name)
+  GROUP BY Year
+) ORDER BY Year;
+----
+2000	1047	8057	606
+2010	1107	8217	650
+2020	1200	8814	780
+
+#PIVOT Cities ON Country || '_' || Name USING SUM(Population) + COUNT(*) GROUP BY Year;
+query IIII rowsort
+WITH tbl AS (
+  SELECT Year, Population, concat(Country, '_', Name) Name FROM Cities
+)
+SELECT * FROM tbl
+PIVOT (
+  SUM(Population) + COUNT(1)
+  FOR Name IN (SELECT DISTINCT Name FROM tbl ORDER BY Name)
+  GROUP BY Year
+) ORDER BY Year;
+----
+2000 1006 8016 565
+2010 1066 8176 609
+2020 1159 8773 739

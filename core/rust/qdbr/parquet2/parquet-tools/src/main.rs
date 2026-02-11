@@ -33,13 +33,6 @@ fn main() -> Result<()> {
     }
 
     if let Some(matches) = matches.subcommand_matches("dump") {
-        // The column sample size is controlled as an argument to the command line.
-        // The default value is 5.
-        let sample_size: usize = match matches.value_of("size") {
-            Some(val) => val.parse::<usize>().unwrap_or(5),
-            None => 5,
-        };
-
         // The columns to be listed can be selected using the columns argument
         // If no argument is chosen then a sample of all the columns if presented
         let columns: Option<Vec<usize>> = match matches.values_of("columns") {
@@ -51,7 +44,7 @@ fn main() -> Result<()> {
             None => None,
         };
 
-        dump_file(file_name, sample_size, columns, &mut output)?;
+        dump_file(file_name, columns, &mut output)?;
     }
 
     Ok(())

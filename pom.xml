@@ -6,7 +6,7 @@
   ~    \__\_\\__,_|\___||___/\__|____/|____/
   ~
   ~  Copyright (c) 2014-2019 Appsicle
-  ~  Copyright (c) 2019-2024 QuestDB
+  ~  Copyright (c) 2019-2026 QuestDB
   ~
   ~  Licensed under the Apache License, Version 2.0 (the "License");
   ~  you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <version>9.2.2-SNAPSHOT</version>
+    <version>9.3.3-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb-parent</artifactId>
     <packaging>pom</packaging>
@@ -35,7 +35,7 @@
         <connection>scm:git:https://github.com/questdb/questdb.git</connection>
         <developerConnection>scm:git:https://github.com/questdb/questdb.git</developerConnection>
         <url>https://github.com/questdb/questdb</url>
-        <tag>HEAD</tag>
+        <tag>9.3.1</tag>
     </scm>
 
     <build>

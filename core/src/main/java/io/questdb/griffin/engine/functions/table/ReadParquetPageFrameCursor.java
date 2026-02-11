@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -46,7 +45,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.griffin.engine.functions.table.ReadParquetRecordCursor.metadataHasChanged;
+import static io.questdb.griffin.engine.functions.table.ReadParquetRecordCursor.canProjectMetadata;
 
 /**
  * Page frame cursor for parallel read_parquet() SQL function.
@@ -73,7 +72,7 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
 
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
-        counter.add(rowCount);
+        counter.add(rowCount - frame.partitionHi);
     }
 
     @Override
@@ -132,14 +131,10 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         this.fileSize = ff.length(fd);
         this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
         decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-        if (metadataHasChanged(metadata, decoder)) {
+        columnIndexes.clear();
+        if (!canProjectMetadata(metadata, decoder, null, columnIndexes)) {
             // We need to recompile the factory as the Parquet metadata has changed.
             throw TableReferenceOutOfDateException.of(path);
-        }
-
-        columnIndexes.clear();
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            columnIndexes.add(i);
         }
         this.rowCount = decoder.metadata().getRowCount();
         this.rowGroupCount = decoder.metadata().getRowGroupCount();
@@ -148,7 +143,7 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
-    public long size() throws DataUnavailableException {
+    public long size() {
         return rowCount;
     }
 
@@ -212,13 +207,8 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         }
 
         @Override
-        public long getParquetAddr() {
-            return addr;
-        }
-
-        @Override
-        public long getParquetFileSize() {
-            return fileSize;
+        public PartitionDecoder getParquetPartitionDecoder() {
+            return decoder;
         }
 
         @Override

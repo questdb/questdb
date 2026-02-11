@@ -37,6 +37,70 @@ impl<'a> BitmapIter<'a> {
             current_byte,
         }
     }
+
+    #[inline]
+    pub fn advance(&mut self, count: usize) {
+        if count == 0 || self.remaining == 0 {
+            return;
+        }
+
+        let count = count.min(self.remaining);
+        self.remaining -= count;
+
+        // Fast path for small values
+        macro_rules! advance_one {
+            ($self:ident) => {
+                $self.mask = $self.mask.rotate_left(1);
+                if $self.mask == 1 {
+                    $self.current_byte = $self.iter.next().unwrap_or(&0);
+                }
+            };
+        }
+
+        match count {
+            1 => {
+                advance_one!(self);
+                return;
+            }
+            2 => {
+                advance_one!(self);
+                advance_one!(self);
+                return;
+            }
+            3 => {
+                advance_one!(self);
+                advance_one!(self);
+                advance_one!(self);
+                return;
+            }
+            4 => {
+                advance_one!(self);
+                advance_one!(self);
+                advance_one!(self);
+                advance_one!(self);
+                return;
+            }
+            _ => {}
+        }
+
+        let current_bit = self.mask.trailing_zeros() as usize;
+        let bits_left_in_byte = 8 - current_bit;
+
+        if count < bits_left_in_byte {
+            self.mask = self.mask.rotate_left(count as u32);
+        } else {
+            let remaining_to_skip = count - bits_left_in_byte;
+            let bytes_to_skip = remaining_to_skip / 8;
+            let final_bits = remaining_to_skip % 8;
+
+            let slice = self.iter.as_slice();
+            let skip = bytes_to_skip.min(slice.len());
+            self.iter = slice[skip..].iter();
+
+            self.current_byte = self.iter.next().unwrap_or(&0);
+            self.mask = 1u8.rotate_left(final_bits as u32);
+        }
+    }
 }
 
 impl<'a> Iterator for BitmapIter<'a> {

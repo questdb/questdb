@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,9 @@ import io.questdb.griffin.engine.functions.AbstractUnaryLongFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
+/**
+ * Factory for the abs() function on long type.
+ */
 public class AbsLongFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {

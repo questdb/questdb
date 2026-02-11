@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,13 +29,16 @@ import io.questdb.std.ex.FatalError;
 import io.questdb.std.ex.KerberosException;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.management.ManagementFactory;
+import java.net.URL;
 import java.nio.file.Paths;
+import java.security.CodeSource;
 import java.util.concurrent.locks.LockSupport;
 
 public final class Os {
@@ -260,9 +263,52 @@ public final class Os {
 
     private static native int setCurrentThreadAffinity0(int cpu);
 
-    private static boolean tryLoadFromDistribution(String cxxLibName, String rustLibName) {
-        // the property name must be sync-ed with questdb.sh
+    private static boolean isJlinkRuntime() {
+        // Detect jlink-ed runtime by checking if CodeSource uses jrt: protocol
+        CodeSource codeSource = Os.class.getProtectionDomain().getCodeSource();
+        if (codeSource == null) {
+            return false;
+        }
+        URL location = codeSource.getLocation();
+        return location != null && "jrt".equals(location.getProtocol());
+    }
+
+    @Nullable
+    public static String getNativeLibsDir(String libName) {
+        // the property name must be synced with questdb.sh and docker-entrypoint.sh
         String libsDir = System.getProperty("questdb.libs.dir");
+        if (libsDir != null) {
+            // hooray, we are running from a distribution and the lib dir was set explicitly!
+            return libsDir;
+        }
+
+        // let's try to detect the lib location
+        if (!isJlinkRuntime()) {
+            // we are not in a jlink-ed runtime image -> we have to extract the native libs from the jar
+            return null;
+        }
+
+        // In jlink-ed runtime images, java.home points to the runtime image root,
+        // modules and native libs are in $JAVA_HOME/lib/
+        String javaHome = System.getProperty("java.home");
+        if (javaHome == null) {
+            return null;
+        }
+
+        java.nio.file.Path libDir = Paths.get(javaHome, "lib");
+        if (!libDir.toFile().isDirectory()) {
+            return null;
+        }
+
+        java.nio.file.Path libPath = libDir.resolve(libName);
+        if (!libPath.toFile().exists()) {
+            return null;
+        }
+        return libDir.toString();
+    }
+
+    private static boolean tryLoadFromDistribution(String cxxLibName, String rustLibName) {
+        String libsDir = getNativeLibsDir(cxxLibName);
         if (libsDir == null) {
             return false;
         }
@@ -345,6 +391,7 @@ public final class Os {
                 if (libRustStream == null) {
                     loadLib(prdLibRoot + rustLibName);
                 } else {
+                    System.err.println("Loading DEV Rust library: " + devRustLib);
                     loadLib(devRustLib, libRustStream);
                 }
             }

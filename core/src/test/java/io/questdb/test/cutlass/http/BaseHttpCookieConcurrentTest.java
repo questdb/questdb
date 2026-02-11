@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,16 +28,11 @@ import io.questdb.ServerMain;
 import io.questdb.cutlass.http.HttpConstants;
 import io.questdb.cutlass.http.HttpCookie;
 import io.questdb.cutlass.http.HttpSessionStore;
-import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.cutlass.http.client.Response;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Rnd;
-import io.questdb.std.ThreadLocal;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -57,7 +52,6 @@ import static io.questdb.test.tools.TestUtils.*;
 public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest {
     protected static final String ADMIN_PWD = "quest";
     protected static final String ADMIN_USER = "admin";
-    private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
     protected volatile int numOfThreads;
 
     @Test
@@ -263,18 +257,6 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
         }, numOfSessions -> numOfSessions == 2);
     }
 
-    private static void assertResponse(HttpClient.ResponseHeaders responseHeaders, String expected) {
-        final StringSink sink = tlSink.get();
-        sink.clear();
-
-        Response chunkedResponse = responseHeaders.getResponse();
-        Fragment fragment;
-        while ((fragment = chunkedResponse.recv()) != null) {
-            Utf8s.utf8ToUtf16(fragment.lo(), fragment.hi(), sink);
-        }
-        assertEquals(expected, sink);
-    }
-
     private static void awaitAllBarriers(CyclicBarrier[] barriers, int from) throws Exception {
         for (int i = from; i < barriers.length; i++) {
             barriers[i].await();
@@ -292,7 +274,7 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
         ) {
             responseHeaders.await();
             assertEquals("200", responseHeaders.getStatusCode());
-            assertResponse(responseHeaders, "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}");
+            HttpUtils.assertChunkedBody(responseHeaders, "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}");
         }
     }
 
@@ -310,7 +292,7 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
             responseHeaders.await();
             assertEquals("200", responseHeaders.getStatusCode());
             sessionId = HttpUtils.assertSessionCookie(responseHeaders, false);
-            assertResponse(responseHeaders, "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}");
+            HttpUtils.assertChunkedBody(responseHeaders, "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}");
         }
 
         Assert.assertNotNull(sessionStore.getSession(sessionId));
@@ -344,7 +326,7 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
         ) {
             responseHeaders.await();
             assertEquals("401", responseHeaders.getStatusCode());
-            assertResponse(responseHeaders, "Unauthorized\r\n");
+            HttpUtils.assertChunkedBody(responseHeaders, "Unauthorized\r\n");
         }
     }
 
@@ -369,7 +351,7 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
         ) {
             responseHeaders.await();
             assertEquals("200", responseHeaders.getStatusCode());
-            assertResponse(responseHeaders, "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}");
+            HttpUtils.assertChunkedBody(responseHeaders, "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}");
             return extractSessionCookie(responseHeaders);
         }
     }

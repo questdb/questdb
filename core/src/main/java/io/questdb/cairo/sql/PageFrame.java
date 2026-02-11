@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 
 /**
  * Represents a contiguous fragment of a table partition.
@@ -95,18 +96,7 @@ public interface PageFrame {
      */
     long getPageSize(int columnIndex);
 
-    /**
-     * Return Parquet partition's mmapped file address or 0 in case of a native partition.
-     */
-    long getParquetAddr();
-
-    /**
-     * Return the Parquet partition's read size or -1 in case of a native partition.
-     * Specifying the read size allows us to find a specific metadata at the end of the read size
-     * (rather than the end of the file) should we have performed an O3 operation that extended
-     * the file size.
-     */
-    long getParquetFileSize();
+    PartitionDecoder getParquetPartitionDecoder();
 
     /**
      * Returns row group index corresponding to the Parquet page frame.
@@ -139,4 +129,5 @@ public interface PageFrame {
      * Return low row index within the frame's partition, inclusive.
      */
     long getPartitionLo();
+
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Misc;
 
 public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFrameCursor {
     private static final Log LOG = LogFactory.getLog(IntervalBwdPartitionFrameCursor.class);
@@ -60,15 +59,7 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
         while (intervalsLo1 < intervalsHi1 && partitionLo1 < partitionHi1) {
             // We don't need to worry about column tops and null column because we
             // are working with timestamp. Timestamp column cannot be added to existing table.
-            long rowCount;
-            try {
-                rowCount = reader.getPartitionRowCountFromMetadata(partitionHi1);
-            } catch (DataUnavailableException e) {
-                // The data is in cold storage, close the event and give up on size calculation.
-                Misc.free(e.getEvent());
-                return;
-            }
-
+            final long rowCount = reader.getPartitionRowCountFromMetadata(partitionHi1);
             if (rowCount > 0) {
                 final TimestampFinder timestampFinder = initTimestampFinder(partitionHi1, rowCount);
 
@@ -119,7 +110,7 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 }
 
                 // Interval is inclusive of edges, and we have to bump to high bound because it is non-inclusive.
-                long lo = timestampFinder.findTimestamp(intervalLo - 1, 0, hi);
+                long lo = intervalLo > Long.MIN_VALUE ? timestampFinder.findTimestamp(intervalLo - 1, 0, hi) : 0;
                 if (hi > lo) {
                     size += (hi - lo);
 
@@ -237,9 +228,9 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
 
                     final byte format = reader.getPartitionFormat(currentPartition);
                     if (format == PartitionFormat.PARQUET) {
-                        assert parquetDecoder.getFileAddr() != -1 : "parquet decoder is not initialized";
                         frame.format = PartitionFormat.PARQUET;
-                        frame.parquetDecoder = parquetDecoder;
+                        frame.parquetDecoder = reader.getAndInitParquetPartitionDecoders(currentPartition);
+                        assert frame.parquetDecoder.getFileAddr() != 0 : "parquet decoder is not initialized";
                     } else {
                         assert format == PartitionFormat.NATIVE;
                         frame.format = PartitionFormat.NATIVE;

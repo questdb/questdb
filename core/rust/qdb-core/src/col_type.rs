@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-use crate::error::{fmt_err, CoreError, CoreErrorExt, CoreResult};
+use crate::error::{CoreError, CoreErrorExt, CoreResult, fmt_err};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt::{Debug, Display, Formatter};
 use std::num::NonZeroI32;
@@ -177,7 +177,7 @@ impl ColumnTypeTag {
     // of constructing an invalid `ColumnType`, e.g. one without the appropriate
     // extra type info for Geo types.
     #[cfg(test)]
-    pub(crate) fn into_type(self) -> ColumnType {
+    pub(crate) const fn into_type(self) -> ColumnType {
         ColumnType::new(self, 0)
     }
 }
@@ -230,6 +230,12 @@ fn tag_of(col_type: i32) -> u8 {
 }
 
 const TYPE_FLAG_DESIGNATED_TIMESTAMP: i32 = 1i32 << 17;
+
+/// Bit 20 represents the designated timestamp column order.
+/// For historical compatibility:
+/// - 0 = ascending order (default)
+/// - 1 = descending order
+const TYPE_FLAG_DESIGNATED_TIMESTAMP_ORDER_DESCENDING: i32 = 1i32 << 20;
 const ARRAY_ELEMTYPE_FIELD_MASK: i32 = 0x3F;
 const ARRAY_ELEMTYPE_FIELD_POS: i32 = 8;
 const ARRAY_NDIMS_LIMIT: i32 = 32; // inclusive
@@ -244,7 +250,7 @@ pub struct ColumnType {
 }
 
 impl ColumnType {
-    pub fn new(tag: ColumnTypeTag, extra_type_info: i32) -> Self {
+    pub const fn new(tag: ColumnTypeTag, extra_type_info: i32) -> Self {
         let shifted_extra_type_info = extra_type_info << 8;
         let code = NonZeroI32::new(tag as i32 | shifted_extra_type_info)
             .expect("column type code should never be zero");
@@ -260,7 +266,16 @@ impl ColumnType {
             && ((self.code.get() & TYPE_FLAG_DESIGNATED_TIMESTAMP) > 0)
     }
 
+    pub fn is_designated_timestamp_ascending(&self) -> bool {
+        self.is_designated()
+            && (self.code.get() & TYPE_FLAG_DESIGNATED_TIMESTAMP_ORDER_DESCENDING) == 0
+    }
+
     pub fn into_designated(self) -> CoreResult<ColumnType> {
+        self.into_designated_with_order(true)
+    }
+
+    pub fn into_designated_with_order(self, ascending: bool) -> CoreResult<ColumnType> {
         if self.tag() != ColumnTypeTag::Timestamp {
             return Err(fmt_err!(
                 InvalidType,
@@ -268,7 +283,11 @@ impl ColumnType {
                 self
             ));
         }
-        let code = NonZeroI32::new(self.code() | TYPE_FLAG_DESIGNATED_TIMESTAMP).unwrap();
+        let mut flags = TYPE_FLAG_DESIGNATED_TIMESTAMP;
+        if !ascending {
+            flags |= TYPE_FLAG_DESIGNATED_TIMESTAMP_ORDER_DESCENDING;
+        }
+        let code = NonZeroI32::new(self.code() | flags).unwrap();
         Ok(Self { code })
     }
 
@@ -280,7 +299,12 @@ impl ColumnType {
                 self
             ));
         }
-        let code = NonZeroI32::new(self.code() & !TYPE_FLAG_DESIGNATED_TIMESTAMP).unwrap();
+        let code = NonZeroI32::new(
+            self.code()
+                & !(TYPE_FLAG_DESIGNATED_TIMESTAMP
+                    | TYPE_FLAG_DESIGNATED_TIMESTAMP_ORDER_DESCENDING),
+        )
+        .unwrap();
         Ok(Self { code })
     }
 
@@ -320,6 +344,10 @@ impl ColumnType {
     pub fn has_flag(&self, flag: i32) -> bool {
         let flag_shifted: i32 = flag << 8;
         self.code.get() & flag_shifted == flag_shifted
+    }
+
+    pub fn is_symbol(&self) -> bool {
+        self.tag() == ColumnTypeTag::Symbol
     }
 }
 
@@ -488,6 +516,35 @@ mod tests {
         assert!(typ.is_ok());
         let typ = typ.unwrap();
         assert!(!typ.is_designated());
+    }
+
+    #[test]
+    fn test_designated_timestamp_ascending() {
+        for tag in ColumnTypeTag::VALUES {
+            if tag != ColumnTypeTag::Timestamp {
+                assert!(!ColumnType::new(tag, 0).is_designated_timestamp_ascending());
+            }
+        }
+        let typ = ColumnType::new(ColumnTypeTag::Timestamp, 0);
+        assert!(!typ.is_designated_timestamp_ascending());
+
+        let typ_asc = ColumnType::new(ColumnTypeTag::Timestamp, 0)
+            .into_designated()
+            .unwrap();
+        assert!(typ_asc.is_designated());
+        assert!(typ_asc.is_designated_timestamp_ascending());
+
+        let typ_desc = ColumnType::new(ColumnTypeTag::Timestamp, 0)
+            .into_designated_with_order(false)
+            .unwrap();
+        assert!(typ_desc.is_designated());
+        assert!(!typ_desc.is_designated_timestamp_ascending());
+
+        let typ_non_designated = typ_asc.into_non_designated().unwrap();
+        assert!(!typ_non_designated.is_designated_timestamp_ascending());
+
+        let typ_non_designated = typ_desc.into_non_designated().unwrap();
+        assert!(!typ_non_designated.is_designated_timestamp_ascending());
     }
 
     #[test]

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,8 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -31,13 +33,13 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
-import io.questdb.cutlass.text.CopyExportResult;
+import io.questdb.cutlass.parquet.CopyExportRequestTask;
+import io.questdb.cutlass.parquet.HTTPSerialParquetExporter;
+import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.model.ExportModel;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Rnd;
@@ -48,10 +50,9 @@ import java.io.Closeable;
 public class ExportQueryProcessorState implements Mutable, Closeable {
     final StringSink fileName = new StringSink();
     final StringSink sqlText = new StringSink();
-    private final CopyExportResult copyExportResult;
+    private final CopyExportContext copyExportContext;
     private final StringSink errorMessage = new StringSink();
     private final ExportModel exportModel = new ExportModel();
-    private final FilesFacade filesFacade;
     private final HttpConnectionContext httpConnectionContext;
     HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
     int columnIndex;
@@ -61,30 +62,33 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     boolean countRows = false;
     RecordCursor cursor;
     char delimiter = ',';
+    boolean descending;
+    boolean firstParquetWriteCall = true;
     boolean hasNext;
     RecordMetadata metadata;
     boolean noMeta = false;
-    long parquetFileAddress = 0;
-    long parquetFileFd = -1;
+    PageFrameCursor pageFrameCursor;
     long parquetFileOffset = 0;
-    long parquetFileSize = 0;
     boolean pausedQuery = false;
     int queryState;
     Record record;
     RecordCursorFactory recordCursorFactory;
     Rnd rnd;
+    boolean serialExporterInit = false;
     long skip;
     long stop;
-    boolean waitingForCopy;
+    CopyExportRequestTask task = new CopyExportRequestTask();
     private CreateTableOperation createParquetOp;
     private int errorPosition;
     private String parquetExportTableName;
     private boolean queryCacheable = false;
+    private HTTPSerialParquetExporter serialParquetExporter;
+    long timeout;
+    private final ParquetWriteCallback writeCallback = new ParquetWriteCallback();
 
-    public ExportQueryProcessorState(HttpConnectionContext httpConnectionContext, FilesFacade filesFacade) {
+    public ExportQueryProcessorState(HttpConnectionContext httpConnectionContext, CopyExportContext copyContext) {
         this.httpConnectionContext = httpConnectionContext;
-        this.copyExportResult = new CopyExportResult();
-        this.filesFacade = filesFacade;
+        this.copyExportContext = copyContext;
         clear();
     }
 
@@ -95,6 +99,8 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         rnd = null;
         record = null;
         cursor = Misc.free(cursor);
+        pageFrameCursor = Misc.free(pageFrameCursor);
+        firstParquetWriteCall = true;
         if (recordCursorFactory != null) {
             if (queryCacheable) {
                 httpConnectionContext.getSelectCache().put(sqlText, recordCursorFactory);
@@ -116,30 +122,30 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         arrayState.clear();
         columnValueFullySent = true;
         metadata = null;
-        copyID = -1;
+        releaseExportEntry();
         createParquetOp = Misc.free(createParquetOp);
         parquetExportTableName = null;
-        waitingForCopy = false;
         parquetFileOffset = 0;
         exportModel.clear();
-        cleanupParquetState();
-        copyExportResult.clear();
         errorMessage.clear();
         errorPosition = 0;
+        serialExporterInit = false;
+        task.clear();
+        writeCallback.of(null, null);
     }
 
     @Override
     public void close() {
         cursor = Misc.free(cursor);
         recordCursorFactory = Misc.free(recordCursorFactory);
+        pageFrameCursor = Misc.free(pageFrameCursor);
+        task = Misc.free(task);
+        serialParquetExporter = null;
+        writeCallback.of(null, null);
     }
 
     public ExportModel getExportModel() {
         return exportModel;
-    }
-
-    public CopyExportResult getExportResult() {
-        return copyExportResult;
     }
 
     public long getFd() {
@@ -154,6 +160,21 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         return createParquetOp;
     }
 
+    public HttpConnectionContext getHttpConnectionContext() {
+        return httpConnectionContext;
+    }
+
+    HTTPSerialParquetExporter getOrCreateSerialParquetExporter(CairoEngine engine) {
+        if (serialParquetExporter == null) {
+            serialParquetExporter = new HTTPSerialParquetExporter(engine);
+        }
+        return serialParquetExporter;
+    }
+
+    public boolean isQueryCacheable() {
+        return queryCacheable;
+    }
+
     public void setParquetExportTableName(String tableName) {
         this.parquetExportTableName = tableName;
     }
@@ -162,17 +183,39 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         this.createParquetOp = createOp;
     }
 
-    private void cleanupParquetState() {
-        if (parquetFileAddress != 0) {
-            filesFacade.munmap(parquetFileAddress, parquetFileSize, MemoryTag.NATIVE_PARQUET_EXPORTER);
-            parquetFileAddress = 0;
-            parquetFileSize = 0;
+    void initWriteCallback(ExportQueryProcessor processor) {
+        this.writeCallback.of(processor, this);
+    }
+
+    CopyExportRequestTask.StreamWriteParquetCallBack getWriteCallback() {
+        return writeCallback;
+    }
+
+    private static final class ParquetWriteCallback implements CopyExportRequestTask.StreamWriteParquetCallBack {
+        private ExportQueryProcessor processor;
+        private ExportQueryProcessorState state;
+
+        void of(ExportQueryProcessor processor, ExportQueryProcessorState state) {
+            this.processor = processor;
+            this.state = state;
         }
-        if (parquetFileFd != -1) {
-            filesFacade.close(parquetFileFd);
-            parquetFileFd = -1;
+
+        @Override
+        public void onWrite(long dataPtr, long dataLen) throws Exception {
+            if (processor != null && state != null) {
+                processor.writeParquetData(state, dataPtr, dataLen);
+            }
         }
-        copyExportResult.cleanUpTempPath(filesFacade);
+    }
+
+    private void releaseExportEntry() {
+        if (copyID != -1) {
+            CopyExportContext.ExportTaskEntry entry = copyExportContext.getEntry(copyID);
+            if (entry != null) {
+                copyExportContext.releaseEntry(entry);
+            }
+            copyID = -1;
+        }
     }
 
     void resumeError(HttpChunkedResponse response) throws PeerIsSlowToReadException, PeerDisconnectedException {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TimeFrame;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.std.Rows;
 
 /**
@@ -56,12 +56,7 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
 
     @Override
     public boolean hasNext() {
-        // Common master cursor iteration logic
-        if (isMasterHasNextPending) {
-            masterHasNext = masterCursor.hasNext();
-            isMasterHasNextPending = false;
-        }
-        if (!masterHasNext) {
+        if (!masterCursor.hasNext()) {
             return false;
         }
 
@@ -77,10 +72,6 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
         if (masterTimestamp >= lookaheadTimestamp) {
             nextSlave(masterTimestamp);
         }
-        // Set `isMasterHasNextPending` only now because `nextSlave()` may throw DataUnavailableException,
-        // and in such a case we don't want to call `masterCursor.hasNext()` during the next call to `this.hasNext()`.
-        // If we are here, it's clear that nextSlave() did not throw DataUnavailableException.
-        isMasterHasNextPending = true;
 
         boolean hasSlave = record.hasSlave();
         origHasSlave = hasSlave;
@@ -109,7 +100,7 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
         return true;
     }
 
-    public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+    public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
         super.of(masterCursor, slaveCursor);
         this.circuitBreaker = circuitBreaker;
     }

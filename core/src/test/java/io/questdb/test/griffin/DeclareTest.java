@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,190 +29,193 @@ import io.questdb.griffin.model.ExecutionModel;
 import org.junit.Test;
 
 public class DeclareTest extends AbstractSqlParserTest {
-    private static final String AAPL_DDL = "CREATE TABLE 'AAPL_orderbook' (\n" +
-            "  timestamp TIMESTAMP,\n" +
-            "  ts_recv VARCHAR,\n" +
-            "  ts_event VARCHAR,\n" +
-            "  rtype LONG,\n" +
-            "  symbol VARCHAR,\n" +
-            "  publisher_id LONG,\n" +
-            "  instrument_id LONG,\n" +
-            "  action VARCHAR,\n" +
-            "  side VARCHAR,\n" +
-            "  depth LONG,\n" +
-            "  price DOUBLE,\n" +
-            "  size LONG,\n" +
-            "  flags LONG,\n" +
-            "  ts_in_delta LONG,\n" +
-            "  sequence LONG,\n" +
-            "  bid_px_00 DOUBLE,\n" +
-            "  ask_px_00 DOUBLE,\n" +
-            "  bid_sz_00 LONG,\n" +
-            "  ask_sz_00 LONG,\n" +
-            "  bid_ct_00 LONG,\n" +
-            "  ask_ct_00 LONG,\n" +
-            "  bid_px_01 DOUBLE,\n" +
-            "  ask_px_01 DOUBLE,\n" +
-            "  bid_sz_01 LONG,\n" +
-            "  ask_sz_01 LONG,\n" +
-            "  bid_ct_01 LONG,\n" +
-            "  ask_ct_01 LONG,\n" +
-            "  bid_px_02 DOUBLE,\n" +
-            "  ask_px_02 DOUBLE,\n" +
-            "  bid_sz_02 LONG,\n" +
-            "  ask_sz_02 LONG,\n" +
-            "  bid_ct_02 LONG,\n" +
-            "  ask_ct_02 LONG,\n" +
-            "  bid_px_03 DOUBLE,\n" +
-            "  ask_px_03 DOUBLE,\n" +
-            "  bid_sz_03 LONG,\n" +
-            "  ask_sz_03 LONG,\n" +
-            "  bid_ct_03 LONG,\n" +
-            "  ask_ct_03 LONG,\n" +
-            "  bid_px_04 DOUBLE,\n" +
-            "  ask_px_04 DOUBLE,\n" +
-            "  bid_sz_04 LONG,\n" +
-            "  ask_sz_04 LONG,\n" +
-            "  bid_ct_04 LONG,\n" +
-            "  ask_ct_04 LONG,\n" +
-            "  bid_px_05 DOUBLE,\n" +
-            "  ask_px_05 DOUBLE,\n" +
-            "  bid_sz_05 LONG,\n" +
-            "  ask_sz_05 LONG,\n" +
-            "  bid_ct_05 LONG,\n" +
-            "  ask_ct_05 LONG,\n" +
-            "  bid_px_06 DOUBLE,\n" +
-            "  ask_px_06 DOUBLE,\n" +
-            "  bid_sz_06 LONG,\n" +
-            "  ask_sz_06 LONG,\n" +
-            "  bid_ct_06 LONG,\n" +
-            "  ask_ct_06 LONG,\n" +
-            "  bid_px_07 DOUBLE,\n" +
-            "  ask_px_07 DOUBLE,\n" +
-            "  bid_sz_07 LONG,\n" +
-            "  ask_sz_07 LONG,\n" +
-            "  bid_ct_07 LONG,\n" +
-            "  ask_ct_07 LONG,\n" +
-            "  bid_px_08 DOUBLE,\n" +
-            "  ask_px_08 DOUBLE,\n" +
-            "  bid_sz_08 LONG,\n" +
-            "  ask_sz_08 LONG,\n" +
-            "  bid_ct_08 LONG,\n" +
-            "  ask_ct_08 LONG,\n" +
-            "  bid_px_09 DOUBLE,\n" +
-            "  ask_px_09 DOUBLE,\n" +
-            "  bid_sz_09 LONG,\n" +
-            "  ask_sz_09 LONG,\n" +
-            "  bid_ct_09 LONG,\n" +
-            "  ask_ct_09 LONG\n" +
-            ") timestamp (timestamp) PARTITION BY HOUR WAL;";
-    private static final String TRADES_DATA = "INSERT INTO trades(timestamp,price,amount) VALUES ('2022-03-08T18:03:57.609765Z','2615.54','4.4E-4'),\n" +
-            "('2022-03-08T18:03:57.710419Z','39269.98','0.001'),\n" +
-            "('2022-03-08T18:03:57.764098Z','2615.4','0.001'),\n" +
-            "('2022-03-08T18:03:57.764098Z','2615.4','0.002'),\n" +
-            "('2022-03-08T18:03:57.764098Z','2615.4','4.2698000000000004E-4'),\n" +
-            "('2022-03-08T18:03:58.194582Z','2615.36','0.02593599'),\n" +
-            "('2022-03-08T18:03:58.194582Z','2615.37','0.03500836'),\n" +
-            "('2022-03-08T18:03:58.194582Z','2615.46','0.17260246'),\n" +
-            "('2022-03-08T18:03:58.194582Z','2615.470000000000','0.14810976'),\n" +
-            "('2022-03-08T18:03:58.357448Z','39263.28','0.00392897'),\n" +
-            "('2022-03-08T18:03:58.357448Z','39265.31','1.27E-4'),\n" +
-            "('2022-03-08T18:03:58.357448Z','39265.31','2.45E-4'),\n" +
-            "('2022-03-08T18:03:58.357448Z','39265.31','7.3E-5'),\n" +
-            "('2022-03-08T18:03:58.612275Z','2615.35','0.02245868'),\n" +
-            "('2022-03-08T18:03:58.612275Z','2615.36','0.0324461300000'),\n" +
-            "('2022-03-08T18:03:58.660121Z','39262.42','4.6562000000000003E-4'),\n" +
-            "('2022-03-08T18:03:58.660121Z','39265.270000000004','6.847E-5'),\n" +
-            "('2022-03-08T18:03:58.682070Z','2615.62','0.02685107'),\n" +
-            "('2022-03-08T18:03:58.682070Z','2615.62','4.4E-4'),\n" +
-            "('2022-03-08T18:03:58.682070Z','2615.62','4.4E-4'),\n" +
-            "('2022-03-08T18:03:58.682070Z','2615.62','4.4E-4'),\n" +
-            "('2022-03-08T18:03:58.682070Z','2615.62','4.4E-4'),\n" +
-            "('2022-03-08T18:03:58.682070Z','2615.63','0.00828692'),\n" +
-            "('2022-03-08T18:03:59.093929Z','2615.08','0.0182400000000'),\n" +
-            "('2022-03-08T18:03:59.093929Z','2615.36','4.4E-4'),\n" +
-            "('2022-03-08T18:03:59.093929Z','2615.38','4.4E-4'),\n" +
-            "('2022-03-08T18:03:59.093929Z','2615.43','4.4E-4'),\n" +
-            "('2022-03-08T18:03:59.093929Z','2615.43','4.4E-4'),\n" +
-            "('2022-03-08T18:03:59.355334Z','39263.24','0.0127958999999'),\n" +
-            "('2022-03-08T18:03:59.608328Z','2615.450000000000','0.001'),\n" +
-            "('2022-03-08T18:03:59.608328Z','2615.450000000000','0.0440829'),\n" +
-            "('2022-03-08T18:03:59.608328Z','2615.46','4.4E-4'),\n" +
-            "('2022-03-08T18:03:59.608328Z','2615.55','4.4E-4'),\n" +
-            "('2022-03-08T18:03:59.608328Z','2615.55','4.4E-4'),\n" +
-            "('2022-03-08T18:03:59.608328Z','2615.55','4.4E-4'),\n" +
-            "('2022-03-08T18:03:59.608328Z','2615.56','7.011200000000001E-4'),\n" +
-            "('2022-03-08T18:03:59.727709Z','2615.44','4.4E-4'),\n" +
-            "('2022-03-08T18:03:59.727709Z','2615.46','0.00556635'),\n" +
-            "('2022-03-08T18:04:00.200434Z','39263.71','0.00207171'),\n" +
-            "('2022-03-08T18:04:00.286031Z','2615.490000000000','0.001'),\n" +
-            "('2022-03-08T18:04:00.286031Z','2615.5','4.4E-4'),\n" +
-            "('2022-03-08T18:04:00.286031Z','2615.5','4.4E-4'),\n" +
-            "('2022-03-08T18:04:00.286031Z','2615.5','4.4E-4'),\n" +
-            "('2022-03-08T18:04:00.286031Z','2615.5','4.4E-4'),\n" +
-            "('2022-03-08T18:04:00.286031Z','2615.51','0.03560969'),\n" +
-            "('2022-03-08T18:04:00.286031Z','2615.52','0.03448545'),\n" +
-            "('2022-03-08T18:04:00.286031Z','2615.66','0.05214486'),\n" +
-            "('2022-03-08T18:04:00.326210Z','2615.46','0.05398012'),\n" +
-            "('2022-03-08T18:04:00.395576Z','39268.89','0.00137114'),\n" +
-            "('2022-03-08T18:04:00.395576Z','39268.89','0.00874886'),\n" +
-            "('2022-03-08T18:04:00.399099Z','2615.46','0.20830946'),\n" +
-            "('2022-03-08T18:04:00.399099Z','2615.470000000000','0.001'),\n" +
-            "('2022-03-08T18:04:00.399099Z','2615.470000000000','0.001'),\n" +
-            "('2022-03-08T18:04:00.431068Z','2615.48','0.00283596'),\n" +
-            "('2022-03-08T18:04:00.583472Z','39268.89','1.6998E-4'),\n" +
-            "('2022-03-08T18:04:00.583472Z','39269.03','4.2543E-4'),\n" +
-            "('2022-03-08T18:04:00.652059Z','39269.03','0.00243515'),\n" +
-            "('2022-03-08T18:04:00.678509Z','39269.03','0.0059'),\n" +
-            "('2022-03-08T18:04:00.690258Z','39269.03','2.83E-6'),\n" +
-            "('2022-03-08T18:04:00.690258Z','39269.520000000004','0.00764717'),\n" +
-            "('2022-03-08T18:04:00.769190Z','2615.48','4.4E-4'),\n" +
-            "('2022-03-08T18:04:00.769190Z','2615.490000000000','4.4E-4'),\n" +
-            "('2022-03-08T18:04:00.769190Z','2615.490000000000','4.4E-4'),\n" +
-            "('2022-03-08T18:04:00.769190Z','2615.490000000000','4.4E-4'),\n" +
-            "('2022-03-08T18:04:00.769190Z','2615.5','0.0384595200000'),\n" +
-            "('2022-03-08T18:04:00.797517Z','39269.520000000004','1.274E-5'),\n" +
-            "('2022-03-08T18:04:00.797517Z','39269.66','0.0175104600000'),\n" +
-            "('2022-03-08T18:04:00.822053Z','39271.15','0.038'),\n" +
-            "('2022-03-08T18:04:00.825881Z','2615.52','4.4E-4'),\n" +
-            "('2022-03-08T18:04:00.825881Z','2615.52','4.4E-4'),\n" +
-            "('2022-03-08T18:04:00.826507Z','2615.66','4.4E-4'),\n" +
-            "('2022-03-08T18:04:00.826507Z','2615.66','4.4E-4'),\n" +
-            "('2022-03-08T18:04:00.826507Z','2615.67','0.570000000000'),\n" +
-            "('2022-03-08T18:04:00.826507Z','2616.220000000000','0.479120000000'),\n" +
-            "('2022-03-08T18:04:00.976207Z','39275.08','1.4401E-4'),\n" +
-            "('2022-03-08T18:04:01.000524Z','39268.13','0.01281'),\n" +
-            "('2022-03-08T18:04:01.004211Z','2615.66','4.4E-4'),\n" +
-            "('2022-03-08T18:04:01.004211Z','2615.66','4.4E-4'),\n" +
-            "('2022-03-08T18:04:01.004211Z','2615.66','4.4E-4'),\n" +
-            "('2022-03-08T18:04:01.062339Z','39275.08','0.09985599'),\n" +
-            "('2022-03-08T18:04:01.082274Z','39277.11','0.00876115'),\n" +
-            "('2022-03-08T18:04:01.164363Z','39279.17','0.0479300000000'),\n" +
-            "('2022-03-08T18:04:01.164363Z','39279.18','0.0270700000000'),\n" +
-            "('2022-03-08T18:04:01.370105Z','39284.23','0.00243635'),\n" +
-            "('2022-03-08T18:04:01.529881Z','39284.090000000004','0.01747499'),\n" +
-            "('2022-03-08T18:04:01.617122Z','39272.05','0.02625746'),\n" +
-            "('2022-03-08T18:04:01.783673Z','2615.8','0.0180000000000'),\n" +
-            "('2022-03-08T18:04:01.783673Z','2615.950000000000','0.001'),\n" +
-            "('2022-03-08T18:04:01.783673Z','2615.950000000000','0.001'),\n" +
-            "('2022-03-08T18:04:01.787719Z','2616.08','0.001'),\n" +
-            "('2022-03-08T18:04:01.787719Z','2616.09','0.001'),\n" +
-            "('2022-03-08T18:04:01.787719Z','2616.100000000000','0.00732372000000'),\n" +
-            "('2022-03-08T18:04:01.991343Z','2615.69','1.91228355'),\n" +
-            "('2022-03-08T18:04:01.991343Z','2615.700000000000','0.12193348'),\n" +
-            "('2022-03-08T18:04:01.991343Z','2615.77','0.15516619'),\n" +
-            "('2022-03-08T18:04:01.991343Z','2615.81','0.001'),\n" +
-            "('2022-03-08T18:04:01.991343Z','2615.81','0.001'),\n" +
-            "('2022-03-08T18:04:01.991343Z','2615.81','0.001'),\n" +
-            "('2022-03-08T18:04:02.006053Z','2616.02','0.001'),\n" +
-            "('2022-03-08T18:04:02.006053Z','2616.02','0.00318975');";
-    private static final String TRADES_DDL = "CREATE TABLE 'trades' (\n" +
-            "  symbol SYMBOL,\n" +
-            "  side SYMBOL,\n" +
-            "  price DOUBLE,\n" +
-            "  amount DOUBLE,\n" +
-            "  timestamp TIMESTAMP\n" +
-            ") timestamp (timestamp) PARTITION BY DAY WAL;";
+    private static final String AAPL_DDL = """
+            CREATE TABLE 'AAPL_orderbook' (
+              timestamp TIMESTAMP,
+              ts_recv VARCHAR,
+              ts_event VARCHAR,
+              rtype LONG,
+              symbol VARCHAR,
+              publisher_id LONG,
+              instrument_id LONG,
+              action VARCHAR,
+              side VARCHAR,
+              depth LONG,
+              price DOUBLE,
+              size LONG,
+              flags LONG,
+              ts_in_delta LONG,
+              sequence LONG,
+              bid_px_00 DOUBLE,
+              ask_px_00 DOUBLE,
+              bid_sz_00 LONG,
+              ask_sz_00 LONG,
+              bid_ct_00 LONG,
+              ask_ct_00 LONG,
+              bid_px_01 DOUBLE,
+              ask_px_01 DOUBLE,
+              bid_sz_01 LONG,
+              ask_sz_01 LONG,
+              bid_ct_01 LONG,
+              ask_ct_01 LONG,
+              bid_px_02 DOUBLE,
+              ask_px_02 DOUBLE,
+              bid_sz_02 LONG,
+              ask_sz_02 LONG,
+              bid_ct_02 LONG,
+              ask_ct_02 LONG,
+              bid_px_03 DOUBLE,
+              ask_px_03 DOUBLE,
+              bid_sz_03 LONG,
+              ask_sz_03 LONG,
+              bid_ct_03 LONG,
+              ask_ct_03 LONG,
+              bid_px_04 DOUBLE,
+              ask_px_04 DOUBLE,
+              bid_sz_04 LONG,
+              ask_sz_04 LONG,
+              bid_ct_04 LONG,
+              ask_ct_04 LONG,
+              bid_px_05 DOUBLE,
+              ask_px_05 DOUBLE,
+              bid_sz_05 LONG,
+              ask_sz_05 LONG,
+              bid_ct_05 LONG,
+              ask_ct_05 LONG,
+              bid_px_06 DOUBLE,
+              ask_px_06 DOUBLE,
+              bid_sz_06 LONG,
+              ask_sz_06 LONG,
+              bid_ct_06 LONG,
+              ask_ct_06 LONG,
+              bid_px_07 DOUBLE,
+              ask_px_07 DOUBLE,
+              bid_sz_07 LONG,
+              ask_sz_07 LONG,
+              bid_ct_07 LONG,
+              ask_ct_07 LONG,
+              bid_px_08 DOUBLE,
+              ask_px_08 DOUBLE,
+              bid_sz_08 LONG,
+              ask_sz_08 LONG,
+              bid_ct_08 LONG,
+              ask_ct_08 LONG,
+              bid_px_09 DOUBLE,
+              ask_px_09 DOUBLE,
+              bid_sz_09 LONG,
+              ask_sz_09 LONG,
+              bid_ct_09 LONG,
+              ask_ct_09 LONG
+            ) timestamp (timestamp) PARTITION BY HOUR WAL;""";
+    private static final String TRADES_DATA = """
+            INSERT INTO trades(timestamp,price,amount) VALUES ('2022-03-08T18:03:57.609765Z','2615.54','4.4E-4'),
+            ('2022-03-08T18:03:57.710419Z','39269.98','0.001'),
+            ('2022-03-08T18:03:57.764098Z','2615.4','0.001'),
+            ('2022-03-08T18:03:57.764098Z','2615.4','0.002'),
+            ('2022-03-08T18:03:57.764098Z','2615.4','4.2698000000000004E-4'),
+            ('2022-03-08T18:03:58.194582Z','2615.36','0.02593599'),
+            ('2022-03-08T18:03:58.194582Z','2615.37','0.03500836'),
+            ('2022-03-08T18:03:58.194582Z','2615.46','0.17260246'),
+            ('2022-03-08T18:03:58.194582Z','2615.470000000000','0.14810976'),
+            ('2022-03-08T18:03:58.357448Z','39263.28','0.00392897'),
+            ('2022-03-08T18:03:58.357448Z','39265.31','1.27E-4'),
+            ('2022-03-08T18:03:58.357448Z','39265.31','2.45E-4'),
+            ('2022-03-08T18:03:58.357448Z','39265.31','7.3E-5'),
+            ('2022-03-08T18:03:58.612275Z','2615.35','0.02245868'),
+            ('2022-03-08T18:03:58.612275Z','2615.36','0.0324461300000'),
+            ('2022-03-08T18:03:58.660121Z','39262.42','4.6562000000000003E-4'),
+            ('2022-03-08T18:03:58.660121Z','39265.270000000004','6.847E-5'),
+            ('2022-03-08T18:03:58.682070Z','2615.62','0.02685107'),
+            ('2022-03-08T18:03:58.682070Z','2615.62','4.4E-4'),
+            ('2022-03-08T18:03:58.682070Z','2615.62','4.4E-4'),
+            ('2022-03-08T18:03:58.682070Z','2615.62','4.4E-4'),
+            ('2022-03-08T18:03:58.682070Z','2615.62','4.4E-4'),
+            ('2022-03-08T18:03:58.682070Z','2615.63','0.00828692'),
+            ('2022-03-08T18:03:59.093929Z','2615.08','0.0182400000000'),
+            ('2022-03-08T18:03:59.093929Z','2615.36','4.4E-4'),
+            ('2022-03-08T18:03:59.093929Z','2615.38','4.4E-4'),
+            ('2022-03-08T18:03:59.093929Z','2615.43','4.4E-4'),
+            ('2022-03-08T18:03:59.093929Z','2615.43','4.4E-4'),
+            ('2022-03-08T18:03:59.355334Z','39263.24','0.0127958999999'),
+            ('2022-03-08T18:03:59.608328Z','2615.450000000000','0.001'),
+            ('2022-03-08T18:03:59.608328Z','2615.450000000000','0.0440829'),
+            ('2022-03-08T18:03:59.608328Z','2615.46','4.4E-4'),
+            ('2022-03-08T18:03:59.608328Z','2615.55','4.4E-4'),
+            ('2022-03-08T18:03:59.608328Z','2615.55','4.4E-4'),
+            ('2022-03-08T18:03:59.608328Z','2615.55','4.4E-4'),
+            ('2022-03-08T18:03:59.608328Z','2615.56','7.011200000000001E-4'),
+            ('2022-03-08T18:03:59.727709Z','2615.44','4.4E-4'),
+            ('2022-03-08T18:03:59.727709Z','2615.46','0.00556635'),
+            ('2022-03-08T18:04:00.200434Z','39263.71','0.00207171'),
+            ('2022-03-08T18:04:00.286031Z','2615.490000000000','0.001'),
+            ('2022-03-08T18:04:00.286031Z','2615.5','4.4E-4'),
+            ('2022-03-08T18:04:00.286031Z','2615.5','4.4E-4'),
+            ('2022-03-08T18:04:00.286031Z','2615.5','4.4E-4'),
+            ('2022-03-08T18:04:00.286031Z','2615.5','4.4E-4'),
+            ('2022-03-08T18:04:00.286031Z','2615.51','0.03560969'),
+            ('2022-03-08T18:04:00.286031Z','2615.52','0.03448545'),
+            ('2022-03-08T18:04:00.286031Z','2615.66','0.05214486'),
+            ('2022-03-08T18:04:00.326210Z','2615.46','0.05398012'),
+            ('2022-03-08T18:04:00.395576Z','39268.89','0.00137114'),
+            ('2022-03-08T18:04:00.395576Z','39268.89','0.00874886'),
+            ('2022-03-08T18:04:00.399099Z','2615.46','0.20830946'),
+            ('2022-03-08T18:04:00.399099Z','2615.470000000000','0.001'),
+            ('2022-03-08T18:04:00.399099Z','2615.470000000000','0.001'),
+            ('2022-03-08T18:04:00.431068Z','2615.48','0.00283596'),
+            ('2022-03-08T18:04:00.583472Z','39268.89','1.6998E-4'),
+            ('2022-03-08T18:04:00.583472Z','39269.03','4.2543E-4'),
+            ('2022-03-08T18:04:00.652059Z','39269.03','0.00243515'),
+            ('2022-03-08T18:04:00.678509Z','39269.03','0.0059'),
+            ('2022-03-08T18:04:00.690258Z','39269.03','2.83E-6'),
+            ('2022-03-08T18:04:00.690258Z','39269.520000000004','0.00764717'),
+            ('2022-03-08T18:04:00.769190Z','2615.48','4.4E-4'),
+            ('2022-03-08T18:04:00.769190Z','2615.490000000000','4.4E-4'),
+            ('2022-03-08T18:04:00.769190Z','2615.490000000000','4.4E-4'),
+            ('2022-03-08T18:04:00.769190Z','2615.490000000000','4.4E-4'),
+            ('2022-03-08T18:04:00.769190Z','2615.5','0.0384595200000'),
+            ('2022-03-08T18:04:00.797517Z','39269.520000000004','1.274E-5'),
+            ('2022-03-08T18:04:00.797517Z','39269.66','0.0175104600000'),
+            ('2022-03-08T18:04:00.822053Z','39271.15','0.038'),
+            ('2022-03-08T18:04:00.825881Z','2615.52','4.4E-4'),
+            ('2022-03-08T18:04:00.825881Z','2615.52','4.4E-4'),
+            ('2022-03-08T18:04:00.826507Z','2615.66','4.4E-4'),
+            ('2022-03-08T18:04:00.826507Z','2615.66','4.4E-4'),
+            ('2022-03-08T18:04:00.826507Z','2615.67','0.570000000000'),
+            ('2022-03-08T18:04:00.826507Z','2616.220000000000','0.479120000000'),
+            ('2022-03-08T18:04:00.976207Z','39275.08','1.4401E-4'),
+            ('2022-03-08T18:04:01.000524Z','39268.13','0.01281'),
+            ('2022-03-08T18:04:01.004211Z','2615.66','4.4E-4'),
+            ('2022-03-08T18:04:01.004211Z','2615.66','4.4E-4'),
+            ('2022-03-08T18:04:01.004211Z','2615.66','4.4E-4'),
+            ('2022-03-08T18:04:01.062339Z','39275.08','0.09985599'),
+            ('2022-03-08T18:04:01.082274Z','39277.11','0.00876115'),
+            ('2022-03-08T18:04:01.164363Z','39279.17','0.0479300000000'),
+            ('2022-03-08T18:04:01.164363Z','39279.18','0.0270700000000'),
+            ('2022-03-08T18:04:01.370105Z','39284.23','0.00243635'),
+            ('2022-03-08T18:04:01.529881Z','39284.090000000004','0.01747499'),
+            ('2022-03-08T18:04:01.617122Z','39272.05','0.02625746'),
+            ('2022-03-08T18:04:01.783673Z','2615.8','0.0180000000000'),
+            ('2022-03-08T18:04:01.783673Z','2615.950000000000','0.001'),
+            ('2022-03-08T18:04:01.783673Z','2615.950000000000','0.001'),
+            ('2022-03-08T18:04:01.787719Z','2616.08','0.001'),
+            ('2022-03-08T18:04:01.787719Z','2616.09','0.001'),
+            ('2022-03-08T18:04:01.787719Z','2616.100000000000','0.00732372000000'),
+            ('2022-03-08T18:04:01.991343Z','2615.69','1.91228355'),
+            ('2022-03-08T18:04:01.991343Z','2615.700000000000','0.12193348'),
+            ('2022-03-08T18:04:01.991343Z','2615.77','0.15516619'),
+            ('2022-03-08T18:04:01.991343Z','2615.81','0.001'),
+            ('2022-03-08T18:04:01.991343Z','2615.81','0.001'),
+            ('2022-03-08T18:04:01.991343Z','2615.81','0.001'),
+            ('2022-03-08T18:04:02.006053Z','2616.02','0.001'),
+            ('2022-03-08T18:04:02.006053Z','2616.02','0.00318975');""";
+    private static final String TRADES_DDL = """
+            CREATE TABLE 'trades' (
+              symbol SYMBOL,
+              side SYMBOL,
+              price DOUBLE,
+              amount DOUBLE,
+              timestamp TIMESTAMP
+            ) timestamp (timestamp) PARTITION BY DAY WAL;""";
 
     @Test
     public void testDeclareCreateAsSelect() throws Exception {
@@ -222,6 +225,14 @@ public class DeclareTest extends AbstractSqlParserTest {
             assertModel("create batch 1000000 table foo as (select-virtual 1 + 2 column from (long_sequence(1)))",
                     "CREATE TABLE foo AS (DECLARE @x := 1, @y := 2 SELECT @x + @y)", ExecutionModel.CREATE_TABLE);
         });
+    }
+
+    @Test
+    public void testDeclareCreateView() throws Exception {
+        assertMemoryLeak(() ->
+                assertModel("create view foo as (select-virtual 1 + 2 column from (long_sequence(1)))",
+                        "CREATE VIEW foo AS (DECLARE @x := 1, @y := 2 SELECT @x + @y)", ExecutionModel.CREATE_VIEW)
+        );
     }
 
     @Test
@@ -254,8 +265,10 @@ public class DeclareTest extends AbstractSqlParserTest {
                     query, ExecutionModel.INSERT);
             execute(query);
             drainWalQueue();
-            assertSql("x\n" +
-                    "3\n", "select * from foo");
+            assertSql("""
+                    x
+                    3
+                    """, "select * from foo");
         });
     }
 
@@ -265,6 +278,39 @@ public class DeclareTest extends AbstractSqlParserTest {
                 "DECLARE @from_time := dateadd('h',-1,now()), DECLARE @to_time := now() WITH t as ( select now() as ts ) select * from t where ts between @from_time and @to_time;",
                 45,
                 "unexpected token [DECLARE] - Multiple DECLARE statements are not allowed. Use single DECLARE block: DECLARE @a := 1, @b := 1, @c := 1");
+    }
+
+    @Test
+    public void testDeclareOverridable() throws Exception {
+        assertModel("select-virtual 5 5 from (long_sequence(1))",
+                "DECLARE OVERRIDABLE @x := 5 SELECT @x", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareOverridableCaseInsensitive() throws Exception {
+        assertModel("select-virtual 5 5 from (long_sequence(1))",
+                "DECLARE overridable @x := 5 SELECT @x", ExecutionModel.QUERY);
+        assertModel("select-virtual 5 5 from (long_sequence(1))",
+                "DECLARE Overridable @x := 5 SELECT @x", ExecutionModel.QUERY);
+        assertModel("select-virtual 5 5 from (long_sequence(1))",
+                "DECLARE OVERRIDABLE @x := 5 SELECT @x", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareOverridableMissingVariable() throws Exception {
+        assertException("DECLARE OVERRIDABLE SELECT 1", 20, "variable name expected after OVERRIDABLE");
+    }
+
+    @Test
+    public void testDeclareOverridableMixed() throws Exception {
+        assertModel("select-virtual 5 5, 10 10 from (long_sequence(1))",
+                "DECLARE OVERRIDABLE @x := 5, @y := 10 SELECT @x, @y", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareOverridableMultiple() throws Exception {
+        assertModel("select-virtual 5 5, 10 10 from (long_sequence(1))",
+                "DECLARE OVERRIDABLE @x := 5, OVERRIDABLE @y := 10 SELECT @x, @y", ExecutionModel.QUERY);
     }
 
     @Test
@@ -342,10 +388,25 @@ public class DeclareTest extends AbstractSqlParserTest {
     @Test
     public void testDeclareSelectExplainPlan() throws Exception {
         assertModel("EXPLAIN (FORMAT TEXT) ", "EXPLAIN DECLARE @x := 5 SELECT @x", ExecutionModel.EXPLAIN);
-        assertSql("QUERY PLAN\n" +
-                "VirtualRecord\n" +
-                "  functions: [5]\n" +
-                "    long_sequence count: 1\n", "EXPLAIN DECLARE @x := 5 SELECT @x");
+        assertSql("""
+                QUERY PLAN
+                VirtualRecord
+                  functions: [5]
+                    long_sequence count: 1
+                """, "EXPLAIN DECLARE @x := 5 SELECT @x");
+    }
+
+    @Test
+    public void testDeclareSelectFromGenerateSeries() throws Exception {
+        // Test for issue #6547: DECLARE substitution should work for function arguments in FROM clause
+        assertMemoryLeak(() -> assertSql(
+                """
+                        generate_series
+                        2025-01-01T00:00:00.000000Z
+                        2025-01-02T00:00:00.000000Z
+                        """,
+                "DECLARE @lo := '2025-01-01', @hi := '2025-01-02', @unit := '1d' SELECT * FROM generate_series(@lo, @hi, @unit)"
+        ));
     }
 
     @Test
@@ -439,8 +500,10 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertModel("select-choose col2 from (select-virtual [2 - 5 + col1 col2] 2 - 5 + col1 col2 from (select-virtual [2 + 5 col1] 2 + 5 col1 from (long_sequence(1))) a) b",
                 query
                 , ExecutionModel.QUERY);
-        assertSql("col2\n" +
-                        "4\n",
+        assertSql("""
+                        col2
+                        4
+                        """,
                 query);
     }
 
@@ -471,10 +534,12 @@ public class DeclareTest extends AbstractSqlParserTest {
             String query = "DECLARE @lo := -5, @hi := -2 SELECT * FROM trades LIMIT @lo, @hi";
             assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades timestamp (timestamp)) limit -(5),-(2)",
                     query, ExecutionModel.QUERY);
-            assertSql("symbol\tside\tprice\tamount\ttimestamp\n" +
-                    "\t\t2615.81\t0.001\t2022-03-08T18:04:01.991343Z\n" +
-                    "\t\t2615.81\t0.001\t2022-03-08T18:04:01.991343Z\n" +
-                    "\t\t2615.81\t0.001\t2022-03-08T18:04:01.991343Z\n", query);
+            assertSql("""
+                    symbol\tside\tprice\tamount\ttimestamp
+                    \t\t2615.81\t0.001\t2022-03-08T18:04:01.991343Z
+                    \t\t2615.81\t0.001\t2022-03-08T18:04:01.991343Z
+                    \t\t2615.81\t0.001\t2022-03-08T18:04:01.991343Z
+                    """, query);
         });
     }
 
@@ -515,11 +580,12 @@ public class DeclareTest extends AbstractSqlParserTest {
 
     @Test
     public void testDeclareSelectRequiredComma() throws Exception {
-        assertModel("select-virtual 5 + 2 column from (long_sequence(1))", "DECLARE \n" +
-                "  @x := 5,\n" +
-                "  @y := 2\n" +
-                "SELECT\n" +
-                "  @x + @y", ExecutionModel.QUERY);
+        assertModel("select-virtual 5 + 2 column from (long_sequence(1))", """
+                DECLARE\s
+                  @x := 5,
+                  @y := 2
+                SELECT
+                  @x + @y""", ExecutionModel.QUERY);
     }
 
     @Test
@@ -639,13 +705,16 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertSql("column\n" +
-                            "true\n",
-                    "DECLARE\n" +
-                            "    @today := today(),\n" +
-                            "    @start := interval_start(@today),\n" +
-                            "    @end := interval_end(@today)\n" +
-                            "    SELECT @today = interval(@start, @end)");
+            assertSql("""
+                            column
+                            true
+                            """,
+                    """
+                            DECLARE
+                                @today := today(),
+                                @start := interval_start(@today),
+                                @end := interval_end(@today)
+                                SELECT @today = interval(@start, @end)""");
         });
     }
 
@@ -659,31 +728,58 @@ public class DeclareTest extends AbstractSqlParserTest {
                             " COUNT() updates_100ms over (order by timestamp range between '100' millisecond preceding and current row exclude no others)," +
                             " SUM(bid_sz_00) volume_2sec over (order by timestamp range between '2' second preceding and current row exclude no others)" +
                             " from (select [timestamp, bid_px_00, bid_sz_00] from AAPL_orderbook timestamp (timestamp) where bid_px_00 > 0) limit 10",
-                    "DECLARE\n" +
-                            "    @ts := timestamp,\n" +
-                            "    @bid_price := bid_px_00,\n" +
-                            "    @bid_size := bid_sz_00,\n" +
-                            "    @avg_time_range := '5',\n" +
-                            "    @updates_period := '100',\n" +
-                            "    @volume_2sec := '2'\n" +
-                            "SELECT\n" +
-                            "    @ts,\n" +
-                            "    @bid_price,\n" +
-                            "    AVG(@bid_price) OVER (\n" +
-                            "        ORDER BY @ts\n" +
-                            "        RANGE BETWEEN @avg_time_range MINUTE PRECEDING AND CURRENT ROW\n" +
-                            "    ) AS avg_5min,\n" +
-                            "    COUNT(*) OVER (\n" +
-                            "        ORDER BY @ts\n" +
-                            "        RANGE BETWEEN @updates_period MILLISECOND PRECEDING AND CURRENT ROW\n" +
-                            "    ) AS updates_100ms,\n" +
-                            "    SUM(@bid_size) OVER (\n" +
-                            "        ORDER BY @ts\n" +
-                            "        RANGE BETWEEN @volume_2sec SECOND PRECEDING AND CURRENT ROW\n" +
-                            "    ) AS volume_2sec\n" +
-                            "FROM AAPL_orderbook\n" +
-                            "WHERE @bid_price > 0\n" +
-                            "LIMIT 10;"
+                    """
+                            DECLARE
+                                @ts := timestamp,
+                                @bid_price := bid_px_00,
+                                @bid_size := bid_sz_00,
+                                @avg_time_range := '5',
+                                @updates_period := '100',
+                                @volume_2sec := '2'
+                            SELECT
+                                @ts,
+                                @bid_price,
+                                AVG(@bid_price) OVER (
+                                    ORDER BY @ts
+                                    RANGE BETWEEN @avg_time_range MINUTE PRECEDING AND CURRENT ROW
+                                ) AS avg_5min,
+                                COUNT(*) OVER (
+                                    ORDER BY @ts
+                                    RANGE BETWEEN @updates_period MILLISECOND PRECEDING AND CURRENT ROW
+                                ) AS updates_100ms,
+                                SUM(@bid_size) OVER (
+                                    ORDER BY @ts
+                                    RANGE BETWEEN @volume_2sec SECOND PRECEDING AND CURRENT ROW
+                                ) AS volume_2sec
+                            FROM AAPL_orderbook
+                            WHERE @bid_price > 0
+                            LIMIT 10;"""
+                    , ExecutionModel.QUERY);
+        });
+    }
+
+    @Test
+    public void testDeclareSelectWithWindowFunctionPartitionBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(AAPL_DDL);
+            drainWalQueue();
+            // Test declared variable in PARTITION BY clause
+            assertModel("select-window timestamp, bid_px_00, " +
+                            "ROW_NUMBER() row_num over (partition by bid_px_00 order by timestamp) " +
+                            "from (select [timestamp, bid_px_00] from AAPL_orderbook timestamp (timestamp)) limit 5",
+                    """
+                            DECLARE
+                                @partition_col := bid_px_00,
+                                @order_col := timestamp
+                            SELECT
+                                @order_col,
+                                @partition_col,
+                                ROW_NUMBER() OVER (
+                                    PARTITION BY @partition_col
+                                    ORDER BY @order_col
+                                ) AS row_num
+                            FROM AAPL_orderbook
+                            LIMIT 5;"""
                     , ExecutionModel.QUERY);
         });
     }
@@ -736,14 +832,16 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            String plan = "Async Group By workers: 1\n" +
-                    "  keys: [timestamp]\n" +
-                    "  values: [count(*)]\n" +
-                    "  filter: null\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Interval forward scan on: trades\n" +
-                    "          intervals: [(\"2024-01-01T00:00:00.000001Z\",\"MAX\")]\n";
+            String plan = """
+                    Async Group By workers: 1
+                      keys: [timestamp]
+                      values: [count(*)]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: trades
+                              intervals: [("2024-01-01T00:00:00.000001Z","MAX")]
+                    """;
             assertPlanNoLeakCheck("declare @ts := (timestamp > '2024-01-01') select timestamp, count() from trades where @ts;", plan);
             assertPlanNoLeakCheck("declare @lo := '2024-01-01' select timestamp, count() from trades where timestamp > @lo;", plan);
         });
@@ -754,14 +852,16 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            String plan = "Async Group By workers: 1\n" +
-                    "  keys: [timestamp]\n" +
-                    "  values: [count(*)]\n" +
-                    "  filter: null\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Interval forward scan on: trades\n" +
-                    "          intervals: [(\"2024-01-01T00:00:00.000001Z\",\"2024-08-22T23:59:59.999999Z\")]\n";
+            String plan = """
+                    Async Group By workers: 1
+                      keys: [timestamp]
+                      values: [count(*)]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: trades
+                              intervals: [("2024-01-01T00:00:00.000001Z","2024-08-22T23:59:59.999999Z")]
+                    """;
             assertPlanNoLeakCheck("declare @ts := (timestamp > '2024-01-01' and timestamp < '2024-08-23') select timestamp, count() from trades where @ts;", plan);
             assertPlanNoLeakCheck("declare @lo := '2024-01-01', @hi := '2024-08-23' select timestamp, count() from trades where timestamp > @lo and timestamp < @hi;", plan);
         });
@@ -772,14 +872,16 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            String plan = "Async Group By workers: 1\n" +
-                    "  keys: [timestamp]\n" +
-                    "  values: [count(*)]\n" +
-                    "  filter: null\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Interval forward scan on: trades\n" +
-                    "          intervals: [(\"MIN\",\"2024-08-22T23:59:59.999999Z\")]\n";
+            String plan = """
+                    Async Group By workers: 1
+                      keys: [timestamp]
+                      values: [count(*)]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: trades
+                              intervals: [("MIN","2024-08-22T23:59:59.999999Z")]
+                    """;
             assertPlanNoLeakCheck("declare @ts := (timestamp < '2024-08-23')  select timestamp, count() from trades where @ts;", plan);
             assertPlanNoLeakCheck("declare @hi := '2024-08-23' select timestamp, count() from trades where timestamp < @hi;", plan);
         });
@@ -790,14 +892,16 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            String plan = "Async Group By workers: 1\n" +
-                    "  keys: [timestamp]\n" +
-                    "  values: [count(*)]\n" +
-                    "  filter: null\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Interval forward scan on: trades\n" +
-                    "          intervals: [(\"2024-01-01T00:00:00.000001Z\",\"MAX\")]\n";
+            String plan = """
+                    Async Group By workers: 1
+                      keys: [timestamp]
+                      values: [count(*)]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: trades
+                              intervals: [("2024-01-01T00:00:00.000001Z","MAX")]
+                    """;
             assertPlanNoLeakCheck("declare @ts := (timestamp > '2024-01-01') select timestamp, count() from trades where @ts;", plan);
             assertPlanNoLeakCheck("declare @lo := '2024-01-01' select timestamp, count() from trades where timestamp > @lo;", plan);
         });
@@ -808,14 +912,16 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            String plan = "Async Group By workers: 1\n" +
-                    "  keys: [timestamp]\n" +
-                    "  values: [count(*)]\n" +
-                    "  filter: null\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Interval forward scan on: trades\n" +
-                    "          intervals: [(\"2024-01-01T00:00:00.000000Z\",\"2024-08-23T00:00:00.000000Z\")]\n";
+            String plan = """
+                    Async Group By workers: 1
+                      keys: [timestamp]
+                      values: [count(*)]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: trades
+                              intervals: [("2024-01-01T00:00:00.000000Z","2024-08-23T00:00:00.000000Z")]
+                    """;
             assertPlanNoLeakCheck("declare @ts := (timestamp >= '2024-01-01' and timestamp <= '2024-08-23') select timestamp, count() from trades where @ts;", plan);
             assertPlanNoLeakCheck("declare @lo := '2024-01-01', @hi := '2024-08-23' select timestamp, count() from trades where timestamp >= @lo and timestamp <= @hi;", plan);
         });
@@ -826,14 +932,16 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            String plan = "Async Group By workers: 1\n" +
-                    "  keys: [timestamp]\n" +
-                    "  values: [count(*)]\n" +
-                    "  filter: null\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Interval forward scan on: trades\n" +
-                    "          intervals: [(\"MIN\",\"2024-08-23T00:00:00.000000Z\")]\n";
+            String plan = """
+                    Async Group By workers: 1
+                      keys: [timestamp]
+                      values: [count(*)]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: trades
+                              intervals: [("MIN","2024-08-23T00:00:00.000000Z")]
+                    """;
             assertPlanNoLeakCheck("declare @ts := (timestamp <= '2024-08-23') select timestamp, count() from trades where @ts;", plan);
             assertPlanNoLeakCheck("declare @hi := '2024-08-23' select timestamp, count() from trades where timestamp <= @hi;", plan);
         });
@@ -844,14 +952,16 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            String plan = "Async Group By workers: 1\n" +
-                    "  keys: [timestamp]\n" +
-                    "  values: [count(*)]\n" +
-                    "  filter: null\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Interval forward scan on: trades\n" +
-                    "          intervals: [(\"2024-01-01T00:00:00.000000Z\",\"MAX\")]\n";
+            String plan = """
+                    Async Group By workers: 1
+                      keys: [timestamp]
+                      values: [count(*)]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: trades
+                              intervals: [("2024-01-01T00:00:00.000000Z","MAX")]
+                    """;
             assertPlanNoLeakCheck("declare @ts := (timestamp >= '2024-01-01') select timestamp, count() from trades where @ts;", plan);
             assertPlanNoLeakCheck("declare @lo := '2024-01-01' select timestamp, count() from trades where timestamp >= @lo;", plan);
 
@@ -863,14 +973,16 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            String plan = "Async Group By workers: 1\n" +
-                    "  keys: [timestamp]\n" +
-                    "  values: [count(*)]\n" +
-                    "  filter: null\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Interval forward scan on: trades\n" +
-                    "          intervals: [(\"2024-01-01T00:00:00.000000Z\",\"2024-08-23T00:00:00.000000Z\")]\n";
+            String plan = """
+                    Async Group By workers: 1
+                      keys: [timestamp]
+                      values: [count(*)]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: trades
+                              intervals: [("2024-01-01T00:00:00.000000Z","2024-08-23T00:00:00.000000Z")]
+                    """;
             assertPlanNoLeakCheck("declare @ts := (timestamp between '2024-01-01' and '2024-08-23') select timestamp, count() from trades where @ts;", plan);
             assertPlanNoLeakCheck("declare @lo := '2024-01-01', @hi := '2024-08-23' select timestamp, count() from trades where timestamp between @lo and @hi;", plan);
         });
@@ -881,14 +993,16 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            String plan = "Async Group By workers: 1\n" +
-                    "  keys: [timestamp]\n" +
-                    "  values: [count(*)]\n" +
-                    "  filter: null\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Interval forward scan on: trades\n" +
-                    "          intervals: [(\"2024-01-01T00:00:00.000000Z\",\"2024-01-01T00:00:00.000000Z\"),(\"2024-08-23T00:00:00.000000Z\",\"2024-08-23T00:00:00.000000Z\")]\n";
+            String plan = """
+                    Async Group By workers: 1
+                      keys: [timestamp]
+                      values: [count(*)]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: trades
+                              intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T00:00:00.000000Z"),("2024-08-23T00:00:00.000000Z","2024-08-23T00:00:00.000000Z")]
+                    """;
             assertPlanNoLeakCheck("declare @ts1 := '2024-01-01', @ts2 := '2024-08-23' select timestamp, count() from trades where timestamp IN (@ts1, @ts2);", plan);
             assertException("declare @ts := ('2024-01-01', '2024-08-23') select timestamp, count() from trades where timestamp IN @ts", 44, "bracket lists are not supported");
         });
@@ -897,29 +1011,34 @@ public class DeclareTest extends AbstractSqlParserTest {
     @Test
     public void testDeclareWorksWithJit() throws Exception {
         assertMemoryLeak(() -> {
-            String plan = "Async{JIT}Filter workers: 1\n" +
-                    "  filter: id<4\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Frame forward scan on: x\n";
+            String plan = """
+                    Async{JIT}Filter workers: 1
+                      filter: id<4
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: x
+                    """;
 
             String replacement = sqlExecutionContext.getJitMode() == SqlJitMode.JIT_MODE_ENABLED ?
                     " JIT " : " ";
             plan = plan.replace("{JIT}", replacement);
 
             execute(
-                    "create table x as (\n" +
-                            "  select x id, timestamp_sequence(0,1000000000) as ts\n" +
-                            "  from long_sequence(10)\n" +
-                            ") timestamp(ts) partition by hour;"
+                    """
+                            create table x as (
+                              select x id, timestamp_sequence(0,1000000000) as ts
+                              from long_sequence(10)
+                            ) timestamp(ts) partition by hour;"""
             );
             assertPlanNoLeakCheck("declare @id := id, @val := 4 select * from x where @id < @val", plan);
             assertPlanNoLeakCheck("declare @expr := (id < 4) select * from x where @expr", plan);
             assertSql(
-                    "id\tts\n" +
-                            "1\t1970-01-01T00:00:00.000000Z\n" +
-                            "2\t1970-01-01T00:16:40.000000Z\n" +
-                            "3\t1970-01-01T00:33:20.000000Z\n",
+                    """
+                            id\tts
+                            1\t1970-01-01T00:00:00.000000Z
+                            2\t1970-01-01T00:16:40.000000Z
+                            3\t1970-01-01T00:33:20.000000Z
+                            """,
                     "x where id < 4"
             );
         });

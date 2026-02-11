@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -1162,7 +1162,7 @@ public class O3Test extends AbstractO3Test {
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,
-                            "select * from " + tableName + " limit -5,5",
+                            "select * from " + tableName + " limit -5",
                             sink,
                             replaceTimestampSuffix1(
                                     "str\tts\n" +

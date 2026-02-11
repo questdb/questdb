@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -58,6 +58,7 @@ import io.questdb.griffin.engine.functions.bool.InUuidFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.WithinGeohashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToRegClassFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToStrArrayFunctionFactory;
+import io.questdb.griffin.engine.functions.catalogue.GlobFilesFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.StringToStringArrayFunction;
 import io.questdb.griffin.engine.functions.catalogue.WalTransactionsFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.ArrayColumn;
@@ -144,7 +145,6 @@ import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory;
-import io.questdb.griffin.engine.functions.table.GlobFilesFunctionFactory;
 import io.questdb.griffin.engine.functions.table.HydrateTableMetadataFunctionFactory;
 import io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
@@ -159,7 +159,7 @@ import io.questdb.griffin.engine.functions.window.LeadTimestampFunctionFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
-import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -207,154 +207,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void test2686LeftJoinDoesNotMoveOtherInnerJoinPredicate() throws Exception {
         test2686Prepare();
-        assertPlan(
-                """
-                        select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
-                        from table_1 as a\s
-                        left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) \
-                        join table_2 as b2 on a.ts >= dateadd('m', -1, b2.ts) and b.age = 10\s""",
-                """
-                        VirtualRecord
-                          functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]
-                            SelectedRecord
-                                Filter filter: a.ts>=dateadd('m',-1,b2.ts)
-                                    Cross Join
-                                        Filter filter: b.age=10
-                                            Nested Loop Left Join
-                                              filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: table_1
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: table_2
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: table_2
-                        """
-        );
-    }
-
-    @Test
-    public void test2686LeftJoinDoesNotMoveOtherLeftJoinPredicate() throws Exception {
-        test2686Prepare();
-        assertPlan(
-                """
-                        select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
-                        from table_1 as a\s
-                        left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) \
-                        left join table_2 as b2 on a.ts >= dateadd('m', -1, b2.ts) and b.age = 10\s""",
-                """
-                        VirtualRecord
-                          functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]
-                            SelectedRecord
-                                Nested Loop Left Join
-                                  filter: (a.ts>=dateadd('m',-1,b2.ts) and b.age=10)
-                                    Nested Loop Left Join
-                                      filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: table_1
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: table_2
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: table_2
-                        """
-        );
-    }
-
-    @Test
-    public void test2686LeftJoinDoesNotMoveOtherTwoTableEqJoinPredicate() throws Exception {
-        test2686Prepare();
-        assertPlan(
-                """
-                        select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
-                        from table_1 as a\s
-                        left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) \
-                        join table_2 as b2 on a.ts >= dateadd('m', -1, b2.ts) and a.age = b.age\s""",
-                """
-                        VirtualRecord
-                          functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]
-                            SelectedRecord
-                                Filter filter: a.ts>=dateadd('m',-1,b2.ts)
-                                    Cross Join
-                                        Filter filter: a.age=b.age
-                                            Nested Loop Left Join
-                                              filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: table_1
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: table_2
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: table_2
-                        """
-        );
-    }
-
-    @Test
-    public void test2686LeftJoinDoesNotPushJoinPredicateToLeftTable() throws Exception {
-        test2686Prepare();
-        assertPlan(
-                """
-                        select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
-                        from table_1 as a\s
-                        left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) and a.age = 10\s""",
-                """
-                        VirtualRecord
-                          functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]
-                            SelectedRecord
-                                Nested Loop Left Join
-                                  filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts and a.age=10)
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: table_1
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: table_2
-                        """
-        );
-    }
-
-    @Test
-    public void test2686LeftJoinDoesNotPushJoinPredicateToRightTable() throws Exception {
-        test2686Prepare();
-        assertPlan(
-                """
-                        select a.name, a.age, b.address, a.ts\s
-                        from table_1 as a\s
-                        left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) and b.age = 10\s""",
-                """
-                        SelectedRecord
-                            Nested Loop Left Join
-                              filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts and b.age=10)
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: table_1
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: table_2
-                        """
-        );
-    }
-
-    @Test
-    public void test2686LeftJoinDoesNotPushWherePredicateToRightTable() throws Exception {
-        test2686Prepare();
-        assertPlan(
-                """
-                        select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
-                        from table_1 as a\s
-                        left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)\
-                        where b.age = 10\s""",
-                """
-                        VirtualRecord
-                          functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]
-                            SelectedRecord
+        assertPlan("""
+                select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
+                from table_1 as a\s
+                left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) \
+                join table_2 as b2 on a.ts >= dateadd('m', -1, b2.ts) and b.age = 10\s""", """
+                VirtualRecord
+                  functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]
+                    SelectedRecord
+                        Filter filter: a.ts>=dateadd('m',-1,b2.ts)
+                            Cross Join
                                 Filter filter: b.age=10
                                     Nested Loop Left Join
                                       filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)
@@ -364,59 +226,173 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: table_2
-                        """
-        );
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: table_2
+                """);
+    }
+
+    @Test
+    public void test2686LeftJoinDoesNotMoveOtherLeftJoinPredicate() throws Exception {
+        test2686Prepare();
+        assertPlan("""
+                select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
+                from table_1 as a\s
+                left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) \
+                left join table_2 as b2 on a.ts >= dateadd('m', -1, b2.ts) and b.age = 10\s""", """
+                VirtualRecord
+                  functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]
+                    SelectedRecord
+                        Nested Loop Left Join
+                          filter: (a.ts>=dateadd('m',-1,b2.ts) and b.age=10)
+                            Nested Loop Left Join
+                              filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: table_1
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: table_2
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: table_2
+                """);
+    }
+
+    @Test
+    public void test2686LeftJoinDoesNotMoveOtherTwoTableEqJoinPredicate() throws Exception {
+        test2686Prepare();
+        assertPlan("""
+                select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
+                from table_1 as a\s
+                left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) \
+                join table_2 as b2 on a.ts >= dateadd('m', -1, b2.ts) and a.age = b.age\s""", """
+                VirtualRecord
+                  functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]
+                    SelectedRecord
+                        Filter filter: a.ts>=dateadd('m',-1,b2.ts)
+                            Cross Join
+                                Filter filter: a.age=b.age
+                                    Nested Loop Left Join
+                                      filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: table_1
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: table_2
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: table_2
+                """);
+    }
+
+    @Test
+    public void test2686LeftJoinDoesNotPushJoinPredicateToLeftTable() throws Exception {
+        test2686Prepare();
+        assertPlan("""
+                select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
+                from table_1 as a\s
+                left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) and a.age = 10\s""", """
+                VirtualRecord
+                  functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]
+                    SelectedRecord
+                        Nested Loop Left Join
+                          filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts and a.age=10)
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: table_1
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: table_2
+                """);
+    }
+
+    @Test
+    public void test2686LeftJoinDoesNotPushJoinPredicateToRightTable() throws Exception {
+        test2686Prepare();
+        assertPlan("""
+                select a.name, a.age, b.address, a.ts\s
+                from table_1 as a\s
+                left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) and b.age = 10\s""", """
+                SelectedRecord
+                    Nested Loop Left Join
+                      filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts and b.age=10)
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: table_1
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: table_2
+                """);
+    }
+
+    @Test
+    public void test2686LeftJoinDoesNotPushWherePredicateToRightTable() throws Exception {
+        test2686Prepare();
+        assertPlan("""
+                select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
+                from table_1 as a\s
+                left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)\
+                where b.age = 10\s""", """
+                VirtualRecord
+                  functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]
+                    SelectedRecord
+                        Filter filter: b.age=10
+                            Nested Loop Left Join
+                              filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: table_1
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: table_2
+                """);
     }
 
     @Test
     public void test2686LeftJoinPushesWherePredicateToLeftJoinCondition() throws Exception {
         test2686Prepare();
-        assertPlan(
-                """
-                        select a.name, a.age, b.address, a.ts
-                        from table_1 as a\s
-                        left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) \
-                        where a.age * b.age = 10""",
-                """
-                        SelectedRecord
-                            Filter filter: a.age*b.age=10
-                                Nested Loop Left Join
-                                  filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: table_1
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: table_2
-                        """
-        );
+        assertPlan("""
+                select a.name, a.age, b.address, a.ts
+                from table_1 as a\s
+                left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) \
+                where a.age * b.age = 10""", """
+                SelectedRecord
+                    Filter filter: a.age*b.age=10
+                        Nested Loop Left Join
+                          filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: table_1
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: table_2
+                """);
     }
 
     @Test
     public void test2686LeftJoinPushesWherePredicateToLeftTable() throws Exception {
         test2686Prepare();
-        assertPlan(
-                """
-                        select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
-                        from table_1 as a\s
-                        left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)\
-                        where a.age = 10\s""",
-                """
-                        VirtualRecord
-                          functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]
-                            SelectedRecord
-                                Nested Loop Left Join
-                                  filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)
-                                    Async JIT Filter workers: 1
-                                      filter: age=10
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: table_1
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: table_2
-                        """
-        );
+        assertPlan("""
+                select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
+                from table_1 as a\s
+                left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)\
+                where a.age = 10\s""", """
+                VirtualRecord
+                  functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]
+                    SelectedRecord
+                        Nested Loop Left Join
+                          filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)
+                            Async JIT Filter workers: 1
+                              filter: age=10
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: table_1
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: table_2
+                """);
     }
 
     @Test
@@ -425,26 +401,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][], arr3 DOUBLE[][][], a DOUBLE)");
             String commonPart1 = "VirtualRecord\n  functions: [";
             String commonPart2 = "]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: tango\n";
-            assertPlanNoLeakCheck("SELECT arr1[1] FROM tango",
-                    commonPart1 + "arr1[1]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT arr1[1:1] FROM tango",
-                    commonPart1 + "arr1[1:1]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT arr3[1:1, 2:3, 4:] FROM tango",
-                    commonPart1 + "arr3[1:1,2:3,4:]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT ARRAY[1.0, 2] FROM tango",
-                    commonPart1 + "ARRAY[1.0,2.0]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT ARRAY[[1.0, 2], [3.0, 4]] FROM tango",
-                    commonPart1 + "ARRAY[[1.0,2.0],[3.0,4.0]]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT ARRAY[a, a] FROM tango",
-                    commonPart1 + "ARRAY[a,a]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT ARRAY[arr1, arr1] FROM tango",
-                    commonPart1 + "ARRAY[arr1,arr1]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT ARRAY[arr1[1:2], arr2[1]] FROM tango",
-                    commonPart1 + "ARRAY[arr1[1:2],arr2[1]]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT transpose(arr2) FROM tango",
-                    commonPart1 + "transpose(arr2)" + commonPart2);
-            assertPlanNoLeakCheck("SELECT arr2 * transpose(arr2) FROM tango",
-                    commonPart1 + "arr2*transpose(arr2)" + commonPart2);
+            assertPlanNoLeakCheck("SELECT arr1[1] FROM tango", commonPart1 + "arr1[1]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT arr1[1:1] FROM tango", commonPart1 + "arr1[1:1]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT arr3[1:1, 2:3, 4:] FROM tango", commonPart1 + "arr3[1:1,2:3,4:]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT ARRAY[1.0, 2] FROM tango", commonPart1 + "ARRAY[1.0,2.0]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT ARRAY[[1.0, 2], [3.0, 4]] FROM tango", commonPart1 + "ARRAY[[1.0,2.0],[3.0,4.0]]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT ARRAY[a, a] FROM tango", commonPart1 + "ARRAY[a,a]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT ARRAY[arr1, arr1] FROM tango", commonPart1 + "ARRAY[arr1,arr1]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT ARRAY[arr1[1:2], arr2[1]] FROM tango", commonPart1 + "ARRAY[arr1[1:2],arr2[1]]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT transpose(arr2) FROM tango", commonPart1 + "transpose(arr2)" + commonPart2);
+            assertPlanNoLeakCheck("SELECT arr2 * transpose(arr2) FROM tango", commonPart1 + "arr2*transpose(arr2)" + commonPart2);
         });
     }
 
@@ -454,20 +420,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a asof join b on ts where a.i = b.ts::int",
-                    """
-                            SelectedRecord
-                                Filter filter: a.i=b.ts::int
-                                    AsOf Join Fast
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a asof join b on ts where a.i = b.ts::int", """
+                    SelectedRecord
+                        Filter filter: a.i=b.ts::int
+                            AsOf Join Fast
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                    """);
         });
     }
 
@@ -477,20 +440,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select ts, ts1, i, i1 from (select * from a asof join b on ts ) where i/10 = i1",
-                    """
-                            SelectedRecord
-                                Filter filter: a.i/10=b.i
-                                    AsOf Join Fast
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select ts, ts1, i, i1 from (select * from a asof join b on ts ) where i/10 = i1", """
+                    SelectedRecord
+                        Filter filter: a.i/10=b.i
+                            AsOf Join Fast
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                    """);
         });
     }
 
@@ -500,19 +460,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a asof join b on ts",
-                    """
-                            SelectedRecord
-                                AsOf Join Fast
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a asof join b on ts", """
+                    SelectedRecord
+                        AsOf Join Fast
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: b
+                    """);
         });
     }
 
@@ -522,20 +479,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a asof join (select * from b limit 10) on ts",
-                    """
-                            SelectedRecord
-                                AsOf Join
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    Limit lo: 10 skip-over-rows: 0 limit: 0
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a asof join (select * from b limit 10) on ts", """
+                    SelectedRecord
+                        AsOf Join
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            Limit value: 10 skip-rows: 0 take-rows: 0
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                    """);
         });
     }
 
@@ -545,21 +499,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a asof join ((select * from b order by ts, i ) timestamp(ts))  on ts",
-                    """
-                            SelectedRecord
-                                AsOf Join
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    Sort light
-                                      keys: [ts, i]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a asof join ((select * from b order by ts, i ) timestamp(ts))  on ts", """
+                    SelectedRecord
+                        AsOf Join
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            Sort light
+                              keys: [ts, i]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                    """);
         });
     }
 
@@ -569,26 +520,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * " +
-                            "from a " +
-                            "asof join b on ts " +
-                            "asof join a c on ts",
-                    """
-                            SelectedRecord
-                                AsOf Join Fast
-                                    AsOf Join Fast
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * " + "from a " + "asof join b on ts " + "asof join a c on ts", """
+                    SelectedRecord
+                        AsOf Join Fast
+                            AsOf Join Fast
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    """);
         });
     }
 
@@ -598,23 +543,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * " +
-                            "from a " +
-                            "asof join b " +
-                            "where a.i = b.i",
-                    """
-                            SelectedRecord
-                                Filter filter: a.i=b.i
-                                    AsOf Join Fast
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * " + "from a " + "asof join b " + "where a.i = b.i", """
+                    SelectedRecord
+                        Filter filter: a.i=b.i
+                            AsOf Join Fast
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                    """);
         });
     }
 
@@ -625,24 +564,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                assertPlanNoLeakCheck(
-                        compiler,
-                        "select * " +
-                                "from a " +
-                                "asof join b on a.i = b.i",
-                        """
-                                SelectedRecord
-                                    AsOf Join
-                                      condition: b.i=a.i
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                                """,
-                        sqlExecutionContext
-                );
+                assertPlanNoLeakCheck(compiler, "select * " + "from a " + "asof join b on a.i = b.i", """
+                        SelectedRecord
+                            AsOf Join
+                              condition: b.i=a.i
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                        """, sqlExecutionContext);
             }
         });
     }
@@ -653,36 +585,30 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a (i int, ts timestamp) timestamp(ts)");
             execute("create table b (i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a asof join b where a.i > 0",
-                    """
-                            SelectedRecord
-                                AsOf Join Fast
-                                    Async JIT Filter workers: 1
-                                      filter: 0<i
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: b
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "select /*+ ENABLE_PRE_TOUCH(a) */ * from a asof join b where a.i > 0",
-                    """
-                            SelectedRecord
-                                AsOf Join Fast
-                                    Async JIT Filter workers: 1
-                                      filter: 0<i [pre-touch]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a asof join b where a.i > 0", """
+                    SelectedRecord
+                        AsOf Join Fast
+                            Async JIT Filter workers: 1
+                              filter: 0<i
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: b
+                    """);
+            assertPlanNoLeakCheck("select /*+ ENABLE_PRE_TOUCH(a) */ * from a asof join b where a.i > 0", """
+                    SelectedRecord
+                        AsOf Join Fast
+                            Async JIT Filter workers: 1
+                              filter: 0<i [pre-touch]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: b
+                    """);
         });
     }
 
@@ -692,19 +618,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a (i int, ts timestamp) timestamp(ts)");
             execute("create table b (i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a asof join b",
-                    """
-                            SelectedRecord
-                                AsOf Join Fast
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a asof join b", """
+                    SelectedRecord
+                        AsOf Join Fast
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: b
+                    """);
         });
     }
 
@@ -714,19 +637,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a (i int, ts timestamp) timestamp(ts)");
             execute("create table b (i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a asof join b on(ts)",
-                    """
-                            SelectedRecord
-                                AsOf Join Fast
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a asof join b on(ts)", """
+                    SelectedRecord
+                        AsOf Join Fast
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: b
+                    """);
         });
     }
 
@@ -736,178 +656,117 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a (ts timestamp, i int) timestamp(ts)");
             execute("create table b (i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a asof join b on(ts)",
-                    """
-                            SelectedRecord
-                                AsOf Join Fast
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a asof join b on(ts)", """
+                    SelectedRecord
+                        AsOf Join Fast
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: b
+                    """);
         });
     }
 
     @Test
     public void testCachedWindowRecordCursorFactoryWithLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x as ( " +
-                    "  select " +
-                    "    cast(x as int) i, " +
-                    "    rnd_symbol('a','b','c') sym, " +
-                    "    timestamp_sequence(0, 100000000) ts " +
-                    "   from long_sequence(100)" +
-                    ") timestamp(ts) partition by hour");
+            execute("create table x as ( " + "  select " + "    cast(x as int) i, " + "    rnd_symbol('a','b','c') sym, " + "    timestamp_sequence(0, 100000000) ts " + "   from long_sequence(100)" + ") timestamp(ts) partition by hour");
 
-            String sql = "select i, " +
-                    "row_number() over (partition by sym), " +
-                    "avg(i) over (), " +
-                    "sum(i) over (), " +
-                    "first_value(i) over (), " +
-                    "from x limit 3";
-            assertPlanNoLeakCheck(
-                    sql,
-                    """
-                            Limit lo: 3 skip-over-rows: 0 limit: 3
-                                CachedWindow
-                                  unorderedFunctions: [row_number() over (partition by [sym]),avg(i) over (),sum(i) over (),first_value(i) over ()]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: x
-                            """
-            );
+            String sql = "select i, " + "row_number() over (partition by sym), " + "avg(i) over (), " + "sum(i) over (), " + "first_value(i) over (), " + "from x limit 3";
+            assertPlanNoLeakCheck(sql, """
+                    Limit value: 3 skip-rows-max: 0 take-rows-max: 3
+                        CachedWindow
+                          unorderedFunctions: [row_number() over (partition by [sym]),avg(i) over (),sum(i) over (),first_value(i) over ()]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: x
+                    """);
 
-            assertSql(
-                    """
-                            i\trow_number\tavg\tsum\tfirst_value
-                            1\t1\t50.5\t5050.0\t1
-                            2\t2\t50.5\t5050.0\t1
-                            3\t1\t50.5\t5050.0\t1
-                            """,
-                    sql
-            );
+            assertSql("""
+                    i\trow_number\tavg\tsum\tfirst_value
+                    1\t1\t50.5\t5050.0\t1
+                    2\t2\t50.5\t5050.0\t1
+                    3\t1\t50.5\t5050.0\t1
+                    """, sql);
         });
     }
 
     @Test
     public void testCastFloatToDouble() throws Exception {
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
-                "select rnd_float()::double ",
-                """
-                        VirtualRecord
-                          functions: [memoize(rnd_float()::double)]
-                            long_sequence count: 1
-                        """
-        ));
+        allowFunctionMemoization();
+        assertMemoryLeak(() -> assertPlanNoLeakCheck("select rnd_float()::double ", """
+                VirtualRecord
+                  functions: [memoize(rnd_float()::double)]
+                    long_sequence count: 1
+                """));
     }
 
     @Test
     public void testCountOfColumnsVectorized() throws Exception {
-        assertPlan(
-                "create table x " +
-                        "(" +
-                        " k int, " +
-                        " i int, " +
-                        " l long, " +
-                        " f float, " +
-                        " d double, " +
-                        " dat date, " +
-                        " ts timestamp " +
-                        ")",
-                "select k, count(1) c1, " +
-                        "count(*) cstar, " +
-                        "count(i) ci, " +
-                        "count(l) cl, " +
-                        "count(d) cd, " +
-                        "count(dat) cdat, " +
-                        "count(ts) cts " +
-                        "from x",
-                """
-                        VirtualRecord
-                          functions: [k,c1,c1,ci,cl,cd,cdat,cts]
-                            GroupBy vectorized: true workers: 1
-                              keys: [k]
-                              values: [count(*),count(i),count(l),count(d),count(dat),count(ts)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: x
-                        """
-        );
+        assertPlan("create table x " + "(" + " k int, " + " i int, " + " l long, " + " f float, " + " d double, " + " dat date, " + " ts timestamp " + ")", "select k, count(1) c1, " + "count(*) cstar, " + "count(i) ci, " + "count(l) cl, " + "count(d) cd, " + "count(dat) cdat, " + "count(ts) cts " + "from x", """
+                VirtualRecord
+                  functions: [k,c1,c1,ci,cl,cd,cdat,cts]
+                    GroupBy vectorized: true workers: 1
+                      keys: [k]
+                      values: [count(*),count(i),count(l),count(d),count(dat),count(ts)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: x
+                """);
     }
 
     @Test
     public void testCrossJoin0() throws Exception {
-        assertPlan(
-                "create table a ( i int, s1 string, s2 string)",
-                "select * from a cross join a b where length(a.s1) = length(b.s2)",
-                """
-                        SelectedRecord
-                            Filter filter: length(a.s1)=length(b.s2)
-                                Cross Join
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s1 string, s2 string)", "select * from a cross join a b where length(a.s1) = length(b.s2)", """
+                SelectedRecord
+                    Filter filter: length(a.s1)=length(b.s2)
+                        Cross Join
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testCrossJoin0Output() throws Exception {
-        assertQuery(
-                "cnt\n9\n",
-                "select count(*) cnt from a cross join a b where length(a.s1) = length(b.s2)",
-                "create table a as (select x, 's' || x as s1, 's' || (x%3) as s2 from long_sequence(3))",
-                null,
-                false,
-                true
-        );
+        assertQuery("cnt\n9\n", "select count(*) cnt from a cross join a b where length(a.s1) = length(b.s2)", "create table a as (select x, 's' || x as s1, 's' || (x%3) as s2 from long_sequence(3))", null, false, true);
     }
 
     @Test
     public void testCrossJoin1() throws Exception {
-        assertPlan(
-                "create table a ( i int)",
-                "select * from a cross join a b",
-                """
-                        SelectedRecord
-                            Cross Join
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int)", "select * from a cross join a b", """
+                SelectedRecord
+                    Cross Join
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testCrossJoin2() throws Exception {
-        assertPlan(
-                "create table a ( i int)",
-                "select * from a cross join a b cross join a c",
-                """
-                        SelectedRecord
-                            Cross Join
-                                Cross Join
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int)", "select * from a cross join a b cross join a c", """
+                SelectedRecord
+                    Cross Join
+                        Cross Join
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
@@ -915,38 +774,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t select x, x::timestamp from long_sequence(2)");
-            String[] queries = {
-                    "select * from t t1 cross join t t2 order by t1.ts",
-                    "select * from (select * from t order by ts desc) t1 cross join t t2 order by t1.ts"
-            };
+            String[] queries = {"select * from t t1 cross join t t2 order by t1.ts", "select * from (select * from t order by ts desc) t1 cross join t t2 order by t1.ts"};
             for (String query : queries) {
-                assertPlanNoLeakCheck(
-                        query,
-                        """
-                                SelectedRecord
-                                    Cross Join
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t
-                                """
-                );
+                assertPlanNoLeakCheck(query, """
+                        SelectedRecord
+                            Cross Join
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                        """);
 
-                assertQueryNoLeakCheck(
-                        """
-                                x\tts\tx1\tts1
-                                1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
-                                1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000002Z
-                                2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z
-                                2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z
-                                """,
-                        query,
-                        "ts",
-                        false,
-                        true
-                );
+                assertQueryNoLeakCheck("""
+                        x\tts\tx1\tts1
+                        1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
+                        1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000002Z
+                        2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z
+                        2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z
+                        """, query, "ts", false, true);
             }
         });
     }
@@ -957,25 +804,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t select x, x::timestamp from long_sequence(2)");
 
-            String query = "select * from " +
-                    "((select * from t order by ts desc) limit 10) t1 " +
-                    "cross join t t2 " +
-                    "order by t1.ts desc";
+            String query = "select * from " + "((select * from t order by ts desc) limit 10) t1 " + "cross join t t2 " + "order by t1.ts desc";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
-                            SelectedRecord
-                                Cross Join
-                                    Limit lo: 10 skip-over-rows: 0 limit: 2
-                                        PageFrame
-                                            Row backward scan
-                                            Frame backward scan on: t
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                            """
-            );
+            assertPlanNoLeakCheck(query, """
+                    SelectedRecord
+                        Cross Join
+                            Limit value: 10 skip-rows: 0 take-rows: 2
+                                PageFrame
+                                    Row backward scan
+                                    Frame backward scan on: t
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: t
+                    """);
         });
     }
 
@@ -984,23 +825,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "((select * from t order by ts asc) limit 10) t1 " +
-                            "cross join t t2 " +
-                            "order by t1.ts asc",
-                    """
-                            SelectedRecord
-                                Cross Join
-                                    Limit lo: 10 skip-over-rows: 0 limit: 0
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                            """
-            );
+            assertPlanNoLeakCheck("select * from " + "((select * from t order by ts asc) limit 10) t1 " + "cross join t t2 " + "order by t1.ts asc", """
+                    SelectedRecord
+                        Cross Join
+                            Limit value: 10 skip-rows: 0 take-rows: 0
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: t
+                    """);
         });
     }
 
@@ -1009,25 +844,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "((select * from t order by ts asc) limit 10) t1 " +
-                            "cross join t t2 " +
-                            "order by t1.ts desc",
-                    """
-                            Sort
-                              keys: [ts desc]
-                                SelectedRecord
-                                    Cross Join
-                                        Limit lo: 10 skip-over-rows: 0 limit: 0
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t
-                            """
-            );
+            assertPlanNoLeakCheck("select * from " + "((select * from t order by ts asc) limit 10) t1 " + "cross join t t2 " + "order by t1.ts desc", """
+                    Sort
+                      keys: [ts desc]
+                        SelectedRecord
+                            Cross Join
+                                Limit value: 10 skip-rows: 0 take-rows: 0
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                    """);
         });
     }
 
@@ -1036,21 +865,88 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
 
+            assertPlanNoLeakCheck("select * from " + "((select * from t order by ts asc) limit 10) t1 " + "cross join t t2 " + "order by t1.ts asc", """
+                    SelectedRecord
+                        Cross Join
+                            Limit value: 10 skip-rows: 0 take-rows: 0
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: t
+                    """);
+        });
+    }
+
+    @Test
+    public void testDateaddIntrinsic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (id long, ts timestamp, ts2 timestamp) timestamp(ts) partition by hour;");
+
             assertPlanNoLeakCheck(
-                    "select * from " +
-                            "((select * from t order by ts asc) limit 10) t1 " +
-                            "cross join t t2 " +
-                            "order by t1.ts asc",
+                    "select * from x where id = 42 and dateadd('h', -1, ts) = '2020-01-01T00:01'",
                     """
-                            SelectedRecord
-                                Cross Join
-                                    Limit lo: 10 skip-over-rows: 0 limit: 0
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
+                            Async JIT Filter workers: 1
+                              filter: id=42
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: x
+                                      intervals: [("2020-01-01T01:01:00.000000Z","2020-01-01T01:01:00.000000Z")]
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "select * from x where id = 42 and dateadd('h', -1, ts2) = '2020-01-01T00:01'",
+                    """
+                            Async Filter workers: 1
+                              filter: (id=42 and dateadd('h',-1,ts2)=2020-01-01T00:01:00.000000Z)
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """
+            );
+
+            assertPlanNoLeakCheck(
+                    "select * from x where dateadd('d', 1, ts) >= '2020-01-01T00:01' and id < 42",
+                    """
+                            Async JIT Filter workers: 1
+                              filter: id<42
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: x
+                                      intervals: [("2019-12-31T00:01:00.000000Z","MAX")]
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "select * from x where dateadd('d', 1, ts2) >= '2020-01-01T00:01' and id < 42",
+                    """
+                            Async Filter workers: 1
+                              filter: (dateadd('d',1,ts2)>=2020-01-01T00:01:00.000000Z and id<42)
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """
+            );
+
+            assertPlanNoLeakCheck(
+                    "select * from x where id in (1,2,3) and dateadd('m', -1, ts) between '2020-01-01T00:01' and '2020-01-01T00:02'",
+                    """
+                            Async JIT Filter workers: 1
+                              filter: id in [1,2,3]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: x
+                                      intervals: [("2020-01-01T00:02:00.000000Z","2020-01-01T00:03:00.000000Z")]
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "select * from x where id in (1,2,3) and dateadd('m', -1, ts2) between '2020-01-01T00:01' and '2020-01-01T00:02'",
+                    """
+                            Async Filter workers: 1
+                              filter: (id in [1,2,3] and dateadd('m',-1,ts2) between 1577836860000000 and 1577836920000000)
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
                             """
             );
         });
@@ -1063,18 +959,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("insert into test select x from long_sequence(3)");
 
             String query = "select * from ( SELECT DISTINCT avg(event) OVER (PARTITION BY 1) FROM test )";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
-                            Distinct
-                              keys: avg
-                                CachedWindow
-                                  unorderedFunctions: [avg(event) over (partition by [1])]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: test
-                            """
-            );
+            assertPlanNoLeakCheck(query, """
+                    Distinct
+                      keys: avg
+                        CachedWindow
+                          unorderedFunctions: [avg(event) over (partition by [1])]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: test
+                    """);
 
             assertSql("avg\n2.0\n", query);
             assertSql("avg\n2.0\n", "select * from ( " + query + " )");
@@ -1083,348 +976,268 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctTsWithLimit1() throws Exception {
-        assertPlan(
-                "create table di (x int, y long, ts timestamp) timestamp(ts)",
-                "select distinct ts from di order by 1 limit 10",
-                """
-                        Long Top K lo: 10
-                          keys: [ts asc]
-                            Async Group By workers: 1
-                              keys: [ts]
-                              filter: null
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di order by 1 limit 10", """
+                Long Top K lo: 10
+                  keys: [ts asc]
+                    Async Group By workers: 1
+                      keys: [ts]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testDistinctTsWithLimit2() throws Exception {
-        assertPlan(
-                "create table di (x int, y long, ts timestamp) timestamp(ts)",
-                "select distinct ts from di order by 1 desc limit 10",
-                """
-                        Long Top K lo: 10
-                          keys: [ts desc]
-                            Async Group By workers: 1
-                              keys: [ts]
-                              filter: null
-                                PageFrame
-                                    Row backward scan
-                                    Frame backward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di order by 1 desc limit 10", """
+                Long Top K lo: 10
+                  keys: [ts desc]
+                    Async Group By workers: 1
+                      keys: [ts]
+                      filter: null
+                        PageFrame
+                            Row backward scan
+                            Frame backward scan on: di
+                """);
     }
 
     @Test
     public void testDistinctTsWithLimit3() throws Exception {
-        assertPlan(
-                "create table di (x int, y long, ts timestamp) timestamp(ts)",
-                "select distinct ts from di limit 10",
-                """
-                        Limit lo: 10 skip-over-rows: 0 limit: 0
-                            Async Group By workers: 1
-                              keys: [ts]
-                              filter: null
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di limit 10", """
+                Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                    Async Group By workers: 1
+                      keys: [ts]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testDistinctTsWithLimit4() throws Exception {
-        assertPlan(
-                "create table di (x int, y long, ts timestamp) timestamp(ts)",
-                "select distinct ts from di limit -10",
-                """
-                        Limit lo: -10 skip-over-rows: 0 limit: 0
-                            Async Group By workers: 1
-                              keys: [ts]
-                              filter: null
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di limit -10", """
+                Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
+                    Async Group By workers: 1
+                      keys: [ts]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testDistinctTsWithLimit5a() throws Exception {
-        assertPlan(
-                "create table di (x int, y long, ts timestamp) timestamp(ts)",
-                "select distinct ts from di where y = 5 limit 10",
-                """
-                        Limit lo: 10 skip-over-rows: 0 limit: 0
-                            Async JIT Group By workers: 1
-                              keys: [ts]
-                              filter: y=5
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di where y = 5 limit 10", """
+                Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                    Async JIT Group By workers: 1
+                      keys: [ts]
+                      filter: y=5
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testDistinctTsWithLimit5b() throws Exception {
-        assertPlan(
-                "create table di (x int, y long, ts timestamp) timestamp(ts)",
-                "select distinct ts from di where y = 5 limit -10",
-                """
-                        Limit lo: -10 skip-over-rows: 0 limit: 0
-                            Async JIT Group By workers: 1
-                              keys: [ts]
-                              filter: y=5
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di where y = 5 limit -10", """
+                Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
+                    Async JIT Group By workers: 1
+                      keys: [ts]
+                      filter: y=5
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testDistinctTsWithLimit6a() throws Exception {
-        assertPlan(
-                "create table di (x int, y long, ts timestamp) timestamp(ts)",
-                "select distinct ts from di where abs(y) = 5 limit 10",
-                """
-                        Limit lo: 10 skip-over-rows: 0 limit: 0
-                            Async Group By workers: 1
-                              keys: [ts]
-                              filter: abs(y)=5
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di where abs(y) = 5 limit 10", """
+                Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                    Async Group By workers: 1
+                      keys: [ts]
+                      filter: abs(y)=5
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testDistinctTsWithLimit6b() throws Exception {
-        assertPlan(
-                "create table di (x int, y long, ts timestamp) timestamp(ts)",
-                "select distinct ts from di where abs(y) = 5 limit -10",
-                """
-                        Limit lo: -10 skip-over-rows: 0 limit: 0
-                            Async Group By workers: 1
-                              keys: [ts]
-                              filter: abs(y)=5
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di where abs(y) = 5 limit -10", """
+                Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
+                    Async Group By workers: 1
+                      keys: [ts]
+                      filter: abs(y)=5
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testDistinctTsWithLimit7() throws Exception {
-        assertPlan(
-                "create table di (x int, y long, ts timestamp) timestamp(ts)",
-                "select distinct ts from di where abs(y) = 5 limit 10, 20",
-                """
-                        Limit lo: 10 hi: 20 skip-over-rows: 0 limit: 0
-                            Async Group By workers: 1
-                              keys: [ts]
-                              filter: abs(y)=5
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di where abs(y) = 5 limit 10, 20", """
+                Limit left: 10 right: 20 skip-rows-max: 10 take-rows-max: 10
+                    Async Group By workers: 1
+                      keys: [ts]
+                      filter: abs(y)=5
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testDistinctWithLimit1() throws Exception {
-        assertPlan(
-                "create table di (x int, y long)",
-                "select distinct x from di order by 1 limit 10",
-                """
-                        Sort light lo: 10
-                          keys: [x]
-                            GroupBy vectorized: true workers: 1
-                              keys: [x]
-                              values: [count(*)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long)", "select distinct x from di order by 1 limit 10", """
+                Sort light lo: 10
+                  keys: [x]
+                    GroupBy vectorized: true workers: 1
+                      keys: [x]
+                      values: [count(*)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testDistinctWithLimit2() throws Exception {
-        assertPlan(
-                "create table di (x int, y long)",
-                "select distinct x from di order by 1 desc limit 10",
-                """
-                        Sort light lo: 10
-                          keys: [x desc]
-                            GroupBy vectorized: true workers: 1
-                              keys: [x]
-                              values: [count(*)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long)", "select distinct x from di order by 1 desc limit 10", """
+                Sort light lo: 10
+                  keys: [x desc]
+                    GroupBy vectorized: true workers: 1
+                      keys: [x]
+                      values: [count(*)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testDistinctWithLimit3() throws Exception {
-        assertPlan(
-                "create table di (x int, y long)",
-                "select distinct x from di limit 10",
-                """
-                        Limit lo: 10 skip-over-rows: 0 limit: 0
-                            GroupBy vectorized: true workers: 1
-                              keys: [x]
-                              values: [count(*)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long)", "select distinct x from di limit 10", """
+                Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                    GroupBy vectorized: true workers: 1
+                      keys: [x]
+                      values: [count(*)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testDistinctWithLimit4() throws Exception {
-        assertPlan(
-                "create table di (x int, y long)",
-                "select distinct x from di limit -10",
-                """
-                        Limit lo: -10 skip-over-rows: 0 limit: 0
-                            GroupBy vectorized: true workers: 1
-                              keys: [x]
-                              values: [count(*)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long)", "select distinct x from di limit -10", """
+                Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
+                    GroupBy vectorized: true workers: 1
+                      keys: [x]
+                      values: [count(*)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testDistinctWithLimit5a() throws Exception {
-        assertPlan(
-                "create table di (x int, y long)",
-                "select distinct x from di where y = 5 limit 10",
-                """
-                        Limit lo: 10 skip-over-rows: 0 limit: 0
-                            Async JIT Group By workers: 1
-                              keys: [x]
-                              filter: y=5
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long)", "select distinct x from di where y = 5 limit 10", """
+                Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                    Async JIT Group By workers: 1
+                      keys: [x]
+                      filter: y=5
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testDistinctWithLimit5b() throws Exception {
-        assertPlan(
-                "create table di (x int, y long)",
-                "select distinct x from di where y = 5 limit -10",
-                """
-                        Limit lo: -10 skip-over-rows: 0 limit: 0
-                            Async JIT Group By workers: 1
-                              keys: [x]
-                              filter: y=5
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long)", "select distinct x from di where y = 5 limit -10", """
+                Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
+                    Async JIT Group By workers: 1
+                      keys: [x]
+                      filter: y=5
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testDistinctWithLimit6a() throws Exception {
-        assertPlan(
-                "create table di (x int, y long)",
-                "select distinct x from di where abs(y) = 5 limit 10",
-                """
-                        Limit lo: 10 skip-over-rows: 0 limit: 0
-                            Async Group By workers: 1
-                              keys: [x]
-                              filter: abs(y)=5
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long)", "select distinct x from di where abs(y) = 5 limit 10", """
+                Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                    Async Group By workers: 1
+                      keys: [x]
+                      filter: abs(y)=5
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testDistinctWithLimit6b() throws Exception {
-        assertPlan(
-                "create table di (x int, y long)",
-                "select distinct x from di where abs(y) = 5 limit -10",
-                """
-                        Limit lo: -10 skip-over-rows: 0 limit: 0
-                            Async Group By workers: 1
-                              keys: [x]
-                              filter: abs(y)=5
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long)", "select distinct x from di where abs(y) = 5 limit -10", """
+                Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
+                    Async Group By workers: 1
+                      keys: [x]
+                      filter: abs(y)=5
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testDistinctWithLimit7() throws Exception {
-        assertPlan(
-                "create table di (x int, y long)",
-                "select distinct x from di where abs(y) = 5 limit 10, 20",
-                """
-                        Limit lo: 10 hi: 20 skip-over-rows: 0 limit: 0
-                            Async Group By workers: 1
-                              keys: [x]
-                              filter: abs(y)=5
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long)", "select distinct x from di where abs(y) = 5 limit 10, 20", """
+                Limit left: 10 right: 20 skip-rows-max: 10 take-rows-max: 10
+                    Async Group By workers: 1
+                      keys: [x]
+                      filter: abs(y)=5
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testExcept() throws Exception {
-        assertPlan(
-                "create table a ( i int, s string);",
-                "select * from a except select * from a",
-                """
-                        Except
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                            Hash
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s string);", "select * from a except select * from a", """
+                Except
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                    Hash
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testExceptAll() throws Exception {
-        assertPlan(
-                "create table a ( i int, s string);",
-                "select * from a except all select * from a",
-                """
-                        Except All
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                            Hash
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s string);", "select * from a except all select * from a", """
+                Except All
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                    Hash
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
@@ -1432,20 +1245,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts desc",
-                    """
-                            Except
-                                Limit lo: 10 skip-over-rows: 0 limit: 0
-                                    PageFrame
-                                        Row backward scan
-                                        Frame backward scan on: a
-                                Hash
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts desc", """
+                    Except
+                        Limit value: 10 skip-rows: 0 take-rows: 0
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: a
+                        Hash
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    """);
         });
     }
 
@@ -1454,20 +1264,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts asc",
-                    """
-                            Except
-                                Limit lo: 10 skip-over-rows: 0 limit: 0
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                Hash
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts asc", """
+                    Except
+                        Limit value: 10 skip-rows: 0 take-rows: 0
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        Hash
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    """);
         });
     }
 
@@ -1476,22 +1283,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts asc",
-                    """
-                            Radix sort light
-                              keys: [ts]
-                                Except
-                                    Limit lo: 10 skip-over-rows: 0 limit: 0
-                                        PageFrame
-                                            Row backward scan
-                                            Frame backward scan on: a
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts asc", """
+                    Radix sort light
+                      keys: [ts]
+                        Except
+                            Limit value: 10 skip-rows: 0 take-rows: 0
+                                PageFrame
+                                    Row backward scan
+                                    Frame backward scan on: a
+                            Hash
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                    """);
         });
     }
 
@@ -1500,43 +1304,36 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts desc",
-                    """
-                            Radix sort light
-                              keys: [ts desc]
-                                Except
-                                    Limit lo: 10 skip-over-rows: 0 limit: 0
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts desc", """
+                    Radix sort light
+                      keys: [ts desc]
+                        Except
+                            Limit value: 10 skip-rows: 0 take-rows: 0
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                            Hash
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                    """);
         });
     }
 
     @Test
     public void testExplainCreateMatView() throws Exception {
-        assertPlan(
-                "create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal",
-                "create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day",
-                """
-                        Create materialized view: test
-                            Radix sort light
-                              keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts,k]
-                                  values: [avg(v)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal", "create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day", """
+                Create materialized view: test
+                    Radix sort light
+                      keys: [ts]
+                        Async Group By workers: 1
+                          keys: [ts,k]
+                          values: [avg(v)]
+                          filter: null
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                """);
     }
 
     @Test
@@ -1544,22 +1341,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertSql("""
                 QUERY PLAN
                 Create table: a
-                """, "explain create table a ( l long, d double)"
-        );
+                """, "explain create table a ( l long, d double)");
     }
 
     @Test
     public void testExplainCreateTableAsSelect() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
-                        QUERY PLAN
-                        Create table: a
-                            VirtualRecord
-                              functions: [x,1]
-                                long_sequence count: 10
-                        """,
-                "explain create table a as (select x, 1 from long_sequence(10))"
-        ));
+        assertMemoryLeak(() -> assertSql("""
+                QUERY PLAN
+                Create table: a
+                    VirtualRecord
+                      functions: [x,1]
+                        long_sequence count: 10
+                """, "explain create table a as (select x, 1 from long_sequence(10))"));
     }
 
     @Test
@@ -1574,28 +1367,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     ) timestamp(ts);""");
             execute("insert into tab values ( 'XXX', 0::timestamp, 1 );");
 
-            assertPlanNoLeakCheck(
-                    """
-                              select
-                               ts,
-                                id,\s
-                                last(val)
-                              from tab
-                              where id = 'XXX'\s
-                              sample by 15m ALIGN to CALENDAR
-                            """,
-                    """
-                            Radix sort light
-                              keys: [ts]
-                                GroupBy vectorized: false
-                                  keys: [ts,id]
-                                  values: [last(val)]
-                                    DeferredSingleSymbolFilterPageFrame
-                                        Index forward scan on: id
-                                          filter: id=1
-                                        Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("""
+                      select
+                       ts,
+                        id,\s
+                        last(val)
+                      from tab
+                      where id = 'XXX'\s
+                      sample by 15m ALIGN to CALENDAR
+                    """, """
+                    Radix sort light
+                      keys: [ts]
+                        GroupBy vectorized: false
+                          keys: [ts,id]
+                          values: [last(val)]
+                            DeferredSingleSymbolFilterPageFrame
+                                Index forward scan on: id
+                                  filter: id=1
+                                Frame forward scan on: tab
+                    """);
 
         });
     }
@@ -1632,9 +1422,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                 assertNotSupportedByExplain("EXPLAIN ALTER TABLE reference_prices ADD COLUMN col1 LONG", executionContext);
 
-                assertWritePermissionDenied("EXPLAIN CREATE MATERIALIZED VIEW prices_1h AS (\n" +
-                        "SELECT venue, symbol, avg(referencePrice) FROM reference_prices sample by 1h" +
-                        ") partition by day", executionContext);
+                assertWritePermissionDenied("EXPLAIN CREATE MATERIALIZED VIEW prices_1h AS (\n" + "SELECT venue, symbol, avg(referencePrice) FROM reference_prices sample by 1h" + ") partition by day", executionContext);
 
                 assertNotSupportedByExplain("EXPLAIN REFRESH MATERIALIZED VIEW prices_1h FULL", executionContext);
 
@@ -1648,11 +1436,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         SELECT 'venue1', 'sym1', 'FUT', rnd_symbol('Open', 'Close'), x::timestamp, rnd_double()
                         FROM long_sequence(100)""", executionContext);
 
-                assertWritePermissionDenied("EXPLAIN UPDATE reference_prices\n" +
-                        "SET referencePrice = 0 WHERE ts IN '2025-09-20'", executionContext);
+                assertWritePermissionDenied("EXPLAIN UPDATE reference_prices\n" + "SET referencePrice = 0 WHERE ts IN '2025-09-20'", executionContext);
 
-                assertWritePermissionDenied("EXPLAIN UPDATE reference_prices\n" +
-                        "SET symbol = 'FDXS' WHERE symbol = 'FDAX'", executionContext);
+                assertWritePermissionDenied("EXPLAIN UPDATE reference_prices\n" + "SET symbol = 'FDXS' WHERE symbol = 'FDAX'", executionContext);
 
                 // SELECT is read-only, it is allowed
                 assertReadOnlyOperationAllowed("EXPLAIN SELECT * FROM reference_prices", executionContext);
@@ -1669,8 +1455,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertSql("""
                     QUERY PLAN
                     Insert into table: a
-                    """, "explain insert into a values (1, 2.0)"
-            );
+                    """, "explain insert into a values (1, 2.0)");
         });
     }
 
@@ -1684,45 +1469,34 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         VirtualRecord
                           functions: [x,1]
                             long_sequence count: 10
-                    """, "explain insert into a select x, 1 from long_sequence(10)"
-            );
+                    """, "explain insert into a select x, 1 from long_sequence(10)");
         });
     }
 
     @Test
     public void testExplainPlanNoTrailingQuote() throws Exception {
-        assertQuery(
-                """
-                        QUERY PLAN
-                        [
-                          {
-                            "Plan": {
-                                "Node Type": "long_sequence",
-                                "count":  1
-                            }
-                          }
-                        ]
-                        """, "explain (format json) select * from long_sequence(1)",
-                null,
-                null,
-                false,
-                true
-        );
+        assertQuery("""
+                QUERY PLAN
+                [
+                  {
+                    "Plan": {
+                        "Node Type": "long_sequence",
+                        "count":  1
+                    }
+                  }
+                ]
+                """, "explain (format json) select * from long_sequence(1)", null, null, false, true);
     }
 
     @Test
     public void testExplainPlanWithEOLs1() throws Exception {
-        assertPlan(
-                "create table a (s string)",
-                "select * from a where s = '\b\f\n\r\t\\u0013'",
-                """
-                        Async Filter workers: 1
-                          filter: s='\\b\\f\\n\\r\\t\\u0013'
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (s string)", "select * from a where s = '\b\f\n\r\t\\u0013'", """
+                Async Filter workers: 1
+                  filter: s='\\b\\f\\n\\r\\t\\u0013'
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
@@ -1734,53 +1508,42 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     PageFrame
                         Row forward scan
                         Frame forward scan on: a
-                    """, "explain select * from a;"
-            );
+                    """, "explain select * from a;");
         });
     }
 
     @Test
     public void testExplainSelectWithCte1() throws Exception {
-        assertPlan(
-                "create table a ( i int, s string);",
-                "with b as (select * from a where i = 0)" +
-                        "select * from a union all select * from b",
-                """
-                        Union All
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                            Async JIT Filter workers: 1
-                              filter: i=0
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s string);", "with b as (select * from a where i = 0)" + "select * from a union all select * from b", """
+                Union All
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                    Async JIT Filter workers: 1
+                      filter: i=0
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testExplainSelectWithCte2() throws Exception {
-        assertPlan(
-                "create table a ( i int, s string);",
-                "with b as (select i from a order by s)" +
-                        "select * from a join b on a.i = b.i",
-                """
-                        SelectedRecord
-                            Hash Join Light
-                              condition: b.i=a.i
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                                Hash
-                                    SelectedRecord
-                                        Sort light
-                                          keys: [s]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s string);", "with b as (select i from a order by s)" + "select * from a join b on a.i = b.i", """
+                SelectedRecord
+                    Hash Join Light
+                      condition: b.i=a.i
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                        Hash
+                            SelectedRecord
+                                Sort light
+                                  keys: [s]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                """);
     }
 
     @Test
@@ -1789,12 +1552,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( l long, d double)");
             assertSql("""
                     QUERY PLAN
-                    Limit lo: 10 skip-over-rows: 0 limit: 0
+                    Limit value: 10 skip-rows: 0 take-rows: 0
                         PageFrame
                             Row forward scan
                             Frame forward scan on: a
-                    """, "explain with b as (select * from a limit 10) select * from b;"
-            );
+                    """, "explain with b as (select * from a limit 10) select * from b;");
         });
     }
 
@@ -1810,8 +1572,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: a
-                    """, "explain update a set l = 1, d=10.1;"
-            );
+                    """, "explain update a set l = 1, d=10.1;");
         });
     }
 
@@ -1835,29 +1596,45 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: b
-                    """, "explain update a set l1 = 1, d1=d2 from b where l1=l2;"
-            );
+                    """, "explain update a set l1 = 1, d1=d2 from b where l1=l2;");
         });
     }
 
     @Test
-    public void testExplainUpdateWithFilter() throws Exception {
+    public void testExplainUpdateWalTable() throws Exception {
+        // Reproducer for https://github.com/questdb/questdb/issues/6194
         assertPlan(
-                "create table a ( l long, d double, ts timestamp) timestamp(ts)",
-                "update a set l = 20, d = d+rnd_double() " +
-                        "where d < 100.0d and ts > dateadd('d', 1, now()  );",
+                "create table trades (" +
+                        "symbol symbol, " +
+                        "price double, " +
+                        "amount int, " +
+                        "ts timestamp" +
+                        ") timestamp(ts) partition by day WAL",
+                "update trades set amount = 0 where ts in '2022-11-11'",
                 """
-                        Update table: a
+                        Update table: trades
                             VirtualRecord
-                              functions: [20,memoize(d+rnd_double())]
-                                Async Filter workers: 1
-                                  filter: d<100.0
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: a
-                                          intervals: [("1970-01-02T00:00:00.000001Z","MAX")]
+                              functions: [0]
+                                Filter filter: ts in [1668124800000000,1668211199999999]
+                                    on: trades
                         """
         );
+    }
+
+    @Test
+    public void testExplainUpdateWithFilter() throws Exception {
+        allowFunctionMemoization();
+        assertPlan("create table a ( l long, d double, ts timestamp) timestamp(ts)", "update a set l = 20, d = d+rnd_double() " + "where d < 100.0d and ts > dateadd('d', 1, now()  );", """
+                Update table: a
+                    VirtualRecord
+                      functions: [20,memoize(d+rnd_double())]
+                        Async Filter workers: 1
+                          filter: d<100.0
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: a
+                                  intervals: [("1970-01-02T00:00:00.000001Z","MAX")]
+                """);
     }
 
     @Test
@@ -1865,64 +1642,49 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab ( key int, value double, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN '1' MINUTES PRECEDING AND CURRENT ROW) from tab",
-                    """
-                            Window
-                              functions: [avg(value) over (partition by [key] range between 60000000 preceding and current row)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN '1' MINUTES PRECEDING AND CURRENT ROW) from tab", """
+                    Window
+                      functions: [avg(value) over (partition by [key] range between 60000000 preceding and current row)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: tab
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN '4' MINUTES PRECEDING AND '3' MINUTES PRECEDING) from tab",
-                    """
-                            Window
-                              functions: [avg(value) over (partition by [key] range between 240000000 preceding and 180000000 preceding)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN '4' MINUTES PRECEDING AND '3' MINUTES PRECEDING) from tab", """
+                    Window
+                      functions: [avg(value) over (partition by [key] range between 240000000 preceding and 180000000 preceding)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: tab
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '10' MINUTES PRECEDING) from tab",
-                    """
-                            Window
-                              functions: [avg(value) over (partition by [key] range between unbounded preceding and 600000000 preceding)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '10' MINUTES PRECEDING) from tab", """
+                    Window
+                      functions: [avg(value) over (partition by [key] range between unbounded preceding and 600000000 preceding)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: tab
+                    """);
         });
     }
 
     @Test
     public void testExplainWithJsonFormat1() throws Exception {
-        assertQuery(
-                """
-                        QUERY PLAN
-                        [
-                          {
-                            "Plan": {
-                                "Node Type": "Count",
-                                "Plans": [
-                                {
-                                    "Node Type": "long_sequence",
-                                    "count":  10
-                                } ]
-                            }
-                          }
-                        ]
-                        """, "explain (format json) select count (*) from long_sequence(10)",
-                null,
-                null,
-                false,
-                true
-        );
+        assertQuery("""
+                QUERY PLAN
+                [
+                  {
+                    "Plan": {
+                        "Node Type": "Count",
+                        "Plans": [
+                        {
+                            "Node Type": "long_sequence",
+                            "count":  10
+                        } ]
+                    }
+                  }
+                ]
+                """, "explain (format json) select count (*) from long_sequence(10)", null, null, false, true);
     }
 
     @Test
@@ -1990,68 +1752,53 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 }
 
                 execute("create table a ( l long)");
-                assertQueryNoLeakCheck(
-                        compiler,
-                        expected,
-                        "explain (format json) select * from a join (select l from a where l > 10 limit 4) b on l where a.l+b.l > 0 ",
-                        null,
-                        false,
-                        sqlExecutionContext,
-                        true
-                );
+                assertQueryNoLeakCheck(compiler, expected, "explain (format json) select * from a join (select l from a where l > 10 limit 4) b on l where a.l+b.l > 0 ", null, false, sqlExecutionContext, true);
             }
         });
     }
 
     @Test
     public void testExplainWithJsonFormat3() throws Exception {
-        assertQuery(
-                """
-                        QUERY PLAN
-                        [
-                          {
-                            "Plan": {
-                                "Node Type": "GroupBy",
-                                "vectorized":  false,
-                                "keys": "[d]",
-                                "values": "[max(i)]",
+        assertQuery("""
+                QUERY PLAN
+                [
+                  {
+                    "Plan": {
+                        "Node Type": "GroupBy",
+                        "vectorized":  false,
+                        "keys": "[d]",
+                        "values": "[max(i)]",
+                        "Plans": [
+                        {
+                            "Node Type": "Union",
+                            "Plans": [
+                            {
+                                "Node Type": "PageFrame",
                                 "Plans": [
                                 {
-                                    "Node Type": "Union",
-                                    "Plans": [
-                                    {
-                                        "Node Type": "PageFrame",
-                                        "Plans": [
-                                        {
-                                            "Node Type": "Row forward scan"
-                                        },
-                                        {
-                                            "Node Type": "Frame forward scan",
-                                            "on": "a"
-                                        } ]
-                                    },
-                                    {
-                                        "Node Type": "PageFrame",
-                                        "Plans": [
-                                        {
-                                            "Node Type": "Row forward scan"
-                                        },
-                                        {
-                                            "Node Type": "Frame forward scan",
-                                            "on": "a"
-                                        } ]
-                                    } ]
+                                    "Node Type": "Row forward scan"
+                                },
+                                {
+                                    "Node Type": "Frame forward scan",
+                                    "on": "a"
                                 } ]
-                            }
-                          }
-                        ]
-                        """,
-                "explain (format json) select d, max(i) from (select * from a union select * from a)",
-                "create table a ( i int, d double)",
-                null,
-                false,
-                true
-        );
+                            },
+                            {
+                                "Node Type": "PageFrame",
+                                "Plans": [
+                                {
+                                    "Node Type": "Row forward scan"
+                                },
+                                {
+                                    "Node Type": "Frame forward scan",
+                                    "on": "a"
+                                } ]
+                            } ]
+                        } ]
+                    }
+                  }
+                ]
+                """, "explain (format json) select d, max(i) from (select * from a union select * from a)", "create table a ( i int, d double)", null, false, true);
     }
 
     @Test
@@ -2059,300 +1806,229 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table taba (a1 int, a2 long)");
             execute("create table tabb (b1 int, b2 long)");
-            assertQueryNoLeakCheck(
-                    """
-                            QUERY PLAN
-                            [
-                              {
-                                "Plan": {
-                                    "Node Type": "SelectedRecord",
+            assertQueryNoLeakCheck("""
+                    QUERY PLAN
+                    [
+                      {
+                        "Plan": {
+                            "Node Type": "SelectedRecord",
+                            "Plans": [
+                            {
+                                "Node Type": "Nested Loop Left Join",
+                                "filter": "(taba.a1=tabb.b1 or taba.a2=tabb.b2)",
+                                "Plans": [
+                                {
+                                    "Node Type": "PageFrame",
                                     "Plans": [
                                     {
-                                        "Node Type": "Nested Loop Left Join",
-                                        "filter": "(taba.a1=tabb.b1 or taba.a2=tabb.b2)",
-                                        "Plans": [
-                                        {
-                                            "Node Type": "PageFrame",
-                                            "Plans": [
-                                            {
-                                                "Node Type": "Row forward scan"
-                                            },
-                                            {
-                                                "Node Type": "Frame forward scan",
-                                                "on": "taba"
-                                            } ]
-                                        },
-                                        {
-                                            "Node Type": "PageFrame",
-                                            "Plans": [
-                                            {
-                                                "Node Type": "Row forward scan"
-                                            },
-                                            {
-                                                "Node Type": "Frame forward scan",
-                                                "on": "tabb"
-                                            } ]
-                                        } ]
+                                        "Node Type": "Row forward scan"
+                                    },
+                                    {
+                                        "Node Type": "Frame forward scan",
+                                        "on": "taba"
                                     } ]
-                                }
-                              }
-                            ]
-                            """,
-                    " explain (format json) select * from taba left join tabb on a1=b1  or a2=b2",
-                    null,
-                    null,
-                    false,
-                    true
-            );
+                                },
+                                {
+                                    "Node Type": "PageFrame",
+                                    "Plans": [
+                                    {
+                                        "Node Type": "Row forward scan"
+                                    },
+                                    {
+                                        "Node Type": "Frame forward scan",
+                                        "on": "tabb"
+                                    } ]
+                                } ]
+                            } ]
+                        }
+                      }
+                    ]
+                    """, " explain (format json) select * from taba left join tabb on a1=b1  or a2=b2", null, null, false, true);
         });
     }
 
     @Test
     public void testExplainWithQueryInParentheses1() throws Exception {
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
-                "(select 1)",
-                """
-                        VirtualRecord
-                          functions: [1]
-                            long_sequence count: 1
-                        """
-        ));
+        assertMemoryLeak(() -> assertPlanNoLeakCheck("(select 1)", """
+                VirtualRecord
+                  functions: [1]
+                    long_sequence count: 1
+                """));
     }
 
     @Test
     public void testExplainWithQueryInParentheses2() throws Exception {
-        assertPlan(
-                "create table x ( i int)",
-                "(select * from x)",
-                """
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: x
-                        """
-        );
+        assertPlan("create table x ( i int)", "(select * from x)", """
+                PageFrame
+                    Row forward scan
+                    Frame forward scan on: x
+                """);
     }
 
     @Test
     public void testExplainWithQueryInParentheses3() throws Exception {
-        assertPlan(
-                "create table x ( i int)",
-                "((select * from x))",
-                """
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: x
-                        """
-        );
+        assertPlan("create table x ( i int)", "((select * from x))", """
+                PageFrame
+                    Row forward scan
+                    Frame forward scan on: x
+                """);
     }
 
     @Test
     public void testExplainWithQueryInParentheses4() throws Exception {
-        assertPlan(
-                "create table x ( i int)",
-                "((x))",
-                """
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: x
-                        """
-        );
+        assertPlan("create table x ( i int)", "((x))", """
+                PageFrame
+                    Row forward scan
+                    Frame forward scan on: x
+                """);
     }
 
     @Test
     public void testExplainWithQueryInParentheses5() throws Exception {
-        assertPlan(
-                """
-                        CREATE TABLE trades (
-                          symbol SYMBOL,
-                          side SYMBOL,
-                          price DOUBLE,
-                          amount DOUBLE,
-                          timestamp TIMESTAMP
-                        ) timestamp (timestamp) PARTITION BY DAY""",
-                "((select last(timestamp) as x, last(price) as btcusd " +
-                        "from trades " +
-                        "where symbol = 'BTC-USD' " +
-                        "and timestamp > dateadd('m', -30, now())) " +
-                        "timestamp(x))",
-                """
-                        SelectedRecord
-                            Async JIT Group By workers: 1
-                              values: [last(timestamp),last(price)]
-                              filter: symbol='BTC-USD'
-                                PageFrame
-                                    Row forward scan
-                                    Interval forward scan on: trades
-                                      intervals: [("1969-12-31T23:30:00.000001Z","MAX")]
-                        """
-        );
+        assertPlan("""
+                CREATE TABLE trades (
+                  symbol SYMBOL,
+                  side SYMBOL,
+                  price DOUBLE,
+                  amount DOUBLE,
+                  timestamp TIMESTAMP
+                ) timestamp (timestamp) PARTITION BY DAY""", "((select last(timestamp) as x, last(price) as btcusd " + "from trades " + "where symbol = 'BTC-USD' " + "and timestamp > dateadd('m', -30, now())) " + "timestamp(x))", """
+                SelectedRecord
+                    Async JIT Group By workers: 1
+                      values: [last(timestamp),last(price)]
+                      filter: symbol='BTC-USD'
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: trades
+                              intervals: [("1969-12-31T23:30:00.000001Z","MAX")]
+                """);
     }
 
     @Test
     public void testFilterOnExcludedIndexedSymbolManyValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("drop table if exists trips");
-            execute("CREATE TABLE trips (l long, s symbol index capacity 5, ts TIMESTAMP) " +
-                    "timestamp(ts) partition by month");
+            execute("CREATE TABLE trips (l long, s symbol index capacity 5, ts TIMESTAMP) " + "timestamp(ts) partition by month");
 
-            assertPlanNoLeakCheck(
-                    "select s, count() from trips where s is not null order by count desc",
-                    """
-                            Radix sort light
-                              keys: [count desc]
-                                GroupBy vectorized: false
-                                  keys: [s]
-                                  values: [count(*)]
-                                    FilterOnExcludedValues symbolOrder: desc
-                                      symbolFilter: s not in [null]
-                                        Cursor-order scan
-                                        Frame forward scan on: trips
-                            """
-            );
+            assertPlanNoLeakCheck("select s, count() from trips where s is not null order by count desc", """
+                    Radix sort light
+                      keys: [count desc]
+                        GroupBy vectorized: false
+                          keys: [s]
+                          values: [count(*)]
+                            FilterOnExcludedValues symbolOrder: desc
+                              symbolFilter: s not in [null]
+                                Cursor-order scan
+                                Frame forward scan on: trips
+                    """);
 
-            execute("insert into trips " +
-                    "  select x, 'A' || ( x%3000 )," +
-                    "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
-                    "  from long_sequence(10000);");
-            execute("insert into trips " +
-                    "  select x, null," +
-                    "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
-                    "  from long_sequence(4000);"
-            );
+            execute("insert into trips " + "  select x, 'A' || ( x%3000 )," + "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " + "  from long_sequence(10000);");
+            execute("insert into trips " + "  select x, null," + "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " + "  from long_sequence(4000);");
 
-            assertPlanNoLeakCheck(
-                    "select s, count() from trips where s is not null",
-                    """
-                            Async JIT Group By workers: 1
-                              keys: [s]
-                              values: [count(*)]
-                              filter: s is not null
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trips
-                            """
-            );
+            assertPlanNoLeakCheck("select s, count() from trips where s is not null", """
+                    Async JIT Group By workers: 1
+                      keys: [s]
+                      values: [count(*)]
+                      filter: s is not null
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: trips
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select s, count() from trips where s is not null and s != 'A1000'",
-                    """
-                            Async JIT Group By workers: 1
-                              keys: [s]
-                              values: [count(*)]
-                              filter: (s is not null and s!='A1000')
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trips
-                            """
-            );
+            assertPlanNoLeakCheck("select s, count() from trips where s is not null and s != 'A1000'", """
+                    Async JIT Group By workers: 1
+                      keys: [s]
+                      values: [count(*)]
+                      filter: (s is not null and s!='A1000')
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: trips
+                    """);
 
             bindVariableService.clear();
             bindVariableService.setStr("s1", "A100");
-            assertPlanNoLeakCheck(
-                    "select s, count() from trips where s is not null and s != :s1",
-                    """
-                            Async JIT Group By workers: 1
-                              keys: [s]
-                              values: [count(*)]
-                              filter: (s is not null and s!=:s1::string)
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trips
-                            """
-            );
+            assertPlanNoLeakCheck("select s, count() from trips where s is not null and s != :s1", """
+                    Async JIT Group By workers: 1
+                      keys: [s]
+                      values: [count(*)]
+                      filter: (s is not null and s!=:s1::string)
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: trips
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select s, count() from trips where s is not null and l != 0",
-                    """
-                            Async JIT Group By workers: 1
-                              keys: [s]
-                              values: [count(*)]
-                              filter: (l!=0 and s is not null)
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trips
-                            """
-            );
+            assertPlanNoLeakCheck("select s, count() from trips where s is not null and l != 0", """
+                    Async JIT Group By workers: 1
+                      keys: [s]
+                      values: [count(*)]
+                      filter: (l!=0 and s is not null)
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: trips
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select s, count() from trips where s is not null or l != 0",
-                    """
-                            Async JIT Group By workers: 1
-                              keys: [s]
-                              values: [count(*)]
-                              filter: (s is not null or l!=0)
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trips
-                            """
-            );
+            assertPlanNoLeakCheck("select s, count() from trips where s is not null or l != 0", """
+                    Async JIT Group By workers: 1
+                      keys: [s]
+                      values: [count(*)]
+                      filter: (s is not null or l!=0)
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: trips
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select s, count() from trips where l != 0 and s is not null",
-                    """
-                            Async JIT Group By workers: 1
-                              keys: [s]
-                              values: [count(*)]
-                              filter: (l!=0 and s is not null)
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trips
-                            """
-            );
+            assertPlanNoLeakCheck("select s, count() from trips where l != 0 and s is not null", """
+                    Async JIT Group By workers: 1
+                      keys: [s]
+                      values: [count(*)]
+                      filter: (l!=0 and s is not null)
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: trips
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select s, count() from trips where l != 0 or s is not null",
-                    """
-                            Async JIT Group By workers: 1
-                              keys: [s]
-                              values: [count(*)]
-                              filter: (l!=0 or s is not null)
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trips
-                            """
-            );
+            assertPlanNoLeakCheck("select s, count() from trips where l != 0 or s is not null", """
+                    Async JIT Group By workers: 1
+                      keys: [s]
+                      values: [count(*)]
+                      filter: (l!=0 or s is not null)
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: trips
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select s, count() from trips where l > 100 or l != 0 and s is not null",
-                    """
-                            Async JIT Group By workers: 1
-                              keys: [s]
-                              values: [count(*)]
-                              filter: (100<l or (l!=0 and s is not null))
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trips
-                            """
-            );
+            assertPlanNoLeakCheck("select s, count() from trips where l > 100 or l != 0 and s is not null", """
+                    Async JIT Group By workers: 1
+                      keys: [s]
+                      values: [count(*)]
+                      filter: (100<l or (l!=0 and s is not null))
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: trips
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', 'A2000')",
-                    """
-                            Async JIT Group By workers: 1
-                              keys: [s]
-                              values: [count(*)]
-                              filter: (100<l or (l!=0 and not (s in [null,A1000,A2000])))
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trips
-                            """
-            );
+            assertPlanNoLeakCheck("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', 'A2000')", """
+                    Async JIT Group By workers: 1
+                      keys: [s]
+                      values: [count(*)]
+                      filter: (100<l or (l!=0 and not (s in [null,A1000,A2000])))
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: trips
+                    """);
 
             bindVariableService.clear();
             bindVariableService.setStr("s1", "A500");
 
-            assertPlanNoLeakCheck(
-                    "select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)",
-                    """
-                            Async JIT Group By workers: 1
-                              keys: [s]
-                              values: [count(*)]
-                              filter: (100<l or (l!=0 and not (s in [null,A1000] or s in [:s1::string])))
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trips
-                            """
-            );
+            assertPlanNoLeakCheck("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)", """
+                    Async JIT Group By workers: 1
+                      keys: [s]
+                      values: [count(*)]
+                      filter: (100<l or (l!=0 and not (s in [null,A1000] or s in [:s1::string])))
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: trips
+                    """);
         });
     }
 
@@ -2360,153 +2036,115 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testFilterOnExcludedNonIndexedSymbolManyValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("drop table if exists trips");
-            execute("CREATE TABLE trips(l long, s symbol capacity 5, ts TIMESTAMP) " +
-                    "timestamp(ts) partition by month");
+            execute("CREATE TABLE trips(l long, s symbol capacity 5, ts TIMESTAMP) " + "timestamp(ts) partition by month");
 
-            assertPlanNoLeakCheck(
-                    "select s, count() from trips where s is not null",
-                    """
-                            Async JIT Group By workers: 1
-                              keys: [s]
-                              values: [count(*)]
-                              filter: s is not null
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trips
-                            """
-            );
+            assertPlanNoLeakCheck("select s, count() from trips where s is not null", """
+                    Async JIT Group By workers: 1
+                      keys: [s]
+                      values: [count(*)]
+                      filter: s is not null
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: trips
+                    """);
 
-            execute("insert into trips " +
-                    "  select x, 'A' || ( x%3000 )," +
-                    "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
-                    "  from long_sequence(10000);");
-            execute("insert into trips " +
-                    "  select x, null," +
-                    "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
-                    "  from long_sequence(4000);"
-            );
+            execute("insert into trips " + "  select x, 'A' || ( x%3000 )," + "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " + "  from long_sequence(10000);");
+            execute("insert into trips " + "  select x, null," + "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " + "  from long_sequence(4000);");
 
-            assertPlanNoLeakCheck(
-                    "select s, count() from trips where s is not null",
-                    """
-                            Async JIT Group By workers: 1
-                              keys: [s]
-                              values: [count(*)]
-                              filter: s is not null
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trips
-                            """
-            );
+            assertPlanNoLeakCheck("select s, count() from trips where s is not null", """
+                    Async JIT Group By workers: 1
+                      keys: [s]
+                      values: [count(*)]
+                      filter: s is not null
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: trips
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select s, count() from trips where s is not null and s != 'A1000'",
-                    """
-                            Async JIT Group By workers: 1
-                              keys: [s]
-                              values: [count(*)]
-                              filter: (s is not null and s!='A1000')
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trips
-                            """
-            );
+            assertPlanNoLeakCheck("select s, count() from trips where s is not null and s != 'A1000'", """
+                    Async JIT Group By workers: 1
+                      keys: [s]
+                      values: [count(*)]
+                      filter: (s is not null and s!='A1000')
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: trips
+                    """);
 
             bindVariableService.clear();
             bindVariableService.setStr("s1", "A100");
-            assertPlanNoLeakCheck(
-                    "select s, count() from trips where s is not null and s != :s1",
-                    """
-                            Async JIT Group By workers: 1
-                              keys: [s]
-                              values: [count(*)]
-                              filter: (s is not null and s!=:s1::string)
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trips
-                            """
-            );
+            assertPlanNoLeakCheck("select s, count() from trips where s is not null and s != :s1", """
+                    Async JIT Group By workers: 1
+                      keys: [s]
+                      values: [count(*)]
+                      filter: (s is not null and s!=:s1::string)
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: trips
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select s, count() from trips where s is not null and l != 0",
-                    """
-                            Async JIT Group By workers: 1
-                              keys: [s]
-                              values: [count(*)]
-                              filter: (s is not null and l!=0)
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trips
-                            """
-            );
+            assertPlanNoLeakCheck("select s, count() from trips where s is not null and l != 0", """
+                    Async JIT Group By workers: 1
+                      keys: [s]
+                      values: [count(*)]
+                      filter: (s is not null and l!=0)
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: trips
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select s, count() from trips where s is not null or l != 0",
-                    """
-                            Async JIT Group By workers: 1
-                              keys: [s]
-                              values: [count(*)]
-                              filter: (s is not null or l!=0)
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trips
-                            """
-            );
+            assertPlanNoLeakCheck("select s, count() from trips where s is not null or l != 0", """
+                    Async JIT Group By workers: 1
+                      keys: [s]
+                      values: [count(*)]
+                      filter: (s is not null or l!=0)
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: trips
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select s, count() from trips where l != 0 and s is not null",
-                    """
-                            Async JIT Group By workers: 1
-                              keys: [s]
-                              values: [count(*)]
-                              filter: (l!=0 and s is not null)
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trips
-                            """
-            );
+            assertPlanNoLeakCheck("select s, count() from trips where l != 0 and s is not null", """
+                    Async JIT Group By workers: 1
+                      keys: [s]
+                      values: [count(*)]
+                      filter: (l!=0 and s is not null)
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: trips
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select s, count() from trips where l != 0 or s is not null",
-                    """
-                            Async JIT Group By workers: 1
-                              keys: [s]
-                              values: [count(*)]
-                              filter: (l!=0 or s is not null)
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trips
-                            """
-            );
+            assertPlanNoLeakCheck("select s, count() from trips where l != 0 or s is not null", """
+                    Async JIT Group By workers: 1
+                      keys: [s]
+                      values: [count(*)]
+                      filter: (l!=0 or s is not null)
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: trips
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select s, count() from trips where l > 100 or l != 0 and s is not null",
-                    """
-                            Async JIT Group By workers: 1
-                              keys: [s]
-                              values: [count(*)]
-                              filter: (100<l or (l!=0 and s is not null))
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trips
-                            """
-            );
+            assertPlanNoLeakCheck("select s, count() from trips where l > 100 or l != 0 and s is not null", """
+                    Async JIT Group By workers: 1
+                      keys: [s]
+                      values: [count(*)]
+                      filter: (100<l or (l!=0 and s is not null))
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: trips
+                    """);
 
             bindVariableService.clear();
             bindVariableService.setStr("s1", "A500");
 
-            assertPlanNoLeakCheck(
-                    "select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)",
-                    """
-                            Async JIT Group By workers: 1
-                              keys: [s]
-                              values: [count(*)]
-                              filter: (100<l or (l!=0 and not (s in [null,A1000] or s in [:s1::string])))
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trips
-                            """
-            );
+            assertPlanNoLeakCheck("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)", """
+                    Async JIT Group By workers: 1
+                      keys: [s]
+                      values: [count(*)]
+                      filter: (100<l or (l!=0 and not (s in [null,A1000] or s in [:s1::string])))
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: trips
+                    """);
         });
     }
 
@@ -2535,10 +2173,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                               rnd_double()
                     from long_sequence(10000)""");
 
-            String query1 = "select referencePriceType,count(*) " +
-                    "from reference_prices " +
-                    "where referencePriceType not in ('TYPE1') " +
-                    "and venue in ('VENUE1', 'VENUE2')";
+            String query1 = "select referencePriceType,count(*) " + "from reference_prices " + "where referencePriceType not in ('TYPE1') " + "and venue in ('VENUE1', 'VENUE2')";
             String expectedResult = """
                     referencePriceType\tcount
                     TYPE2\t3344
@@ -2576,27 +2211,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
                 execute("create table a (l long)");
-                assertPlanNoLeakCheck(
-                        compiler,
-                        "select * from a join (select l from a where l > 10 limit 4) b on l where a.l+b.l > 0 ",
-                        """
-                                SelectedRecord
-                                    Filter filter: 0<a.l+b.l
-                                        Hash Join
-                                          condition: b.l=a.l
+                assertPlanNoLeakCheck(compiler, "select * from a join (select l from a where l > 10 limit 4) b on l where a.l+b.l > 0 ", """
+                        SelectedRecord
+                            Filter filter: 0<a.l+b.l
+                                Hash Join
+                                  condition: b.l=a.l
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    Hash
+                                        Async JIT Filter workers: 1
+                                          limit: 4
+                                          filter: 10<l
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: a
-                                            Hash
-                                                Async JIT Filter workers: 1
-                                                  limit: 4
-                                                  filter: 10<l
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: a
-                                """,
-                        sqlExecutionContext
-                );
+                        """, sqlExecutionContext);
             }
         });
     }
@@ -2607,24 +2237,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
                 execute("create table a ( l long)");
-                assertPlanNoLeakCheck(
-                        compiler,
-                        "select * from a join (select l from a limit 40) on l",
-                        """
-                                SelectedRecord
-                                    Hash Join
-                                      condition: _xQdbA1.l=a.l
+                assertPlanNoLeakCheck(compiler, "select * from a join (select l from a limit 40) on l", """
+                        SelectedRecord
+                            Hash Join
+                              condition: _xQdbA1.l=a.l
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                                Hash
+                                    Limit value: 40 skip-rows: 0 take-rows: 0
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: a
-                                        Hash
-                                            Limit lo: 40 skip-over-rows: 0 limit: 0
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: a
-                                """,
-                        sqlExecutionContext
-                );
+                        """, sqlExecutionContext);
             }
         });
     }
@@ -2641,21 +2266,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 for (int i = 0; i < joinTypes.length; i++) {
                     String joinType = joinTypes[i];
                     String factoryType = joinFactoryTypes[i];
-                    assertPlanNoLeakCheck(
-                            compiler,
-                            "select * from a " + joinType + " join a a1 on l",
-                            "SelectedRecord\n" +
-                                    "    " + factoryType + "\n" +
-                                    "      condition: a1.l=a.l\n" +
-                                    "        PageFrame\n" +
-                                    "            Row forward scan\n" +
-                                    "            Frame forward scan on: a\n" +
-                                    "        Hash\n" +
-                                    "            PageFrame\n" +
-                                    "                Row forward scan\n" +
-                                    "                Frame forward scan on: a\n",
-                            sqlExecutionContext
-                    );
+                    assertPlanNoLeakCheck(compiler, "select * from a " + joinType + " join a a1 on l", "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: a1.l=a.l\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: a\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: a\n", sqlExecutionContext);
                 }
             }
         });
@@ -2672,23 +2283,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck(
-                        "select * from taba " +
-                                joinType + " join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2) " +
-                                "where a1+10 < b1 - 10",
-                        "SelectedRecord\n" +
-                                "    Filter filter: taba.a1+10<tabb.b1-10\n" +
-                                "        " + factoryType + "\n" +
-                                "          condition: b2=a2 and b1=a1\n" +
-                                "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: taba\n" +
-                                "            Hash\n" +
-                                "                PageFrame\n" +
-                                "                    Row forward scan\n" +
-                                "                    Frame forward scan on: tabb\n"
-                );
+                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2) " + "where a1+10 < b1 - 10", "SelectedRecord\n" + "    Filter filter: taba.a1+10<tabb.b1-10\n" + "        " + factoryType + "\n" + "          condition: b2=a2 and b1=a1\n" + "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n");
             }
         });
     }
@@ -2704,21 +2299,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck(
-                        "select * from taba " + joinType + " join tabb on a1=b1 and abs(a2+1) = abs(b2) where a2=b2",
-                        "SelectedRecord\n" +
-                                "    Filter filter: taba.a2=tabb.b2\n" +
-                                "        " + factoryType + "\n" +
-                                "          condition: b1=a1\n" +
-                                "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: taba\n" +
-                                "            Hash\n" +
-                                "                PageFrame\n" +
-                                "                    Row forward scan\n" +
-                                "                    Frame forward scan on: tabb\n"
-                );
+                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a1=b1 and abs(a2+1) = abs(b2) where a2=b2", "SelectedRecord\n" + "    Filter filter: taba.a2=tabb.b2\n" + "        " + factoryType + "\n" + "          condition: b1=a1\n" + "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n");
             }
         });
     }
@@ -2896,10 +2477,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         sigArgType = ColumnType.DOUBLE;
                                     } else if (factory instanceof LevelTwoPriceFunctionFactory) {
                                         sigArgType = ColumnType.DOUBLE;
-                                    } else if (factory instanceof LagDoubleFunctionFactory || factory instanceof LeadDoubleFunctionFactory
-                                            || factory instanceof LagLongFunctionFactory || factory instanceof LeadLongFunctionFactory
-                                            || factory instanceof LagTimestampFunctionFactory || factory instanceof LeadTimestampFunctionFactory
-                                            || factory instanceof LagDateFunctionFactory || factory instanceof LeadDateFunctionFactory) {
+                                    } else if (factory instanceof LagDoubleFunctionFactory || factory instanceof LeadDoubleFunctionFactory || factory instanceof LagLongFunctionFactory || factory instanceof LeadLongFunctionFactory || factory instanceof LagTimestampFunctionFactory || factory instanceof LeadTimestampFunctionFactory || factory instanceof LagDateFunctionFactory || factory instanceof LeadDateFunctionFactory) {
                                         sigArgType = ColumnType.INT;
                                         useConst = true;
                                     } else if (factory instanceof ArrayCreateFunctionFactory) {
@@ -3040,11 +2618,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                             // TODO: test with partition by, order by and various frame modes
                             if (factory.isWindow()) {
-                                sqlExecutionContext.configureWindowContext(
-                                        null, null, null, false,
-                                        PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true,
-                                        WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, (char) 0, 10, 0, (char) 0, 20,
-                                        WindowColumn.EXCLUDE_NO_OTHERS, 0, -1, ColumnType.NULL, false, 0);
+                                sqlExecutionContext.configureWindowContext(null, null, null, false, PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowExpression.FRAMING_RANGE, Long.MIN_VALUE, (char) 0, 10, 0, (char) 0, 20, WindowExpression.EXCLUDE_NO_OTHERS, 0, -1, ColumnType.NULL, false, 0);
                             }
                             Function function = null;
                             try {
@@ -3059,9 +2633,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                                 goodArgsFound = true;
 
-                                assertFalse("function " + factory.getSignature() +
-                                        " should serialize to text properly. current text: " +
-                                        planSink.getSink(), Chars.contains(planSink.getSink(), "io.questdb"));
+                                assertFalse("function " + factory.getSignature() + " should serialize to text properly. current text: " + planSink.getSink(), Chars.contains(planSink.getSink(), "io.questdb"));
                                 LOG.info().$safe(sink).$safe(planSink.getSink()).$();
 
                                 if (function instanceof NegatableBooleanFunction && !((NegatableBooleanFunction) function).isNegated()) {
@@ -3070,21 +2642,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     function.toPlan(tmpPlanSink);
 
                                     if (Chars.equals(planSink.getSink(), tmpPlanSink.getSink())) {
-                                        throw new AssertionError("Same output generated regardless of " +
-                                                "negatable flag! Factory: " + factory.getSignature() + " " + function);
+                                        throw new AssertionError("Same output generated regardless of " + "negatable flag! Factory: " + factory.getSignature() + " " + function);
                                     }
 
-                                    assertFalse(
-                                            "function " + factory.getSignature() + " should serialize to text properly",
-                                            Chars.contains(tmpPlanSink.getSink(), "io.questdb")
-                                    );
+                                    assertFalse("function " + factory.getSignature() + " should serialize to text properly", Chars.contains(tmpPlanSink.getSink(), "io.questdb"));
                                 }
 
                                 if (function instanceof GroupByFunction) {
-                                    assertFalse(
-                                            "group by function " + factory.getSignature() + " should not be marked as constant",
-                                            function.isConstant()
-                                    );
+                                    assertFalse("group by function " + factory.getSignature() + " should not be marked as constant", function.isConstant());
                                 }
                             } finally {
                                 Misc.free(function);
@@ -3110,254 +2675,194 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByBoolean() throws Exception {
-        assertPlan(
-                "create table a (l long, b boolean)",
-                "select b, min(l)  from a group by b",
-                """
-                        Async Group By workers: 1
-                          keys: [b]
-                          values: [min(l)]
-                          filter: null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (l long, b boolean)", "select b, min(l)  from a group by b", """
+                Async Group By workers: 1
+                  keys: [b]
+                  values: [min(l)]
+                  filter: null
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByBooleanFunction() throws Exception {
-        assertPlan(
-                "create table a (l long, b1 boolean, b2 boolean)",
-                "select b1||b2, min(l) from a group by b1||b2",
-                """
-                        Async Group By workers: 1
-                          keys: [concat]
-                          values: [min(l)]
-                          filter: null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (l long, b1 boolean, b2 boolean)", "select b1||b2, min(l) from a group by b1||b2", """
+                Async Group By workers: 1
+                  keys: [concat]
+                  values: [min(l)]
+                  filter: null
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByBooleanWithFilter() throws Exception {
-        assertPlan(
-                "create table a (l long, b boolean)",
-                "select b, min(l)  from a where b = true group by b",
-                """
-                        Async JIT Group By workers: 1
-                          keys: [b]
-                          values: [min(l)]
-                          filter: b=true
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (l long, b boolean)", "select b, min(l)  from a where b = true group by b", """
+                Async JIT Group By workers: 1
+                  keys: [b]
+                  values: [min(l)]
+                  filter: b=true
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByDouble() throws Exception {
-        assertPlan(
-                "create table a (l long, d double)",
-                "select d, min(l) from a group by d",
-                """
-                        Async Group By workers: 1
-                          keys: [d]
-                          values: [min(l)]
-                          filter: null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (l long, d double)", "select d, min(l) from a group by d", """
+                Async Group By workers: 1
+                  keys: [d]
+                  values: [min(l)]
+                  filter: null
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByFloat() throws Exception {
-        assertPlan(
-                "create table a (l long, f float)",
-                "select f, min(l) from a group by f",
-                """
-                        Async Group By workers: 1
-                          keys: [f]
-                          values: [min(l)]
-                          filter: null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (l long, f float)", "select f, min(l) from a group by f", """
+                Async Group By workers: 1
+                  keys: [f]
+                  values: [min(l)]
+                  filter: null
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test // special case
     public void testGroupByHour() throws Exception {
-        assertPlan(
-                "create table a (ts timestamp, d double)",
-                "select hour(ts), min(d) from a group by hour(ts)",
-                """
-                        GroupBy vectorized: true workers: 1
-                          keys: [ts]
-                          values: [min(d)]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (ts timestamp, d double)", "select hour(ts), min(d) from a group by hour(ts)", """
+                GroupBy vectorized: true workers: 1
+                  keys: [ts]
+                  values: [min(d)]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByHourAndFilterIsParallel() throws Exception {
-        assertPlan(
-                "create table a (ts timestamp, d double)",
-                "select hour(ts), min(d) from a where d > 0 group by hour(ts)",
-                """
-                        Async JIT Group By workers: 1
-                          keys: [hour]
-                          values: [min(d)]
-                          filter: 0<d
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (ts timestamp, d double)", "select hour(ts), min(d) from a where d > 0 group by hour(ts)", """
+                Async JIT Group By workers: 1
+                  keys: [hour]
+                  values: [min(d)]
+                  filter: 0<d
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByHourNonTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a (ts timestamp, d double)");
-            assertException(
-                    "select hour(d), min(d) from a",
-                    12,
-                    "argument type mismatch for function `hour` at #1 expected: TIMESTAMP, actual: DOUBLE"
-            );
+            assertException("select hour(d), min(d) from a", 12, "argument type mismatch for function `hour` at #1 expected: TIMESTAMP, actual: DOUBLE");
         });
     }
 
     @Test
     public void testGroupByHourUnorderedColumns() throws Exception {
-        assertPlan(
-                "create table a (ts timestamp, d double)",
-                "select min(d), hour(ts) from a group by hour(ts)",
-                """
-                        VirtualRecord
-                          functions: [min,hour]
-                            GroupBy vectorized: true workers: 1
-                              keys: [ts]
-                              values: [min(d)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (ts timestamp, d double)", "select min(d), hour(ts) from a group by hour(ts)", """
+                VirtualRecord
+                  functions: [min,hour]
+                    GroupBy vectorized: true workers: 1
+                      keys: [ts]
+                      values: [min(d)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByInt1() throws Exception {
-        assertPlan(
-                "create table a (i int, d double)",
-                "select min(d), i from a group by i",
-                """
-                        VirtualRecord
-                          functions: [min,i]
-                            GroupBy vectorized: true workers: 1
-                              keys: [i]
-                              values: [min(d)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (i int, d double)", "select min(d), i from a group by i", """
+                VirtualRecord
+                  functions: [min,i]
+                    GroupBy vectorized: true workers: 1
+                      keys: [i]
+                      values: [min(d)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test // repeated group by keys get merged at group by level
     public void testGroupByInt2() throws Exception {
-        assertPlan(
-                "create table a (i int, d double)",
-                "select i, i, min(d) from a group by i, i",
-                """
-                        VirtualRecord
-                          functions: [i,i,min]
-                            GroupBy vectorized: true workers: 1
-                              keys: [i]
-                              values: [min(d)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (i int, d double)", "select i, i, min(d) from a group by i, i", """
+                VirtualRecord
+                  functions: [i,i,min]
+                    GroupBy vectorized: true workers: 1
+                      keys: [i]
+                      values: [min(d)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByInt3() throws Exception {
-        assertPlan(
-                "create table a (i int, l long)",
-                "select i, max(l) - min(l) delta from a group by i",
-                """
-                        VirtualRecord
-                          functions: [i,max-min]
-                            GroupBy vectorized: true workers: 1
-                              keys: [i]
-                              values: [min(l),max(l)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (i int, l long)", "select i, max(l) - min(l) delta from a group by i", """
+                VirtualRecord
+                  functions: [i,max-min]
+                    GroupBy vectorized: true workers: 1
+                      keys: [i]
+                      values: [min(l),max(l)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByIntOperation() throws Exception {
-        assertPlan(
-                "create table a (i int, d double)",
-                "select min(d), i * 42 from a group by i",
-                """
-                        VirtualRecord
-                          functions: [min,i*42]
-                            GroupBy vectorized: true workers: 1
-                              keys: [i]
-                              values: [min(d)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (i int, d double)", "select min(d), i * 42 from a group by i", """
+                VirtualRecord
+                  functions: [min,i*42]
+                    GroupBy vectorized: true workers: 1
+                      keys: [i]
+                      values: [min(d)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByKeyedAliased() throws Exception {
-        assertPlan(
-                "create table a (s symbol, ts timestamp) timestamp(ts) partition by year;",
-                "select s as symbol, count() from a",
-                """
-                        GroupBy vectorized: true workers: 1
-                          keys: [s]
-                          values: [count(*)]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (s symbol, ts timestamp) timestamp(ts) partition by year;", "select s as symbol, count() from a", """
+                GroupBy vectorized: true workers: 1
+                  keys: [s]
+                  values: [count(*)]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByKeyedNoAlias() throws Exception {
-        assertPlan(
-                "create table a (s symbol, ts timestamp) timestamp(ts) partition by year;",
-                "select s, count() from a",
-                """
-                        GroupBy vectorized: true workers: 1
-                          keys: [s]
-                          values: [count(*)]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (s symbol, ts timestamp) timestamp(ts) partition by year;", "select s, count() from a", """
+                GroupBy vectorized: true workers: 1
+                  keys: [s]
+                  values: [count(*)]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
@@ -3365,23 +2870,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, d double)");
 
-            assertPlanNoLeakCheck(
-                    "create table b ( j int, e double)",
-                    "select d, max(i) from (select * from a except select * from b)",
-                    """
-                            GroupBy vectorized: false
-                              keys: [d]
-                              values: [max(i)]
-                                Except
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("create table b ( j int, e double)", "select d, max(i) from (select * from a except select * from b)", """
+                    GroupBy vectorized: false
+                      keys: [d]
+                      values: [max(i)]
+                        Except
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            Hash
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                    """);
         });
     }
 
@@ -3390,624 +2891,480 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, d double)");
 
-            assertPlanNoLeakCheck(
-                    "create table b ( j int, e double)",
-                    "select d, max(i) from (select * from a intersect select * from b)",
-                    """
-                            GroupBy vectorized: false
-                              keys: [d]
-                              values: [max(i)]
-                                Intersect
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("create table b ( j int, e double)", "select d, max(i) from (select * from a intersect select * from b)", """
+                    GroupBy vectorized: false
+                      keys: [d]
+                      values: [max(i)]
+                        Intersect
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            Hash
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                    """);
         });
     }
 
     @Test
     public void testGroupByKeyedOnUnion() throws Exception {
-        assertPlan(
-                "create table a ( i int, d double)",
-                "select d, max(i) from (select * from a union select * from a)",
-                """
-                        GroupBy vectorized: false
-                          keys: [d]
-                          values: [max(i)]
-                            Union
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, d double)", "select d, max(i) from (select * from a union select * from a)", """
+                GroupBy vectorized: false
+                  keys: [d]
+                  values: [max(i)]
+                    Union
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByKeyedOnUnionAll() throws Exception {
-        assertPlan(
-                "create table a ( i int, d double)",
-                "select d, max(i) from (select * from a union all select * from a)",
-                """
-                        GroupBy vectorized: false
-                          keys: [d]
-                          values: [max(i)]
-                            Union All
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, d double)", "select d, max(i) from (select * from a union all select * from a)", """
+                GroupBy vectorized: false
+                  keys: [d]
+                  values: [max(i)]
+                    Union All
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByLong() throws Exception {
-        assertPlan(
-                "create table a ( l long, d double)",
-                "select l, min(d) from a group by l",
-                """
-                        Async Group By workers: 1
-                          keys: [l]
-                          values: [min(d)]
-                          filter: null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( l long, d double)", "select l, min(d) from a group by l", """
+                Async Group By workers: 1
+                  keys: [l]
+                  values: [min(d)]
+                  filter: null
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByNoFunctions1() throws Exception {
-        assertPlan(
-                "create table a (i int, d double)",
-                "select i from a group by i",
-                """
-                        GroupBy vectorized: true workers: 1
-                          keys: [i]
-                          values: [count(*)]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (i int, d double)", "select i from a group by i", """
+                GroupBy vectorized: true workers: 1
+                  keys: [i]
+                  values: [count(*)]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByNoFunctions2() throws Exception {
-        assertPlan(
-                "create table a (i int, d double)",
-                "select i from a where d < 42 group by i",
-                """
-                        Async JIT Group By workers: 1
-                          keys: [i]
-                          filter: d<42
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (i int, d double)", "select i from a where d < 42 group by i", """
+                Async JIT Group By workers: 1
+                  keys: [i]
+                  filter: d<42
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByNoFunctions3() throws Exception {
-        assertPlan(
-                "create table a (i short, d double)",
-                "select i from a group by i",
-                """
-                        Async Group By workers: 1
-                          keys: [i]
-                          filter: null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (i short, d double)", "select i from a group by i", """
+                Async Group By workers: 1
+                  keys: [i]
+                  filter: null
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByNoFunctions4() throws Exception {
-        assertPlan(
-                "create table a (i long, j long)",
-                "select i, j from a group by i, j",
-                """
-                        Async Group By workers: 1
-                          keys: [i,j]
-                          filter: null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (i long, j long)", "select i, j from a group by i, j", """
+                Async Group By workers: 1
+                  keys: [i,j]
+                  filter: null
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByNoFunctions5() throws Exception {
-        assertPlan(
-                "create table a (i long, j long, d double)",
-                "select i, j from a where d > 42 group by i, j",
-                """
-                        Async JIT Group By workers: 1
-                          keys: [i,j]
-                          filter: 42<d
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (i long, j long, d double)", "select i, j from a where d > 42 group by i, j", """
+                Async JIT Group By workers: 1
+                  keys: [i,j]
+                  filter: 42<d
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByNoFunctions6() throws Exception {
-        assertPlan(
-                "create table a (s symbol)",
-                "select s from a group by s",
-                """
-                        GroupBy vectorized: true workers: 1
-                          keys: [s]
-                          values: [count(*)]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (s symbol)", "select s from a group by s", """
+                GroupBy vectorized: true workers: 1
+                  keys: [s]
+                  values: [count(*)]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByNoFunctions7() throws Exception {
-        assertPlan(
-                "create table a (s symbol, d double)",
-                "select s from a where d = 42 group by s",
-                """
-                        Async JIT Group By workers: 1
-                          keys: [s]
-                          filter: d=42
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (s symbol, d double)", "select s from a where d = 42 group by s", """
+                Async JIT Group By workers: 1
+                  keys: [s]
+                  filter: d=42
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByNoFunctions8() throws Exception {
-        assertPlan(
-                "create table a (s string)",
-                "select s from a group by s",
-                """
-                        Async Group By workers: 1
-                          keys: [s]
-                          filter: null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (s string)", "select s from a group by s", """
+                Async Group By workers: 1
+                  keys: [s]
+                  filter: null
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByNoFunctions9() throws Exception {
-        assertPlan(
-                "create table a (s string)",
-                "select s from a where s like '%foobar%' group by s",
-                """
-                        Async Group By workers: 1
-                          keys: [s]
-                          filter: s like %foobar%
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (s string)", "select s from a where s like '%foobar%' group by s", """
+                Async Group By workers: 1
+                  keys: [s]
+                  filter: s like %foobar%
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByNotKeyed1() throws Exception {
-        assertPlan(
-                "create table a (i int, d double)",
-                "select min(d) from a",
-                """
-                        GroupBy vectorized: true workers: 1
-                          values: [min(d)]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (i int, d double)", "select min(d) from a", """
+                GroupBy vectorized: true workers: 1
+                  values: [min(d)]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByNotKeyed10() throws Exception {
-        assertPlan(
-                "create table a (i int, d double)",
-                "select max(i) from (select * from a join a b on i )",
-                """
-                        GroupBy vectorized: false
-                          values: [max(i)]
-                            SelectedRecord
-                                Hash Join Light
-                                  condition: b.i=a.i
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (i int, d double)", "select max(i) from (select * from a join a b on i )", """
+                GroupBy vectorized: false
+                  values: [max(i)]
+                    SelectedRecord
+                        Hash Join Light
+                          condition: b.i=a.i
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            Hash
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByNotKeyed11() throws Exception {
-        assertPlan(
-                "create table a (gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b))",
-                "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a",
-                """
-                        Async Group By workers: 1
-                          values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]
-                          filter: null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b))", "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a", """
+                Async Group By workers: 1
+                  values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]
+                  filter: null
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByNotKeyed12() throws Exception {
-        assertPlan(
-                "create table a (gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b), i int)",
-                "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a where i > 42",
-                """
-                        Async JIT Group By workers: 1
-                          values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]
-                          filter: 42<i
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b), i int)", "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a where i > 42", """
+                Async JIT Group By workers: 1
+                  values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]
+                  filter: 42<i
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByNotKeyed13() throws Exception {
-        assertPlan(
-                "create table a (i int)",
-                "select max(i) - min(i) from a",
-                """
-                        VirtualRecord
-                          functions: [max-min]
-                            GroupBy vectorized: true workers: 1
-                              values: [min(i),max(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (i int)", "select max(i) - min(i) from a", """
+                VirtualRecord
+                  functions: [max-min]
+                    GroupBy vectorized: true workers: 1
+                      values: [min(i),max(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test // expressions in aggregates disable vectorized impl
     public void testGroupByNotKeyed2() throws Exception {
-        assertPlan(
-                "create table a (i int, d double)",
-                "select min(d), max(d*d) from a",
-                """
-                        Async Group By workers: 1
-                          values: [min(d),max(d*d)]
-                          filter: null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (i int, d double)", "select min(d), max(d*d) from a", """
+                Async Group By workers: 1
+                  values: [min(d),max(d*d)]
+                  filter: null
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test // expressions in aggregates disable vectorized impl
     public void testGroupByNotKeyed3() throws Exception {
-        assertPlan(
-                "create table a (i int, d double)",
-                "select max(d+1) from a",
-                """
-                        Async Group By workers: 1
-                          values: [max(d+1)]
-                          filter: null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (i int, d double)", "select max(d+1) from a", """
+                Async Group By workers: 1
+                  values: [max(d+1)]
+                  filter: null
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByNotKeyed4() throws Exception {
-        assertPlan(
-                "create table a (i int, d double)",
-                "select count(*), max(i), min(d) from a",
-                """
-                        GroupBy vectorized: true workers: 1
-                          values: [count(*),max(i),min(d)]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (i int, d double)", "select count(*), max(i), min(d) from a", """
+                GroupBy vectorized: true workers: 1
+                  values: [count(*),max(i),min(d)]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByNotKeyed5() throws Exception {
-        assertPlan(
-                "create table a (i int, d double)",
-                "select first(10), last(d), avg(10), min(10), max(10) from a",
-                """
-                        Async Group By workers: 1
-                          values: [first(10),last(d),avg(10),min(10),max(10)]
-                          filter: null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (i int, d double)", "select first(10), last(d), avg(10), min(10), max(10) from a", """
+                Async Group By workers: 1
+                  values: [first(10),last(d),avg(10),min(10),max(10)]
+                  filter: null
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test // group by on filtered data is not vectorized
     public void testGroupByNotKeyed6() throws Exception {
-        assertPlan(
-                "create table a (i int, d double)",
-                "select max(i) from a where i < 10",
-                """
-                        Async JIT Group By workers: 1
-                          values: [max(i)]
-                          filter: i<10
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (i int, d double)", "select max(i) from a where i < 10", """
+                Async JIT Group By workers: 1
+                  values: [max(i)]
+                  filter: i<10
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test // order by is ignored and grouped by - vectorized
     public void testGroupByNotKeyed7() throws Exception {
-        assertPlan(
-                "create table a (i int, d double)",
-                "select max(i) from (select * from a order by d)",
-                """
-                        GroupBy vectorized: true workers: 1
-                          values: [max(i)]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (i int, d double)", "select max(i) from (select * from a order by d)", """
+                GroupBy vectorized: true workers: 1
+                  values: [max(i)]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test // order by can't be ignored; group by is not vectorized
     public void testGroupByNotKeyed8() throws Exception {
-        assertPlan(
-                "create table a (i int, d double)",
-                "select max(i) from (select * from a order by d limit 10)",
-                """
-                        GroupBy vectorized: false
-                          values: [max(i)]
-                            Async Top K lo: 10 workers: 1
-                              filter: null
-                              keys: [d]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (i int, d double)", "select max(i) from (select * from a order by d limit 10)", """
+                GroupBy vectorized: false
+                  values: [max(i)]
+                    Async Top K lo: 10 workers: 1
+                      filter: null
+                      keys: [d]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test // TODO: group by could be vectorized for union tables and result merged
     public void testGroupByNotKeyed9() throws Exception {
-        assertPlan(
-                "create table a (i int, d double)",
-                "select max(i) from (select * from a union all select * from a)",
-                """
-                        GroupBy vectorized: false
-                          values: [max(i)]
-                            Union All
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (i int, d double)", "select max(i) from (select * from a union all select * from a)", """
+                GroupBy vectorized: false
+                  values: [max(i)]
+                    Union All
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByStringFunction() throws Exception {
-        assertPlan(
-                "create table a (l long, s1 string, s2 string)",
-                "select s1||s2 s, avg(l) a from a",
-                """
-                        Async Group By workers: 1
-                          keys: [s]
-                          values: [avg(l)]
-                          filter: null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (l long, s1 string, s2 string)", "select s1||s2 s, avg(l) a from a", """
+                Async Group By workers: 1
+                  keys: [s]
+                  values: [avg(l)]
+                  filter: null
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByStringFunctionWithFilter() throws Exception {
-        assertPlan(
-                "create table a (l long, s1 string, s2 string)",
-                "select s1||s2 s, avg(l) a from a where l > 42",
-                """
-                        Async JIT Group By workers: 1
-                          keys: [s]
-                          values: [avg(l)]
-                          filter: 42<l
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (l long, s1 string, s2 string)", "select s1||s2 s, avg(l) a from a where l > 42", """
+                Async JIT Group By workers: 1
+                  keys: [s]
+                  values: [avg(l)]
+                  filter: 42<l
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupBySymbol() throws Exception {
-        assertPlan(
-                "create table a (l long, s symbol)",
-                "select s, avg(l) a from a",
-                """
-                        GroupBy vectorized: true workers: 1
-                          keys: [s]
-                          values: [avg(l)]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (l long, s symbol)", "select s, avg(l) a from a", """
+                GroupBy vectorized: true workers: 1
+                  keys: [s]
+                  values: [avg(l)]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupBySymbol2() throws Exception {
-        assertPlan(
-                "create table a (l long, s symbol)",
-                "select s, max(l) - min(l) a from a",
-                """
-                        VirtualRecord
-                          functions: [s,max-min]
-                            GroupBy vectorized: true workers: 1
-                              keys: [s]
-                              values: [min(l),max(l)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (l long, s symbol)", "select s, max(l) - min(l) a from a", """
+                VirtualRecord
+                  functions: [s,max-min]
+                    GroupBy vectorized: true workers: 1
+                      keys: [s]
+                      values: [min(l),max(l)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupBySymbolFunction() throws Exception {
-        assertPlan(
-                "create table a (l long, s string)",
-                "select s::symbol, avg(l) a from a",
-                """
-                        GroupBy vectorized: false
-                          keys: [cast]
-                          values: [avg(l)]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (l long, s string)", "select s::symbol, avg(l) a from a", """
+                GroupBy vectorized: false
+                  keys: [cast]
+                  values: [avg(l)]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupBySymbolWithSubQueryFilter() throws Exception {
-        assertPlan(
-                "create table a (l long, s symbol)",
-                "select s, avg(l) a from a where s in (select s from a where s = 'key')",
-                """
-                        Async Group By workers: 1
-                          keys: [s]
-                          values: [avg(l)]
-                          filter: s in cursor\s
-                            Async JIT Filter workers: 1
-                              filter: s='key'
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a [state-shared]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (l long, s symbol)", "select s, avg(l) a from a where s in (select s from a where s = 'key')", """
+                Async Group By workers: 1
+                  keys: [s]
+                  values: [avg(l)]
+                  filter: s in cursor\s
+                    Async JIT Filter workers: 1
+                      filter: s='key'
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a [state-shared]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testGroupByWithLimit1() throws Exception {
-        assertPlan(
-                "create table di (x int, y long)",
-                "select x, count(*) from di group by x order by 1 limit 10",
-                """
-                        Sort light lo: 10
-                          keys: [x]
-                            GroupBy vectorized: true workers: 1
-                              keys: [x]
-                              values: [count(*)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long)", "select x, count(*) from di group by x order by 1 limit 10", """
+                Sort light lo: 10
+                  keys: [x]
+                    GroupBy vectorized: true workers: 1
+                      keys: [x]
+                      values: [count(*)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testGroupByWithLimit10() throws Exception {
-        assertPlan(
-                "create table di (x int, y long)",
-                "select y, count(*) from di order by y desc limit 1",
-                """
-                        Long Top K lo: 1
-                          keys: [y desc]
-                            Async Group By workers: 1
-                              keys: [y]
-                              values: [count(*)]
-                              filter: null
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long)", "select y, count(*) from di order by y desc limit 1", """
+                Long Top K lo: 1
+                  keys: [y desc]
+                    Async Group By workers: 1
+                      keys: [y]
+                      values: [count(*)]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testGroupByWithLimit11() throws Exception {
-        assertPlan(
-                "create table di (x int, y long)",
-                "select y, count(*) c from di order by c limit 42",
-                """
-                        Long Top K lo: 42
-                          keys: [c asc]
-                            Async Group By workers: 1
-                              keys: [y]
-                              values: [count(*)]
-                              filter: null
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long)", "select y, count(*) c from di order by c limit 42", """
+                Long Top K lo: 42
+                  keys: [c asc]
+                    Async Group By workers: 1
+                      keys: [y]
+                      values: [count(*)]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testGroupByWithLimit12() throws Exception {
         sqlExecutionContext.setParallelGroupByEnabled(false);
         try {
-            assertPlan(
-                    "create table di (x int, y long)",
-                    "select y, count(*) c from di order by c limit 42",
-                    """
-                            Long Top K lo: 42
-                              keys: [c asc]
-                                GroupBy vectorized: false
-                                  keys: [y]
-                                  values: [count(*)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: di
-                            """
-            );
+            assertPlan("create table di (x int, y long)", "select y, count(*) c from di order by c limit 42", """
+                    Long Top K lo: 42
+                      keys: [c asc]
+                        GroupBy vectorized: false
+                          keys: [y]
+                          values: [count(*)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: di
+                    """);
         } finally {
             sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelGroupByEnabled());
         }
@@ -4015,263 +3372,207 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit13() throws Exception {
-        assertPlan(
-                "create table di (x int, y long)",
-                "select y, 42, count(*) c from di order by c limit 42",
-                """
-                        Long Top K lo: 42
-                          keys: [c asc]
-                            VirtualRecord
-                              functions: [y,42,c]
-                                Async Group By workers: 1
-                                  keys: [y]
-                                  values: [count(*)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long)", "select y, 42, count(*) c from di order by c limit 42", """
+                Long Top K lo: 42
+                  keys: [c asc]
+                    VirtualRecord
+                      functions: [y,42,c]
+                        Async Group By workers: 1
+                          keys: [y]
+                          values: [count(*)]
+                          filter: null
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testGroupByWithLimit14() throws Exception {
-        assertPlan(
-                "create table di (x int, y long, z double)",
-                "select y, c from (select y, z, count(*) c from di) order by c limit 42",
-                """
-                        Long Top K lo: 42
-                          keys: [c asc]
-                            SelectedRecord
-                                Async Group By workers: 1
-                                  keys: [y,z]
-                                  values: [count(*)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long, z double)", "select y, c from (select y, z, count(*) c from di) order by c limit 42", """
+                Long Top K lo: 42
+                  keys: [c asc]
+                    SelectedRecord
+                        Async Group By workers: 1
+                          keys: [y,z]
+                          values: [count(*)]
+                          filter: null
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testGroupByWithLimit15() throws Exception {
-        assertPlan(
-                "create table di (y long, ts timestamp)",
-                "select y, c from (select ts, y, count(*) c from di) order by ts limit 13",
-                """
-                        SelectedRecord
-                            Long Top K lo: 13
-                              keys: [ts asc]
-                                Async Group By workers: 1
-                                  keys: [y,ts]
-                                  values: [count(*)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (y long, ts timestamp)", "select y, c from (select ts, y, count(*) c from di) order by ts limit 13", """
+                SelectedRecord
+                    Long Top K lo: 13
+                      keys: [ts asc]
+                        Async Group By workers: 1
+                          keys: [y,ts]
+                          values: [count(*)]
+                          filter: null
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testGroupByWithLimit16() throws Exception {
-        assertPlan(
-                "create table di (ts timestamp)",
-                "select ts, 42, count(*) c from di order by ts limit 2",
-                """
-                        Long Top K lo: 2
-                          keys: [ts asc]
-                            VirtualRecord
-                              functions: [ts,42,c]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  values: [count(*)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (ts timestamp)", "select ts, 42, count(*) c from di order by ts limit 2", """
+                Long Top K lo: 2
+                  keys: [ts asc]
+                    VirtualRecord
+                      functions: [ts,42,c]
+                        Async Group By workers: 1
+                          keys: [ts]
+                          values: [count(*)]
+                          filter: null
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testGroupByWithLimit17() throws Exception {
-        assertPlan(
-                "create table di (i int)",
-                "select i, count(*) c from di order by c limit 2",
-                """
-                        Long Top K lo: 2
-                          keys: [c asc]
-                            GroupBy vectorized: true workers: 1
-                              keys: [i]
-                              values: [count(*)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (i int)", "select i, count(*) c from di order by c limit 2", """
+                Long Top K lo: 2
+                  keys: [c asc]
+                    GroupBy vectorized: true workers: 1
+                      keys: [i]
+                      values: [count(*)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testGroupByWithLimit2() throws Exception {
-        assertPlan(
-                "create table di (x int, y long)",
-                "select x, count(*) from di group by x order by 1 desc limit 10",
-                """
-                        Sort light lo: 10
-                          keys: [x desc]
-                            GroupBy vectorized: true workers: 1
-                              keys: [x]
-                              values: [count(*)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long)", "select x, count(*) from di group by x order by 1 desc limit 10", """
+                Sort light lo: 10
+                  keys: [x desc]
+                    GroupBy vectorized: true workers: 1
+                      keys: [x]
+                      values: [count(*)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testGroupByWithLimit3() throws Exception {
-        assertPlan(
-                "create table di (x int, y long)",
-                "select x, count(*) from di group by x limit 10",
-                """
-                        Limit lo: 10 skip-over-rows: 0 limit: 0
-                            GroupBy vectorized: true workers: 1
-                              keys: [x]
-                              values: [count(*)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long)", "select x, count(*) from di group by x limit 10", """
+                Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                    GroupBy vectorized: true workers: 1
+                      keys: [x]
+                      values: [count(*)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testGroupByWithLimit4() throws Exception {
-        assertPlan(
-                "create table di (x int, y long)",
-                "select x, count(*) from di group by x limit -10",
-                """
-                        Limit lo: -10 skip-over-rows: 0 limit: 0
-                            GroupBy vectorized: true workers: 1
-                              keys: [x]
-                              values: [count(*)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long)", "select x, count(*) from di group by x limit -10", """
+                Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
+                    GroupBy vectorized: true workers: 1
+                      keys: [x]
+                      values: [count(*)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testGroupByWithLimit5a() throws Exception {
-        assertPlan(
-                "create table di (x int, y long)",
-                "select x, count(*) from di where y = 5 group by x limit 10",
-                """
-                        Limit lo: 10 skip-over-rows: 0 limit: 0
-                            Async JIT Group By workers: 1
-                              keys: [x]
-                              values: [count(*)]
-                              filter: y=5
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long)", "select x, count(*) from di where y = 5 group by x limit 10", """
+                Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                    Async JIT Group By workers: 1
+                      keys: [x]
+                      values: [count(*)]
+                      filter: y=5
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testGroupByWithLimit5b() throws Exception {
-        assertPlan(
-                "create table di (x int, y long)",
-                "select x, count(*) from di where y = 5 group by x limit -10",
-                """
-                        Limit lo: -10 skip-over-rows: 0 limit: 0
-                            Async JIT Group By workers: 1
-                              keys: [x]
-                              values: [count(*)]
-                              filter: y=5
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long)", "select x, count(*) from di where y = 5 group by x limit -10", """
+                Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
+                    Async JIT Group By workers: 1
+                      keys: [x]
+                      values: [count(*)]
+                      filter: y=5
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testGroupByWithLimit6a() throws Exception {
-        assertPlan(
-                "create table di (x int, y long)",
-                "select x, count(*) from di where abs(y) = 5 group by x limit 10",
-                """
-                        Limit lo: 10 skip-over-rows: 0 limit: 0
-                            Async Group By workers: 1
-                              keys: [x]
-                              values: [count(*)]
-                              filter: abs(y)=5
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long)", "select x, count(*) from di where abs(y) = 5 group by x limit 10", """
+                Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                    Async Group By workers: 1
+                      keys: [x]
+                      values: [count(*)]
+                      filter: abs(y)=5
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testGroupByWithLimit6b() throws Exception {
-        assertPlan(
-                "create table di (x int, y long)",
-                "select x, count(*) from di where abs(y) = 5 group by x limit -10",
-                """
-                        Limit lo: -10 skip-over-rows: 0 limit: 0
-                            Async Group By workers: 1
-                              keys: [x]
-                              values: [count(*)]
-                              filter: abs(y)=5
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long)", "select x, count(*) from di where abs(y) = 5 group by x limit -10", """
+                Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
+                    Async Group By workers: 1
+                      keys: [x]
+                      values: [count(*)]
+                      filter: abs(y)=5
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testGroupByWithLimit7() throws Exception {
-        assertPlan(
-                "create table di (x int, y long)",
-                "select x, count(*) from di where abs(y) = 5 group by x limit 10, 20",
-                """
-                        Limit lo: 10 hi: 20 skip-over-rows: 0 limit: 0
-                            Async Group By workers: 1
-                              keys: [x]
-                              values: [count(*)]
-                              filter: abs(y)=5
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long)", "select x, count(*) from di where abs(y) = 5 group by x limit 10, 20", """
+                Limit left: 10 right: 20 skip-rows-max: 10 take-rows-max: 10
+                    Async Group By workers: 1
+                      keys: [x]
+                      values: [count(*)]
+                      filter: abs(y)=5
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
     public void testGroupByWithLimit8() throws Exception {
-        assertPlan(
-                "create table di (x int, y long, ts timestamp) timestamp(ts)",
-                "select ts, count(*) from di where y = 5 group by ts order by ts desc limit 10",
-                """
-                        Long Top K lo: 10
-                          keys: [ts desc]
-                            Async JIT Group By workers: 1
-                              keys: [ts]
-                              values: [count(*)]
-                              filter: y=5
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
-                        """
-        );
+        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select ts, count(*) from di where y = 5 group by ts order by ts desc limit 10", """
+                Long Top K lo: 10
+                  keys: [ts desc]
+                    Async JIT Group By workers: 1
+                      keys: [ts]
+                      values: [count(*)]
+                      filter: y=5
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: di
+                """);
     }
 
     @Test
@@ -4280,22 +3581,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, s1 string)");
             execute("create table b ( i int, s2 string)");
 
-            assertPlanNoLeakCheck(
-                    "select s1, s2 from (select a.s1, b.s2, b.i, a.i  from a join b on i) where i < i1 and s1 = s2",
-                    """
-                            SelectedRecord
-                                Filter filter: (b.i<a.i and a.s1=b.s2)
-                                    Hash Join Light
-                                      condition: b.i=a.i
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                        Hash
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select s1, s2 from (select a.s1, b.s2, b.i, a.i  from a join b on i) where i < i1 and s1 = s2", """
+                    SelectedRecord
+                        Filter filter: (b.i<a.i and a.s1=b.s2)
+                            Hash Join Light
+                              condition: b.i=a.i
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                                Hash
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: b
+                    """);
         });
     }
 
@@ -4308,31 +3606,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                assertPlanNoLeakCheck(
-                        compiler,
-                        "select * " +
-                                "from taba " +
-                                "inner join tabb on a1=b1 " +
-                                "asof join tabc on b1=c1",
-                        """
-                                SelectedRecord
-                                    AsOf Join
-                                      condition: c1=b1
-                                        Hash Join
-                                          condition: b1=a1
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
+                assertPlanNoLeakCheck(compiler, "select * " + "from taba " + "inner join tabb on a1=b1 " + "asof join tabc on b1=c1", """
+                        SelectedRecord
+                            AsOf Join
+                              condition: c1=b1
+                                Hash Join
+                                  condition: b1=a1
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: taba
+                                    Hash
                                         PageFrame
                                             Row forward scan
-                                            Frame forward scan on: tabc
-                                """,
-                        sqlExecutionContext
-                );
+                                            Frame forward scan on: tabb
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tabc
+                        """, sqlExecutionContext);
             }
         });
     }
@@ -4348,19 +3638,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck(
-                        "select * from a " + joinType + " join b on i",
-                        "SelectedRecord\n" +
-                                "    " + factoryType + "\n" +
-                                "      condition: b.i=a.i\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: a\n" +
-                                "        Hash\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: b\n"
-                );
+                assertPlanNoLeakCheck("select * from a " + joinType + " join b on i", "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b.i=a.i\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: a\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: b\n");
             }
         });
     }
@@ -4376,20 +3654,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck(
-                        "select * from a " + joinType + " join b on i where b.i is not null",
-                        "SelectedRecord\n" +
-                                "    Filter filter: b.i!=null\n" +
-                                "        " + factoryType + "\n" +
-                                "          condition: b.i=a.i\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: a\n" +
-                                "            Hash\n" +
-                                "                PageFrame\n" +
-                                "                    Row forward scan\n" +
-                                "                    Frame forward scan on: b\n"
-                );
+                assertPlanNoLeakCheck("select * from a " + joinType + " join b on i where b.i is not null", "SelectedRecord\n" + "    Filter filter: b.i!=null\n" + "        " + factoryType + "\n" + "          condition: b.i=a.i\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: a\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: b\n");
             }
         });
     }
@@ -4405,95 +3670,76 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertSql("", "select * from a, b where a.i1 = b.i2");
 
-            assertPlanNoLeakCheck(
-                    "select * from a , b where a.i1 = b.i2",
-                    """
-                            SelectedRecord
-                                Cross Join
-                                    Cross Join
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a , b where a.i1 = b.i2", """
+                    SelectedRecord
+                        Cross Join
+                            Cross Join
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    """);
         });
     }
 
     @Test
     public void testInUuid() throws Exception {
-        assertPlan(
-                "create table a (u uuid, ts timestamp) timestamp(ts);",
-                "select u, ts from a where u in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333')",
-                """
-                        Async JIT Filter workers: 1
-                          filter: u in ['22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','33333333-3333-3333-3333-333333333333']
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (u uuid, ts timestamp) timestamp(ts);", "select u, ts from a where u in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333')", """
+                Async JIT Filter workers: 1
+                  filter: u in ['22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','33333333-3333-3333-3333-333333333333']
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testIntersect1() throws Exception {
-        assertPlan(
-                "create table a ( i int, s string);",
-                "select * from a intersect select * from a",
-                """
-                        Intersect
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                            Hash
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s string);", "select * from a intersect select * from a", """
+                Intersect
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                    Hash
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testIntersect2() throws Exception {
-        assertPlan(
-                "create table a ( i int, s string);",
-                "select * from a intersect select * from a where i > 0",
-                """
-                        Intersect
+        assertPlan("create table a ( i int, s string);", "select * from a intersect select * from a where i > 0", """
+                Intersect
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                    Hash
+                        Async JIT Filter workers: 1
+                          filter: 0<i
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: a
-                            Hash
-                                Async JIT Filter workers: 1
-                                  filter: 0<i
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                        """
-        );
+                """);
     }
 
     @Test
     public void testIntersectAll() throws Exception {
-        assertPlan(
-                "create table a ( i int, s string);",
-                "select * from a intersect all select * from a",
-                """
-                        Intersect All
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                            Hash
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s string);", "select * from a intersect all select * from a", """
+                Intersect All
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                    Hash
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
@@ -4501,20 +3747,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts desc",
-                    """
-                            Intersect
-                                Limit lo: 10 skip-over-rows: 0 limit: 0
-                                    PageFrame
-                                        Row backward scan
-                                        Frame backward scan on: a
-                                Hash
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts desc", """
+                    Intersect
+                        Limit value: 10 skip-rows: 0 take-rows: 0
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: a
+                        Hash
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    """);
         });
     }
 
@@ -4523,20 +3766,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts asc",
-                    """
-                            Intersect
-                                Limit lo: 10 skip-over-rows: 0 limit: 0
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                Hash
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts asc", """
+                    Intersect
+                        Limit value: 10 skip-rows: 0 take-rows: 0
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        Hash
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    """);
         });
     }
 
@@ -4545,22 +3785,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts asc",
-                    """
-                            Radix sort light
-                              keys: [ts]
-                                Intersect
-                                    Limit lo: 10 skip-over-rows: 0 limit: 0
-                                        PageFrame
-                                            Row backward scan
-                                            Frame backward scan on: a
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts asc", """
+                    Radix sort light
+                      keys: [ts]
+                        Intersect
+                            Limit value: 10 skip-rows: 0 take-rows: 0
+                                PageFrame
+                                    Row backward scan
+                                    Frame backward scan on: a
+                            Hash
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                    """);
         });
     }
 
@@ -4569,22 +3806,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts desc",
-                    """
-                            Radix sort light
-                              keys: [ts desc]
-                                Intersect
-                                    Limit lo: 10 skip-over-rows: 0 limit: 0
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts desc", """
+                    Radix sort light
+                      keys: [ts desc]
+                        Intersect
+                            Limit value: 10 skip-rows: 0 take-rows: 0
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                            Hash
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                    """);
         });
     }
 
@@ -4593,18 +3827,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( k long, x double );");
 
-            assertPlanNoLeakCheck(
-                    "SELECT k, ksum(x), nsum(x) FROM tab",
-                    """
-                            Async Group By workers: 1
-                              keys: [k]
-                              values: [ksum(x),nsum(x)]
-                              filter: null
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT k, ksum(x), nsum(x) FROM tab", """
+                    Async Group By workers: 1
+                      keys: [k]
+                      values: [ksum(x),nsum(x)]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: tab
+                    """);
         });
     }
 
@@ -4621,8 +3852,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                       packets int
                     ) timestamp(timestamp);""");
 
-            execute("insert into maps values ('2023-09-01T09:41:00.000Z', 'cluster10', 'a', 1, 1), " +
-                    "('2023-09-01T09:42:00.000Z', 'cluster10', 'a', 2, 2)");
+            execute("insert into maps values ('2023-09-01T09:41:00.000Z', 'cluster10', 'a', 1, 1), " + "('2023-09-01T09:42:00.000Z', 'cluster10', 'a', 2, 2)");
 
             String sql = """
                     select timestamp, cluster, alias, timestamp - timestamp1 interval, (octets-octets1)*8 bits, packets-packets1 packets from (
@@ -4633,28 +3863,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
                       lt join maps on (cluster,alias)
                       ) order by bits desc
                     limit 10""";
-            assertPlanNoLeakCheck(
-                    sql,
-                    """
-                            Limit lo: 10 skip-over-rows: 0 limit: 1
-                                Sort
-                                  keys: [bits desc]
-                                    VirtualRecord
-                                      functions: [timestamp,cluster,alias,timestamp-timestamp1,octets-octets1*8,packets-packets1]
-                                        SelectedRecord
-                                            Lt Join Light
-                                              condition: maps.cluster=_xQdbA3.cluster and maps.alias=_xQdbA3.alias
-                                                LatestByAllSymbolsFiltered
-                                                  filter: cluster in [cluster10]
-                                                    Row backward scan
-                                                      expectedSymbolsCount: 2147483647
-                                                    Interval backward scan on: maps
-                                                      intervals: [("2023-09-01T09:40:27.286000Z","2023-09-01T10:40:27.286000Z")]
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: maps
-                            """
-            );
+            assertPlanNoLeakCheck(sql, """
+                    Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                        Sort
+                          keys: [bits desc]
+                            VirtualRecord
+                              functions: [timestamp,cluster,alias,timestamp-timestamp1,octets-octets1*8,packets-packets1]
+                                SelectedRecord
+                                    Lt Join Light
+                                      condition: maps.cluster=_xQdbA3.cluster and maps.alias=_xQdbA3.alias
+                                        LatestByAllSymbolsFiltered
+                                          filter: cluster in [cluster10]
+                                            Row backward scan
+                                              expectedSymbolsCount: 2147483647
+                                            Interval backward scan on: maps
+                                              intervals: [("2023-09-01T09:40:27.286000Z","2023-09-01T10:40:27.286000Z")]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: maps
+                    """);
 
             assertSql("""
                     timestamp\tcluster\talias\tinterval\tbits\tpackets
@@ -4666,28 +3893,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestByRecordCursorFactoryWithLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab as ( " +
-                    "  select " +
-                    "    rnd_str('a','b','c') s, " +
-                    "    timestamp_sequence(0, 100000000) ts " +
-                    "   from long_sequence(100)" +
-                    ") timestamp(ts) partition by hour");
+            execute("create table tab as ( " + "  select " + "    rnd_str('a','b','c') s, " + "    timestamp_sequence(0, 100000000) ts " + "   from long_sequence(100)" + ") timestamp(ts) partition by hour");
 
-            String sql = "with yy as (select ts, max(s) s from tab sample by 1h ALIGN TO FIRST OBSERVATION) " +
-                    "select * from yy latest on ts partition by s limit 10";
-            assertPlanNoLeakCheck(
-                    sql,
-                    """
-                            Limit lo: 10 skip-over-rows: 0 limit: 1
-                                LatestBy
-                                    Sample By
-                                      fill: none
-                                      values: [max(s)]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
-                            """
-            );
+            String sql = "with yy as (select ts, max(s) s from tab sample by 1h ALIGN TO FIRST OBSERVATION) " + "select * from yy latest on ts partition by s limit 10";
+            assertPlanNoLeakCheck(sql, """
+                    Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                        LatestBy
+                            Sample By
+                              fill: none
+                              values: [max(s)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                    """);
 
             assertSql("""
                     ts\ts
@@ -4698,53 +3916,41 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn0() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts);",
-                "select i from a latest on ts partition by i",
-                """
-                        LatestByAllFiltered
-                            Row backward scan
-                            Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts);", "select i from a latest on ts partition by i", """
+                LatestByAllFiltered
+                    Row backward scan
+                    Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testLatestOn0a() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts);",
-                "select i from (select * from a where i = 10 union select * from a where i =20) latest on ts partition by i",
-                """
-                        SelectedRecord
-                            LatestBy
-                                Union
-                                    Async JIT Filter workers: 1
-                                      filter: i=10
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                    Async JIT Filter workers: 1
-                                      filter: i=20
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts);", "select i from (select * from a where i = 10 union select * from a where i =20) latest on ts partition by i", """
+                SelectedRecord
+                    LatestBy
+                        Union
+                            Async JIT Filter workers: 1
+                              filter: i=10
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                            Async JIT Filter workers: 1
+                              filter: i=20
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testLatestOn0b() throws Exception {
-        assertPlan(
-                "create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
-                "select ts,i from a where s in ('ABC') and i > 0 latest on ts partition by s",
-                """
-                        SelectedRecord
-                            LatestByValueDeferredFiltered
-                              filter: 0<i
-                              symbolFilter: s='ABC'
-                                Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s symbol, ts timestamp) timestamp(ts);", "select ts,i from a where s in ('ABC') and i > 0 latest on ts partition by s", """
+                SelectedRecord
+                    LatestByValueDeferredFiltered
+                      filter: 0<i
+                      symbolFilter: s='ABC'
+                        Frame backward scan on: a
+                """);
     }
 
     @Test
@@ -4753,17 +3959,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, s symbol, ts timestamp) timestamp(ts);");
             execute("insert into a select 10-x, 'a' || x, x::timestamp from long_sequence(10)");
 
-            assertPlanNoLeakCheck(
-                    "select ts,i from a where s in ('a1') and i > 0 latest on ts partition by s",
-                    """
-                            SelectedRecord
-                                LatestByValueFiltered
-                                    Row backward scan
-                                      symbolFilter: s=0
-                                      filter: 0<i
-                                    Frame backward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select ts,i from a where s in ('a1') and i > 0 latest on ts partition by s", """
+                    SelectedRecord
+                        LatestByValueFiltered
+                            Row backward scan
+                              symbolFilter: s=0
+                              filter: 0<i
+                            Frame backward scan on: a
+                    """);
         });
     }
 
@@ -4773,16 +3976,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, s symbol, ts timestamp) timestamp(ts);");
             execute("insert into a select 10-x, 'a' || x, x::timestamp from long_sequence(10)");
 
-            assertPlanNoLeakCheck(
-                    "select ts,i from a where s in ('a1') latest on ts partition by s",
-                    """
-                            SelectedRecord
-                                LatestByValueFiltered
-                                    Row backward scan
-                                      symbolFilter: s=0
-                                    Frame backward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select ts,i from a where s in ('a1') latest on ts partition by s", """
+                    SelectedRecord
+                        LatestByValueFiltered
+                            Row backward scan
+                              symbolFilter: s=0
+                            Frame backward scan on: a
+                    """);
         });
     }
 
@@ -4792,256 +3992,193 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
             execute("insert into a select 10-x, 'a' || x, x::timestamp from long_sequence(10)");
 
-            assertPlanNoLeakCheck(
-                    "select ts,i, s from a where s in ('a1') and i > 0 latest on ts partition by s",
-                    """
-                            Index backward scan on: s
-                              filter: 0<i
-                              symbolFilter: s=1
-                                Frame backward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select ts,i, s from a where s in ('a1') and i > 0 latest on ts partition by s", """
+                    Index backward scan on: s
+                      filter: 0<i
+                      symbolFilter: s=1
+                        Frame backward scan on: a
+                    """);
         });
     }
 
     @Test
     public void testLatestOn1() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts);",
-                "select * from a latest on ts partition by i",
-                """
-                        LatestByAllFiltered
-                            Row backward scan
-                            Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts);", "select * from a latest on ts partition by i", """
+                LatestByAllFiltered
+                    Row backward scan
+                    Frame backward scan on: a
+                """);
     }
 
     @Test // TODO: should use index
     public void testLatestOn10() throws Exception {
-        assertPlan(
-                "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
-                "select s, i, ts from a where s = 'S1' or s = 'S2' latest on ts partition by s",
-                """
-                        LatestByDeferredListValuesFiltered
-                          filter: (s='S1' or s='S2')
-                            Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select s, i, ts from a where s = 'S1' or s = 'S2' latest on ts partition by s", """
+                LatestByDeferredListValuesFiltered
+                  filter: (s='S1' or s='S2')
+                    Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testLatestOn11() throws Exception {
-        assertPlan(
-                "create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
-                "select s, i, ts from a where s in ('S1', 'S2') latest on ts partition by s",
-                """
-                        LatestByDeferredListValuesFiltered
-                          includedSymbols: ['S1','S2']
-                            Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s symbol, ts timestamp) timestamp(ts);", "select s, i, ts from a where s in ('S1', 'S2') latest on ts partition by s", """
+                LatestByDeferredListValuesFiltered
+                  includedSymbols: ['S1','S2']
+                    Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testLatestOn12() throws Exception {
-        assertPlan(
-                "create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
-                "select s, i, ts from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s",
-                """
-                        LatestBySubQuery
-                            Subquery
-                                GroupBy vectorized: true workers: 1
-                                  keys: [s]
-                                  values: [count(*)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                            Row backward scan on: s
-                              filter: length(s)=2
-                            Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s symbol, ts timestamp) timestamp(ts);", "select s, i, ts from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s", """
+                LatestBySubQuery
+                    Subquery
+                        GroupBy vectorized: true workers: 1
+                          keys: [s]
+                          values: [count(*)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    Row backward scan on: s
+                      filter: length(s)=2
+                    Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testLatestOn12a() throws Exception {
-        assertPlan(
-                "create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
-                "select s, i, ts from a where s in (select distinct s from a) latest on ts partition by s",
-                """
-                        LatestBySubQuery
-                            Subquery
-                                GroupBy vectorized: true workers: 1
-                                  keys: [s]
-                                  values: [count(*)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                            Row backward scan on: s
-                            Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s symbol, ts timestamp) timestamp(ts);", "select s, i, ts from a where s in (select distinct s from a) latest on ts partition by s", """
+                LatestBySubQuery
+                    Subquery
+                        GroupBy vectorized: true workers: 1
+                          keys: [s]
+                          values: [count(*)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    Row backward scan on: s
+                    Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testLatestOn13() throws Exception {
-        assertPlan(
-                "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
-                "select i, ts, s from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s",
-                """
-                        LatestBySubQuery
-                            Subquery
-                                GroupBy vectorized: true workers: 1
-                                  keys: [s]
-                                  values: [count(*)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                            Index backward scan on: s
-                              filter: length(s)=2
-                            Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select i, ts, s from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s", """
+                LatestBySubQuery
+                    Subquery
+                        GroupBy vectorized: true workers: 1
+                          keys: [s]
+                          values: [count(*)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    Index backward scan on: s
+                      filter: length(s)=2
+                    Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testLatestOn13a() throws Exception {
-        assertPlan(
-                "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
-                "select i, ts, s from a where s in (select distinct s from a) latest on ts partition by s",
-                """
-                        LatestBySubQuery
-                            Subquery
-                                GroupBy vectorized: true workers: 1
-                                  keys: [s]
-                                  values: [count(*)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                            Index backward scan on: s
-                            Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select i, ts, s from a where s in (select distinct s from a) latest on ts partition by s", """
+                LatestBySubQuery
+                    Subquery
+                        GroupBy vectorized: true workers: 1
+                          keys: [s]
+                          values: [count(*)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    Index backward scan on: s
+                    Frame backward scan on: a
+                """);
     }
 
     @Test // TODO: should use one or two indexes
     public void testLatestOn14() throws Exception {
-        assertPlan(
-                "create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);",
-                "select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' and i > 0 latest on ts partition by s1,s2",
-                """
-                        LatestByAllSymbolsFiltered
-                          filter: (s1 in [S1,S2] and s2='S3' and 0<i)
-                            Row backward scan
-                              expectedSymbolsCount: 2
-                            Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);", "select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' and i > 0 latest on ts partition by s1,s2", """
+                LatestByAllSymbolsFiltered
+                  filter: (s1 in [S1,S2] and s2='S3' and 0<i)
+                    Row backward scan
+                      expectedSymbolsCount: 2
+                    Frame backward scan on: a
+                """);
     }
 
     @Test // TODO: should use one or two indexes
     public void testLatestOn15() throws Exception {
-        assertPlan(
-                "create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);",
-                "select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' latest on ts partition by s1,s2",
-                """
-                        LatestByAllSymbolsFiltered
-                          filter: (s1 in [S1,S2] and s2='S3')
-                            Row backward scan
-                              expectedSymbolsCount: 2
-                            Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);", "select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' latest on ts partition by s1,s2", """
+                LatestByAllSymbolsFiltered
+                  filter: (s1 in [S1,S2] and s2='S3')
+                    Row backward scan
+                      expectedSymbolsCount: 2
+                    Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testLatestOn16() throws Exception {
-        assertPlan(
-                "create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);",
-                "select s1, s2, i, ts from a where s1 = 'S1' and ts > 0::timestamp latest on ts partition by s1,s2",
-                """
-                        LatestByAllSymbolsFiltered
-                          filter: s1='S1'
-                            Row backward scan
-                              expectedSymbolsCount: 2147483647
-                            Interval backward scan on: a
-                              intervals: [("1970-01-01T00:00:00.000001Z","MAX")]
-                        """
-        );
+        assertPlan("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);", "select s1, s2, i, ts from a where s1 = 'S1' and ts > 0::timestamp latest on ts partition by s1,s2", """
+                LatestByAllSymbolsFiltered
+                  filter: s1='S1'
+                    Row backward scan
+                      expectedSymbolsCount: 2147483647
+                    Interval backward scan on: a
+                      intervals: [("1970-01-01T00:00:00.000001Z","MAX")]
+                """);
     }
 
     @Test
     public void testLatestOn1a() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts);",
-                "select * from (select ts, i as i1, i as i2 from a ) where 0 < i1 and i2 < 10 latest on ts partition by i1",
-                """
-                        LatestBy light order_by_timestamp: true
-                            SelectedRecord
-                                Async JIT Filter workers: 1
-                                  filter: (0<i and i<10)
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts);", "select * from (select ts, i as i1, i as i2 from a ) where 0 < i1 and i2 < 10 latest on ts partition by i1", """
+                LatestBy light order_by_timestamp: true
+                    SelectedRecord
+                        Async JIT Filter workers: 1
+                          filter: (0<i and i<10)
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testLatestOn1b() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts);",
-                "select ts, i as i1, i as i2 from a where 0 < i and i < 10 latest on ts partition by i",
-                """
-                        SelectedRecord
-                            LatestByAllFiltered
-                                Row backward scan
-                                  filter: (0<i and i<10)
-                                Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts);", "select ts, i as i1, i as i2 from a where 0 < i and i < 10 latest on ts partition by i", """
+                SelectedRecord
+                    LatestByAllFiltered
+                        Row backward scan
+                          filter: (0<i and i<10)
+                        Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testLatestOn2() throws Exception {
-        assertPlan(
-                "create table a ( i int, d double, ts timestamp) timestamp(ts);",
-                "select ts, d from a latest on ts partition by i",
-                """
-                        SelectedRecord
-                            LatestByAllFiltered
-                                Row backward scan
-                                Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, d double, ts timestamp) timestamp(ts);", "select ts, d from a latest on ts partition by i", """
+                SelectedRecord
+                    LatestByAllFiltered
+                        Row backward scan
+                        Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testLatestOn3() throws Exception {
-        assertPlan(
-                "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
-                "select * from a latest on ts partition by s",
-                """
-                        LatestByAllIndexed
-                            Async index backward scan on: s workers: 2
-                            Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select * from a latest on ts partition by s", """
+                LatestByAllIndexed
+                    Async index backward scan on: s workers: 2
+                    Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testLatestOn4() throws Exception {
-        assertPlan(
-                "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
-                "select s, i, ts from a where s  = 'S1' latest on ts partition by s",
-                """
-                        PageFrame
-                            Index backward scan on: s deferred: true
-                              filter: s='S1'
-                            Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select s, i, ts from a where s  = 'S1' latest on ts partition by s", """
+                PageFrame
+                    Index backward scan on: s deferred: true
+                      filter: s='S1'
+                    Frame backward scan on: a
+                """);
     }
 
     @Test
@@ -5050,14 +4187,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
             execute("insert into a select x, x::symbol, x::timestamp from long_sequence(10) ");
 
-            assertPlanNoLeakCheck(
-                    "select s, i, ts from a where s  in ('def1', 'def2') latest on ts partition by s",
-                    """
-                            Index backward scan on: s
-                              symbolFilter: s in ['def1','def2']
-                                Frame backward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select s, i, ts from a where s  in ('def1', 'def2') latest on ts partition by s", """
+                    Index backward scan on: s
+                      symbolFilter: s in ['def1','def2']
+                        Frame backward scan on: a
+                    """);
         });
     }
 
@@ -5067,14 +4201,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
             execute("insert into a select x, x::symbol, x::timestamp from long_sequence(10) ");
 
-            assertPlanNoLeakCheck(
-                    "select s, i, ts from a where s  in ('1', 'deferred') latest on ts partition by s",
-                    """
-                            Index backward scan on: s
-                              symbolFilter: s in [1] or s in ['deferred']
-                                Frame backward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select s, i, ts from a where s  in ('1', 'deferred') latest on ts partition by s", """
+                    Index backward scan on: s
+                      symbolFilter: s in [1] or s in ['deferred']
+                        Frame backward scan on: a
+                    """);
         });
     }
 
@@ -5084,43 +4215,32 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
             execute("insert into a select x, x::symbol, x::timestamp from long_sequence(10) ");
 
-            assertPlanNoLeakCheck(
-                    "select s, i, ts from a where s  in ('1', '2') latest on ts partition by s",
-                    """
-                            Index backward scan on: s
-                              symbolFilter: s in [1,2]
-                                Frame backward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select s, i, ts from a where s  in ('1', '2') latest on ts partition by s", """
+                    Index backward scan on: s
+                      symbolFilter: s in [1,2]
+                        Frame backward scan on: a
+                    """);
         });
     }
 
     @Test
     public void testLatestOn6() throws Exception {
-        assertPlan(
-                "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
-                "select s, i, ts from a where s  in ('S1', 'S2') and i > 0 latest on ts partition by s",
-                """
-                        Index backward scan on: s
-                          filter: 0<i
-                          symbolFilter: s in ['S1','S2']
-                            Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select s, i, ts from a where s  in ('S1', 'S2') and i > 0 latest on ts partition by s", """
+                Index backward scan on: s
+                  filter: 0<i
+                  symbolFilter: s in ['S1','S2']
+                    Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testLatestOn7() throws Exception {
-        assertPlan(
-                "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
-                "select s, i, ts from a where s  in ('S1', 'S2') and length(s)<10 latest on ts partition by s",
-                """
-                        Index backward scan on: s
-                          filter: length(s)<10
-                          symbolFilter: s in ['S1','S2']
-                            Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select s, i, ts from a where s  in ('S1', 'S2') and length(s)<10 latest on ts partition by s", """
+                Index backward scan on: s
+                  filter: length(s)<10
+                  symbolFilter: s in ['S1','S2']
+                    Frame backward scan on: a
+                """);
     }
 
     @Test
@@ -5129,15 +4249,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)");
             execute("insert into a select x::int, 's' ||(x%10), x::timestamp from long_sequence(1000)");
 
-            assertPlanNoLeakCheck(
-                    "select s, i, ts from a where s  in ('s1') latest on ts partition by s",
-                    """
-                            PageFrame
-                                Index backward scan on: s
-                                  filter: s=1
-                                Frame backward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select s, i, ts from a where s  in ('s1') latest on ts partition by s", """
+                    PageFrame
+                        Index backward scan on: s
+                          filter: s=1
+                        Frame backward scan on: a
+                    """);
         });
     }
 
@@ -5147,44 +4264,33 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)");
             execute("insert into a select x::int, 's' ||(x%10), x::timestamp from long_sequence(1000)");
 
-            assertPlanNoLeakCheck(
-                    "select s, i, ts from a where s in ('bogus_key') latest on ts partition by s",
-                    """
-                            PageFrame
-                                Index backward scan on: s deferred: true
-                                  filter: s='bogus_key'
-                                Frame backward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select s, i, ts from a where s in ('bogus_key') latest on ts partition by s", """
+                    PageFrame
+                        Index backward scan on: s deferred: true
+                          filter: s='bogus_key'
+                        Frame backward scan on: a
+                    """);
         });
     }
 
     @Test // columns in order different to table's
     public void testLatestOn9() throws Exception {
-        assertPlan(
-                "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
-                "select s, i, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s",
-                """
-                        Index backward scan on: s
-                          filter: length(s)=10
-                          symbolFilter: s='S1'
-                            Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select s, i, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s", """
+                Index backward scan on: s
+                  filter: length(s)=10
+                  symbolFilter: s='S1'
+                    Frame backward scan on: a
+                """);
     }
 
     @Test // columns in table's order
     public void testLatestOn9a() throws Exception {
-        assertPlan(
-                "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
-                "select i, s, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s",
-                """
-                        Index backward scan on: s
-                          filter: length(s)=10
-                          symbolFilter: s='S1'
-                            Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select i, s, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s", """
+                Index backward scan on: s
+                  filter: length(s)=10
+                  symbolFilter: s='S1'
+                    Frame backward scan on: a
+                """);
     }
 
     @Test
@@ -5193,15 +4299,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
             execute("insert into a select x::int, 'S' || x, x::timestamp from long_sequence(10)");
 
-            assertPlanNoLeakCheck(
-                    "select s, i, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s",
-                    """
-                            Index backward scan on: s
-                              filter: length(s)=10
-                              symbolFilter: s=1
-                                Frame backward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select s, i, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s", """
+                    Index backward scan on: s
+                      filter: length(s)=10
+                      symbolFilter: s=1
+                        Frame backward scan on: a
+                    """);
         });
     }
 
@@ -5211,20 +4314,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table taba (a1 int, a2 long)");
             execute("create table tabb (b1 int, b2 long)");
 
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on a1=b1  or a2=b2",
-                    """
-                            SelectedRecord
-                                Nested Loop Left Join
-                                  filter: (taba.a1=tabb.b1 or taba.a2=tabb.b2)
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: taba
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tabb
-                            """
-            );
+            assertPlanNoLeakCheck("select * from taba left join tabb on a1=b1  or a2=b2", """
+                    SelectedRecord
+                        Nested Loop Left Join
+                          filter: (taba.a1=tabb.b1 or taba.a2=tabb.b2)
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: taba
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tabb
+                    """);
         });
     }
 
@@ -5234,21 +4334,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table taba (a1 int, a2 long)");
             execute("create table tabb (b1 int, b2 long)");
 
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on a1=b1  or a2=b2 where a1 > b2",
-                    """
-                            SelectedRecord
-                                Filter filter: tabb.b2<taba.a1
-                                    Nested Loop Left Join
-                                      filter: (taba.a1=tabb.b1 or taba.a2=tabb.b2)
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: taba
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tabb
-                            """
-            );
+            assertPlanNoLeakCheck("select * from taba left join tabb on a1=b1  or a2=b2 where a1 > b2", """
+                    SelectedRecord
+                        Filter filter: tabb.b2<taba.a1
+                            Nested Loop Left Join
+                              filter: (taba.a1=tabb.b1 or taba.a2=tabb.b2)
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: taba
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tabb
+                    """);
         });
     }
 
@@ -5277,20 +4374,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table taba (a1 int, a2 long)");
             execute("create table tabb (b1 int, b2 long)");
 
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on abs(a2+1) = abs(b2)",
-                    """
-                            SelectedRecord
-                                Nested Loop Left Join
-                                  filter: abs(taba.a2+1)=abs(tabb.b2)
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: taba
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tabb
-                            """
-            );
+            assertPlanNoLeakCheck("select * from taba left join tabb on abs(a2+1) = abs(b2)", """
+                    SelectedRecord
+                        Nested Loop Left Join
+                          filter: abs(taba.a2+1)=abs(tabb.b2)
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: taba
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tabb
+                    """);
         });
     }
 
@@ -5300,20 +4394,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table taba (a1 int, a2 long)");
             execute("create table tabb (b1 int, b2 long)");
 
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on abs(a2+1) = abs(b2) or a2/2 = b2+1",
-                    """
-                            SelectedRecord
-                                Nested Loop Left Join
-                                  filter: (abs(taba.a2+1)=abs(tabb.b2) or taba.a2/2=tabb.b2+1)
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: taba
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tabb
-                            """
-            );
+            assertPlanNoLeakCheck("select * from taba left join tabb on abs(a2+1) = abs(b2) or a2/2 = b2+1", """
+                    SelectedRecord
+                        Nested Loop Left Join
+                          filter: (abs(taba.a2+1)=abs(tabb.b2) or taba.a2/2=tabb.b2+1)
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: taba
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tabb
+                    """);
         });
     }
 
@@ -5329,61 +4420,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
 
-                assertPlanNoLeakCheck(
-                        "SELECT count(1) " +
-                                "FROM tab as T1 " +
-                                joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") +
-                                "WHERE not T2.value<>T2.value",
-                        "Count\n" +
-                                "    Filter filter: T2.value=T2.value\n" +
-                                "        " + factoryType + "\n" +
-                                (i < 3 ? "          condition: T2.created=T1.created\n" : "") +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: tab\n" +
-                                (i < 3 ? "            Hash\n" : "") +
-                                (i < 3 ? "    " : "") + "            PageFrame\n" +
-                                (i < 3 ? "    " : "") + "                Row forward scan\n" +
-                                (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n"
-                );
+                assertPlanNoLeakCheck("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") + "WHERE not T2.value<>T2.value", "Count\n" + "    Filter filter: T2.value=T2.value\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
 
-                assertPlanNoLeakCheck(
-                        "SELECT count(1) " +
-                                "FROM tab as T1 " +
-                                joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") +
-                                "WHERE not T2.value=1",
-                        "Count\n" +
-                                "    Filter filter: T2.value!=1\n" +
-                                "        " + factoryType + "\n" +
-                                (i < 3 ? "          condition: T2.created=T1.created\n" : "") +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: tab\n" +
-                                (i < 3 ? "            Hash\n" : "") +
-                                (i < 3 ? "    " : "") + "            PageFrame\n" +
-                                (i < 3 ? "    " : "") + "                Row forward scan\n" +
-                                (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n"
-                );
+                assertPlanNoLeakCheck("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") + "WHERE not T2.value=1", "Count\n" + "    Filter filter: T2.value!=1\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
 
                 // push down predicate to the 'left' table of left join
-                assertPlanNoLeakCheck(
-                        "SELECT count(1) " +
-                                "FROM tab as T1 " +
-                                joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") +
-                                "WHERE not T1.value=1",
-                        "Count\n" +
-                                "    " + factoryType + "\n" +
-                                (i < 3 ? "      condition: T2.created=T1.created\n" : "") +
-                                "        Async JIT Filter workers: 1\n" +
-                                "          filter: value!=1\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: tab\n" +
-                                (i < 3 ? "        Hash\n" : "") +
-                                (i < 3 ? "    " : "") + "        PageFrame\n" +
-                                (i < 3 ? "    " : "") + "            Row forward scan\n" +
-                                (i < 3 ? "    " : "") + "            Frame forward scan on: tab\n"
-                );
+                assertPlanNoLeakCheck("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") + "WHERE not T1.value=1", "Count\n" + "    " + factoryType + "\n" + (i < 3 ? "      condition: T2.created=T1.created\n" : "") + "        Async JIT Filter workers: 1\n" + "          filter: value!=1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "        Hash\n" : "") + (i < 3 ? "    " : "") + "        PageFrame\n" + (i < 3 ? "    " : "") + "            Row forward scan\n" + (i < 3 ? "    " : "") + "            Frame forward scan on: tab\n");
             }
 
             // two joins
@@ -5391,124 +4433,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
 
-                assertPlanNoLeakCheck(
-                        "SELECT count(1) " +
-                                "FROM tab as T1 " +
-                                joinType + " JOIN tab as T2 ON T1.created=T2.created " +
-                                "JOIN tab as T3 ON T2.created=T3.created " +
-                                "WHERE T1.value=1",
-                        "Count\n" +
-                                "    Hash Join Light\n" +
-                                "      condition: T3.created=T2.created\n" +
-                                "        " + factoryType + "\n" +
-                                "          condition: T2.created=T1.created\n" +
-                                "            Async JIT Filter workers: 1\n" +
-                                "              filter: value=1\n" +
-                                "                PageFrame\n" +
-                                "                    Row forward scan\n" +
-                                "                    Frame forward scan on: tab\n" +
-                                "            Hash\n" +
-                                "                PageFrame\n" +
-                                "                    Row forward scan\n" +
-                                "                    Frame forward scan on: tab\n" +
-                                "        Hash\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: tab\n"
-                );
+                assertPlanNoLeakCheck("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T1.value=1", "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            Async JIT Filter workers: 1\n" + "              filter: value=1\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
 
-                assertPlanNoLeakCheck(
-                        "SELECT count(1) " +
-                                "FROM tab as T1 " +
-                                joinType + " JOIN tab as T2 ON T1.created=T2.created " +
-                                "JOIN tab as T3 ON T2.created=T3.created " +
-                                "WHERE T2.created=1",
-                        "Count\n" +
-                                "    Hash Join Light\n" +
-                                "      condition: T3.created=T2.created\n" +
-                                "        Filter filter: T2.created=1\n" +
-                                "            " + factoryType + "\n" +
-                                "              condition: T2.created=T1.created\n" +
-                                "                PageFrame\n" +
-                                "                    Row forward scan\n" +
-                                "                    Frame forward scan on: tab\n" +
-                                "                Hash\n" +
-                                "                    PageFrame\n" +
-                                "                        Row forward scan\n" +
-                                "                        Frame forward scan on: tab\n" +
-                                "        Hash\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: tab\n"
-                );
+                assertPlanNoLeakCheck("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T2.created=1", "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        Filter filter: T2.created=1\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
 
-                assertPlanNoLeakCheck(
-                        "SELECT count(1) " +
-                                "FROM tab as T1 " +
-                                joinType + " JOIN tab as T2 ON T1.created=T2.created " +
-                                "JOIN tab as T3 ON T2.created=T3.created " +
-                                "WHERE T3.value=1",
-                        "Count\n" +
-                                "    Hash Join Light\n" +
-                                "      condition: T3.created=T2.created\n" +
-                                "        " + factoryType + "\n" +
-                                "          condition: T2.created=T1.created\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: tab\n" +
-                                "            Hash\n" +
-                                "                PageFrame\n" +
-                                "                    Row forward scan\n" +
-                                "                    Frame forward scan on: tab\n" +
-                                "        Hash\n" +
-                                "            Async JIT Filter workers: 1\n" +
-                                "              filter: value=1\n" +
-                                "                PageFrame\n" +
-                                "                    Row forward scan\n" +
-                                "                    Frame forward scan on: tab\n"
-                );
+                assertPlanNoLeakCheck("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T3.value=1", "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "        Hash\n" + "            Async JIT Filter workers: 1\n" + "              filter: value=1\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n");
 
                 // where clause in parent model
-                assertPlanNoLeakCheck(
-                        "SELECT count(1) " +
-                                "FROM ( " +
-                                "SELECT * " +
-                                "FROM tab as T1 " +
-                                joinType + " JOIN tab as T2 ON T1.created=T2.created ) e " +
-                                "WHERE not value1<>value1",
-                        "Count\n" +
-                                "    SelectedRecord\n" +
-                                "        Filter filter: T2.value=T2.value\n" +
-                                "            " + factoryType + "\n" +
-                                "              condition: T2.created=T1.created\n" +
-                                "                PageFrame\n" +
-                                "                    Row forward scan\n" +
-                                "                    Frame forward scan on: tab\n" +
-                                "                Hash\n" +
-                                "                    PageFrame\n" +
-                                "                        Row forward scan\n" +
-                                "                        Frame forward scan on: tab\n"
-                );
+                assertPlanNoLeakCheck("SELECT count(1) " + "FROM ( " + "SELECT * " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created ) e " + "WHERE not value1<>value1", "Count\n" + "    SelectedRecord\n" + "        Filter filter: T2.value=T2.value\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n");
 
-                assertPlanNoLeakCheck(
-                        "SELECT count(1) " +
-                                "FROM ( " +
-                                "SELECT * " +
-                                "FROM tab as T1 " +
-                                joinType + " JOIN tab as T2 ON T1.created=T2.created ) e " +
-                                "WHERE not value<>value",
-                        "Count\n" +
-                                "    SelectedRecord\n" +
-                                "        " + factoryType + "\n" +
-                                "          condition: T2.created=T1.created\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: tab\n" +
-                                "            Hash\n" +
-                                "                PageFrame\n" +
-                                "                    Row forward scan\n" +
-                                "                    Frame forward scan on: tab\n"
-                );
+                assertPlanNoLeakCheck("SELECT count(1) " + "FROM ( " + "SELECT * " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created ) e " + "WHERE not value<>value", "Count\n" + "    SelectedRecord\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n");
             }
         });
     }
@@ -5518,19 +4452,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (s1 string, s2 string, s3 string, s4 string, s5 string, s6 string);");
 
-            assertPlanNoLeakCheck(
-                    "select * from tab " +
-                            "where s1 like '%a'  and s2 ilike '%a' " +
-                            "  and s3 like 'a%'  and s4 ilike 'a%' " +
-                            "  and s5 like '%a%' and s6 ilike '%a%';",
-                    """
-                            Async Filter workers: 1
-                              filter: ((s1 like %a and s2 ilike %a and s3 like a% and s4 ilike a%) and s5 like %a% and s6 ilike %a%)
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("select * from tab " + "where s1 like '%a'  and s2 ilike '%a' " + "  and s3 like 'a%'  and s4 ilike 'a%' " + "  and s5 like '%a%' and s6 ilike '%a%';", """
+                    Async Filter workers: 1
+                      filter: ((s1 like %a and s2 ilike %a and s3 like a% and s4 ilike a%) and s5 like %a% and s6 ilike %a%)
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: tab
+                    """);
         });
     }
 
@@ -5540,20 +4468,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select ts1, ts2, i1, i2 from (select a.i as i1, a.ts as ts1, b.i as i2, b.ts as ts2 from a lt join b on ts) where ts1::long*i1<ts2::long*i2",
-                    """
-                            SelectedRecord
-                                Filter filter: a.ts::long*a.i<b.ts::long*b.i
-                                    Lt Join Fast
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select ts1, ts2, i1, i2 from (select a.i as i1, a.ts as ts1, b.i as i2, b.ts as ts2 from a lt join b on ts) where ts1::long*i1<ts2::long*i2", """
+                    SelectedRecord
+                        Filter filter: a.ts::long*a.i<b.ts::long*b.i
+                            Lt Join Fast
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                    """);
         });
     }
 
@@ -5563,19 +4488,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a lt join b on ts",
-                    """
-                            SelectedRecord
-                                Lt Join Fast
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a lt join b on ts", """
+                    SelectedRecord
+                        Lt Join Fast
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: b
+                    """);
         });
     }
 
@@ -5587,20 +4509,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a lt join b on ts where a.i = b.ts",
-                    """
-                            SelectedRecord
-                                Filter filter: a.i=b.ts
-                                    Lt Join Fast
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a lt join b on ts where a.i = b.ts", """
+                    SelectedRecord
+                        Filter filter: a.i=b.ts
+                            Lt Join Fast
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                    """);
         });
     }
 
@@ -5610,20 +4529,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a lt join b on ts where a.i = b.ts",
-                    """
-                            SelectedRecord
-                                Filter filter: a.i=b.ts
-                                    Lt Join Fast
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a lt join b on ts where a.i = b.ts", """
+                    SelectedRecord
+                        Filter filter: a.i=b.ts
+                            Lt Join Fast
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                    """);
         });
     }
 
@@ -5633,20 +4549,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a lt join b where a.i = b.ts",
-                    """
-                            SelectedRecord
-                                Filter filter: a.i=b.ts
-                                    Lt Join Fast
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a lt join b where a.i = b.ts", """
+                    SelectedRecord
+                        Filter filter: a.i=b.ts
+                            Lt Join Fast
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                    """);
         });
     }
 
@@ -5656,20 +4569,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a lt join (select * from b limit 10) on ts",
-                    """
-                            SelectedRecord
-                                Lt Join
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    Limit lo: 10 skip-over-rows: 0 limit: 0
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a lt join (select * from b limit 10) on ts", """
+                    SelectedRecord
+                        Lt Join
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            Limit value: 10 skip-rows: 0 take-rows: 0
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                    """);
         });
     }
 
@@ -5681,24 +4591,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                assertPlanNoLeakCheck(
-                        compiler,
-                        "select * " +
-                                "from a " +
-                                "Lt Join b on a.i = b.i",
-                        """
-                                SelectedRecord
-                                    Lt Join
-                                      condition: b.i=a.i
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                                """,
-                        sqlExecutionContext
-                );
+                assertPlanNoLeakCheck(compiler, "select * " + "from a " + "Lt Join b on a.i = b.i", """
+                        SelectedRecord
+                            Lt Join
+                              condition: b.i=a.i
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                        """, sqlExecutionContext);
             }
         });
     }
@@ -5709,21 +4612,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a (i int, ts timestamp) timestamp(ts)");
             execute("create table b (i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a lt join b where a.i > 0",
-                    """
-                            SelectedRecord
-                                Lt Join Fast
-                                    Async JIT Filter workers: 1
-                                      filter: 0<i
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a lt join b where a.i > 0", """
+                    SelectedRecord
+                        Lt Join Fast
+                            Async JIT Filter workers: 1
+                              filter: 0<i
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: b
+                    """);
         });
     }
 
@@ -5733,19 +4633,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a (i int, ts timestamp) timestamp(ts)");
             execute("create table b (i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a lt join b",
-                    """
-                            SelectedRecord
-                                Lt Join Fast
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a lt join b", """
+                    SelectedRecord
+                        Lt Join Fast
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: b
+                    """);
         });
     }
 
@@ -5755,19 +4652,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a (i int, ts timestamp) timestamp(ts)");
             execute("create table b (i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a lt join b on(ts)",
-                    """
-                            SelectedRecord
-                                Lt Join Fast
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a lt join b on(ts)", """
+                    SelectedRecord
+                        Lt Join Fast
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: b
+                    """);
         });
     }
 
@@ -5777,19 +4671,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a (ts timestamp, i int) timestamp(ts)");
             execute("create table b (i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a lt join b on(ts)",
-                    """
-                            SelectedRecord
-                                Lt Join Fast
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a lt join b on(ts)", """
+                    SelectedRecord
+                        Lt Join Fast
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: b
+                    """);
         });
     }
 
@@ -5799,21 +4690,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a lt join ((select * from b order by ts, i ) timestamp(ts))  on ts",
-                    """
-                            SelectedRecord
-                                Lt Join
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    Sort light
-                                      keys: [ts, i]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a lt join ((select * from b order by ts, i ) timestamp(ts))  on ts", """
+                    SelectedRecord
+                        Lt Join
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            Sort light
+                              keys: [ts, i]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                    """);
         });
     }
 
@@ -5823,115 +4711,93 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * " +
-                            "from a " +
-                            "lt join b on ts " +
-                            "lt join a c on ts",
-                    """
-                            SelectedRecord
-                                Lt Join Fast
-                                    Lt Join Fast
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * " + "from a " + "lt join b on ts " + "lt join a c on ts", """
+                    SelectedRecord
+                        Lt Join Fast
+                            Lt Join Fast
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    """);
         });
     }
 
     @Test
     public void testMultiExcept() throws Exception {
-        assertPlan(
-                "create table a ( i int, s string);",
-                "select * from a except select * from a except select * from a",
-                """
-                        Except
-                            Except
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                                Hash
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                            Hash
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s string);", "select * from a except select * from a except select * from a", """
+                Except
+                    Except
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                        Hash
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    Hash
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testMultiIntersect() throws Exception {
-        assertPlan(
-                "create table a ( i int, s string);",
-                "select * from a intersect select * from a intersect select * from a",
-                """
-                        Intersect
-                            Intersect
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                                Hash
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                            Hash
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s string);", "select * from a intersect select * from a intersect select * from a", """
+                Intersect
+                    Intersect
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                        Hash
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    Hash
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testMultiUnion() throws Exception {
-        assertPlan(
-                "create table a ( i int, s string);",
-                "select * from a union select * from a union select * from a",
-                """
-                        Union
-                            Union
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s string);", "select * from a union select * from a union select * from a", """
+                Union
+                    Union
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testMultiUnionAll() throws Exception {
-        assertPlan(
-                "create table a ( i int, s string);",
-                "select * from a union all select * from a union all select * from a",
-                """
-                        Union All
-                            Union All
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s string);", "select * from a union all select * from a union all select * from a", """
+                Union All
+                    Union All
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
@@ -5939,37 +4805,27 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t select x, x::timestamp from long_sequence(2)");
-            String[] queries = {"select * from t t1 left join t t2 on t1.x*t2.x>0 order by t1.ts",
-                    "select * from (select * from t order by ts desc) t1 left join t t2 on t1.x*t2.x>0 order by t1.ts"};
+            String[] queries = {"select * from t t1 left join t t2 on t1.x*t2.x>0 order by t1.ts", "select * from (select * from t order by ts desc) t1 left join t t2 on t1.x*t2.x>0 order by t1.ts"};
             for (String query : queries) {
-                assertPlanNoLeakCheck(
-                        query,
-                        """
-                                SelectedRecord
-                                    Nested Loop Left Join
-                                      filter: 0<t1.x*t2.x
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t
-                                """
-                );
+                assertPlanNoLeakCheck(query, """
+                        SelectedRecord
+                            Nested Loop Left Join
+                              filter: 0<t1.x*t2.x
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                        """);
 
-                assertQueryNoLeakCheck(
-                        """
-                                x\tts\tx1\tts1
-                                1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
-                                1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000002Z
-                                2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z
-                                2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z
-                                """,
-                        query,
-                        "ts",
-                        false,
-                        false
-                );
+                assertQueryNoLeakCheck("""
+                        x\tts\tx1\tts1
+                        1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
+                        1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000002Z
+                        2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z
+                        2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z
+                        """, query, "ts", false, false);
             }
         });
     }
@@ -5980,26 +4836,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t select x, x::timestamp from long_sequence(2)");
 
-            String query = "select * from " +
-                    "((select * from t order by ts desc) limit 10) t1 " +
-                    "left join t t2 on t1.x*t2.x > 0 " +
-                    "order by t1.ts desc";
+            String query = "select * from " + "((select * from t order by ts desc) limit 10) t1 " + "left join t t2 on t1.x*t2.x > 0 " + "order by t1.ts desc";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
-                            SelectedRecord
-                                Nested Loop Left Join
-                                  filter: 0<t1.x*t2.x
-                                    Limit lo: 10 skip-over-rows: 0 limit: 2
-                                        PageFrame
-                                            Row backward scan
-                                            Frame backward scan on: t
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                            """
-            );
+            assertPlanNoLeakCheck(query, """
+                    SelectedRecord
+                        Nested Loop Left Join
+                          filter: 0<t1.x*t2.x
+                            Limit value: 10 skip-rows: 0 take-rows: 2
+                                PageFrame
+                                    Row backward scan
+                                    Frame backward scan on: t
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: t
+                    """);
         });
     }
 
@@ -6008,33 +4858,27 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (b boolean, ts timestamp)");
             // true
-            assertPlanNoLeakCheck(
-                    "update tab t1 set b=true from tab t2 where 1>2 and t1.b = t2.b",
-                    """
-                            Update table: tab
-                                VirtualRecord
-                                  functions: [true]
-                                    Empty table
-                            """
-            );
+            assertPlanNoLeakCheck("update tab t1 set b=true from tab t2 where 1>2 and t1.b = t2.b", """
+                    Update table: tab
+                        VirtualRecord
+                          functions: [true]
+                            Empty table
+                    """);
             // false
-            assertPlanNoLeakCheck(
-                    "update tab t1 set b=true from tab t2 where 1<2 and t1.b = t2.b",
-                    """
-                            Update table: tab
-                                VirtualRecord
-                                  functions: [true]
-                                    Hash Join Light
-                                      condition: t2.b=t1.b
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
-                                        Hash
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("update tab t1 set b=true from tab t2 where 1<2 and t1.b = t2.b", """
+                    Update table: tab
+                        VirtualRecord
+                          functions: [true]
+                            Hash Join Light
+                              condition: t2.b=t1.b
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                                Hash
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                    """);
         });
     }
 
@@ -6042,25 +4886,21 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testNoArgNonConstantExpressionUsedInJoinClauseIsUsedAsPostJoinFilter() throws Exception {
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
 
-        assertPlan(
-                "create table tab (b boolean, ts timestamp)",
-                "update tab t1 set b=true from tab t2 where not sleep(60000) and t1.b = t2.b",
-                """
-                        Update table: tab
-                            VirtualRecord
-                              functions: [true]
-                                Filter filter: not (sleep(60000))
-                                    Hash Join Light
-                                      condition: t2.b=t1.b
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
-                                        Hash
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab (b boolean, ts timestamp)", "update tab t1 set b=true from tab t2 where not sleep(60000) and t1.b = t2.b", """
+                Update table: tab
+                    VirtualRecord
+                      functions: [true]
+                        Filter filter: not (sleep(60000))
+                            Hash Join Light
+                              condition: t2.b=t1.b
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                                Hash
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                """);
     }
 
     @Test
@@ -6069,45 +4909,54 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table tab (b boolean, ts timestamp)");
 
             // true
-            assertPlanNoLeakCheck(
-                    "update tab t1 set b=true from tab t2 where now()::long > -1 and t1.b = t2.b",
-                    """
-                            Update table: tab
-                                VirtualRecord
-                                  functions: [true]
-                                    Filter filter: -1<now()::long
-                                        Hash Join Light
-                                          condition: t2.b=t1.b
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: tab
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("update tab t1 set b=true from tab t2 where now()::long > -1 and t1.b = t2.b", """
+                    Update table: tab
+                        VirtualRecord
+                          functions: [true]
+                            Filter filter: -1<now()::long
+                                Hash Join Light
+                                  condition: t2.b=t1.b
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                    """);
 
             // false
-            assertPlanNoLeakCheck(
-                    "update tab t1 set b=true from tab t2 where now()::long < 0 and t1.b = t2.b",
-                    """
-                            Update table: tab
-                                VirtualRecord
-                                  functions: [true]
-                                    Filter filter: now()::long<0
-                                        Hash Join Light
-                                          condition: t2.b=t1.b
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: tab
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("update tab t1 set b=true from tab t2 where now()::long < 0 and t1.b = t2.b", """
+                    Update table: tab
+                        VirtualRecord
+                          functions: [true]
+                            Filter filter: now()::long<0
+                                Hash Join Light
+                                  condition: t2.b=t1.b
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                    """);
         });
+    }
+
+    @Test
+    public void testNonKeyedGroupByMinMaxTimestamp() throws Exception {
+        assertPlan(
+                "create table x (ts timestamp, ts1 timestamp) timestamp(ts) partition by day;",
+                "select min(ts), max(ts), min(ts1), max(ts1) from x",
+                """
+                        GroupBy vectorized: true workers: 1
+                          values: [min_designated(ts),max_designated(ts),min(ts1),max(ts1)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: x
+                        """
+        );
     }
 
     @Test
@@ -6118,253 +4967,166 @@ public class ExplainPlanTest extends AbstractCairoTest {
         // if order by is via alias of designated timestamp
 
         assertMemoryLeak(() -> {
-            execute(
-                    "create table device_data " +
-                            "( " +
-                            "  timestamp timestamp, " +
-                            "  val double, " +
-                            "  id symbol " +
-                            ") timestamp(timestamp)"
-            );
+            execute("create table device_data " + "( " + "  timestamp timestamp, " + "  val double, " + "  id symbol " + ") timestamp(timestamp)");
 
             execute("insert into device_data select x::timestamp, x, '12345678' from long_sequence(10)");
 
             // use column name in order by
-            assertSqlAndPlanNoLeakCheck(
-                    "SELECT timestamp AS date, val, val + 1 " +
-                            "FROM device_data " +
-                            "WHERE device_data.id = '12345678' " +
-                            "ORDER BY timestamp DESC " +
-                            "LIMIT 1",
-                    """
-                            VirtualRecord
-                              functions: [date,val,val+1]
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      limit: 1
-                                      filter: id='12345678'
-                                        PageFrame
-                                            Row backward scan
-                                            Frame backward scan on: device_data
-                            """,
-                    """
-                            date\tval\tcolumn
-                            1970-01-01T00:00:00.000010Z\t10.0\t11.0
-                            """
-            );
+            assertSqlAndPlanNoLeakCheck("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY timestamp DESC " + "LIMIT 1", """
+                    VirtualRecord
+                      functions: [date,val,val+1]
+                        SelectedRecord
+                            Async JIT Filter workers: 1
+                              limit: 1
+                              filter: id='12345678'
+                                PageFrame
+                                    Row backward scan
+                                    Frame backward scan on: device_data
+                    """, """
+                    date\tval\tcolumn
+                    1970-01-01T00:00:00.000010Z\t10.0\t11.0
+                    """);
 
-            assertSqlAndPlanNoLeakCheck(
-                    "SELECT timestamp AS date, val, val + 1 " +
-                            "FROM device_data " +
-                            "WHERE device_data.id = '12345678' " +
-                            "ORDER BY timestamp  " +
-                            "LIMIT -1",
-                    """
-                            VirtualRecord
-                              functions: [date,val,val+1]
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      limit: 1
-                                      filter: id='12345678'
-                                        PageFrame
-                                            Row backward scan
-                                            Frame backward scan on: device_data
-                            """,
-                    """
-                            date\tval\tcolumn
-                            1970-01-01T00:00:00.000010Z\t10.0\t11.0
-                            """
-            );
+            assertSqlAndPlanNoLeakCheck("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY timestamp  " + "LIMIT -1", """
+                    VirtualRecord
+                      functions: [date,val,val+1]
+                        SelectedRecord
+                            Async JIT Filter workers: 1
+                              limit: 1
+                              filter: id='12345678'
+                                PageFrame
+                                    Row backward scan
+                                    Frame backward scan on: device_data
+                    """, """
+                    date\tval\tcolumn
+                    1970-01-01T00:00:00.000010Z\t10.0\t11.0
+                    """);
 
-            assertSqlAndPlanNoLeakCheck(
-                    "SELECT timestamp AS date, val, val + 1 " +
-                            "FROM device_data " +
-                            "WHERE device_data.id = '12345678' " +
-                            "ORDER BY timestamp DESC " +
-                            "LIMIT -2",
-                    """
-                            VirtualRecord
-                              functions: [date,val,val+1]
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      limit: 2
-                                      filter: id='12345678'
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: device_data
-                            """,
-                    """
-                            date\tval\tcolumn
-                            1970-01-01T00:00:00.000002Z\t2.0\t3.0
-                            1970-01-01T00:00:00.000001Z\t1.0\t2.0
-                            """
-            );
+            assertSqlAndPlanNoLeakCheck("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY timestamp DESC " + "LIMIT -2", """
+                    VirtualRecord
+                      functions: [date,val,val+1]
+                        SelectedRecord
+                            Async JIT Filter workers: 1
+                              limit: 2
+                              filter: id='12345678'
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: device_data
+                    """, """
+                    date\tval\tcolumn
+                    1970-01-01T00:00:00.000002Z\t2.0\t3.0
+                    1970-01-01T00:00:00.000001Z\t1.0\t2.0
+                    """);
 
-            assertSqlAndPlanNoLeakCheck(
-                    "SELECT timestamp AS date, val, val + 1 " +
-                            "FROM device_data " +
-                            "WHERE device_data.id = '12345678' " +
-                            "ORDER BY timestamp DESC " +
-                            "LIMIT 1,3",
-                    """
-                            Limit lo: 1 hi: 3 skip-over-rows: 1 limit: 2
-                                VirtualRecord
-                                  functions: [date,val,val+1]
-                                    SelectedRecord
-                                        Async JIT Filter workers: 1
-                                          filter: id='12345678'
-                                            PageFrame
-                                                Row backward scan
-                                                Frame backward scan on: device_data
-                            """,
-                    """
-                            date\tval\tcolumn
-                            1970-01-01T00:00:00.000009Z\t9.0\t10.0
-                            1970-01-01T00:00:00.000008Z\t8.0\t9.0
-                            """
-            );
+            assertSqlAndPlanNoLeakCheck("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY timestamp DESC " + "LIMIT 1,3", """
+                    Limit left: 1 right: 3 skip-rows-max: 1 take-rows-max: 2
+                        VirtualRecord
+                          functions: [date,val,val+1]
+                            SelectedRecord
+                                Async JIT Filter workers: 1
+                                  filter: id='12345678'
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: device_data
+                    """, """
+                    date\tval\tcolumn
+                    1970-01-01T00:00:00.000009Z\t9.0\t10.0
+                    1970-01-01T00:00:00.000008Z\t8.0\t9.0
+                    """);
 
             // with a virtual column
-            assertSqlAndPlanNoLeakCheck(
-                    "SELECT timestamp, val, now() " +
-                            "FROM device_data " +
-                            "WHERE device_data.id = '12345678' " +
-                            "ORDER BY timestamp DESC " +
-                            "LIMIT 1",
-                    """
-                            VirtualRecord
-                              functions: [timestamp,val,now()]
-                                Async JIT Filter workers: 1
-                                  limit: 1
-                                  filter: id='12345678'
-                                    PageFrame
-                                        Row backward scan
-                                        Frame backward scan on: device_data
-                            """,
-                    """
-                            timestamp\tval\tnow
-                            1970-01-01T00:00:00.000010Z\t10.0\t1970-01-01T00:00:00.000000Z
-                            """
-            );
+            assertSqlAndPlanNoLeakCheck("SELECT timestamp, val, now() " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY timestamp DESC " + "LIMIT 1", """
+                    VirtualRecord
+                      functions: [timestamp,val,now()]
+                        Async JIT Filter workers: 1
+                          limit: 1
+                          filter: id='12345678'
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: device_data
+                    """, """
+                    timestamp\tval\tnow
+                    1970-01-01T00:00:00.000010Z\t10.0\t1970-01-01T00:00:00.000000Z
+                    """);
 
-            assertSqlAndPlanNoLeakCheck(
-                    "SELECT timestamp, val, now() " +
-                            "FROM device_data " +
-                            "WHERE device_data.id = '12345678' " +
-                            "ORDER BY timestamp ASC " +
-                            "LIMIT -3",
-                    """
-                            VirtualRecord
-                              functions: [timestamp,val,now()]
-                                Async JIT Filter workers: 1
-                                  limit: 3
-                                  filter: id='12345678'
-                                    PageFrame
-                                        Row backward scan
-                                        Frame backward scan on: device_data
-                            """,
-                    """
-                            timestamp\tval\tnow
-                            1970-01-01T00:00:00.000008Z\t8.0\t1970-01-01T00:00:00.000000Z
-                            1970-01-01T00:00:00.000009Z\t9.0\t1970-01-01T00:00:00.000000Z
-                            1970-01-01T00:00:00.000010Z\t10.0\t1970-01-01T00:00:00.000000Z
-                            """
-            );
+            assertSqlAndPlanNoLeakCheck("SELECT timestamp, val, now() " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY timestamp ASC " + "LIMIT -3", """
+                    VirtualRecord
+                      functions: [timestamp,val,now()]
+                        Async JIT Filter workers: 1
+                          limit: 3
+                          filter: id='12345678'
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: device_data
+                    """, """
+                    timestamp\tval\tnow
+                    1970-01-01T00:00:00.000008Z\t8.0\t1970-01-01T00:00:00.000000Z
+                    1970-01-01T00:00:00.000009Z\t9.0\t1970-01-01T00:00:00.000000Z
+                    1970-01-01T00:00:00.000010Z\t10.0\t1970-01-01T00:00:00.000000Z
+                    """);
 
             // use alias in order by
-            assertSqlAndPlanNoLeakCheck(
-                    "SELECT timestamp AS date, val, val + 1 " +
-                            "FROM device_data " +
-                            "WHERE device_data.id = '12345678' " +
-                            "ORDER BY date DESC " +
-                            "LIMIT 1",
-                    """
-                            Limit lo: 1 skip-over-rows: 0 limit: 1
-                                VirtualRecord
-                                  functions: [date,val,val+1]
-                                    SelectedRecord
-                                        Async JIT Filter workers: 1
-                                          filter: id='12345678'
-                                            PageFrame
-                                                Row backward scan
-                                                Frame backward scan on: device_data
-                            """,
-                    """
-                            date\tval\tcolumn
-                            1970-01-01T00:00:00.000010Z\t10.0\t11.0
-                            """
-            );
+            assertSqlAndPlanNoLeakCheck("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY date DESC " + "LIMIT 1", """
+                    Limit value: 1 skip-rows-max: 0 take-rows-max: 1
+                        VirtualRecord
+                          functions: [date,val,val+1]
+                            SelectedRecord
+                                Async JIT Filter workers: 1
+                                  filter: id='12345678'
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: device_data
+                    """, """
+                    date\tval\tcolumn
+                    1970-01-01T00:00:00.000010Z\t10.0\t11.0
+                    """);
 
-            assertSqlAndPlanNoLeakCheck(
-                    "SELECT timestamp AS date, val, val + 1 " +
-                            "FROM device_data " +
-                            "WHERE device_data.id = '12345678' " +
-                            "ORDER BY date  " +
-                            "LIMIT -1",
-                    """
-                            Limit lo: -1 skip-over-rows: 9 limit: 1
-                                VirtualRecord
-                                  functions: [date,val,val+1]
-                                    SelectedRecord
-                                        Async JIT Filter workers: 1
-                                          filter: id='12345678'
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: device_data
-                            """,
-                    """
-                            date\tval\tcolumn
-                            1970-01-01T00:00:00.000010Z\t10.0\t11.0
-                            """
-            );
+            assertSqlAndPlanNoLeakCheck("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY date  " + "LIMIT -1", """
+                    Limit value: -1 skip-rows: baseRows-1 take-rows-max: 1
+                        VirtualRecord
+                          functions: [date,val,val+1]
+                            SelectedRecord
+                                Async JIT Filter workers: 1
+                                  filter: id='12345678'
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: device_data
+                    """, """
+                    date\tval\tcolumn
+                    1970-01-01T00:00:00.000010Z\t10.0\t11.0
+                    """);
 
-            assertSqlAndPlanNoLeakCheck(
-                    "SELECT timestamp AS date, val, val + 1 " +
-                            "FROM device_data " +
-                            "WHERE device_data.id = '12345678' " +
-                            "ORDER BY date DESC " +
-                            "LIMIT -2",
-                    """
-                            Limit lo: -2 skip-over-rows: 8 limit: 2
-                                VirtualRecord
-                                  functions: [date,val,val+1]
-                                    SelectedRecord
-                                        Async JIT Filter workers: 1
-                                          filter: id='12345678'
-                                            PageFrame
-                                                Row backward scan
-                                                Frame backward scan on: device_data
-                            """,
-                    """
-                            date\tval\tcolumn
-                            1970-01-01T00:00:00.000002Z\t2.0\t3.0
-                            1970-01-01T00:00:00.000001Z\t1.0\t2.0
-                            """
-            );
+            assertSqlAndPlanNoLeakCheck("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY date DESC " + "LIMIT -2", """
+                    Limit value: -2 skip-rows: baseRows-2 take-rows-max: 2
+                        VirtualRecord
+                          functions: [date,val,val+1]
+                            SelectedRecord
+                                Async JIT Filter workers: 1
+                                  filter: id='12345678'
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: device_data
+                    """, """
+                    date\tval\tcolumn
+                    1970-01-01T00:00:00.000002Z\t2.0\t3.0
+                    1970-01-01T00:00:00.000001Z\t1.0\t2.0
+                    """);
 
-            assertSqlAndPlanNoLeakCheck(
-                    "SELECT timestamp AS date, val, val + 1 " +
-                            "FROM device_data " +
-                            "WHERE device_data.id = '12345678' " +
-                            "ORDER BY date DESC " +
-                            "LIMIT 1,3",
-                    """
-                            Limit lo: 1 hi: 3 skip-over-rows: 1 limit: 2
-                                VirtualRecord
-                                  functions: [date,val,val+1]
-                                    SelectedRecord
-                                        Async JIT Filter workers: 1
-                                          filter: id='12345678'
-                                            PageFrame
-                                                Row backward scan
-                                                Frame backward scan on: device_data
-                            """,
-                    """
-                            date\tval\tcolumn
-                            1970-01-01T00:00:00.000009Z\t9.0\t10.0
-                            1970-01-01T00:00:00.000008Z\t8.0\t9.0
-                            """
-            );
+            assertSqlAndPlanNoLeakCheck("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY date DESC " + "LIMIT 1,3", """
+                    Limit left: 1 right: 3 skip-rows-max: 1 take-rows-max: 2
+                        VirtualRecord
+                          functions: [date,val,val+1]
+                            SelectedRecord
+                                Async JIT Filter workers: 1
+                                  filter: id='12345678'
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: device_data
+                    """, """
+                    date\tval\tcolumn
+                    1970-01-01T00:00:00.000009Z\t9.0\t10.0
+                    1970-01-01T00:00:00.000008Z\t8.0\t9.0
+                    """);
         });
     }
 
@@ -6374,27 +5136,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table gas_prices (timestamp TIMESTAMP, galon_price DOUBLE ) timestamp (timestamp);");
 
             for (String joinType : Arrays.asList("AsOf", "Lt")) {
-                String query = "with gp as \n" +
-                        "(\n" +
-                        "selecT * from (\n" +
-                        "selecT * from gas_prices order by timestamp asc, galon_price desc\n" +
-                        ") timestamp(timestamp))\n" +
-                        "selecT * from gp gp1 \n" +
-                        joinType + " join gp gp2 \n" +
-                        "order by gp1.timestamp; ";
+                String query = "with gp as \n" + "(\n" + "selecT * from (\n" + "selecT * from gas_prices order by timestamp asc, galon_price desc\n" + ") timestamp(timestamp))\n" + "selecT * from gp gp1 \n" + joinType + " join gp gp2 \n" + "order by gp1.timestamp; ";
 
-                String expectedPlan = "SelectedRecord\n" +
-                        "    " + joinType + " Join\n" +
-                        "        Sort light\n" +
-                        "          keys: [timestamp, galon_price desc]\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: gas_prices\n" +
-                        "        Sort light\n" +
-                        "          keys: [timestamp, galon_price desc]\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: gas_prices\n";
+                String expectedPlan = "SelectedRecord\n" + "    " + joinType + " Join\n" + "        Sort light\n" + "          keys: [timestamp, galon_price desc]\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: gas_prices\n" + "        Sort light\n" + "          keys: [timestamp, galon_price desc]\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: gas_prices\n";
 
                 assertPlanNoLeakCheck(query, expectedPlan);
             }
@@ -6439,10 +5183,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testOrderByIsMaintainedInSubquery() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table gas_prices " +
-                    "(timestamp TIMESTAMP, " +
-                    "galon_price DOUBLE) " +
-                    "timestamp (timestamp);");
+            execute("create table gas_prices " + "(timestamp TIMESTAMP, " + "galon_price DOUBLE) " + "timestamp (timestamp);");
 
             String query = """
                     WITH full_range AS ( \s
@@ -6482,32 +5223,24 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByTimestampAndOtherColumns1() throws Exception {
-        assertPlan(
-                "create table tab (i int, ts timestamp) timestamp(ts)",
-                "select * from (select * from tab order by ts, i desc limit 10) order by ts",
-                """
-                        Sort light lo: 10 partiallySorted: true
-                          keys: [ts, i desc]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab (i int, ts timestamp) timestamp(ts)", "select * from (select * from tab order by ts, i desc limit 10) order by ts", """
+                Sort light lo: 10 partiallySorted: true
+                  keys: [ts, i desc]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testOrderByTimestampAndOtherColumns2() throws Exception {
-        assertPlan(
-                "create table tab (i int, ts timestamp) timestamp(ts)",
-                "select * from (select * from tab order by ts desc, i asc limit 10) order by ts desc",
-                """
-                        Sort light lo: 10 partiallySorted: true
-                          keys: [ts desc, i]
-                            PageFrame
-                                Row backward scan
-                                Frame backward scan on: tab
-                        """
-        );
+        assertPlan("create table tab (i int, ts timestamp) timestamp(ts)", "select * from (select * from tab order by ts desc, i asc limit 10) order by ts desc", """
+                Sort light lo: 10 partiallySorted: true
+                  keys: [ts desc, i]
+                    PageFrame
+                        Row backward scan
+                        Frame backward scan on: tab
+                """);
     }
 
     @Test
@@ -6521,19 +5254,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck(
-                        "select * from taba " + joinType + " join tabb on a=b",
-                        "SelectedRecord\n" +
-                                "    " + factoryType + "\n" +
-                                "      condition: b=a\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: taba\n" +
-                                "        Hash\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: tabb\n"
-                );
+                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a=b", "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b=a\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -6549,19 +5270,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck(
-                        "select * from taba " + joinType + " join tabb on a1=b1  and a2=b2",
-                        "SelectedRecord\n" +
-                                "    " + factoryType + "\n" +
-                                "      condition: b2=a2 and b1=a1\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: taba\n" +
-                                "        Hash\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: tabb\n"
-                );
+                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a1=b1  and a2=b2", "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b2=a2 and b1=a1\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -6577,21 +5286,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck(
-                        "select * from taba " +
-                                joinType + " join tabb on a1=b1 and (a2=b2+10 or a2=2*b2)",
-                        "SelectedRecord\n" +
-                                "    " + factoryType + "\n" +
-                                "      condition: b1=a1\n" +
-                                "      filter: (taba.a2=tabb.b2+10 or taba.a2=2*tabb.b2)\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: taba\n" +
-                                "        Hash\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: tabb\n"
-                );
+                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a1=b1 and (a2=b2+10 or a2=2*b2)", "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b1=a1\n" + "      filter: (taba.a2=tabb.b2+10 or taba.a2=2*tabb.b2)\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -6611,28 +5306,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck(
-                        "select * from taba " +
-                                joinType + " join tabb on a1=b1 and a1=5 " +
-                                "join tabc on a1=c1",
-                        "SelectedRecord\n" +
-                                "    Hash Join Light\n" +
-                                "      condition: c1=a1\n" +
-                                "        " + factoryType + "\n" +
-                                "          condition: b1=a1\n" +
-                                "          filter: taba.a1=5\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: taba\n" +
-                                "            Hash\n" +
-                                "                PageFrame\n" +
-                                "                    Row forward scan\n" +
-                                "                    Frame forward scan on: tabb\n" +
-                                "        Hash\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: tabc\n"
-                );
+                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a1=b1 and a1=5 " + "join tabc on a1=c1", "SelectedRecord\n" + "    Hash Join Light\n" + "      condition: c1=a1\n" + "        " + factoryType + "\n" + "          condition: b1=a1\n" + "          filter: taba.a1=5\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabc\n");
             }
         });
     }
@@ -6648,20 +5322,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck(
-                        "select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2)",
-                        "SelectedRecord\n" +
-                                "    " + factoryType + "\n" +
-                                "      condition: b2=a2 and b1=a1\n" +
-                                "      filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: taba\n" +
-                                "        Hash\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: tabb\n"
-                );
+                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2)", "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b2=a2 and b1=a1\n" + "      filter: abs(taba.a2+1)=abs(tabb.b2)\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -6677,20 +5338,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck(
-                        "select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and a2+5 = b2+10",
-                        "SelectedRecord\n" +
-                                "    " + factoryType + "\n" +
-                                "      condition: b2=a2 and b1=a1\n" +
-                                "      filter: taba.a2+5=tabb.b2+10\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: taba\n" +
-                                "        Hash\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: tabb\n"
-                );
+                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and a2+5 = b2+10", "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b2=a2 and b1=a1\n" + "      filter: taba.a2+5=tabb.b2+10\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -6701,50 +5349,41 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table taba (a1 int, a2 long)");
             execute("create table tabb (b1 int, b2 long)");
 
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0",
-                    """
-                            SelectedRecord
-                                Hash Left Outer Join
-                                  condition: b2=a2 and b1=a1
-                                  filter: false
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: taba
-                                    Hash
-                                        Empty table
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "select * from taba right join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0",
-                    """
-                            SelectedRecord
-                                Hash Right Outer Join Light
-                                  condition: b2=a2 and b1=a1
-                                  filter: false
-                                    Empty table
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tabb
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "select * from taba full join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0",
-                    """
-                            SelectedRecord
-                                Hash Full Outer Join Light
-                                  condition: b2=a2 and b1=a1
-                                  filter: false
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: taba
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tabb
-                            """
-            );
+            assertPlanNoLeakCheck("select * from taba left join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0", """
+                    SelectedRecord
+                        Hash Left Outer Join
+                          condition: b2=a2 and b1=a1
+                          filter: false
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: taba
+                            Hash
+                                Empty table
+                    """);
+            assertPlanNoLeakCheck("select * from taba right join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0", """
+                    SelectedRecord
+                        Hash Right Outer Join Light
+                          condition: b2=a2 and b1=a1
+                          filter: false
+                            Empty table
+                            Hash
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tabb
+                    """);
+            assertPlanNoLeakCheck("select * from taba full join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0", """
+                    SelectedRecord
+                        Hash Full Outer Join Light
+                          condition: b2=a2 and b1=a1
+                          filter: false
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: taba
+                            Hash
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tabb
+                    """);
         });
     }
 
@@ -6760,20 +5399,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck(
-                        "select * from taba " + joinType + " join tabb on a1=b1  and a2!=a2",
-                        "SelectedRecord\n" +
-                                "    " + factoryType + "\n" +
-                                "      condition: b1=a1\n" +
-                                "      filter: taba.a2!=taba.a2\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: taba\n" +
-                                "        Hash\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: tabb\n"
-                );
+                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a1=b1  and a2!=a2", "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b1=a1\n" + "      filter: taba.a2!=taba.a2\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -6789,20 +5415,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck(
-                        "select * from taba " + joinType + " join tabb on a1=b1  and a2=a2",
-                        "SelectedRecord\n" +
-                                "    " + factoryType + "\n" +
-                                "      condition: b1=a1\n" +
-                                "      filter: taba.a2=taba.a2\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: taba\n" +
-                                "        Hash\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: tabb\n"
-                );
+                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a1=b1  and a2=a2", "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b1=a1\n" + "      filter: taba.a2=taba.a2\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -6818,21 +5431,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck(
-                        "select * from taba " +
-                                joinType + " join tabb on a1=b1  and a2 ~ 'a.*' and b2 ~ '.*z'",
-                        "SelectedRecord\n" +
-                                "    " + factoryType + "\n" +
-                                "      condition: b1=a1\n" +
-                                "      filter: (taba.a2 ~ a.* and tabb.b2 ~ .*z)\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: taba\n" +
-                                "        Hash\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: tabb\n"
-                );
+                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a1=b1  and a2 ~ 'a.*' and b2 ~ '.*z'", "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b1=a1\n" + "      filter: (taba.a2 ~ a.* and tabb.b2 ~ .*z)\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -6848,21 +5447,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck(
-                        "select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2) where a1=b1",
-                        "SelectedRecord\n" +
-                                "    Filter filter: taba.a1=tabb.b1\n" +
-                                "        " + factoryType + "\n" +
-                                "          condition: b2=a2 and b1=a1\n" +
-                                "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: taba\n" +
-                                "            Hash\n" +
-                                "                PageFrame\n" +
-                                "                    Row forward scan\n" +
-                                "                    Frame forward scan on: tabb\n"
-                );
+                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2) where a1=b1", "SelectedRecord\n" + "    Filter filter: taba.a1=tabb.b1\n" + "        " + factoryType + "\n" + "          condition: b2=a2 and b1=a1\n" + "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n");
             }
         });
     }
@@ -6879,26 +5464,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table test (event int, created timestamp)");
             execute("insert into test values (1, 1), (2, 2)");
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
-                            Count
-                                Filter filter: T1.event<T2.event
-                                    Cross Join
-                                        Hash Join Light
-                                          condition: T3.created=T2.created
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: test
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: test
+            assertPlanNoLeakCheck(query, """
+                    Count
+                        Filter filter: T1.event<T2.event
+                            Cross Join
+                                Hash Join Light
+                                  condition: T3.created=T2.created
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: test
+                                    Hash
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: test
-                            """
-            );
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: test
+                    """);
 
             assertSql("count\n1\n", query);
         });
@@ -6907,165 +5489,124 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testPredicatesArentPushedIntoWindowModel() throws Exception {
         assertMemoryLeak(() -> {
-            String query = "SELECT * " +
-                    "FROM ( " +
-                    "  SELECT *, ROW_NUMBER() OVER ( PARTITION BY a ORDER BY b ) rownum " +
-                    "  FROM (" +
-                    "    SELECT 1 a, 2 b, 4 c " +
-                    "    UNION " +
-                    "    SELECT 1, 3, 5 " +
-                    "  ) o " +
-                    ") ra " +
-                    "WHERE ra.rownum = 1 " +
-                    "AND   c = 5";
+            String query = "SELECT * " + "FROM ( " + "  SELECT *, ROW_NUMBER() OVER ( PARTITION BY a ORDER BY b ) rownum " + "  FROM (" + "    SELECT 1 a, 2 b, 4 c " + "    UNION " + "    SELECT 1, 3, 5 " + "  ) o " + ") ra " + "WHERE ra.rownum = 1 " + "AND   c = 5";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
-                            Filter filter: (rownum=1 and c=5)
-                                CachedWindow
-                                  orderedFunctions: [[b] => [row_number() over (partition by [a])]]
-                                    Union
-                                        VirtualRecord
-                                          functions: [1,2,4]
-                                            long_sequence count: 1
-                                        VirtualRecord
-                                          functions: [1,3,5]
-                                            long_sequence count: 1
-                            """
-            );
+            assertPlanNoLeakCheck(query, """
+                    Filter filter: (rownum=1 and c=5)
+                        CachedWindow
+                          orderedFunctions: [[b] => [row_number() over (partition by [a])]]
+                            Union
+                                VirtualRecord
+                                  functions: [1,2,4]
+                                    long_sequence count: 1
+                                VirtualRecord
+                                  functions: [1,3,5]
+                                    long_sequence count: 1
+                    """);
             assertSql("a\tb\tc\trownum\n", query);
 
             execute("CREATE TABLE tab AS (SELECT x FROM long_sequence(10))");
 
-            assertPlanNoLeakCheck(
-                    "SELECT *, ROW_NUMBER() OVER () FROM tab WHERE x = 10",
-                    """
+            assertPlanNoLeakCheck("SELECT *, ROW_NUMBER() OVER () FROM tab WHERE x = 10", """
+                    Window
+                      functions: [row_number()]
+                        Async JIT Filter workers: 1
+                          filter: x=10
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                    """);
+
+            assertPlanNoLeakCheck("SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab ) WHERE x = 10", """
+                    Filter filter: x=10
+                        Window
+                          functions: [row_number()]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                    """);
+
+            assertPlanNoLeakCheck("SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab UNION ALL select 11, 11  ) WHERE x = 10", """
+                    Filter filter: x=10
+                        Union All
                             Window
                               functions: [row_number()]
-                                Async JIT Filter workers: 1
-                                  filter: x=10
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            VirtualRecord
+                              functions: [11,11]
+                                long_sequence count: 1
+                    """);
+
+            assertPlanNoLeakCheck("SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab cross join (select 11, 11)  ) WHERE x = 10", """
+                    Filter filter: x=10
+                        Window
+                          functions: [row_number()]
+                            SelectedRecord
+                                Cross Join
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: tab
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab ) WHERE x = 10",
-                    """
-                            Filter filter: x=10
-                                Window
-                                  functions: [row_number()]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab UNION ALL select 11, 11  ) WHERE x = 10",
-                    """
-                            Filter filter: x=10
-                                Union All
-                                    Window
-                                      functions: [row_number()]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
                                     VirtualRecord
                                       functions: [11,11]
                                         long_sequence count: 1
-                            """
-            );
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab cross join (select 11, 11)  ) WHERE x = 10",
-                    """
+            assertPlanNoLeakCheck("SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab ) join (select 11L y, 11) on x=y WHERE x = 10", """
+                    SelectedRecord
+                        Hash Join Light
+                          condition: y=x
                             Filter filter: x=10
                                 Window
                                   functions: [row_number()]
-                                    SelectedRecord
-                                        Cross Join
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: tab
-                                            VirtualRecord
-                                              functions: [11,11]
-                                                long_sequence count: 1
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab ) join (select 11L y, 11) on x=y WHERE x = 10",
-                    """
-                            SelectedRecord
-                                Hash Join Light
-                                  condition: y=x
-                                    Filter filter: x=10
-                                        Window
-                                          functions: [row_number()]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: tab
-                                    Hash
-                                        Filter filter: y=10
-                                            VirtualRecord
-                                              functions: [11L,11]
-                                                long_sequence count: 1
-                            """
-            );
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                            Hash
+                                Filter filter: y=10
+                                    VirtualRecord
+                                      functions: [11L,11]
+                                        long_sequence count: 1
+                    """);
         });
     }
 
     @Test
     public void testReadParquet() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
-                    "create table x as (select" +
-                            " x as a_long," +
-                            " rnd_str(4,4,4,2) as a_str," +
-                            " rnd_timestamp('2015','2016',2) as a_ts" +
-                            " from long_sequence(3))"
-            );
+            execute("create table x as (select" + " x as a_long," + " rnd_str(4,4,4,2) as a_str," + " rnd_timestamp('2015','2016',2) as a_ts" + " from long_sequence(3))");
 
-            try (
-                    Path path = new Path();
-                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
-                    TableReader reader = engine.getReader("x")
-            ) {
+            try (Path path = new Path(); PartitionDescriptor partitionDescriptor = new PartitionDescriptor(); TableReader reader = engine.getReader("x")) {
                 path.of(root).concat("x.parquet");
                 PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
                 PartitionEncoder.encode(partitionDescriptor, path);
                 assertTrue(Files.exists(path.$()));
 
-                assertPlanNoLeakCheck(
-                        "select * from read_parquet('x.parquet') where a_long = 42;",
+                assertPlanNoLeakCheck("select * from read_parquet('x.parquet') where a_long = 42;", """
+                        Async JIT Filter workers: 1
+                          filter: a_long=42
+                            parquet page frame scan
+                              columns: a_long,a_str,a_ts
                         """
-                                Async JIT Filter workers: 1
-                                  filter: a_long=42
-                                    parquet page frame scan
-                                """
                 );
 
-                assertPlanNoLeakCheck(
-                        "select avg(a_long) from read_parquet('x.parquet');",
+                assertPlanNoLeakCheck("select avg(a_long) from read_parquet('x.parquet');", """
+                        GroupBy vectorized: true workers: 1
+                          values: [avg(a_long)]
+                            parquet page frame scan
+                              columns: a_long
                         """
-                                GroupBy vectorized: true workers: 1
-                                  values: [avg(a_long)]
-                                    parquet page frame scan
-                                """
                 );
 
-                assertPlanNoLeakCheck(
-                        "select a_str, max(a_long) from read_parquet('x.parquet');",
+                assertPlanNoLeakCheck("select a_str, max(a_long) from read_parquet('x.parquet');", """
+                        Async Group By workers: 1
+                          keys: [a_str]
+                          values: [max(a_long)]
+                          filter: null
+                            parquet page frame scan
+                              columns: a_str,a_long
                         """
-                                Async Group By workers: 1
-                                  keys: [a_str]
-                                  values: [max(a_long)]
-                                  filter: null
-                                    parquet page frame scan
-                                """
                 );
             }
         });
@@ -7076,29 +5617,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x double );");
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(x+10) FROM tab",
-                    """
-                            Async Group By workers: 1
-                              values: [sum(x),sum(x+10)]
-                              filter: null
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(x+10) FROM tab", """
+                    Async Group By workers: 1
+                      values: [sum(x),sum(x+10)]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: tab
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(10+x) FROM tab",
-                    """
-                            Async Group By workers: 1
-                              values: [sum(x),sum(10+x)]
-                              filter: null
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(10+x) FROM tab", """
+                    Async Group By workers: 1
+                      values: [sum(x),sum(10+x)]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: tab
+                    """);
         });
     }
 
@@ -7108,49 +5643,39 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("CREATE TABLE taba ( x int, id int );");
             execute("CREATE TABLE tabb ( x int, id int );");
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(taba.x),sum(tabb.x), sum(taba.x+10), sum(tabb.x+10) " +
-                            "FROM taba " +
-                            "join tabb on (id)",
-                    """
-                            VirtualRecord
-                              functions: [sum,sum1,sum+COUNT*10,sum1+COUNT1*10]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1),count(x),count(x1)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(taba.x),sum(tabb.x), sum(taba.x+10), sum(tabb.x+10) " + "FROM taba " + "join tabb on (id)", """
+                    VirtualRecord
+                      functions: [sum,sum1,sum+COUNT*10,sum1+COUNT1*10]
+                        GroupBy vectorized: false
+                          values: [sum(x),sum(x1),count(x),count(x1)]
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: tabb.id=taba.id
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: taba
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(tabb.x),sum(taba.x),sum(10+taba.x), sum(10+tabb.x) " +
-                            "FROM taba " +
-                            "join tabb on (id)",
-                    """
-                            VirtualRecord
-                              functions: [sum,sum1,COUNT*10+sum1,COUNT1*10+sum]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1),count(x1),count(x)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(tabb.x),sum(taba.x),sum(10+taba.x), sum(10+tabb.x) " + "FROM taba " + "join tabb on (id)", """
+                    VirtualRecord
+                      functions: [sum,sum1,COUNT*10+sum1,COUNT1*10+sum]
+                        GroupBy vectorized: false
+                          values: [sum(x),sum(x1),count(x1),count(x)]
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: tabb.id=taba.id
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: taba
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
+                    """);
         });
     }
 
@@ -7159,31 +5684,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x int );");
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(x+10) FROM tab",
-                    """
-                            VirtualRecord
-                              functions: [sum,sum+COUNT*10]
-                                GroupBy vectorized: true workers: 1
-                                  values: [sum(x),count(x)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(x+10) FROM tab", """
+                    VirtualRecord
+                      functions: [sum,sum+COUNT*10]
+                        GroupBy vectorized: true workers: 1
+                          values: [sum(x),count(x)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(10+x) FROM tab",
-                    """
-                            VirtualRecord
-                              functions: [sum,COUNT*10+sum]
-                                GroupBy vectorized: true workers: 1
-                                  values: [sum(x),count(x)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(10+x) FROM tab", """
+                    VirtualRecord
+                      functions: [sum,COUNT*10+sum]
+                        GroupBy vectorized: true workers: 1
+                          values: [sum(x),count(x)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                    """);
         });
     }
 
@@ -7192,31 +5711,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x int );");
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(x*10) FROM tab",
-                    """
-                            VirtualRecord
-                              functions: [sum,sum*10]
-                                GroupBy vectorized: true workers: 1
-                                  values: [sum(x)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(x*10) FROM tab", """
+                    VirtualRecord
+                      functions: [sum,sum*10]
+                        GroupBy vectorized: true workers: 1
+                          values: [sum(x)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(10*x) FROM tab",
-                    """
-                            VirtualRecord
-                              functions: [sum,10*sum]
-                                GroupBy vectorized: true workers: 1
-                                  values: [sum(x)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(10*x) FROM tab", """
+                    VirtualRecord
+                      functions: [sum,10*sum]
+                        GroupBy vectorized: true workers: 1
+                          values: [sum(x)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                    """);
         });
     }
 
@@ -7225,31 +5738,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x int );");
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(x-10) FROM tab",
-                    """
-                            VirtualRecord
-                              functions: [sum,sum-COUNT*10]
-                                GroupBy vectorized: true workers: 1
-                                  values: [sum(x),count(x)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(x-10) FROM tab", """
+                    VirtualRecord
+                      functions: [sum,sum-COUNT*10]
+                        GroupBy vectorized: true workers: 1
+                          values: [sum(x),count(x)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(10-x) FROM tab",
-                    """
-                            VirtualRecord
-                              functions: [sum,COUNT*10-sum]
-                                GroupBy vectorized: true workers: 1
-                                  values: [sum(x),count(x)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(10-x) FROM tab", """
+                    VirtualRecord
+                      functions: [sum,COUNT*10-sum]
+                        GroupBy vectorized: true workers: 1
+                          values: [sum(x),count(x)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                    """);
         });
     }
 
@@ -7258,31 +5765,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x long );");
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(x+2) FROM tab",
-                    """
-                            VirtualRecord
-                              functions: [sum,sum+COUNT*2]
-                                GroupBy vectorized: true workers: 1
-                                  values: [sum(x),count(x)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(x+2) FROM tab", """
+                    VirtualRecord
+                      functions: [sum,sum+COUNT*2]
+                        GroupBy vectorized: true workers: 1
+                          values: [sum(x),count(x)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(2+x) FROM tab",
-                    """
-                            VirtualRecord
-                              functions: [sum,COUNT*2+sum]
-                                GroupBy vectorized: true workers: 1
-                                  values: [sum(x),count(x)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(2+x) FROM tab", """
+                    VirtualRecord
+                      functions: [sum,COUNT*2+sum]
+                        GroupBy vectorized: true workers: 1
+                          values: [sum(x),count(x)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                    """);
         });
     }
 
@@ -7291,31 +5792,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x long );");
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(x*10) FROM tab",
-                    """
-                            VirtualRecord
-                              functions: [sum,sum*10]
-                                GroupBy vectorized: true workers: 1
-                                  values: [sum(x)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(x*10) FROM tab", """
+                    VirtualRecord
+                      functions: [sum,sum*10]
+                        GroupBy vectorized: true workers: 1
+                          values: [sum(x)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(10*x) FROM tab",
-                    """
-                            VirtualRecord
-                              functions: [sum,10*sum]
-                                GroupBy vectorized: true workers: 1
-                                  values: [sum(x)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(10*x) FROM tab", """
+                    VirtualRecord
+                      functions: [sum,10*sum]
+                        GroupBy vectorized: true workers: 1
+                          values: [sum(x)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                    """);
         });
     }
 
@@ -7324,31 +5819,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x long );");
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(x-10) FROM tab",
-                    """
-                            VirtualRecord
-                              functions: [sum,sum-COUNT*10]
-                                GroupBy vectorized: true workers: 1
-                                  values: [sum(x),count(x)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(x-10) FROM tab", """
+                    VirtualRecord
+                      functions: [sum,sum-COUNT*10]
+                        GroupBy vectorized: true workers: 1
+                          values: [sum(x),count(x)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(10-x) FROM tab",
-                    """
-                            VirtualRecord
-                              functions: [sum,COUNT*10-sum]
-                                GroupBy vectorized: true workers: 1
-                                  values: [sum(x),count(x)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(10-x) FROM tab", """
+                    VirtualRecord
+                      functions: [sum,COUNT*10-sum]
+                        GroupBy vectorized: true workers: 1
+                          values: [sum(x),count(x)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                    """);
         });
     }
 
@@ -7357,29 +5846,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x double );");
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(x*10) FROM tab",
-                    """
-                            Async Group By workers: 1
-                              values: [sum(x),sum(x*10)]
-                              filter: null
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(x*10) FROM tab", """
+                    Async Group By workers: 1
+                      values: [sum(x),sum(x*10)]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: tab
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(10*x) FROM tab",
-                    """
-                            Async Group By workers: 1
-                              values: [sum(x),sum(10*x)]
-                              filter: null
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(10*x) FROM tab", """
+                    Async Group By workers: 1
+                      values: [sum(x),sum(10*x)]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: tab
+                    """);
         });
     }
 
@@ -7388,29 +5871,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x double );");
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(x*10.0) FROM tab",
-                    """
-                            Async Group By workers: 1
-                              values: [sum(x),sum(x*10.0)]
-                              filter: null
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(x*10.0) FROM tab", """
+                    Async Group By workers: 1
+                      values: [sum(x),sum(x*10.0)]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: tab
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(10.0*x) FROM tab",
-                    """
-                            Async Group By workers: 1
-                              values: [sum(x),sum(10.0*x)]
-                              filter: null
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(10.0*x) FROM tab", """
+                    Async Group By workers: 1
+                      values: [sum(x),sum(10.0*x)]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: tab
+                    """);
         });
     }
 
@@ -7420,49 +5897,39 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("CREATE TABLE taba ( x int, id int );");
             execute("CREATE TABLE tabb ( x int, id int );");
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(taba.x),sum(tabb.x),sum(taba.x*10), sum(tabb.x*10) " +
-                            "FROM taba " +
-                            "join tabb on (id)",
-                    """
-                            VirtualRecord
-                              functions: [sum,sum1,sum*10,sum1*10]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(taba.x),sum(tabb.x),sum(taba.x*10), sum(tabb.x*10) " + "FROM taba " + "join tabb on (id)", """
+                    VirtualRecord
+                      functions: [sum,sum1,sum*10,sum1*10]
+                        GroupBy vectorized: false
+                          values: [sum(x),sum(x1)]
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: tabb.id=taba.id
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: taba
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(taba.x),sum(tabb.x),sum(10*taba.x), sum(10*tabb.x) " +
-                            "FROM taba " +
-                            "join tabb on (id)",
-                    """
-                            VirtualRecord
-                              functions: [sum,sum1,10*sum,10*sum1]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(taba.x),sum(tabb.x),sum(10*taba.x), sum(10*tabb.x) " + "FROM taba " + "join tabb on (id)", """
+                    VirtualRecord
+                      functions: [sum,sum1,10*sum,10*sum1]
+                        GroupBy vectorized: false
+                          values: [sum(x),sum(x1)]
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: tabb.id=taba.id
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: taba
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
+                    """);
         });
     }
 
@@ -7471,31 +5938,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x short );");
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(x+42) FROM tab",
-                    """
-                            VirtualRecord
-                              functions: [sum,sum+COUNT*42]
-                                GroupBy vectorized: true workers: 1
-                                  values: [sum(x),count(*)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(x+42) FROM tab", """
+                    VirtualRecord
+                      functions: [sum,sum+COUNT*42]
+                        GroupBy vectorized: true workers: 1
+                          values: [sum(x),count(*)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(42+x) FROM tab",
-                    """
-                            VirtualRecord
-                              functions: [sum,COUNT*42+sum]
-                                GroupBy vectorized: true workers: 1
-                                  values: [sum(x),count(*)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(42+x) FROM tab", """
+                    VirtualRecord
+                      functions: [sum,COUNT*42+sum]
+                        GroupBy vectorized: true workers: 1
+                          values: [sum(x),count(*)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                    """);
         });
     }
 
@@ -7504,31 +5965,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x short );");
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(x*10) FROM tab",
-                    """
-                            VirtualRecord
-                              functions: [sum,sum*10]
-                                GroupBy vectorized: true workers: 1
-                                  values: [sum(x)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(x*10) FROM tab", """
+                    VirtualRecord
+                      functions: [sum,sum*10]
+                        GroupBy vectorized: true workers: 1
+                          values: [sum(x)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(10*x) FROM tab",
-                    """
-                            VirtualRecord
-                              functions: [sum,10*sum]
-                                GroupBy vectorized: true workers: 1
-                                  values: [sum(x)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(10*x) FROM tab", """
+                    VirtualRecord
+                      functions: [sum,10*sum]
+                        GroupBy vectorized: true workers: 1
+                          values: [sum(x)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                    """);
         });
     }
 
@@ -7537,31 +5992,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x short );");
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(x-10) FROM tab",
-                    """
-                            VirtualRecord
-                              functions: [sum,sum-COUNT*10]
-                                GroupBy vectorized: true workers: 1
-                                  values: [sum(x),count(*)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(x-10) FROM tab", """
+                    VirtualRecord
+                      functions: [sum,sum-COUNT*10]
+                        GroupBy vectorized: true workers: 1
+                          values: [sum(x),count(*)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(10-x) FROM tab",
-                    """
-                            VirtualRecord
-                              functions: [sum,COUNT*10-sum]
-                                GroupBy vectorized: true workers: 1
-                                  values: [sum(x),count(*)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(10-x) FROM tab", """
+                    VirtualRecord
+                      functions: [sum,COUNT*10-sum]
+                        GroupBy vectorized: true workers: 1
+                          values: [sum(x),count(*)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                    """);
         });
     }
 
@@ -7570,29 +6019,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x double );");
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(x-10) FROM tab",
-                    """
-                            Async Group By workers: 1
-                              values: [sum(x),sum(x-10)]
-                              filter: null
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(x-10) FROM tab", """
+                    Async Group By workers: 1
+                      values: [sum(x),sum(x-10)]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: tab
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(x), sum(10-x) FROM tab",
-                    """
-                            Async Group By workers: 1
-                              values: [sum(x),sum(10-x)]
-                              filter: null
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(x), sum(10-x) FROM tab", """
+                    Async Group By workers: 1
+                      values: [sum(x),sum(10-x)]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: tab
+                    """);
         });
     }
 
@@ -7602,49 +6045,39 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("CREATE TABLE taba ( x int, id int );");
             execute("CREATE TABLE tabb ( x int, id int );");
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(taba.x),sum(tabb.x),sum(taba.x-10), sum(tabb.x-10) " +
-                            "FROM taba " +
-                            "join tabb on (id)",
-                    """
-                            VirtualRecord
-                              functions: [sum,sum1,sum-COUNT*10,sum1-COUNT1*10]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1),count(x),count(x1)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(taba.x),sum(tabb.x),sum(taba.x-10), sum(tabb.x-10) " + "FROM taba " + "join tabb on (id)", """
+                    VirtualRecord
+                      functions: [sum,sum1,sum-COUNT*10,sum1-COUNT1*10]
+                        GroupBy vectorized: false
+                          values: [sum(x),sum(x1),count(x),count(x1)]
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: tabb.id=taba.id
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: taba
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(taba.x),sum(tabb.x),sum(10-taba.x), sum(10-tabb.x) " +
-                            "FROM taba " +
-                            "join tabb on (id)",
-                    """
-                            VirtualRecord
-                              functions: [sum,sum1,COUNT*10-sum,COUNT1*10-sum1]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1),count(x),count(x1)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(taba.x),sum(tabb.x),sum(10-taba.x), sum(10-tabb.x) " + "FROM taba " + "join tabb on (id)", """
+                    VirtualRecord
+                      functions: [sum,sum1,COUNT*10-sum,COUNT1*10-sum1]
+                        GroupBy vectorized: false
+                          values: [sum(x),sum(x1),count(x),count(x1)]
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: tabb.id=taba.id
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: taba
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
+                    """);
         });
     }
 
@@ -7659,57 +6092,40 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         ResolutionHeight int
                     ) TIMESTAMP(EventTime) PARTITION BY DAY;""");
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(resolutIONWidth), count(resolutionwIDTH), SUM(ResolutionWidth), sum(ResolutionWidth) + count(), " +
-                            "SUM(ResolutionWidth+1),SUM(ResolutionWidth*2),sUM(ResolutionWidth), count()\n" +
-                            "FROM hits",
-                    """
-                            VirtualRecord
-                              functions: [sum,count,sum,sum+count1,sum+count*1,sum*2,sum,count1]
-                                GroupBy vectorized: true workers: 1
-                                  values: [sum(resolutIONWidth),count(resolutIONWidth),count(*)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: hits
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(resolutIONWidth), count(resolutionwIDTH), SUM(ResolutionWidth), sum(ResolutionWidth) + count(), " + "SUM(ResolutionWidth+1),SUM(ResolutionWidth*2),sUM(ResolutionWidth), count()\n" + "FROM hits", """
+                    VirtualRecord
+                      functions: [sum,count,sum,sum+count1,sum+count*1,sum*2,sum,count1]
+                        GroupBy vectorized: true workers: 1
+                          values: [sum(ResolutionWidth),count(ResolutionWidth),count(*)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: hits
+                    """);
         });
     }
 
     @Test
     public void testRewriteAggregatesOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE hits1" +
-                    "(" +
-                    "    EventTime timestamp, " +
-                    "    ResolutionWidth int, " +
-                    "    ResolutionHeight int, " +
-                    "    id int" +
-                    ")");
+            execute("CREATE TABLE hits1" + "(" + "    EventTime timestamp, " + "    ResolutionWidth int, " + "    ResolutionHeight int, " + "    id int" + ")");
             execute("create table hits2 as (select * from hits1)");
 
-            assertPlanNoLeakCheck(
-                    "SELECT sum(h1.resolutIONWidth), count(h1.resolutionwIDTH), SUM(h2.ResolutionWidth), sum(h2.ResolutionWidth) + count(), " +
-                            "SUM(h1.ResolutionWidth+1),SUM(h2.ResolutionWidth*2),sUM(h1.ResolutionWidth), count()\n" +
-                            "FROM hits1 h1 " +
-                            "join hits2 h2 on (id)",
-                    """
-                            VirtualRecord
-                              functions: [sum,count,SUM1,SUM1+count1,sum+count*1,SUM1*2,sum,count1]
-                                GroupBy vectorized: false
-                                  values: [sum(resolutIONWidth),count(resolutIONWidth),sum(ResolutionWidth1),count(*)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: h2.id=h1.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: hits1
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: hits2
-                            """
-            );
+            assertPlanNoLeakCheck("SELECT sum(h1.resolutIONWidth), count(h1.resolutionwIDTH), SUM(h2.ResolutionWidth), sum(h2.ResolutionWidth) + count(), " + "SUM(h1.ResolutionWidth+1),SUM(h2.ResolutionWidth*2),sUM(h1.ResolutionWidth), count()\n" + "FROM hits1 h1 " + "join hits2 h2 on (id)", """
+                    VirtualRecord
+                      functions: [sum,count,SUM1,SUM1+count1,sum+count*1,SUM1*2,sum,count1]
+                        GroupBy vectorized: false
+                          values: [sum(resolutIONWidth),count(resolutIONWidth),sum(ResolutionWidth1),count(*)]
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: h2.id=h1.id
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: hits1
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits2
+                    """);
         });
     }
 
@@ -7717,12 +6133,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testRewriteSelectCountDistinct() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test(s string, x long, ts timestamp, substring string) timestamp(ts) partition by day");
-            execute("insert into test " +
-                    "select 's' || (x%10), " +
-                    " x, " +
-                    " (x*86400000000)::timestamp, " +
-                    " 'substring' " +
-                    "from long_sequence(10)");
+            execute("insert into test " + "select 's' || (x%10), " + " x, " + " (x*86400000000)::timestamp, " + " 'substring' " + "from long_sequence(10)");
 
             // multiple count_distinct, no re-write
             String expected = """
@@ -7871,34 +6282,27 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleBy() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck(
-                    "create table a ( i int, ts timestamp) timestamp(ts);",
-                    "select first(i) from a sample by 1h align to first observation",
-                    """
-                            Sample By
-                              fill: none
+            assertPlanNoLeakCheck("create table a ( i int, ts timestamp) timestamp(ts);", "select first(i) from a sample by 1h align to first observation", """
+                    Sample By
+                      fill: none
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
+
+            assertPlanNoLeakCheck("select first(i) from a sample by 1h align to calendar", """
+                    SelectedRecord
+                        Radix sort light
+                          keys: [ts]
+                            Async Group By workers: 1
+                              keys: [ts]
                               values: [first(i)]
+                              filter: null
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: a
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select first(i) from a sample by 1h align to calendar",
-                    """
-                            SelectedRecord
-                                Radix sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      values: [first(i)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                            """
-            );
+                    """);
         });
     }
 
@@ -7907,489 +6311,389 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
 
-            assertPlanNoLeakCheck(
-                    "select x1.a, sum(x1.b) from x x1 sample by 2m align to first observation order by x1.a",
-                    """
-                            Sort
-                              keys: [a]
-                                Sample By
-                                  keys: [a]
+            assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 sample by 2m align to first observation order by x1.a", """
+                    Sort
+                      keys: [a]
+                        Sample By
+                          keys: [a]
+                          values: [sum(b)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: x
+                    """);
+
+            assertPlanNoLeakCheck("select \"x1.a\", sum(\"x1.b\") from x \"x1\" sample by 2m order by \"x1.a\"", """
+                    SelectedRecord
+                        Radix sort light
+                          keys: [a]
+                            Async Group By workers: 1
+                              keys: [a,ts]
+                              values: [sum(b)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                    """);
+
+            assertPlanNoLeakCheck("select \"x1.a\", sum(\"x1.b\") from x \"x1\" sample by 2m align to calendar time zone 'Europe/Paris' order by \"x1.a\"", """
+                    Radix sort light
+                      keys: [a]
+                        VirtualRecord
+                          functions: [a,sum]
+                            Async Group By workers: 1
+                              keys: [a,ts]
+                              values: [sum(b)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                    """);
+
+            assertPlanNoLeakCheck("select \"x1.a\", sum(\"x1.b\") from x \"x1\" sample by 2m align to calendar time zone 'Europe/Paris' order by 10*\"x1.a\"", """
+                    SelectedRecord
+                        Radix sort light
+                          keys: [column]
+                            VirtualRecord
+                              functions: [a,sum,10*a]
+                                VirtualRecord
+                                  functions: [a,sum]
+                                    Async Group By workers: 1
+                                      keys: [a,ts]
+                                      values: [sum(b)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                    """);
+
+            assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc", """
+                    Radix sort light
+                      keys: [a desc]
+                        VirtualRecord
+                          functions: [a,sum]
+                            Async Group By workers: 1
+                              keys: [a,ts]
+                              values: [sum(b)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                    """);
+
+            assertPlanNoLeakCheck("select 10*x1.a as a10, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by a10", """
+                    Radix sort light
+                      keys: [a10]
+                        VirtualRecord
+                          functions: [a10,sum]
+                            Async Group By workers: 1
+                              keys: [a10,ts]
+                              values: [sum(b)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                    """);
+
+            assertPlanNoLeakCheck("select x1.a as a0, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc", """
+                    SelectedRecord
+                        Sort light
+                          keys: [column desc, a0]
+                            VirtualRecord
+                              functions: [a0,sum,10*a0]
+                                VirtualRecord
+                                  functions: [a0,sum]
+                                    Async Group By workers: 1
+                                      keys: [a0,ts]
+                                      values: [sum(b)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                    """);
+
+            assertPlanNoLeakCheck("select x1.a as a0, sum(x1.b), x1.ts from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc", """
+                    SelectedRecord
+                        Sort light
+                          keys: [column desc, a0]
+                            VirtualRecord
+                              functions: [a0,sum,to_utc(ts),10*a0]
+                                Async Group By workers: 1
+                                  keys: [a0,ts]
                                   values: [sum(b)]
+                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
-                            """
-            );
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select \"x1.a\", sum(\"x1.b\") from x \"x1\" sample by 2m order by \"x1.a\"",
-                    """
-                            SelectedRecord
-                                Radix sort light
-                                  keys: [a]
-                                    Async Group By workers: 1
-                                      keys: [a,ts]
-                                      values: [sum(b)]
-                                      filter: null
+            assertPlanNoLeakCheck("select x1.ts, to_utc(x1.ts, 'Europe/Berlin') berlin_ts, x1.a as a0, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 3 asc, berlin_ts desc", """
+                    SelectedRecord
+                        Sort light
+                          keys: [column desc, a0, berlin_ts desc]
+                            VirtualRecord
+                              functions: [to_utc(ts),berlin_ts,a0,sum,10*a0]
+                                Async Group By workers: 1
+                                  keys: [ts,berlin_ts,a0]
+                                  values: [sum(b)]
+                                  filter: null
+                                    SelectedRecord
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select \"x1.a\", sum(\"x1.b\") from x \"x1\" sample by 2m align to calendar time zone 'Europe/Paris' order by \"x1.a\"",
-                    """
-                            Radix sort light
-                              keys: [a]
-                                VirtualRecord
-                                  functions: [a,sum]
-                                    Async Group By workers: 1
-                                      keys: [a,ts]
-                                      values: [sum(b)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select \"x1.a\", sum(\"x1.b\") from x \"x1\" sample by 2m align to calendar time zone 'Europe/Paris' order by 10*\"x1.a\"",
-                    """
-                            SelectedRecord
-                                Radix sort light
-                                  keys: [column]
-                                    VirtualRecord
-                                      functions: [a,sum,10*a]
-                                        VirtualRecord
-                                          functions: [a,sum]
-                                            Async Group By workers: 1
-                                              keys: [a,ts]
-                                              values: [sum(b)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select x1.a, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc",
-                    """
-                            Radix sort light
-                              keys: [a desc]
-                                VirtualRecord
-                                  functions: [a,sum]
-                                    Async Group By workers: 1
-                                      keys: [a,ts]
-                                      values: [sum(b)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select 10*x1.a as a10, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by a10",
-                    """
-                            Radix sort light
-                              keys: [a10]
-                                VirtualRecord
-                                  functions: [a10,sum]
-                                    Async Group By workers: 1
-                                      keys: [a10,ts]
-                                      values: [sum(b)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select x1.a as a0, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc",
-                    """
-                            SelectedRecord
-                                Sort light
-                                  keys: [column desc, a0]
-                                    VirtualRecord
-                                      functions: [a0,sum,10*a0]
-                                        VirtualRecord
-                                          functions: [a0,sum]
-                                            Async Group By workers: 1
-                                              keys: [a0,ts]
-                                              values: [sum(b)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select x1.a as a0, sum(x1.b), x1.ts from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc",
-                    """
-                            SelectedRecord
-                                Sort light
-                                  keys: [column desc, a0]
-                                    VirtualRecord
-                                      functions: [a0,sum,to_utc(ts),10*a0]
-                                        Async Group By workers: 1
-                                          keys: [a0,ts]
-                                          values: [sum(b)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select x1.ts, to_utc(x1.ts, 'Europe/Berlin') berlin_ts, x1.a as a0, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 3 asc, berlin_ts desc",
-                    """
-                            SelectedRecord
-                                Sort light
-                                  keys: [column desc, a0, berlin_ts desc]
-                                    VirtualRecord
-                                      functions: [to_utc(ts),berlin_ts,a0,sum,10*a0]
-                                        Async Group By workers: 1
-                                          keys: [ts,berlin_ts,a0]
-                                          values: [sum(b)]
-                                          filter: null
-                                            SelectedRecord
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
-                            """
-            );
+                    """);
         });
     }
 
     @Test
     public void testSampleByDuplicateKeys() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck(
-                    "create table x ( a double, b symbol, k timestamp, ts timestamp) timestamp(ts);",
-                    "select b, sum(a), k k1, k from x sample by 3h",
-                    """
+            assertPlanNoLeakCheck("create table x ( a double, b symbol, k timestamp, ts timestamp) timestamp(ts);", "select b, sum(a), k k1, k from x sample by 3h", """
+                    SelectedRecord
+                        Radix sort light
+                          keys: [ts]
                             SelectedRecord
-                                Radix sort light
-                                  keys: [ts]
-                                    SelectedRecord
-                                        Async Group By workers: 1
-                                          keys: [b,k1,ts]
-                                          values: [sum(a)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
-                            """
-            );
+                                Async Group By workers: 1
+                                  keys: [b,k1,ts]
+                                  values: [sum(a)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select b, sum(a), k, k k1 from x sample by 3h",
-                    """
+            assertPlanNoLeakCheck("select b, sum(a), k, k k1 from x sample by 3h", """
+                    SelectedRecord
+                        Radix sort light
+                          keys: [ts]
                             SelectedRecord
-                                Radix sort light
-                                  keys: [ts]
-                                    SelectedRecord
-                                        Async Group By workers: 1
-                                          keys: [b,k,ts]
-                                          values: [sum(a)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
-                            """
-            );
+                                Async Group By workers: 1
+                                  keys: [b,k,ts]
+                                  values: [sum(a)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                    """);
         });
     }
 
     @Test
     public void testSampleByFillLinear() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck(
-                    "create table a ( i int, ts timestamp) timestamp(ts);",
-                    "select first(i) from a sample by 1h fill(linear) align to first observation",
-                    """
-                            Sample By
-                              fill: linear
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("create table a ( i int, ts timestamp) timestamp(ts);", "select first(i) from a sample by 1h fill(linear) align to first observation", """
+                    Sample By
+                      fill: linear
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select first(i) from a sample by 1h fill(linear) align to calendar",
-                    """
-                            Sample By
-                              fill: linear
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(linear) align to calendar", """
+                    Sample By
+                      fill: linear
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
         });
     }
 
     @Test
     public void testSampleByFillNull() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck(
-                    "create table a ( i int, ts timestamp) timestamp(ts);",
-                    "select first(i) from a sample by 1h fill(null) align to first observation",
-                    """
-                            Sample By
-                              fill: null
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("create table a ( i int, ts timestamp) timestamp(ts);", "select first(i) from a sample by 1h fill(null) align to first observation", """
+                    Sample By
+                      fill: null
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select first(i) from a sample by 1h fill(null) align to calendar with offset '10:00'",
-                    """
-                            Sample By
-                              fill: null
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(null) align to calendar with offset '10:00'", """
+                    Sample By
+                      fill: null
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
 
             // with rewrite
-            assertPlanNoLeakCheck(
-                    "select first(i) from a sample by 1h fill(null) align to calendar",
-                    """
-                            SelectedRecord
-                                Sort
+            assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(null) align to calendar", """
+                    SelectedRecord
+                        Sort
+                          keys: [ts]
+                            Fill Range
+                              stride: '1h'
+                              values: [null]
+                                Async Group By workers: 1
                                   keys: [ts]
-                                    Fill Range
-                                      stride: '1h'
-                                      values: [null]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          values: [first(i)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
-                            """
-            );
+                                  values: [first(i)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                    """);
         });
     }
 
     @Test
     public void testSampleByFillPrevKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck(
-                    "create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
-                    "select s, first(i) from a sample by 1h fill(prev) align to first observation",
-                    """
-                            Sample By
-                              fill: prev
-                              keys: [s]
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("create table a ( i int, s symbol, ts timestamp) timestamp(ts);", "select s, first(i) from a sample by 1h fill(prev) align to first observation", """
+                    Sample By
+                      fill: prev
+                      keys: [s]
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select s, first(i) from a sample by 1h fill(prev) align to calendar",
-                    """
-                            Sample By
-                              fill: prev
-                              keys: [s]
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select s, first(i) from a sample by 1h fill(prev) align to calendar", """
+                    Sample By
+                      fill: prev
+                      keys: [s]
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
         });
     }
 
     @Test
     public void testSampleByFillPrevNotKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck(
-                    "create table a (i int, ts timestamp) timestamp(ts);",
-                    "select first(i) from a sample by 1h fill(prev) align to first observation",
-                    """
-                            Sample By
-                              fill: prev
-                              values: [first(i)]
+            assertPlanNoLeakCheck("create table a (i int, ts timestamp) timestamp(ts);", "select first(i) from a sample by 1h fill(prev) align to first observation", """
+                    Sample By
+                      fill: prev
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
+
+            assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(prev) align to calendar", """
+                    Sample By
+                      fill: prev
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
+
+            assertPlanNoLeakCheck("select first(a1.i) from a a1 asof join a a2 sample by 1h fill(prev) align to calendar", """
+                    Sample By
+                      fill: prev
+                      values: [first(i)]
+                        SelectedRecord
+                            AsOf Join Fast
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: a
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select first(i) from a sample by 1h fill(prev) align to calendar",
-                    """
-                            Sample By
-                              fill: prev
-                              values: [first(i)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: a
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select first(a1.i) from a a1 asof join a a2 sample by 1h fill(prev) align to calendar",
-                    """
-                            Sample By
-                              fill: prev
-                              values: [first(i)]
-                                SelectedRecord
-                                    AsOf Join Fast
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                            """
-            );
+                    """);
         });
     }
 
     @Test
     public void testSampleByFillValueKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck(
-                    "create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
-                    "select s, first(i) from a sample by 1h fill(1) align to first observation",
-                    """
-                            Sample By
-                              fill: value
-                              keys: [s]
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("create table a ( i int, s symbol, ts timestamp) timestamp(ts);", "select s, first(i) from a sample by 1h fill(1) align to first observation", """
+                    Sample By
+                      fill: value
+                      keys: [s]
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select s, first(i) from a sample by 1h fill(1) align to calendar",
-                    """
-                            Sample By
-                              fill: value
-                              keys: [s]
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select s, first(i) from a sample by 1h fill(1) align to calendar", """
+                    Sample By
+                      fill: value
+                      keys: [s]
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
         });
     }
 
     @Test
     public void testSampleByFillValueNotKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck(
-                    "create table a (i int, ts timestamp) timestamp(ts);",
-                    "select first(i) from a sample by 1h fill(1) align to first observation",
-                    """
-                            Sample By
-                              fill: value
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("create table a (i int, ts timestamp) timestamp(ts);", "select first(i) from a sample by 1h fill(1) align to first observation", """
+                    Sample By
+                      fill: value
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select first(i) from a sample by 1h fill(1) align to calendar with offset '10:00'",
-                    """
-                            Sample By
-                              fill: value
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(1) align to calendar with offset '10:00'", """
+                    Sample By
+                      fill: value
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
 
             // with rewrite
-            assertPlanNoLeakCheck(
-                    "select first(i) from a sample by 1h fill(1) align to calendar",
-                    """
-                            SelectedRecord
-                                Sort
+            assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(1) align to calendar", """
+                    SelectedRecord
+                        Sort
+                          keys: [ts]
+                            Fill Range
+                              stride: '1h'
+                              values: [1]
+                                Async Group By workers: 1
                                   keys: [ts]
-                                    Fill Range
-                                      stride: '1h'
-                                      values: [1]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          values: [first(i)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
-                            """
-            );
+                                  values: [first(i)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                    """);
         });
     }
 
     @Test
     public void testSampleByFirstLast() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck(
-                    "create table a ( l long, s symbol, sym symbol index, i int, ts timestamp) timestamp(ts) partition by day;",
-                    "select sym, first(i), last(s), first(l) " +
-                            "from a " +
-                            "where sym in ('S') " +
-                            "and   ts > 0::timestamp and ts < 100::timestamp " +
-                            "sample by 1h align to first observation",
-                    """
-                            SampleByFirstLast
-                              keys: [sym]
-                              values: [first(i), last(s), first(l)]
+            assertPlanNoLeakCheck("create table a ( l long, s symbol, sym symbol index, i int, ts timestamp) timestamp(ts) partition by day;", "select sym, first(i), last(s), first(l) " + "from a " + "where sym in ('S') " + "and   ts > 0::timestamp and ts < 100::timestamp " + "sample by 1h align to first observation", """
+                    SampleByFirstLast
+                      keys: [sym]
+                      values: [first(i), last(s), first(l)]
+                        DeferredSingleSymbolFilterPageFrame
+                            Index forward scan on: sym deferred: true
+                              filter: sym='S'
+                            Interval forward scan on: a
+                              intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000099Z")]
+                    """);
+
+            assertPlanNoLeakCheck("select sym, first(i), last(s), first(l) " + "from a " + "where sym in ('S') " + "and   ts > 0::timestamp and ts < 100::timestamp " + "sample by 1h align to calendar", """
+                    SelectedRecord
+                        Radix sort light
+                          keys: [ts]
+                            GroupBy vectorized: false
+                              keys: [sym,ts]
+                              values: [first(i),last(s),first(l)]
                                 DeferredSingleSymbolFilterPageFrame
                                     Index forward scan on: sym deferred: true
                                       filter: sym='S'
                                     Interval forward scan on: a
                                       intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000099Z")]
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select sym, first(i), last(s), first(l) " +
-                            "from a " +
-                            "where sym in ('S') " +
-                            "and   ts > 0::timestamp and ts < 100::timestamp " +
-                            "sample by 1h align to calendar",
-                    """
-                            SelectedRecord
-                                Radix sort light
-                                  keys: [ts]
-                                    GroupBy vectorized: false
-                                      keys: [sym,ts]
-                                      values: [first(i),last(s),first(l)]
-                                        DeferredSingleSymbolFilterPageFrame
-                                            Index forward scan on: sym deferred: true
-                                              filter: sym='S'
-                                            Interval forward scan on: a
-                                              intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000099Z")]
-                            """
-            );
+                    """);
         });
     }
 
@@ -8398,13 +6702,143 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
 
-            assertPlanNoLeakCheck(
-                    "select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to first observation order by x1.a",
-                    """
-                            Sort
-                              keys: [a]
-                                Sample By
-                                  keys: [a]
+            assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to first observation order by x1.a", """
+                    Sort
+                      keys: [a]
+                        Sample By
+                          keys: [a]
+                          values: [sum(b)]
+                            SelectedRecord
+                                AsOf Join Fast
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                    """);
+
+            assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m order by x1.a", """
+                    SelectedRecord
+                        Radix sort light
+                          keys: [a]
+                            GroupBy vectorized: false
+                              keys: [a,ts]
+                              values: [sum(b)]
+                                SelectedRecord
+                                    AsOf Join Fast
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                    """);
+
+            assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by x1.a", """
+                    Radix sort light
+                      keys: [a]
+                        VirtualRecord
+                          functions: [a,sum]
+                            GroupBy vectorized: false
+                              keys: [a,ts]
+                              values: [sum(b)]
+                                SelectedRecord
+                                    AsOf Join Fast
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                    """);
+
+            assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a", """
+                    SelectedRecord
+                        Radix sort light
+                          keys: [column]
+                            VirtualRecord
+                              functions: [a,sum,10*a]
+                                VirtualRecord
+                                  functions: [a,sum]
+                                    GroupBy vectorized: false
+                                      keys: [a,ts]
+                                      values: [sum(b)]
+                                        SelectedRecord
+                                            AsOf Join Fast
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: x
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: x
+                    """);
+
+            assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc", """
+                    Radix sort light
+                      keys: [a desc]
+                        VirtualRecord
+                          functions: [a,sum]
+                            GroupBy vectorized: false
+                              keys: [a,ts]
+                              values: [sum(b)]
+                                SelectedRecord
+                                    AsOf Join Fast
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                    """);
+
+            assertPlanNoLeakCheck("select 10*x1.a as a10, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by a10", """
+                    Radix sort light
+                      keys: [a10]
+                        VirtualRecord
+                          functions: [a10,sum]
+                            GroupBy vectorized: false
+                              keys: [a10,ts]
+                              values: [sum(b)]
+                                SelectedRecord
+                                    AsOf Join Fast
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                    """);
+
+            assertPlanNoLeakCheck("select x1.a as a0, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc", """
+                    SelectedRecord
+                        Sort light
+                          keys: [column desc, a0]
+                            VirtualRecord
+                              functions: [a0,sum,10*a0]
+                                VirtualRecord
+                                  functions: [a0,sum]
+                                    GroupBy vectorized: false
+                                      keys: [a0,ts]
+                                      values: [sum(b)]
+                                        SelectedRecord
+                                            AsOf Join Fast
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: x
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: x
+                    """);
+
+            assertPlanNoLeakCheck("select x1.a as a0, sum(x1.b), x1.ts from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc", """
+                    SelectedRecord
+                        Sort light
+                          keys: [column desc, a0]
+                            VirtualRecord
+                              functions: [a0,sum,to_utc(ts),10*a0]
+                                GroupBy vectorized: false
+                                  keys: [a0,ts]
                                   values: [sum(b)]
                                     SelectedRecord
                                         AsOf Join Fast
@@ -8414,379 +6848,180 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: x
-                            """
-            );
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m order by x1.a",
-                    """
-                            SelectedRecord
-                                Radix sort light
-                                  keys: [a]
-                                    GroupBy vectorized: false
-                                      keys: [a,ts]
-                                      values: [sum(b)]
-                                        SelectedRecord
-                                            AsOf Join Fast
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by x1.a",
-                    """
-                            Radix sort light
-                              keys: [a]
-                                VirtualRecord
-                                  functions: [a,sum]
-                                    GroupBy vectorized: false
-                                      keys: [a,ts]
-                                      values: [sum(b)]
-                                        SelectedRecord
-                                            AsOf Join Fast
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a",
-                    """
-                            SelectedRecord
-                                Radix sort light
-                                  keys: [column]
-                                    VirtualRecord
-                                      functions: [a,sum,10*a]
-                                        VirtualRecord
-                                          functions: [a,sum]
-                                            GroupBy vectorized: false
-                                              keys: [a,ts]
-                                              values: [sum(b)]
-                                                SelectedRecord
-                                                    AsOf Join Fast
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: x
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: x
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc",
-                    """
-                            Radix sort light
-                              keys: [a desc]
-                                VirtualRecord
-                                  functions: [a,sum]
-                                    GroupBy vectorized: false
-                                      keys: [a,ts]
-                                      values: [sum(b)]
-                                        SelectedRecord
-                                            AsOf Join Fast
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select 10*x1.a as a10, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by a10",
-                    """
-                            Radix sort light
-                              keys: [a10]
-                                VirtualRecord
-                                  functions: [a10,sum]
-                                    GroupBy vectorized: false
-                                      keys: [a10,ts]
-                                      values: [sum(b)]
-                                        SelectedRecord
-                                            AsOf Join Fast
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select x1.a as a0, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc",
-                    """
-                            SelectedRecord
-                                Sort light
-                                  keys: [column desc, a0]
-                                    VirtualRecord
-                                      functions: [a0,sum,10*a0]
-                                        VirtualRecord
-                                          functions: [a0,sum]
-                                            GroupBy vectorized: false
-                                              keys: [a0,ts]
-                                              values: [sum(b)]
-                                                SelectedRecord
-                                                    AsOf Join Fast
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: x
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: x
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select x1.a as a0, sum(x1.b), x1.ts from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc",
-                    """
-                            SelectedRecord
-                                Sort light
-                                  keys: [column desc, a0]
-                                    VirtualRecord
-                                      functions: [a0,sum,to_utc(ts),10*a0]
-                                        GroupBy vectorized: false
-                                          keys: [a0,ts]
-                                          values: [sum(b)]
-                                            SelectedRecord
-                                                AsOf Join Fast
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: x
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: x
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select x1.ts, to_utc(x1.ts, 'Europe/Berlin') berlin_ts, x1.a as a0, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 3 asc, berlin_ts desc",
-                    """
-                            SelectedRecord
-                                Sort light
-                                  keys: [column desc, a0, berlin_ts desc]
-                                    VirtualRecord
-                                      functions: [to_utc(ts),berlin_ts,a0,sum,10*a0]
-                                        GroupBy vectorized: false
-                                          keys: [ts,berlin_ts,a0]
-                                          values: [sum(b)]
-                                            SelectedRecord
-                                                AsOf Join Fast
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: x
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: x
-                            """
-            );
+            assertPlanNoLeakCheck("select x1.ts, to_utc(x1.ts, 'Europe/Berlin') berlin_ts, x1.a as a0, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 3 asc, berlin_ts desc", """
+                    SelectedRecord
+                        Sort light
+                          keys: [column desc, a0, berlin_ts desc]
+                            VirtualRecord
+                              functions: [to_utc(ts),berlin_ts,a0,sum,10*a0]
+                                GroupBy vectorized: false
+                                  keys: [ts,berlin_ts,a0]
+                                  values: [sum(b)]
+                                    SelectedRecord
+                                        AsOf Join Fast
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                    """);
         });
     }
 
     @Test
     public void testSampleByKeyed0() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck(
-                    "create table a ( i int, l long, ts timestamp) timestamp(ts);",
-                    "select l, i, first(i) from a sample by 1h align to first observation",
-                    """
-                            Sample By
-                              keys: [l,i]
+            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp) timestamp(ts);", "select l, i, first(i) from a sample by 1h align to first observation", """
+                    Sample By
+                      keys: [l,i]
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
+
+            assertPlanNoLeakCheck("select l, i, first(i) from a sample by 1h align to calendar", """
+                    SelectedRecord
+                        Radix sort light
+                          keys: [ts]
+                            Async Group By workers: 1
+                              keys: [l,i,ts]
                               values: [first(i)]
+                              filter: null
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: a
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select l, i, first(i) from a sample by 1h align to calendar",
-                    """
-                            SelectedRecord
-                                Radix sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [l,i,ts]
-                                      values: [first(i)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                            """
-            );
+                    """);
         });
     }
 
     @Test
     public void testSampleByKeyed1() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck(
-                    "create table a ( i int, l long, ts timestamp) timestamp(ts);",
-                    "select l, i, first(i) from a sample by 1h align to first observation",
-                    """
-                            Sample By
-                              keys: [l,i]
+            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp) timestamp(ts);", "select l, i, first(i) from a sample by 1h align to first observation", """
+                    Sample By
+                      keys: [l,i]
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
+
+            assertPlanNoLeakCheck("select l, i, first(i) from a sample by 1h align to calendar", """
+                    SelectedRecord
+                        Radix sort light
+                          keys: [ts]
+                            Async Group By workers: 1
+                              keys: [l,i,ts]
                               values: [first(i)]
+                              filter: null
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: a
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select l, i, first(i) from a sample by 1h align to calendar",
-                    """
-                            SelectedRecord
-                                Radix sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [l,i,ts]
-                                      values: [first(i)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                            """
-            );
+                    """);
         });
     }
 
     @Test
     public void testSampleByKeyed2() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck(
-                    "create table a ( i int, l long, ts timestamp) timestamp(ts);",
-                    "select l, first(i) from a sample by 1h fill(null) align to first observation",
-                    """
-                            Sample By
-                              fill: null
-                              keys: [l]
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp) timestamp(ts);", "select l, first(i) from a sample by 1h fill(null) align to first observation", """
+                    Sample By
+                      fill: null
+                      keys: [l]
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select l, first(i) from a sample by 1h fill(null) align to calendar",
-                    """
-                            Sample By
-                              fill: null
-                              keys: [l]
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select l, first(i) from a sample by 1h fill(null) align to calendar", """
+                    Sample By
+                      fill: null
+                      keys: [l]
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
         });
     }
 
     @Test
     public void testSampleByKeyed3() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck(
-                    "create table a (i int, l long, ts timestamp) timestamp(ts);",
-                    "select l, first(i) from a sample by 1d fill(linear) align to first observation",
-                    """
-                            Sample By
-                              fill: linear
-                              keys: [l]
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("create table a (i int, l long, ts timestamp) timestamp(ts);", "select l, first(i) from a sample by 1d fill(linear) align to first observation", """
+                    Sample By
+                      fill: linear
+                      keys: [l]
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select l, first(i) from a sample by 1d fill(linear) align to calendar",
-                    """
-                            Sample By
-                              fill: linear
-                              keys: [l]
-                              values: [first(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select l, first(i) from a sample by 1d fill(linear) align to calendar", """
+                    Sample By
+                      fill: linear
+                      keys: [l]
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
         });
     }
 
     @Test
     public void testSampleByKeyed4() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck(
-                    "create table a ( i int, l long, ts timestamp) timestamp(ts);",
-                    "select l, first(i), last(i) from a sample by 1d fill(1,2) align to first observation",
-                    """
-                            Sample By
-                              fill: value
-                              keys: [l]
-                              values: [first(i),last(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp) timestamp(ts);", "select l, first(i), last(i) from a sample by 1d fill(1,2) align to first observation", """
+                    Sample By
+                      fill: value
+                      keys: [l]
+                      values: [first(i),last(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select l, first(i), last(i) from a sample by 1d fill(1,2) align to calendar",
-                    """
-                            Sample By
-                              fill: value
-                              keys: [l]
-                              values: [first(i),last(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select l, first(i), last(i) from a sample by 1d fill(1,2) align to calendar", """
+                    Sample By
+                      fill: value
+                      keys: [l]
+                      values: [first(i),last(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
         });
     }
 
     @Test
     public void testSampleByKeyed5() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck(
-                    "create table a ( i int, l long, ts timestamp) timestamp(ts);",
-                    "select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to first observation",
-                    """
-                            Sample By
-                              fill: value
-                              keys: [l]
-                              values: [first(i),last(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp) timestamp(ts);", "select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to first observation", """
+                    Sample By
+                      fill: value
+                      keys: [l]
+                      values: [first(i),last(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to calendar",
-                    """
-                            Sample By
-                              fill: value
-                              keys: [l]
-                              values: [first(i),last(i)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to calendar", """
+                    Sample By
+                      fill: value
+                      keys: [l]
+                      values: [first(i),last(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
         });
     }
 
@@ -8795,164 +7030,137 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
 
-            assertPlanNoLeakCheck(
-                    "select a, sum(b) from x sample by 2m align to first observation order by a",
-                    """
-                            Sort
-                              keys: [a]
-                                Sample By
-                                  keys: [a]
+            assertPlanNoLeakCheck("select a, sum(b) from x sample by 2m align to first observation order by a", """
+                    Sort
+                      keys: [a]
+                        Sample By
+                          keys: [a]
+                          values: [sum(b)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: x
+                    """);
+
+            assertPlanNoLeakCheck("select a, sum(b) from x sample by 2m order by a", """
+                    SelectedRecord
+                        Radix sort light
+                          keys: [a]
+                            Async Group By workers: 1
+                              keys: [a,ts]
+                              values: [sum(b)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                    """);
+
+            assertPlanNoLeakCheck("select a, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by a", """
+                    Radix sort light
+                      keys: [a]
+                        VirtualRecord
+                          functions: [a,sum]
+                            Async Group By workers: 1
+                              keys: [a,ts]
+                              values: [sum(b)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                    """);
+
+            assertPlanNoLeakCheck("select a, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a", """
+                    SelectedRecord
+                        Radix sort light
+                          keys: [column]
+                            VirtualRecord
+                              functions: [a,sum,10*a]
+                                VirtualRecord
+                                  functions: [a,sum]
+                                    Async Group By workers: 1
+                                      keys: [a,ts]
+                                      values: [sum(b)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                    """);
+
+            assertPlanNoLeakCheck("select a, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc", """
+                    Radix sort light
+                      keys: [a desc]
+                        VirtualRecord
+                          functions: [a,sum]
+                            Async Group By workers: 1
+                              keys: [a,ts]
+                              values: [sum(b)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                    """);
+
+            assertPlanNoLeakCheck("select 10*a as a10, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by a10", """
+                    Radix sort light
+                      keys: [a10]
+                        VirtualRecord
+                          functions: [a10,sum]
+                            Async Group By workers: 1
+                              keys: [a10,ts]
+                              values: [sum(b)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                    """);
+
+            assertPlanNoLeakCheck("select a as a0, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a desc, 1 asc", """
+                    SelectedRecord
+                        Sort light
+                          keys: [column desc, a0]
+                            VirtualRecord
+                              functions: [a0,sum,10*a0]
+                                VirtualRecord
+                                  functions: [a0,sum]
+                                    Async Group By workers: 1
+                                      keys: [a0,ts]
+                                      values: [sum(b)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                    """);
+
+            assertPlanNoLeakCheck("select a as a0, sum(b), ts from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a desc, 1 asc", """
+                    SelectedRecord
+                        Sort light
+                          keys: [column desc, a0]
+                            VirtualRecord
+                              functions: [a0,sum,to_utc(ts),10*a0]
+                                Async Group By workers: 1
+                                  keys: [a0,ts]
                                   values: [sum(b)]
+                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
-                            """
-            );
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select a, sum(b) from x sample by 2m order by a",
-                    """
-                            SelectedRecord
-                                Radix sort light
-                                  keys: [a]
-                                    Async Group By workers: 1
-                                      keys: [a,ts]
-                                      values: [sum(b)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select a, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by a",
-                    """
-                            Radix sort light
-                              keys: [a]
+            assertPlanNoLeakCheck("select ts, to_utc(ts, 'Europe/Berlin') berlin_ts, a as a0, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a desc, 3 asc, berlin_ts desc", """
+                    SelectedRecord
+                        Sort light
+                          keys: [column desc, a0, berlin_ts desc]
+                            VirtualRecord
+                              functions: [ts,to_utc(ts),a0,sum,10*a0]
                                 VirtualRecord
-                                  functions: [a,sum]
+                                  functions: [to_utc(ts),a0,sum]
                                     Async Group By workers: 1
-                                      keys: [a,ts]
+                                      keys: [ts,a0]
                                       values: [sum(b)]
                                       filter: null
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select a, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a",
-                    """
-                            SelectedRecord
-                                Radix sort light
-                                  keys: [column]
-                                    VirtualRecord
-                                      functions: [a,sum,10*a]
-                                        VirtualRecord
-                                          functions: [a,sum]
-                                            Async Group By workers: 1
-                                              keys: [a,ts]
-                                              values: [sum(b)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select a, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc",
-                    """
-                            Radix sort light
-                              keys: [a desc]
-                                VirtualRecord
-                                  functions: [a,sum]
-                                    Async Group By workers: 1
-                                      keys: [a,ts]
-                                      values: [sum(b)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select 10*a as a10, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by a10",
-                    """
-                            Radix sort light
-                              keys: [a10]
-                                VirtualRecord
-                                  functions: [a10,sum]
-                                    Async Group By workers: 1
-                                      keys: [a10,ts]
-                                      values: [sum(b)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select a as a0, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a desc, 1 asc",
-                    """
-                            SelectedRecord
-                                Sort light
-                                  keys: [column desc, a0]
-                                    VirtualRecord
-                                      functions: [a0,sum,10*a0]
-                                        VirtualRecord
-                                          functions: [a0,sum]
-                                            Async Group By workers: 1
-                                              keys: [a0,ts]
-                                              values: [sum(b)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select a as a0, sum(b), ts from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a desc, 1 asc",
-                    """
-                            SelectedRecord
-                                Sort light
-                                  keys: [column desc, a0]
-                                    VirtualRecord
-                                      functions: [a0,sum,to_utc(ts),10*a0]
-                                        Async Group By workers: 1
-                                          keys: [a0,ts]
-                                          values: [sum(b)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select ts, to_utc(ts, 'Europe/Berlin') berlin_ts, a as a0, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a desc, 3 asc, berlin_ts desc",
-                    """
-                            SelectedRecord
-                                Sort light
-                                  keys: [column desc, a0, berlin_ts desc]
-                                    VirtualRecord
-                                      functions: [ts,to_utc(ts),a0,sum,10*a0]
-                                        VirtualRecord
-                                          functions: [to_utc(ts),a0,sum]
-                                            Async Group By workers: 1
-                                              keys: [ts,a0]
-                                              values: [sum(b)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
-                            """
-            );
+                    """);
         });
     }
 
@@ -8961,373 +7169,286 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
 
-            assertPlanNoLeakCheck(
-                    "select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by berlin_ts desc",
-                    """
-                            Radix sort light
-                              keys: [berlin_ts desc]
-                                VirtualRecord
-                                  functions: [a,sum,to_timezone(ts)]
-                                    Async Group By workers: 1
-                                      keys: [a,ts]
-                                      values: [sum(b)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
-                            """
-            );
+            assertPlanNoLeakCheck("select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by berlin_ts desc", """
+                    Radix sort light
+                      keys: [berlin_ts desc]
+                        VirtualRecord
+                          functions: [a,sum,to_timezone(ts)]
+                            Async Group By workers: 1
+                              keys: [a,ts]
+                              values: [sum(b)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by 3 asc",
-                    """
-                            Radix sort light
-                              keys: [berlin_ts]
-                                VirtualRecord
-                                  functions: [a,sum,to_timezone(ts)]
-                                    Async Group By workers: 1
-                                      keys: [a,ts]
-                                      values: [sum(b)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
-                            """
-            );
+            assertPlanNoLeakCheck("select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by 3 asc", """
+                    Radix sort light
+                      keys: [berlin_ts]
+                        VirtualRecord
+                          functions: [a,sum,to_timezone(ts)]
+                            Async Group By workers: 1
+                              keys: [a,ts]
+                              values: [sum(b)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by to_timezone(ts, 'Europe/Berlin')",
-                    """
-                            Radix sort light
-                              keys: [berlin_ts]
-                                VirtualRecord
-                                  functions: [a,sum,to_timezone(ts)]
-                                    Async Group By workers: 1
-                                      keys: [a,ts]
-                                      values: [sum(b)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
-                            """
-            );
+            assertPlanNoLeakCheck("select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by to_timezone(ts, 'Europe/Berlin')", """
+                    Radix sort light
+                      keys: [berlin_ts]
+                        VirtualRecord
+                          functions: [a,sum,to_timezone(ts)]
+                            Async Group By workers: 1
+                              keys: [a,ts]
+                              values: [sum(b)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select a, timestamp_floor('M', ts) month_ts, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by berlin_ts desc, a asc, month_ts asc",
-                    """
-                            Sort light
-                              keys: [berlin_ts desc, a, month_ts]
-                                VirtualRecord
-                                  functions: [a,timestamp_floor('month',ts),sum,to_timezone(ts)]
-                                    Async Group By workers: 1
-                                      keys: [a,ts]
-                                      values: [sum(b)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
-                            """
-            );
+            assertPlanNoLeakCheck("select a, timestamp_floor('M', ts) month_ts, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by berlin_ts desc, a asc, month_ts asc", """
+                    Sort light
+                      keys: [berlin_ts desc, a, month_ts]
+                        VirtualRecord
+                          functions: [a,timestamp_floor('month',ts),sum,to_timezone(ts)]
+                            Async Group By workers: 1
+                              keys: [a,ts]
+                              values: [sum(b)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                    """);
         });
     }
 
     @Test
     public void testSelect0() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts) ;",
-                "select * from a",
-                """
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a", """
+                PageFrame
+                    Row forward scan
+                    Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectConcat() throws Exception {
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
-                "select concat('a', 'b', rnd_str('c', 'd', 'e'))",
-                """
-                        VirtualRecord
-                          functions: [concat(['a','b',rnd_str([c,d,e])])]
-                            long_sequence count: 1
-                        """
-        ));
+        assertMemoryLeak(() -> assertPlanNoLeakCheck("select concat('a', 'b', rnd_str('c', 'd', 'e'))", """
+                VirtualRecord
+                  functions: [concat(['a','b',rnd_str([c,d,e])])]
+                    long_sequence count: 1
+                """));
     }
 
     @Test
     public void testSelectCount1() throws Exception {
-        assertPlan(
-                "create table a ( i int, d double)",
-                "select count(*) from a",
-                """
-                        Count
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, d double)", "select count(*) from a", """
+                Count
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectCount10() throws Exception {
-        assertPlan(
-                "create table a ( i int, s symbol index)",
-                "select count(*) from (select 1 from a limit 1) ",
-                """
-                        Count
-                            Limit lo: 1 skip-over-rows: 0 limit: 0
-                                VirtualRecord
-                                  functions: [1]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s symbol index)", "select count(*) from (select 1 from a limit 1) ", """
+                Count
+                    Limit value: 1 skip-rows: 0 take-rows: 0
+                        VirtualRecord
+                          functions: [1]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                """);
     }
 
     @Test // TODO: should return count on first table instead
     public void testSelectCount11() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp ) timestamp(ts)",
-                "select count(*) from (select * from a lt join a b) ",
-                """
-                        Count
-                            SelectedRecord
-                                Lt Join Fast
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp ) timestamp(ts)", "select count(*) from (select * from a lt join a b) ", """
+                Count
+                    SelectedRecord
+                        Lt Join Fast
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                """);
     }
 
     @Test // TODO: should return count on first table instead
     public void testSelectCount12() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp ) timestamp(ts)",
-                "select count(*) from (select * from a asof join a b) ",
-                """
-                        Count
-                            SelectedRecord
-                                AsOf Join Fast
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp ) timestamp(ts)", "select count(*) from (select * from a asof join a b) ", """
+                Count
+                    SelectedRecord
+                        AsOf Join Fast
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                """);
     }
 
     @Test // TODO: should return count(first table)*count(second_table) instead
     public void testSelectCount13() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp ) timestamp(ts)",
-                "select count(*) from (select * from a cross join a b) ",
-                """
-                        Count
-                            SelectedRecord
-                                Cross Join
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp ) timestamp(ts)", "select count(*) from (select * from a cross join a b) ", """
+                Count
+                    SelectedRecord
+                        Cross Join
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectCount14() throws Exception {
-        assertPlan(
-                "create table a ( i int, s symbol index, ts timestamp) timestamp(ts)",
-                "select * from a where s = 'S1' order by ts desc ",
-                """
-                        DeferredSingleSymbolFilterPageFrame
-                            Index backward scan on: s deferred: true
-                              filter: s='S1'
-                            Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)", "select * from a where s = 'S1' order by ts desc ", """
+                DeferredSingleSymbolFilterPageFrame
+                    Index backward scan on: s deferred: true
+                      filter: s='S1'
+                    Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testSelectCount15() throws Exception {
-        assertPlan(
-                "create table a ( i int, s symbol index, ts timestamp) timestamp(ts)",
-                "select * from a where s = 'S1' order by ts asc",
-                """
-                        DeferredSingleSymbolFilterPageFrame
-                            Index forward scan on: s deferred: true
-                              filter: s='S1'
-                            Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)", "select * from a where s = 'S1' order by ts asc", """
+                DeferredSingleSymbolFilterPageFrame
+                    Index forward scan on: s deferred: true
+                      filter: s='S1'
+                    Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectCount16() throws Exception {
-        assertPlan(
-                "create table a (i long, j long)",
-                "select count(*) from (select i, j from a group by i, j)",
-                """
-                        Count
-                            Async Group By workers: 1
-                              keys: [i,j]
-                              filter: null
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (i long, j long)", "select count(*) from (select i, j from a group by i, j)", """
+                Count
+                    Async Group By workers: 1
+                      keys: [i,j]
+                      filter: null
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectCount17() throws Exception {
-        assertPlan(
-                "create table a (i long, j long, d double)",
-                "select count(*) from (select i, j from a where d > 42 group by i, j)",
-                """
-                        Count
-                            Async JIT Group By workers: 1
-                              keys: [i,j]
-                              filter: 42<d
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (i long, j long, d double)", "select count(*) from (select i, j from a where d > 42 group by i, j)", """
+                Count
+                    Async JIT Group By workers: 1
+                      keys: [i,j]
+                      filter: 42<d
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectCount2() throws Exception {
-        assertPlan(
-                "create table a ( i int, d double)",
-                "select count() from a",
-                """
-                        Count
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, d double)", "select count() from a", """
+                Count
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectCount3() throws Exception {
-        assertPlan(
-                "create table a ( i int, d double)",
-                "select count(2) from a",
-                """
-                        Count
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, d double)", "select count(2) from a", """
+                Count
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectCount4() throws Exception {
-        assertPlan(
-                "create table a ( i int, s symbol index)",
-                "select count(*) from a where s = 'S1'",
-                """
-                        Count
-                            DeferredSingleSymbolFilterPageFrame
-                                Index forward scan on: s deferred: true
-                                  filter: s='S1'
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s symbol index)", "select count(*) from a where s = 'S1'", """
+                Count
+                    DeferredSingleSymbolFilterPageFrame
+                        Index forward scan on: s deferred: true
+                          filter: s='S1'
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectCount5() throws Exception {
-        assertPlan(
-                "create table a ( i int, s symbol index)",
-                "select count(*) from (select * from a union all select * from a) ",
-                """
-                        Count
-                            Union All
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s symbol index)", "select count(*) from (select * from a union all select * from a) ", """
+                Count
+                    Union All
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectCount6() throws Exception {
-        assertPlan(
-                "create table a ( i int, s symbol index)",
-                "select count(*) from (select * from a union select * from a) ",
-                """
-                        Count
-                            Union
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s symbol index)", "select count(*) from (select * from a union select * from a) ", """
+                Count
+                    Union
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectCount7() throws Exception {
-        assertPlan(
-                "create table a ( i int, s symbol index)",
-                "select count(*) from (select * from a intersect select * from a) ",
-                """
-                        Count
-                            Intersect
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                                Hash
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s symbol index)", "select count(*) from (select * from a intersect select * from a) ", """
+                Count
+                    Intersect
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                        Hash
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectCount8() throws Exception {
-        assertPlan(
-                "create table a ( i int, s symbol index)",
-                "select count(*) from a where 1=0 ",
-                """
-                        Count
-                            Empty table
-                        """
-        );
+        assertPlan("create table a ( i int, s symbol index)", "select count(*) from a where 1=0 ", """
+                Count
+                    Empty table
+                """);
     }
 
     @Test
     public void testSelectCount9() throws Exception {
-        assertPlan(
-                "create table a ( i int, s symbol index)",
-                "select count(*) from a where 1=1 ",
-                """
-                        Count
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s symbol index)", "select count(*) from a where 1=1 ", """
+                Count
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
@@ -9339,15 +7460,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Row forward scan
                         Frame forward scan on: tab
                 """;
-        assertPlan(
-                "create table tab (s symbol, ts timestamp);",
-                "select count_distinct(s) from tab",
-                expected
-        );
-        assertPlan(
-                "select count(distinct s) from tab",
-                expected
-        );
+        assertPlan("create table tab (s symbol, ts timestamp);", "select count_distinct(s) from tab", expected);
+        assertPlan("select count(distinct s) from tab", expected);
     }
 
     @Test
@@ -9359,15 +7473,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Row forward scan
                         Frame forward scan on: tab
                 """;
-        assertPlan(
-                "create table tab (s symbol index, ts timestamp);",
-                "select count_distinct(s) from tab",
-                expected
-        );
-        assertPlan(
-                "select count(distinct s) from tab",
-                expected
-        );
+        assertPlan("create table tab (s symbol index, ts timestamp);", "select count_distinct(s) from tab", expected);
+        assertPlan("select count(distinct s) from tab", expected);
     }
 
     @Test
@@ -9381,15 +7488,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Row forward scan
                             Frame forward scan on: tab
                 """;
-        assertPlan(
-                "create table tab ( s string, l long )",
-                "select count_distinct(l) from tab",
-                expected
-        );
-        assertPlan(
-                "select count(distinct l) from tab",
-                expected
-        );
+        assertPlan("create table tab ( s string, l long )", "select count_distinct(l) from tab", expected);
+        assertPlan("select count(distinct l) from tab", expected);
     }
 
     @Test
@@ -9403,15 +7503,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Row forward scan
                         Frame forward scan on: tab
                 """;
-        assertPlan(
-                "create table tab ( s string, i int )",
-                "select s, count_distinct(i) from tab",
-                expected
-        );
-        assertPlan(
-                "select s, count(distinct i) from tab",
-                expected
-        );
+        assertPlan("create table tab ( s string, i int )", "select s, count_distinct(i) from tab", expected);
+        assertPlan("select s, count(distinct i) from tab", expected);
     }
 
     @Test
@@ -9425,15 +7518,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Row forward scan
                         Frame forward scan on: tab
                 """;
-        assertPlan(
-                "create table tab ( s string, ip ipv4 )",
-                "select s, count_distinct(ip) from tab",
-                expected
-        );
-        assertPlan(
-                "select s, count(distinct ip) from tab",
-                expected
-        );
+        assertPlan("create table tab ( s string, ip ipv4 )", "select s, count_distinct(ip) from tab", expected);
+        assertPlan("select s, count(distinct ip) from tab", expected);
     }
 
     @Test
@@ -9447,15 +7533,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Row forward scan
                         Frame forward scan on: tab
                 """;
-        assertPlan(
-                "create table tab ( s string, l long )",
-                "select s, count_distinct(l) from tab",
-                expected
-        );
-        assertPlan(
-                "select s, count(distinct l) from tab",
-                expected
-        );
+        assertPlan("create table tab ( s string, l long )", "select s, count_distinct(l) from tab", expected);
+        assertPlan("select s, count(distinct l) from tab", expected);
     }
 
     @Test
@@ -9468,15 +7547,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Row forward scan
                         Frame forward scan on: tab
                 """;
-        assertPlan(
-                "create table tab (s symbol, ts timestamp);",
-                "select count_distinct(s) from tab where s = 'foobar'",
-                expected
-        );
-        assertPlan(
-                "select count(distinct s) from tab where s = 'foobar'",
-                expected
-        );
+        assertPlan("create table tab (s symbol, ts timestamp);", "select count_distinct(s) from tab where s = 'foobar'", expected);
+        assertPlan("select count(distinct s) from tab where s = 'foobar'", expected);
     }
 
     @Test
@@ -9489,158 +7561,115 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Row forward scan
                         Frame forward scan on: tab
                 """;
-        assertPlan(
-                "create table tab (s symbol, ts timestamp);",
-                "select count_distinct(s), first(s) from tab",
-                expected
-        );
-        assertPlan(
-                "select count(distinct s), first(s) from tab",
-                expected
-        );
+        assertPlan("create table tab (s symbol, ts timestamp);", "select count_distinct(s), first(s) from tab", expected);
+        assertPlan("select count(distinct s), first(s) from tab", expected);
     }
 
     @Test
     public void testSelectDesc() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts) ;",
-                "select * from a order by ts desc",
-                """
-                        PageFrame
-                            Row backward scan
-                            Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by ts desc", """
+                PageFrame
+                    Row backward scan
+                    Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testSelectDesc2() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) ;",
-                "select * from a order by ts desc",
-                """
-                        Radix sort light
-                          keys: [ts desc]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) ;", "select * from a order by ts desc", """
+                Radix sort light
+                  keys: [ts desc]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectDescMaterialized() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) ;",
-                "select * from (select i, ts from a union all select 1, null ) order by ts desc",
-                """
-                        Sort
-                          keys: [ts desc]
-                            Union All
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                                VirtualRecord
-                                  functions: [1,null]
-                                    long_sequence count: 1
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) ;", "select * from (select i, ts from a union all select 1, null ) order by ts desc", """
+                Sort
+                  keys: [ts desc]
+                    Union All
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                        VirtualRecord
+                          functions: [1,null]
+                            long_sequence count: 1
+                """);
     }
 
     @Test
     public void testSelectDistinct0() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp) timestamp(ts);",
-                "select distinct l, ts from tab",
-                """
-                        Async Group By workers: 1
-                          keys: [l,ts]
-                          filter: null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select distinct l, ts from tab", """
+                Async Group By workers: 1
+                  keys: [l,ts]
+                  filter: null
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Ignore
     @Test // FIXME: somehow only ts gets included, pg returns record type
     public void testSelectDistinct0a() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp) timestamp(ts);",
-                "select distinct (l, ts) from tab",
-                """
-                        DistinctTimeSeries
-                          keys: l,ts
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select distinct (l, ts) from tab", """
+                DistinctTimeSeries
+                  keys: l,ts
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectDistinct1() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select distinct(l) from tab",
-                """
-                        Async Group By workers: 1
-                          keys: [l]
-                          filter: null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select distinct(l) from tab", """
+                Async Group By workers: 1
+                  keys: [l]
+                  filter: null
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectDistinct2() throws Exception {
-        assertPlan(
-                "create table tab ( s symbol, ts timestamp);",
-                "select distinct(s) from tab",
-                """
-                        GroupBy vectorized: true workers: 1
-                          keys: [s]
-                          values: [count(*)]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( s symbol, ts timestamp);", "select distinct(s) from tab", """
+                GroupBy vectorized: true workers: 1
+                  keys: [s]
+                  values: [count(*)]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectDistinct3() throws Exception {
-        assertPlan(
-                "create table tab ( s symbol index, ts timestamp);",
-                "select distinct(s) from tab",
-                """
-                        GroupBy vectorized: true workers: 1
-                          keys: [s]
-                          values: [count(*)]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( s symbol index, ts timestamp);", "select distinct(s) from tab", """
+                GroupBy vectorized: true workers: 1
+                  keys: [s]
+                  values: [count(*)]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectDistinct4() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select distinct ts, l  from tab",
-                """
-                        Async Group By workers: 1
-                          keys: [ts,l]
-                          filter: null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select distinct ts, l  from tab", """
+                Async Group By workers: 1
+                  keys: [ts,l]
+                  filter: null
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
@@ -9648,224 +7677,158 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t ( d double)");
 
-            assertPlanNoLeakCheck(
-                    "select * from t where d in (5, -1, 1, null)",
-                    """
-                            Async JIT Filter workers: 1
-                              filter: d in [-1.0,1.0,5.0,NaN]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                            """
-            );
+            assertPlanNoLeakCheck("select * from t where d in (5, -1, 1, null)", """
+                    Async JIT Filter workers: 1
+                      filter: d in [-1.0,1.0,5.0,NaN]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: t
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select * from t where d not in (5, -1, 1, null)",
-                    """
-                            Async JIT Filter workers: 1
-                              filter: not (d in [-1.0,1.0,5.0,NaN])
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                            """
-            );
+            assertPlanNoLeakCheck("select * from t where d not in (5, -1, 1, null)", """
+                    Async JIT Filter workers: 1
+                      filter: not (d in [-1.0,1.0,5.0,NaN])
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: t
+                    """);
         });
     }
 
     @Test // there's no interval scan because sysdate is evaluated per-row
     public void testSelectDynamicTsInterval1() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp) timestamp(ts);",
-                "select * from tab where ts > sysdate()",
-                """
-                        Async Filter workers: 1
-                          filter: sysdate()<ts
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts > sysdate()", """
+                Async Filter workers: 1
+                  filter: sysdate()<ts
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test // there's no interval scan because systimestamp is evaluated per-row
     public void testSelectDynamicTsInterval2() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp) timestamp(ts);",
-                "select * from tab where ts > systimestamp()",
-                """
-                        Async Filter workers: 1
-                          filter: systimestamp()<ts
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts > systimestamp()", """
+                Async Filter workers: 1
+                  filter: systimestamp()<ts
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectDynamicTsInterval3() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp) timestamp(ts);",
-                "select * from tab where ts > now()",
-                """
-                        PageFrame
-                            Row forward scan
-                            Interval forward scan on: tab
-                              intervals: [("1970-01-01T00:00:00.000001Z","MAX")]
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts > now()", """
+                PageFrame
+                    Row forward scan
+                    Interval forward scan on: tab
+                      intervals: [("1970-01-01T00:00:00.000001Z","MAX")]
+                """);
     }
 
     @Test
     public void testSelectDynamicTsInterval4() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp) timestamp(ts);",
-                "select * from tab where ts > dateadd('d', -1, now()) and ts < now()",
-                """
-                        PageFrame
-                            Row forward scan
-                            Interval forward scan on: tab
-                              intervals: [("1969-12-31T00:00:00.000001Z","1969-12-31T23:59:59.999999Z")]
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts > dateadd('d', -1, now()) and ts < now()", """
+                PageFrame
+                    Row forward scan
+                    Interval forward scan on: tab
+                      intervals: [("1969-12-31T00:00:00.000001Z","1969-12-31T23:59:59.999999Z")]
+                """);
     }
 
     @Test
     public void testSelectDynamicTsInterval5() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp) timestamp(ts);",
-                "select * from tab where ts > '2022-01-01' and ts > now()",
-                """
-                        PageFrame
-                            Row forward scan
-                            Interval forward scan on: tab
-                              intervals: [("2022-01-01T00:00:00.000001Z","MAX")]
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts > '2022-01-01' and ts > now()", """
+                PageFrame
+                    Row forward scan
+                    Interval forward scan on: tab
+                      intervals: [("2022-01-01T00:00:00.000001Z","MAX")]
+                """);
     }
 
     @Test
     public void testSelectDynamicTsInterval6() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp) timestamp(ts);",
-                "select * from tab where ts > '2022-01-01' and ts > now() order by ts desc",
-                """
-                        PageFrame
-                            Row backward scan
-                            Interval backward scan on: tab
-                              intervals: [("2022-01-01T00:00:00.000001Z","MAX")]
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts > '2022-01-01' and ts > now() order by ts desc", """
+                PageFrame
+                    Row backward scan
+                    Interval backward scan on: tab
+                      intervals: [("2022-01-01T00:00:00.000001Z","MAX")]
+                """);
     }
 
     @Test
     public void testSelectFromAllTables() throws Exception {
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
-                "select * from all_tables()",
-                "all_tables()\n"
-        ));
+        assertMemoryLeak(() -> assertPlanNoLeakCheck("select * from all_tables()", "all_tables()\n"));
     }
 
     @Test
     public void testSelectFromMemoryMetrics() throws Exception {
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
-                "select * from memory_metrics()",
-                "memory_metrics\n"
-        ));
+        assertMemoryLeak(() -> assertPlanNoLeakCheck("select * from memory_metrics()", "memory_metrics\n"));
     }
 
     @Test
     public void testSelectFromReaderPool() throws Exception {
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
-                "select * from reader_pool()",
-                "reader_pool\n"
-        ));
+        assertMemoryLeak(() -> assertPlanNoLeakCheck("select * from reader_pool()", "reader_pool\n"));
     }
 
     @Test
     public void testSelectFromTableColumns() throws Exception {
-        assertPlan(
-                "create table tab ( s string, sy symbol, i int, ts timestamp)",
-                "select * from table_columns('tab')",
-                "show_columns of: tab\n"
-        );
+        assertPlan("create table tab ( s string, sy symbol, i int, ts timestamp)", "select * from table_columns('tab')", "show_columns of: tab\n");
     }
 
     @Test
     public void testSelectFromTablePartitions() throws Exception {
-        assertPlan(
-                "create table tab ( s string, sy symbol, i int, ts timestamp)",
-                "select * from table_partitions('tab')",
-                "show_partitions of: tab\n"
-        );
+        assertPlan("create table tab ( s string, sy symbol, i int, ts timestamp)", "select * from table_partitions('tab')", "show_partitions of: tab\n");
     }
 
     @Test
     public void testSelectFromTableWriterMetrics() throws Exception {
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
-                "select * from table_writer_metrics()",
-                "table_writer_metrics\n"
-        ));
+        assertMemoryLeak(() -> assertPlanNoLeakCheck("select * from table_writer_metrics()", "table_writer_metrics\n"));
     }
 
     @Test
     public void testSelectIndexedSymbolWithLimitLoOrderByTsAscNotPartitioned() throws Exception {
-        assertPlan(
-                "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
-                "select * from a where s = 'S1' order by ts desc limit 1 ",
-                """
-                        Limit lo: 1 skip-over-rows: 0 limit: 0
-                            DeferredSingleSymbolFilterPageFrame
-                                Index backward scan on: s deferred: true
-                                  filter: s='S1'
-                                Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
+                Limit value: 1 skip-rows-max: 0 take-rows-max: 1
+                    DeferredSingleSymbolFilterPageFrame
+                        Index backward scan on: s deferred: true
+                          filter: s='S1'
+                        Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testSelectIndexedSymbolWithLimitLoOrderByTsAscPartitioned() throws Exception {
-        assertPlan(
-                "create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day;",
-                "select * from a where s = 'S1' order by ts desc limit 1 ",
-                """
-                        Limit lo: 1 skip-over-rows: 0 limit: 0
-                            DeferredSingleSymbolFilterPageFrame
-                                Index backward scan on: s deferred: true
-                                  filter: s='S1'
-                                Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
+                Limit value: 1 skip-rows-max: 0 take-rows-max: 1
+                    DeferredSingleSymbolFilterPageFrame
+                        Index backward scan on: s deferred: true
+                          filter: s='S1'
+                        Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testSelectIndexedSymbolWithLimitLoOrderByTsDescNotPartitioned() throws Exception {
-        assertPlan(
-                "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
-                "select * from a where s = 'S1' order by ts desc limit 1 ",
-                """
-                        Limit lo: 1 skip-over-rows: 0 limit: 0
-                            DeferredSingleSymbolFilterPageFrame
-                                Index backward scan on: s deferred: true
-                                  filter: s='S1'
-                                Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
+                Limit value: 1 skip-rows-max: 0 take-rows-max: 1
+                    DeferredSingleSymbolFilterPageFrame
+                        Index backward scan on: s deferred: true
+                          filter: s='S1'
+                        Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testSelectIndexedSymbolWithLimitLoOrderByTsDescPartitioned() throws Exception {
-        assertPlan(
-                "create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day;",
-                "select * from a where s = 'S1' order by ts desc limit 1 ",
-                """
-                        Limit lo: 1 skip-over-rows: 0 limit: 0
-                            DeferredSingleSymbolFilterPageFrame
-                                Index backward scan on: s deferred: true
-                                  filter: s='S1'
-                                Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
+                Limit value: 1 skip-rows-max: 0 take-rows-max: 1
+                    DeferredSingleSymbolFilterPageFrame
+                        Index backward scan on: s deferred: true
+                          filter: s='S1'
+                        Frame backward scan on: a
+                """);
     }
 
     @Test
@@ -9925,140 +7888,100 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols01c() throws Exception {
-        assertPlan(
-                "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
-                "select ts, s from a where s in ('S1', 'S2') and length(s) = 2 order by s desc limit 1",
-                "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
-                        "    FilterOnValues symbolOrder: desc\n" +
-                        "        Cursor-order scan\n" + //actual order is S2, S1
-                        "            Index forward scan on: s deferred: true\n" +
-                        "              symbolFilter: s='S2'\n" +
-                        "              filter: length(s)=2\n" +
-                        "            Index forward scan on: s deferred: true\n" +
-                        "              symbolFilter: s='S1'\n" +
-                        "              filter: length(s)=2\n" +
-                        "        Frame forward scan on: a\n"
-        );
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select ts, s from a where s in ('S1', 'S2') and length(s) = 2 order by s desc limit 1", "Limit value: 1 skip-rows-max: 0 take-rows-max: 1\n" + "    FilterOnValues symbolOrder: desc\n" + "        Cursor-order scan\n" + //actual order is S2, S1
+                "            Index forward scan on: s deferred: true\n" + "              symbolFilter: s='S2'\n" + "              filter: length(s)=2\n" + "            Index forward scan on: s deferred: true\n" + "              symbolFilter: s='S1'\n" + "              filter: length(s)=2\n" + "        Frame forward scan on: a\n");
     }
 
     @Test // TODO: sql is same as in testSelectIndexedSymbols1 but doesn't use index !
     public void testSelectIndexedSymbols02() throws Exception {
-        assertPlan(
-                "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
-                "select * from a where s = $1 or s = $2 order by ts desc limit 1",
-                """
-                        Async JIT Filter workers: 1
-                          limit: 1
-                          filter: (s=$0::string or s=$1::string)
-                            PageFrame
-                                Row backward scan
-                                Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s = $1 or s = $2 order by ts desc limit 1", """
+                Async JIT Filter workers: 1
+                  limit: 1
+                  filter: (s=$0::string or s=$1::string)
+                    PageFrame
+                        Row backward scan
+                        Frame backward scan on: a
+                """);
     }
 
     @Test // TODO: sql is same as in testSelectIndexedSymbols1 but doesn't use index !
     public void testSelectIndexedSymbols03() throws Exception {
-        assertPlan(
-                "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
-                "select * from a where s = 'S1' or s = 'S2' order by ts desc limit 1",
-                """
-                        Async JIT Filter workers: 1
-                          limit: 1
-                          filter: (s='S1' or s='S2')
-                            PageFrame
-                                Row backward scan
-                                Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s = 'S1' or s = 'S2' order by ts desc limit 1", """
+                Async JIT Filter workers: 1
+                  limit: 1
+                  filter: (s='S1' or s='S2')
+                    PageFrame
+                        Row backward scan
+                        Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testSelectIndexedSymbols04() throws Exception {
-        assertPlan(
-                "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
-                "select * from a where s = 'S1' and s = 'S2' order by ts desc limit 1",
-                """
-                        Limit lo: 1 skip-over-rows: 0 limit: 0
-                            Sort
-                              keys: [ts desc]
-                                Empty table
-                        """
-        );
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s = 'S1' and s = 'S2' order by ts desc limit 1", """
+                Limit value: 1 skip-rows: 0 take-rows: 0
+                    Sort
+                      keys: [ts desc]
+                        Empty table
+                """);
     }
 
     @Test
     public void testSelectIndexedSymbols05() throws Exception {
-        assertPlan(
-                "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
-                "select * from a where s in (select 'S1' union all select 'S2') order by ts desc limit 1",
-                """
-                        Sort light lo: 1
-                          keys: [ts desc]
-                            FilterOnSubQuery
-                                Union All
-                                    VirtualRecord
-                                      functions: ['S1']
-                                        long_sequence count: 1
-                                    VirtualRecord
-                                      functions: ['S2']
-                                        long_sequence count: 1
-                                Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s in (select 'S1' union all select 'S2') order by ts desc limit 1", """
+                Sort light lo: 1
+                  keys: [ts desc]
+                    FilterOnSubQuery
+                        Union All
+                            VirtualRecord
+                              functions: ['S1']
+                                long_sequence count: 1
+                            VirtualRecord
+                              functions: ['S2']
+                                long_sequence count: 1
+                        Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testSelectIndexedSymbols05a() throws Exception {
-        assertPlan(
-                "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
-                "select * from a where s in (select 'S1' union all select 'S2') and length(s) = 2 order by ts desc limit 1",
-                """
-                        Sort light lo: 1
-                          keys: [ts desc]
-                            FilterOnSubQuery
-                              filter: length(s)=2
-                                Union All
-                                    VirtualRecord
-                                      functions: ['S1']
-                                        long_sequence count: 1
-                                    VirtualRecord
-                                      functions: ['S2']
-                                        long_sequence count: 1
-                                Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s in (select 'S1' union all select 'S2') and length(s) = 2 order by ts desc limit 1", """
+                Sort light lo: 1
+                  keys: [ts desc]
+                    FilterOnSubQuery
+                      filter: length(s)=2
+                        Union All
+                            VirtualRecord
+                              functions: ['S1']
+                                long_sequence count: 1
+                            VirtualRecord
+                              functions: ['S2']
+                                long_sequence count: 1
+                        Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testSelectIndexedSymbols06() throws Exception {
-        assertPlan(
-                "create table a ( s symbol index) ;",
-                "select * from a where s = 'S1' order by s asc limit 10",
-                """
-                        Limit lo: 10 skip-over-rows: 0 limit: 0
-                            DeferredSingleSymbolFilterPageFrame
-                                Index forward scan on: s deferred: true
-                                  filter: s='S1'
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( s symbol index) ;", "select * from a where s = 'S1' order by s asc limit 10", """
+                Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                    DeferredSingleSymbolFilterPageFrame
+                        Index forward scan on: s deferred: true
+                          filter: s='S1'
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectIndexedSymbols06a() throws Exception {
-        assertPlan(
-                "create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day",
-                "select * from a where s = 'S1' order by s asc limit 10",
-                """
-                        Sort light lo: 10
-                          keys: [s]
-                            DeferredSingleSymbolFilterPageFrame
-                                Index forward scan on: s deferred: true
-                                  filter: s='S1'
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day", "select * from a where s = 'S1' order by s asc limit 10", """
+                Sort light lo: 10
+                  keys: [s]
+                    DeferredSingleSymbolFilterPageFrame
+                        Index forward scan on: s deferred: true
+                          filter: s='S1'
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
@@ -10072,14 +7995,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Cursor-order scan
                         Frame forward scan on: a
                     """;
-            assertPlanNoLeakCheck(
-                    "select * from a where s != 'S1' and length(s) = 2 order by s ",
-                    expectedPlan.replace("#ORDER#", "asc")
-            );
-            assertPlanNoLeakCheck(
-                    "select * from a where s != 'S1' and length(s) = 2 order by s desc",
-                    expectedPlan.replace("#ORDER#", "desc")
-            );
+            assertPlanNoLeakCheck("select * from a where s != 'S1' and length(s) = 2 order by s ", expectedPlan.replace("#ORDER#", "asc"));
+            assertPlanNoLeakCheck("select * from a where s != 'S1' and length(s) = 2 order by s desc", expectedPlan.replace("#ORDER#", "desc"));
         });
     }
 
@@ -10098,15 +8015,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           intervals: [("2023-03-15T00:00:00.000000Z","2023-03-15T23:59:59.999999Z")]
                     """;
 
-            assertPlanNoLeakCheck(
-                    query.replace("#ORDER#", "asc"),
-                    expectedPlan.replace("#ORDER#", "asc")
-            );
+            assertPlanNoLeakCheck(query.replace("#ORDER#", "asc"), expectedPlan.replace("#ORDER#", "asc"));
 
-            assertPlanNoLeakCheck(
-                    query.replace("#ORDER#", "desc"),
-                    expectedPlan.replace("#ORDER#", "desc")
-            );
+            assertPlanNoLeakCheck(query.replace("#ORDER#", "desc"), expectedPlan.replace("#ORDER#", "desc"));
         });
     }
 
@@ -10117,43 +8028,35 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("insert into a values ('a'), ('w'), ('b'), ('a'), (null);");
 
             String query = "select * from a where s != 'a' order by s";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
-                            FilterOnExcludedValues symbolOrder: asc
-                              symbolFilter: s not in ['a']
-                                Cursor-order scan
-                                    Index forward scan on: s
-                                      filter: s=0
-                                    Index forward scan on: s
-                                      filter: s=3
-                                    Index forward scan on: s
-                                      filter: s=2
-                                Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck(query, """
+                    FilterOnExcludedValues symbolOrder: asc
+                      symbolFilter: s not in ['a']
+                        Cursor-order scan
+                            Index forward scan on: s
+                              filter: s=0
+                            Index forward scan on: s
+                              filter: s=3
+                            Index forward scan on: s
+                              filter: s=2
+                        Frame forward scan on: a
+                    """);
 
-            assertQueryNoLeakCheck("s\n" +
-                    "\n" +//null
-                    "b\n" +
-                    "w\n", query, null, true, false);
+            assertQueryNoLeakCheck("s\n" + "\n" +//null
+                    "b\n" + "w\n", query, null, true, false);
 
             query = "select * from a where s != 'a' order by s desc";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
-                            FilterOnExcludedValues symbolOrder: desc
-                              symbolFilter: s not in ['a']
-                                Cursor-order scan
-                                    Index forward scan on: s
-                                      filter: s=2
-                                    Index forward scan on: s
-                                      filter: s=3
-                                    Index forward scan on: s
-                                      filter: s=0
-                                Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck(query, """
+                    FilterOnExcludedValues symbolOrder: desc
+                      symbolFilter: s not in ['a']
+                        Cursor-order scan
+                            Index forward scan on: s
+                              filter: s=2
+                            Index forward scan on: s
+                              filter: s=3
+                            Index forward scan on: s
+                              filter: s=0
+                        Frame forward scan on: a
+                    """);
 
             assertQueryNoLeakCheck("""
                     s
@@ -10163,21 +8066,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """/*null*/, query, null, true, false);
 
             query = "select * from a where s != null order by s desc";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
-                            FilterOnExcludedValues symbolOrder: desc
-                              symbolFilter: s not in [null]
-                                Cursor-order scan
-                                    Index forward scan on: s
-                                      filter: s=2
-                                    Index forward scan on: s
-                                      filter: s=3
-                                    Index forward scan on: s
-                                      filter: s=1
-                                Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck(query, """
+                    FilterOnExcludedValues symbolOrder: desc
+                      symbolFilter: s not in [null]
+                        Cursor-order scan
+                            Index forward scan on: s
+                              filter: s=2
+                            Index forward scan on: s
+                              filter: s=3
+                            Index forward scan on: s
+                              filter: s=1
+                        Frame forward scan on: a
+                    """);
 
             assertQueryNoLeakCheck("""
                     s
@@ -10191,35 +8091,27 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols09() throws Exception {
-        assertPlan(
-                "create table a ( s symbol index, ts timestamp) timestamp(ts) partition by year ;",
-                "select * from a where ts >= 0::timestamp and ts < 100::timestamp order by s asc",
-                """
-                        SortedSymbolIndex
-                            Index forward scan on: s
-                              symbolOrder: asc
-                            Interval forward scan on: a
-                              intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T00:00:00.000099Z")]
-                        """
-        );
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by year ;", "select * from a where ts >= 0::timestamp and ts < 100::timestamp order by s asc", """
+                SortedSymbolIndex
+                    Index forward scan on: s
+                      symbolOrder: asc
+                    Interval forward scan on: a
+                      intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T00:00:00.000099Z")]
+                """);
     }
 
     @Test
     public void testSelectIndexedSymbols10() throws Exception {
-        assertPlan(
-                "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
-                "select * from a where s in ('S1', 'S2') limit 1",
-                """
-                        Limit lo: 1 skip-over-rows: 0 limit: 0
-                            FilterOnValues
-                                Table-order scan
-                                    Index forward scan on: s deferred: true
-                                      filter: s='S2'
-                                    Index forward scan on: s deferred: true
-                                      filter: s='S1'
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s in ('S1', 'S2') limit 1", """
+                Limit value: 1 skip-rows-max: 0 take-rows-max: 1
+                    FilterOnValues
+                        Table-order scan
+                            Index forward scan on: s deferred: true
+                              filter: s='S2'
+                            Index forward scan on: s deferred: true
+                              filter: s='S1'
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
@@ -10236,19 +8128,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( s symbol index, ts timestamp) timestamp(ts)");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a where s in ('S1', 'S2') and length(s) = 2 limit 1",
-                    """
-                            Limit lo: 1 skip-over-rows: 0 limit: 1
-                                FilterOnValues
-                                    Table-order scan
-                                        Index forward scan on: s
-                                          filter: s=2 and length(s)=2
-                                        Index forward scan on: s
-                                          filter: s=1 and length(s)=2
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a where s in ('S1', 'S2') and length(s) = 2 limit 1", """
+                    Limit value: 1 skip-rows-max: 0 take-rows-max: 1
+                        FilterOnValues
+                            Table-order scan
+                                Index forward scan on: s
+                                  filter: s=2 and length(s)=2
+                                Index forward scan on: s
+                                  filter: s=1 and length(s)=2
+                            Frame forward scan on: a
+                    """);
         });
     }
 
@@ -10257,16 +8146,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( s1 symbol index, s2 symbol index, ts timestamp) timestamp(ts)");
             execute("insert into a select 'S' || x, 'S' || x, x::timestamp from long_sequence(10)");
-            assertPlanNoLeakCheck(
-                    "select * from a where s1 in ('S1', 'S2') and s2 in ('S2') limit 1",
-                    """
-                            Limit lo: 1 skip-over-rows: 0 limit: 1
-                                PageFrame
-                                    Index forward scan on: s2
-                                      filter: s2=2 and s1 in [S1,S2]
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a where s1 in ('S1', 'S2') and s2 in ('S2') limit 1", """
+                    Limit value: 1 skip-rows-max: 0 take-rows-max: 1
+                        PageFrame
+                            Index forward scan on: s2
+                              filter: s2=2 and s1 in [S1,S2]
+                            Frame forward scan on: a
+                    """);
         });
     }
 
@@ -10275,15 +8161,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( s1 symbol index, s2 symbol index, ts timestamp) timestamp(ts)");
             execute("insert into a select 'S' || x, 'S' || x, x::timestamp from long_sequence(10)");
-            assertPlanNoLeakCheck(
-                    "select * from a where s1 in ('S1')  order by ts desc",
-                    """
-                            DeferredSingleSymbolFilterPageFrame
-                                Index backward scan on: s1
-                                  filter: s1=1
-                                Frame backward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a where s1 in ('S1')  order by ts desc", """
+                    DeferredSingleSymbolFilterPageFrame
+                        Index backward scan on: s1
+                          filter: s1=1
+                        Frame backward scan on: a
+                    """);
         });
     }
 
@@ -10292,15 +8175,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
-            assertPlanNoLeakCheck(
-                    "select * from a where s1 = 'S1'  order by ts desc",
-                    """
-                            DeferredSingleSymbolFilterPageFrame
-                                Index backward scan on: s1
-                                  filter: s1=1
-                                Frame backward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a where s1 = 'S1'  order by ts desc", """
+                    DeferredSingleSymbolFilterPageFrame
+                        Index backward scan on: s1
+                          filter: s1=1
+                        Frame backward scan on: a
+                    """);
         });
     }
 
@@ -10309,19 +8189,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
-            assertPlanNoLeakCheck(
-                    "select * from a " +
-                            "where s1 = 'S1' " +
-                            "and ts > 0::timestamp and ts < 9::timestamp  " +
-                            "order by s1,ts desc",
-                    """
-                            DeferredSingleSymbolFilterPageFrame
-                                Index backward scan on: s1
-                                  filter: s1=1
-                                Interval forward scan on: a
-                                  intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000008Z")]
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a " + "where s1 = 'S1' " + "and ts > 0::timestamp and ts < 9::timestamp  " + "order by s1,ts desc", """
+                    DeferredSingleSymbolFilterPageFrame
+                        Index backward scan on: s1
+                          filter: s1=1
+                        Interval forward scan on: a
+                          intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000008Z")]
+                    """);
         });
     }
 
@@ -10330,22 +8204,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
-            assertPlanNoLeakCheck(
-                    "select * from a " +
-                            "where s1 in ('S1', 'S2') " +
-                            "and ts > 0::timestamp and ts < 9::timestamp  " +
-                            "order by s1,ts desc",
-                    """
-                            FilterOnValues symbolOrder: asc
-                                Cursor-order scan
-                                    Index backward scan on: s1
-                                      filter: s1=1
-                                    Index backward scan on: s1
-                                      filter: s1=2
-                                Interval forward scan on: a
-                                  intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000008Z")]
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a " + "where s1 in ('S1', 'S2') " + "and ts > 0::timestamp and ts < 9::timestamp  " + "order by s1,ts desc", """
+                    FilterOnValues symbolOrder: asc
+                        Cursor-order scan
+                            Index backward scan on: s1
+                              filter: s1=1
+                            Index backward scan on: s1
+                              filter: s1=2
+                        Interval forward scan on: a
+                          intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000008Z")]
+                    """);
         });
     }
 
@@ -10354,22 +8222,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
-            assertPlanNoLeakCheck(
-                    "select * from a " +
-                            "where (s1 = 'S1' or s1 = 'S2') " +
-                            "and ts > 0::timestamp and ts < 9::timestamp  " +
-                            "order by s1,ts desc",
-                    """
-                            Sort light
-                              keys: [s1, ts desc]
-                                Async JIT Filter workers: 1
-                                  filter: (s1='S1' or s1='S2')
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: a
-                                          intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000008Z")]
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a " + "where (s1 = 'S1' or s1 = 'S2') " + "and ts > 0::timestamp and ts < 9::timestamp  " + "order by s1,ts desc", """
+                    Sort light
+                      keys: [s1, ts desc]
+                        Async JIT Filter workers: 1
+                          filter: (s1='S1' or s1='S2')
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: a
+                                  intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000008Z")]
+                    """);
         });
     }
 
@@ -10378,58 +8240,39 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by hour;");
             execute("insert into a select 'S' || (6-x), dateadd('m', 20*x::int, 0::timestamp) from long_sequence(5)");
-            String query = "select * from " +
-                    "(" +
-                    "  select * from a " +
-                    "  where s1 not in ('S1', 'S2') " +
-                    "  order by ts asc " +
-                    "  limit 5" +
-                    ") order by ts asc";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
-                            Limit lo: 5 skip-over-rows: 0 limit: 3
-                                FilterOnExcludedValues
-                                  symbolFilter: s1 not in ['S1','S2']
-                                    Table-order scan
-                                        Index forward scan on: s1
-                                          filter: s1=1
-                                        Index forward scan on: s1
-                                          filter: s1=2
-                                        Index forward scan on: s1
-                                          filter: s1=3
-                                    Frame forward scan on: a
-                            """
-            );
+            String query = "select * from " + "(" + "  select * from a " + "  where s1 not in ('S1', 'S2') " + "  order by ts asc " + "  limit 5" + ") order by ts asc";
+            assertPlanNoLeakCheck(query, """
+                    Limit value: 5 skip-rows-max: 0 take-rows-max: 5
+                        FilterOnExcludedValues
+                          symbolFilter: s1 not in ['S1','S2']
+                            Table-order scan
+                                Index forward scan on: s1
+                                  filter: s1=1
+                                Index forward scan on: s1
+                                  filter: s1=2
+                                Index forward scan on: s1
+                                  filter: s1=3
+                            Frame forward scan on: a
+                    """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            s1\tts
-                            S5\t1970-01-01T00:20:00.000000Z
-                            S4\t1970-01-01T00:40:00.000000Z
-                            S3\t1970-01-01T01:00:00.000000Z
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    true
-            );
+            assertQueryNoLeakCheck("""
+                    s1\tts
+                    S5\t1970-01-01T00:20:00.000000Z
+                    S4\t1970-01-01T00:40:00.000000Z
+                    S3\t1970-01-01T01:00:00.000000Z
+                    """, query, "ts", true, false);
         });
     }
 
     @Test
     public void testSelectIndexedSymbols7b() throws Exception {
-        assertPlan(
-                "create table a ( ts timestamp, s symbol index) timestamp(ts);",
-                "select s from a where s != 'S1' and length(s) = 2 order by s ",
-                """
-                        FilterOnExcludedValues symbolOrder: asc
-                          symbolFilter: s not in ['S1']
-                          filter: length(s)=2
-                            Cursor-order scan
-                            Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( ts timestamp, s symbol index) timestamp(ts);", "select s from a where s != 'S1' and length(s) = 2 order by s ", """
+                FilterOnExcludedValues symbolOrder: asc
+                  symbolFilter: s not in ['S1']
+                  filter: length(s)=2
+                    Cursor-order scan
+                    Frame forward scan on: a
+                """);
     }
 
     @Test
@@ -10437,27 +8280,21 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t ( l long)");
 
-            assertPlanNoLeakCheck(
-                    "select * from t where l in (5, -1, 1, null)",
-                    """
-                            Async JIT Filter workers: 1
-                              filter: l in [null,-1,1,5]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                            """
-            );
+            assertPlanNoLeakCheck("select * from t where l in (5, -1, 1, null)", """
+                    Async JIT Filter workers: 1
+                      filter: l in [null,-1,1,5]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: t
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select * from t where l not in (5, -1, 1, null)",
-                    """
-                            Async JIT Filter workers: 1
-                              filter: not (l in [null,-1,1,5])
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                            """
-            );
+            assertPlanNoLeakCheck("select * from t where l not in (5, -1, 1, null)", """
+                    Async JIT Filter workers: 1
+                      filter: not (l in [null,-1,1,5])
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: t
+                    """);
         });
     }
 
@@ -10467,15 +8304,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("insert into a select x,x::timestamp from long_sequence(10)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a limit -5",
-                    """
-                            Limit lo: -5 skip-over-rows: 5 limit: 5
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a limit -5", """
+                    Limit value: -5 skip-rows: 5 take-rows: 5
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
         });
     }
 
@@ -10485,43 +8319,32 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("insert into a select x,x::timestamp from long_sequence(10)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a limit -10+2",
-                    """
-                            Limit lo: -8 skip-over-rows: 2 limit: 8
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a limit -10+2", """
+                    Limit value: -8 skip-rows: 2 take-rows: 8
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
         });
     }
 
     @Test
     public void testSelectOrderByTsAsIndexDescNegativeLimit() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts);",
-                "select * from a order by 2 desc limit -10",
-                """
-                        Limit lo: -10 skip-over-rows: 0 limit: 0
-                            PageFrame
-                                Row backward scan
-                                Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts);", "select * from a order by 2 desc limit -10", """
+                Limit value: -10 skip-rows: 0 take-rows: 0
+                    PageFrame
+                        Row backward scan
+                        Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testSelectOrderByTsAsc() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts) ;",
-                "select * from a order by ts asc",
-                """
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by ts asc", """
+                PageFrame
+                    Row forward scan
+                    Frame forward scan on: a
+                """);
     }
 
     @Test
@@ -10530,17 +8353,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("insert into a select x,x::timestamp from long_sequence(10)");
 
-            assertPlanNoLeakCheck(
-                    "select * from (select * from a order by ts asc limit 5) order by ts desc",
-                    """
-                            Radix sort light
-                              keys: [ts desc]
-                                Limit lo: 5 skip-over-rows: 0 limit: 5
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 5) order by ts desc", """
+                    Radix sort light
+                      keys: [ts desc]
+                        Limit value: 5 skip-rows: 0 take-rows: 5
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    """);
         });
     }
 
@@ -10550,74 +8370,55 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("insert into a select x,x::timestamp from long_sequence(10)");
 
-            assertPlanNoLeakCheck(
-                    "select * from (select * from a order by ts desc limit 5) order by ts asc",
-                    """
-                            Radix sort light
-                              keys: [ts]
-                                Limit lo: 5 skip-over-rows: 0 limit: 5
-                                    PageFrame
-                                        Row backward scan
-                                        Frame backward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 5) order by ts asc", """
+                    Radix sort light
+                      keys: [ts]
+                        Limit value: 5 skip-rows: 0 take-rows: 5
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: a
+                    """);
         });
     }
 
     @Test
     public void testSelectOrderByTsDescLargeNegativeLimit1() throws Exception {
-        assertPlan(
-                "create table a as (select rnd_int() i, timestamp_sequence(0, 100) ts from long_sequence(10000)) timestamp(ts) ;",
-                "select * from a order by ts desc limit 9223372036854775806L+3L ",
-                """
-                        Limit lo: -9223372036854775807L skip-over-rows: 0 limit: 10000
-                            PageFrame
-                                Row backward scan
-                                Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a as (select rnd_int() i, timestamp_sequence(0, 100) ts from long_sequence(10000)) timestamp(ts) ;", "select * from a order by ts desc limit 9223372036854775806L+3L ", """
+                Limit value: -9223372036854775807L skip-rows: 0 take-rows: 10000
+                    PageFrame
+                        Row backward scan
+                        Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testSelectOrderByTsDescLargeNegativeLimit2() throws Exception {
-        assertPlan(
-                "create table a as (select rnd_int() i, timestamp_sequence(0,100) ts from long_sequence(2_000_000)) timestamp(ts) ;",
-                "select * from a order by ts desc limit -1_000_000 ",
-                """
-                        Limit lo: -1000000 skip-over-rows: 1000000 limit: 1000000
-                            PageFrame
-                                Row backward scan
-                                Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a as (select rnd_int() i, timestamp_sequence(0,100) ts from long_sequence(2_000_000)) timestamp(ts) ;", "select * from a order by ts desc limit -1_000_000 ", """
+                Limit value: -1000000 skip-rows: 1000000 take-rows: 1000000
+                    PageFrame
+                        Row backward scan
+                        Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testSelectOrderByTsDescNegativeLimit() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts) ;",
-                "select * from a order by ts desc limit -10",
-                """
-                        Limit lo: -10 skip-over-rows: 0 limit: 0
-                            PageFrame
-                                Row backward scan
-                                Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by ts desc limit -10", """
+                Limit value: -10 skip-rows: 0 take-rows: 0
+                    PageFrame
+                        Row backward scan
+                        Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testSelectOrderByTsWithNegativeLimit() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts)",
-                "select * from a order by ts  limit -5",
-                """
-                        Limit lo: -5 skip-over-rows: 0 limit: 0
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts)", "select * from a order by ts  limit -5", """
+                Limit value: -5 skip-rows: 0 take-rows: 0
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
@@ -10626,1056 +8427,778 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("insert into a select x,x::timestamp from long_sequence(10)");
 
-            assertPlanNoLeakCheck(
-                    "select ts, count(*)  from a sample by 1s ALIGN TO FIRST OBSERVATION limit -5",
-                    """
-                            Limit lo: -5 skip-over-rows: 0 limit: 1
-                                Sample By
-                                  fill: none
-                                  values: [count(*)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select ts, count(*)  from a sample by 1s ALIGN TO FIRST OBSERVATION limit -5", """
+                    Limit value: -5 skip-rows: baseRows-5 take-rows-max: 5
+                        Sample By
+                          fill: none
+                          values: [count(*)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select i, count(*)  from a group by i limit -5",
-                    """
-                            Limit lo: -5 skip-over-rows: 5 limit: 5
-                                GroupBy vectorized: true workers: 1
-                                  keys: [i]
-                                  values: [count(*)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select i, count(*)  from a group by i limit -5", """
+                    Limit value: -5 skip-rows: baseRows-5 take-rows-max: 5
+                        GroupBy vectorized: true workers: 1
+                          keys: [i]
+                          values: [count(*)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select i, count(*)  from a limit -5",
-                    """
-                            Limit lo: -5 skip-over-rows: 5 limit: 5
-                                GroupBy vectorized: true workers: 1
-                                  keys: [i]
-                                  values: [count(*)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select i, count(*)  from a limit -5", """
+                    Limit value: -5 skip-rows: baseRows-5 take-rows-max: 5
+                        GroupBy vectorized: true workers: 1
+                          keys: [i]
+                          values: [count(*)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select distinct(i) from a limit -5",
-                    """
-                            Limit lo: -5 skip-over-rows: 5 limit: 5
-                                GroupBy vectorized: true workers: 1
-                                  keys: [i]
-                                  values: [count(*)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select distinct(i) from a limit -5", """
+                    Limit value: -5 skip-rows: baseRows-5 take-rows-max: 5
+                        GroupBy vectorized: true workers: 1
+                          keys: [i]
+                          values: [count(*)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    """);
         });
     }
 
     @Test
     public void testSelectOrderedAsc() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts) ;",
-                "select * from a order by i asc",
-                """
-                        Radix sort light
-                          keys: [i]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by i asc", """
+                Radix sort light
+                  keys: [i]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectOrderedDesc() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts) ;",
-                "select * from a order by i desc",
-                """
-                        Radix sort light
-                          keys: [i desc]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by i desc", """
+                Radix sort light
+                  keys: [i desc]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectOrderedWithLimitLoHi() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts) ;",
-                "select * from a order by i limit 10, 100",
-                """
-                        Sort light lo: 10 hi: 100
-                          keys: [i]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by i limit 10, 100", """
+                Sort light lo: 10 hi: 100
+                  keys: [i]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectRandomBoolean() throws Exception {
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
-                "select rnd_boolean()",
-                """
-                        VirtualRecord
-                          functions: [memoize(rnd_boolean())]
-                            long_sequence count: 1
-                        """
-        ));
+        allowFunctionMemoization();
+        assertMemoryLeak(() -> assertPlanNoLeakCheck("select rnd_boolean()", """
+                VirtualRecord
+                  functions: [memoize(rnd_boolean())]
+                    long_sequence count: 1
+                """));
     }
 
     @Test
     public void testSelectStaticTsInterval1() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp) timestamp(ts);",
-                "select * from tab where ts > '2020-03-01'",
-                """
-                        PageFrame
-                            Row forward scan
-                            Interval forward scan on: tab
-                              intervals: [("2020-03-01T00:00:00.000001Z","MAX")]
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts > '2020-03-01'", """
+                PageFrame
+                    Row forward scan
+                    Interval forward scan on: tab
+                      intervals: [("2020-03-01T00:00:00.000001Z","MAX")]
+                """);
     }
 
     @Test
     public void testSelectStaticTsInterval10() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp) timestamp(ts);",
-                "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc ",
-                """
-                        Radix sort light
-                          keys: [l desc]
-                            PageFrame
-                                Row forward scan
-                                Interval forward scan on: tab
-                                  intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T04:00:00.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T04:00:00.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T04:00:00.999999Z")]
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc ", """
+                Radix sort light
+                  keys: [l desc]
+                    PageFrame
+                        Row forward scan
+                        Interval forward scan on: tab
+                          intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T03:59:59.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T03:59:59.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T03:59:59.999999Z")]
+                """);
     }
 
     @Test
     public void testSelectStaticTsInterval10a() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp) timestamp(ts);",
-                "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc, ts desc ",
-                """
-                        Sort light
-                          keys: [l desc, ts desc]
-                            PageFrame
-                                Row forward scan
-                                Interval forward scan on: tab
-                                  intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T04:00:00.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T04:00:00.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T04:00:00.999999Z")]
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc, ts desc ", """
+                Sort light
+                  keys: [l desc, ts desc]
+                    PageFrame
+                        Row forward scan
+                        Interval forward scan on: tab
+                          intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T03:59:59.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T03:59:59.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T03:59:59.999999Z")]
+                """);
     }
 
     @Test
     public void testSelectStaticTsInterval2() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp) timestamp(ts);",
-                "select * from tab where ts in '2020-03-01'",
+        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-03-01'", """
+                PageFrame
+                    Row forward scan
+                    Interval forward scan on: tab
+                      intervals: [("2020-03-01T00:00:00.000000Z","2020-03-01T23:59:59.999999Z")]
+                """);
+    }
+
+    @Test
+    public void testSelectStaticTsInterval3() throws Exception {
+        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-03-01' or ts in '2020-03-10'",
                 """
                         PageFrame
                             Row forward scan
                             Interval forward scan on: tab
-                              intervals: [("2020-03-01T00:00:00.000000Z","2020-03-01T23:59:59.999999Z")]
-                        """
-        );
-    }
-
-    @Test // TODO: this should use interval scan with two ranges !
-    public void testSelectStaticTsInterval3() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp) timestamp(ts);",
-                "select * from tab where ts in '2020-03-01' or ts in '2020-03-10'",
-                """
-                        Async JIT Filter workers: 1
-                          filter: (ts in [1583020800000000,1583107199999999] or ts in [1583798400000000,1583884799999999])
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+                              intervals: [("2020-03-01T00:00:00.000000Z","2020-03-01T23:59:59.999999Z"),("2020-03-10T00:00:00.000000Z","2020-03-10T23:59:59.999999Z")]
+                        """);
     }
 
     @Test // ranges don't overlap so result is empty
     public void testSelectStaticTsInterval4() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp) timestamp(ts);",
-                "select * from tab where ts in '2020-03-01' and ts in '2020-03-10'",
-                "Empty table\n"
-        );
+        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-03-01' and ts in '2020-03-10'", "Empty table\n");
     }
 
     @Test // only 2020-03-10->2020-03-31 needs to be scanned
     public void testSelectStaticTsInterval5() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp) timestamp(ts);",
-                "select * from tab where ts in '2020-03' and ts > '2020-03-10'",
-                """
-                        PageFrame
-                            Row forward scan
-                            Interval forward scan on: tab
-                              intervals: [("2020-03-10T00:00:00.000001Z","2020-03-31T23:59:59.999999Z")]
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-03' and ts > '2020-03-10'", """
+                PageFrame
+                    Row forward scan
+                    Interval forward scan on: tab
+                      intervals: [("2020-03-10T00:00:00.000001Z","2020-03-31T23:59:59.999999Z")]
+                """);
     }
 
     @Test // TODO: this should use interval scan with two ranges !
     public void testSelectStaticTsInterval6() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp) timestamp(ts);",
-                "select * from tab where (ts > '2020-03-01' and ts < '2020-03-10') or (ts > '2020-04-01' and ts < '2020-04-10') ",
-                """
-                        Async JIT Filter workers: 1
-                          filter: ((2020-03-01T00:00:00.000000Z<ts and ts<2020-03-10T00:00:00.000000Z) or (2020-04-01T00:00:00.000000Z<ts and ts<2020-04-10T00:00:00.000000Z))
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where (ts > '2020-03-01' and ts < '2020-03-10') or (ts > '2020-04-01' and ts < '2020-04-10') ", """
+                Async JIT Filter workers: 1
+                  filter: ((2020-03-01T00:00:00.000000Z<ts and ts<2020-03-10T00:00:00.000000Z) or (2020-04-01T00:00:00.000000Z<ts and ts<2020-04-10T00:00:00.000000Z))
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test // TODO: this should use interval scan with two ranges !
     public void testSelectStaticTsInterval7() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp) timestamp(ts);",
-                "select * from tab where (ts between '2020-03-01' and '2020-03-10') or (ts between '2020-04-01' and '2020-04-10') ",
-                """
-                        Async Filter workers: 1
-                          filter: (ts between 1583020800000000 and 1583798400000000 or ts between 1585699200000000 and 1586476800000000)
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where (ts between '2020-03-01' and '2020-03-10') or (ts between '2020-04-01' and '2020-04-10') ", """
+                Async Filter workers: 1
+                  filter: (ts between 1583020800000000 and 1583798400000000 or ts between 1585699200000000 and 1586476800000000)
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectStaticTsInterval8() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp) timestamp(ts);",
-                "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' ",
-                """
-                        PageFrame
-                            Row forward scan
-                            Interval forward scan on: tab
-                              intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T04:00:00.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T04:00:00.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T04:00:00.999999Z")]
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' ", """
+                PageFrame
+                    Row forward scan
+                    Interval forward scan on: tab
+                      intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T03:59:59.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T03:59:59.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T03:59:59.999999Z")]
+                """);
     }
 
     @Test
     public void testSelectStaticTsInterval9() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp) timestamp(ts);",
-                "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by ts desc",
-                """
-                        PageFrame
-                            Row backward scan
-                            Interval backward scan on: tab
-                              intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T04:00:00.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T04:00:00.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T04:00:00.999999Z")]
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by ts desc", """
+                PageFrame
+                    Row backward scan
+                    Interval backward scan on: tab
+                      intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T03:59:59.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T03:59:59.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T03:59:59.999999Z")]
+                """);
     }
 
     @Test
     public void testSelectStaticTsIntervalOnTabWithoutDesignatedTimestamp() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select * from tab where ts > '2020-03-01'",
-                """
-                        Async JIT Filter workers: 1
-                          filter: 2020-03-01T00:00:00.000000Z<ts
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where ts > '2020-03-01'", """
+                Async JIT Filter workers: 1
+                  filter: 2020-03-01T00:00:00.000000Z<ts
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWalTransactions() throws Exception {
-        assertPlan(
-                "create table tab ( s string, sy symbol, i int, ts timestamp) timestamp(ts) partition by day WAL",
-                "select * from wal_transactions('tab')",
-                "wal_transactions of: tab\n"
-        );
+        assertPlan("create table tab ( s string, sy symbol, i int, ts timestamp) timestamp(ts) partition by day WAL", "select * from wal_transactions('tab')", "wal_transactions of: tab\n");
     }
 
     @Test
     public void testSelectWhereOrderByLimit1() throws Exception {
-        assertPlan(
-                "create table xx ( x long, str string) ",
-                "select * from xx where str = 'A' order by str,x limit 10",
-                """
-                        Async Top K lo: 10 workers: 1
-                          filter: str='A'
-                          keys: [str, x]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: xx
-                        """
-        );
+        assertPlan("create table xx ( x long, str string) ", "select * from xx where str = 'A' order by str,x limit 10", """
+                Async Top K lo: 10 workers: 1
+                  filter: str='A'
+                  keys: [str, x]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: xx
+                """);
     }
 
     @Test
     public void testSelectWhereOrderByLimit2() throws Exception {
-        assertPlan(
-                "create table xx ( x long, str varchar ) ",
-                "select * from xx where str is not null order by str,x limit 10",
-                """
-                        Async JIT Top K lo: 10 workers: 1
-                          filter: str is not null
-                          keys: [str, x]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: xx
-                        """
-        );
+        assertPlan("create table xx ( x long, str varchar ) ", "select * from xx where str is not null order by str,x limit 10", """
+                Async JIT Top K lo: 10 workers: 1
+                  filter: str is not null
+                  keys: [str, x]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: xx
+                """);
     }
 
     @Test
     public void testSelectWhereOrderByLimit3() throws Exception {
-        assertPlan(
-                "create table xx ( x long, id uuid ) ",
-                "select * from xx order by id desc, x limit 10",
-                """
-                        Async Top K lo: 10 workers: 1
-                          filter: null
-                          keys: [id desc, x]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: xx
-                        """
-        );
+        assertPlan("create table xx ( x long, id uuid ) ", "select * from xx order by id desc, x limit 10", """
+                Async Top K lo: 10 workers: 1
+                  filter: null
+                  keys: [id desc, x]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: xx
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter1() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select * from tab where l > 100 ",
-                """
-                        Async JIT Filter workers: 1
-                          filter: 100<l
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l > 100 ", """
+                Async JIT Filter workers: 1
+                  filter: 100<l
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter10() throws Exception {
-        assertPlan(
-                "create table tab ( s symbol, ts timestamp);",
-                "select * from tab where s in ( 'A', 'B' )",
-                """
-                        Async JIT Filter workers: 1
-                          filter: s in [A,B]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( s symbol, ts timestamp);", "select * from tab where s in ( 'A', 'B' )", """
+                Async JIT Filter workers: 1
+                  filter: s in [A,B]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test // TODO: this one should interval scan without filter
     public void testSelectWithJittedFilter11() throws Exception {
-        assertPlan(
-                "create table tab ( s symbol, ts timestamp);",
-                "select * from tab where ts in ( '2020-01-01', '2020-01-02' )",
-                """
-                        Async JIT Filter workers: 1
-                          filter: ts in [1577836800000000,1577923200000000]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( s symbol, ts timestamp);", "select * from tab where ts in ( '2020-01-01', '2020-01-02' )", """
+                Async JIT Filter workers: 1
+                  filter: ts in [1577836800000000,1577923200000000]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test // TODO: this one should interval scan with jit filter
     public void testSelectWithJittedFilter12() throws Exception {
-        assertPlan(
-                "create table tab ( s symbol, ts timestamp);",
-                "select * from tab where ts in ( '2020-01-01', '2020-01-03' ) and s = 'ABC'",
-                """
-                        Async JIT Filter workers: 1
-                          filter: (ts in [1577836800000000,1578009600000000] and s='ABC')
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( s symbol, ts timestamp);", "select * from tab where ts in ( '2020-01-01', '2020-01-03' ) and s = 'ABC'", """
+                Async JIT Filter workers: 1
+                  filter: (ts in [1577836800000000,1578009600000000] and s='ABC')
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test // TODO: this one should interval scan with jit filter
     public void testSelectWithJittedFilter13() throws Exception {
-        assertPlan(
-                "create table tab ( s symbol, ts timestamp);",
-                "select * from tab where ts in ( '2020-01-01' ) and s = 'ABC'",
-                """
-                        Async JIT Filter workers: 1
-                          filter: (ts in [1577836800000000,1577923199999999] and s='ABC')
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( s symbol, ts timestamp);", "select * from tab where ts in ( '2020-01-01' ) and s = 'ABC'", """
+                Async JIT Filter workers: 1
+                  filter: (ts in [1577836800000000,1577923199999999] and s='ABC')
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter14() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select * from tab where l = 12 or l = 15 ",
-                """
-                        Async JIT Filter workers: 1
-                          filter: (l=12 or l=15)
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 12 or l = 15 ", """
+                Async JIT Filter workers: 1
+                  filter: (l=12 or l=15)
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter15() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select * from tab where l = 12.345 ",
-                """
-                        Async JIT Filter workers: 1
-                          filter: l=12.345
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 12.345 ", """
+                Async JIT Filter workers: 1
+                  filter: l=12.345
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter16() throws Exception {
-        assertPlan(
-                "create table tab ( b boolean, ts timestamp);",
-                "select * from tab where b = false ",
-                """
-                        Async JIT Filter workers: 1
-                          filter: b=false
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( b boolean, ts timestamp);", "select * from tab where b = false ", """
+                Async JIT Filter workers: 1
+                  filter: b=false
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter17() throws Exception {
-        assertPlan(
-                "create table tab ( b boolean, ts timestamp);",
-                "select * from tab where not(b = false or ts = 123) ",
-                """
-                        Async JIT Filter workers: 1
-                          filter: (b!=false and ts!=123)
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( b boolean, ts timestamp);", "select * from tab where not(b = false or ts = 123) ", """
+                Async JIT Filter workers: 1
+                  filter: (b!=false and ts!=123)
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter18() throws Exception {
-        assertPlan(
-                "create table tab ( l1 long, l2 long);",
-                "select * from tab where l1 < l2 ",
-                """
-                        Async JIT Filter workers: 1
-                          filter: l1<l2
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l1 long, l2 long);", "select * from tab where l1 < l2 ", """
+                Async JIT Filter workers: 1
+                  filter: l1<l2
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter19() throws Exception {
-        assertPlan(
-                "create table tab ( l1 long, l2 long);",
-                "select * from tab where l1 * l2 > 0  ",
-                """
-                        Async JIT Filter workers: 1
-                          filter: 0<l1*l2
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l1 long, l2 long);", "select * from tab where l1 * l2 > 0  ", """
+                Async JIT Filter workers: 1
+                  filter: 0<l1*l2
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter2() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select * from tab where l > 100 and l < 1000 ",
-                """
-                        Async JIT Filter workers: 1
-                          filter: (100<l and l<1000)
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l > 100 and l < 1000 ", """
+                Async JIT Filter workers: 1
+                  filter: (100<l and l<1000)
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter20() throws Exception {
-        assertPlan(
-                "create table tab ( l1 long, l2 long, l3 long);",
-                "select * from tab where l1 * l2 > l3  ",
-                """
-                        Async JIT Filter workers: 1
-                          filter: l3<l1*l2
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l1 long, l2 long, l3 long);", "select * from tab where l1 * l2 > l3  ", """
+                Async JIT Filter workers: 1
+                  filter: l3<l1*l2
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter21() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select * from tab where l = $1 ",
-                """
-                        Async JIT Filter workers: 1
-                          filter: l=$0::long
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = $1 ", """
+                Async JIT Filter workers: 1
+                  filter: l=$0::long
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter22() throws Exception {
-        assertPlan(
-                "create table tab ( d double, ts timestamp);",
-                "select * from tab where d = 1024.1 + 1 ",
-                """
-                        Async JIT Filter workers: 1
-                          filter: d=1024.1+1
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( d double, ts timestamp);", "select * from tab where d = 1024.1 + 1 ", """
+                Async JIT Filter workers: 1
+                  filter: d=1024.1+1
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter23() throws Exception {
-        assertPlan(
-                "create table tab ( d double, ts timestamp);",
-                "select * from tab where d = null ",
-                """
-                        Async JIT Filter workers: 1
-                          filter: d is null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( d double, ts timestamp);", "select * from tab where d = null ", """
+                Async JIT Filter workers: 1
+                  filter: d is null
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter24a() throws Exception {
-        assertPlan(
-                "create table tab ( d double, ts timestamp) timestamp(ts);",
-                "select * from tab where d = 1.2 order by ts limit 1 ",
-                """
-                        Async JIT Filter workers: 1
-                          limit: 1
-                          filter: d=1.2
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 order by ts limit 1 ", """
+                Async JIT Filter workers: 1
+                  limit: 1
+                  filter: d=1.2
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter24b() throws Exception {
-        assertPlan(
-                "create table tab ( d double, ts timestamp) timestamp(ts);",
-                "select * from tab where d = 1.2 order by ts limit -1 ",
-                """
-                        Async JIT Filter workers: 1
-                          limit: 1
-                          filter: d=1.2
-                            PageFrame
-                                Row backward scan
-                                Frame backward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 order by ts limit -1 ", """
+                Async JIT Filter workers: 1
+                  limit: 1
+                  filter: d=1.2
+                    PageFrame
+                        Row backward scan
+                        Frame backward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter24b2() throws Exception {
-        assertPlan(
-                "create table tab ( d double, ts timestamp) timestamp(ts);",
-                "select * from tab where d = 1.2 limit -1 ",
-                """
-                        Async JIT Filter workers: 1
-                          limit: 1
-                          filter: d=1.2
-                            PageFrame
-                                Row backward scan
-                                Frame backward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 limit -1 ", """
+                Async JIT Filter workers: 1
+                  limit: 1
+                  filter: d=1.2
+                    PageFrame
+                        Row backward scan
+                        Frame backward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter24c() throws Exception {
-        assertPlan(
-                "create table tab ( d double, ts timestamp) timestamp(ts);",
-                "select * from tab where d = 1.2 order by ts desc limit 1 ",
-                """
-                        Async JIT Filter workers: 1
-                          limit: 1
-                          filter: d=1.2
-                            PageFrame
-                                Row backward scan
-                                Frame backward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 order by ts desc limit 1 ", """
+                Async JIT Filter workers: 1
+                  limit: 1
+                  filter: d=1.2
+                    PageFrame
+                        Row backward scan
+                        Frame backward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter24d() throws Exception {
-        assertPlan(
-                "create table tab ( d double, ts timestamp) timestamp(ts);",
-                "select * from tab where d = 1.2 limit -1 ",
-                """
-                        Async JIT Filter workers: 1
-                          limit: 1
-                          filter: d=1.2
-                            PageFrame
-                                Row backward scan
-                                Frame backward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 limit -1 ", """
+                Async JIT Filter workers: 1
+                  limit: 1
+                  filter: d=1.2
+                    PageFrame
+                        Row backward scan
+                        Frame backward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter24e() throws Exception {
         bindVariableService.setInt("maxRows", -1);
 
-        assertPlan(
-                "create table tab ( d double, ts timestamp) timestamp(ts);",
-                "select * from tab where d = 1.2 limit :maxRows ",
-                """
-                        Async JIT Filter workers: 1
-                          limit: 1
-                          filter: d=1.2
-                            PageFrame
-                                Row backward scan
-                                Frame backward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 limit :maxRows ", """
+                Async JIT Filter workers: 1
+                  limit: 1
+                  filter: d=1.2
+                    PageFrame
+                        Row backward scan
+                        Frame backward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter25() throws Exception {
-        assertPlan(
-                "create table tab ( d double, ts timestamp) timestamp(ts);",
-                "select * from tab where d = 1.2 order by ts desc limit 1 ",
-                """
-                        Async JIT Filter workers: 1
-                          limit: 1
-                          filter: d=1.2
-                            PageFrame
-                                Row backward scan
-                                Frame backward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 order by ts desc limit 1 ", """
+                Async JIT Filter workers: 1
+                  limit: 1
+                  filter: d=1.2
+                    PageFrame
+                        Row backward scan
+                        Frame backward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter26() throws Exception {
-        assertPlan(
-                "create table tab ( d double, ts timestamp) timestamp(ts);",
-                "select * from tab where d = 1.2 order by ts limit -1 ",
-                """
-                        Async JIT Filter workers: 1
-                          limit: 1
-                          filter: d=1.2
-                            PageFrame
-                                Row backward scan
-                                Frame backward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 order by ts limit -1 ", """
+                Async JIT Filter workers: 1
+                  limit: 1
+                  filter: d=1.2
+                    PageFrame
+                        Row backward scan
+                        Frame backward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter27() throws Exception {
-        assertPlan(
-                "create table tab (s string, ts timestamp);",
-                "select * from tab where s = null ",
-                """
-                        Async JIT Filter workers: 1
-                          filter: s is null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab (s string, ts timestamp);", "select * from tab where s = null ", """
+                Async JIT Filter workers: 1
+                  filter: s is null
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter28() throws Exception {
-        assertPlan(
-                "create table tab (v varchar, ts timestamp);",
-                "select * from tab where v = null ",
-                """
-                        Async JIT Filter workers: 1
-                          filter: v is null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab (v varchar, ts timestamp);", "select * from tab where v = null ", """
+                Async JIT Filter workers: 1
+                  filter: v is null
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter3() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select /*+ ENABLE_PRE_TOUCH(tab) */ * from tab where l > 100 and l < 1000 and ts = '2022-01-01' ",
-                """
-                        Async JIT Filter workers: 1
-                          filter: (100<l and l<1000 and ts=2022-01-01T00:00:00.000000Z) [pre-touch]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select /*+ ENABLE_PRE_TOUCH(tab) */ * from tab where l > 100 and l < 1000 and ts = '2022-01-01' ", """
+                Async JIT Filter workers: 1
+                  filter: (100<l and l<1000 and ts=2022-01-01T00:00:00.000000Z) [pre-touch]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter4() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select * from tab where l > 100 and l < 1000 and l = 20",
-                """
-                        Async JIT Filter workers: 1
-                          filter: (100<l and l<1000 and l=20)
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l > 100 and l < 1000 and l = 20", """
+                Async JIT Filter workers: 1
+                  filter: (100<l and l<1000 and l=20)
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter5() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select * from tab where l > 100 and l < 1000 or l = 20",
-                """
-                        Async JIT Filter workers: 1
-                          filter: ((100<l and l<1000) or l=20)
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l > 100 and l < 1000 or l = 20", """
+                Async JIT Filter workers: 1
+                  filter: ((100<l and l<1000) or l=20)
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter6() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select * from tab where l > 100 and l < 1000 or ts = 123",
-                """
-                        Async JIT Filter workers: 1
-                          filter: ((100<l and l<1000) or ts=123)
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l > 100 and l < 1000 or ts = 123", """
+                Async JIT Filter workers: 1
+                  filter: ((100<l and l<1000) or ts=123)
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter7() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp) timestamp (ts);",
-                "select * from tab where l > 100 and l < 1000 or ts > '2021-01-01'",
-                """
-                        Async JIT Filter workers: 1
-                          filter: ((100<l and l<1000) or 2021-01-01T00:00:00.000000Z<ts)
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp) timestamp (ts);", "select * from tab where l > 100 and l < 1000 or ts > '2021-01-01'", """
+                Async JIT Filter workers: 1
+                  filter: ((100<l and l<1000) or 2021-01-01T00:00:00.000000Z<ts)
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter8() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp) timestamp (ts);",
-                "select * from tab where l > 100 and l < 1000 and ts in '2021-01-01'",
-                """
-                        Async JIT Filter workers: 1
-                          filter: (100<l and l<1000)
-                            PageFrame
-                                Row forward scan
-                                Interval forward scan on: tab
-                                  intervals: [("2021-01-01T00:00:00.000000Z","2021-01-01T23:59:59.999999Z")]
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp) timestamp (ts);", "select * from tab where l > 100 and l < 1000 and ts in '2021-01-01'", """
+                Async JIT Filter workers: 1
+                  filter: (100<l and l<1000)
+                    PageFrame
+                        Row forward scan
+                        Interval forward scan on: tab
+                          intervals: [("2021-01-01T00:00:00.000000Z","2021-01-01T23:59:59.999999Z")]
+                """);
     }
 
     @Test
     public void testSelectWithJittedFilter9() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select * from tab where l in ( 100, 200 )",
-                """
-                        Async JIT Filter workers: 1
-                          filter: l in [100,200]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l in ( 100, 200 )", """
+                Async JIT Filter workers: 1
+                  filter: l in [100,200]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithLimitLo() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts) ;",
-                "select * from a limit 10",
-                """
-                        Limit lo: 10 skip-over-rows: 0 limit: 0
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a limit 10", """
+                Limit value: 10 skip-rows: 0 take-rows: 0
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectWithLimitLoHi() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts) ;",
-                "select * from a limit 10, 100",
-                """
-                        Limit lo: 10 hi: 100 skip-over-rows: 0 limit: 0
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a limit 10, 100", """
+                Limit left: 10 right: 100 skip-rows: 0 take-rows: 0
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectWithLimitLoHiNegative() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts) ;",
-                "select * from a limit -10, -100",
-                """
-                        Limit lo: -10 hi: -100 skip-over-rows: 0 limit: 0
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a limit -10, -100", """
+                Limit left: -10 right: -100 skip-rows: 0 take-rows: 0
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectWithLimitLoNegative() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts) ;",
-                "select * from a limit -10",
-                """
-                        Limit lo: -10 skip-over-rows: 0 limit: 0
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a limit -10", """
+                Limit value: -10 skip-rows: 0 take-rows: 0
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test // jit is not used due to type mismatch
     public void testSelectWithNonJittedFilter1() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select * from tab where l = 12::short ",
-                """
-                        Async Filter workers: 1
-                          filter: l=12::short
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 12::short ", """
+                Async Filter workers: 1
+                  filter: l=12::short
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test // jit filter doesn't work with type casts
     public void testSelectWithNonJittedFilter10() throws Exception {
-        assertPlan(
-                "create table tab ( s short, ts timestamp);",
-                "select * from tab where s = 1::short ",
-                """
-                        Async Filter workers: 1
-                          filter: s=1::short
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( s short, ts timestamp);", "select * from tab where s = 1::short ", """
+                Async Filter workers: 1
+                  filter: s=1::short
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test // TODO: should run with jitted filter just like b = true
     public void testSelectWithNonJittedFilter11() throws Exception {
-        assertPlan(
-                "create table tab ( b boolean, ts timestamp);",
-                "select * from tab where b = true::boolean ",
-                """
-                        Async Filter workers: 1
-                          filter: b=true
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( b boolean, ts timestamp);", "select * from tab where b = true::boolean ", """
+                Async Filter workers: 1
+                  filter: b=true
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test // TODO: should run with jitted filter just like l = 1024
     public void testSelectWithNonJittedFilter12() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select * from tab where l = 1024::long ",
-                """
-                        Async Filter workers: 1
-                          filter: l=1024::long
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 1024::long ", """
+                Async Filter workers: 1
+                  filter: l=1024::long
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test // TODO: should run with jitted filter just like d = 1024.1
     public void testSelectWithNonJittedFilter13() throws Exception {
-        assertPlan(
-                "create table tab ( d double, ts timestamp);",
-                "select * from tab where d = 1024.1::double ",
-                """
-                        Async Filter workers: 1
-                          filter: d=1024.1
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( d double, ts timestamp);", "select * from tab where d = 1024.1::double ", """
+                Async Filter workers: 1
+                  filter: d=1024.1
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test // TODO: should run with jitted filter just like d = null
     public void testSelectWithNonJittedFilter14() throws Exception {
-        assertPlan(
-                "create table tab ( d double, ts timestamp);",
-                "select * from tab where d = null::double ",
-                """
-                        Async Filter workers: 1
-                          filter: d is null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( d double, ts timestamp);", "select * from tab where d = null::double ", """
+                Async Filter workers: 1
+                  filter: d is null
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test // jit doesn't work for bitwise operators
     public void testSelectWithNonJittedFilter15() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select * from tab where (l | l) > 0  ",
-                """
-                        Async Filter workers: 1
-                          filter: 0<l|l
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where (l | l) > 0  ", """
+                Async Filter workers: 1
+                  filter: 0<l|l
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test // jit doesn't work for bitwise operators
     public void testSelectWithNonJittedFilter16() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select * from tab where (l & l) > 0  ",
-                """
-                        Async Filter workers: 1
-                          filter: 0<l&l
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where (l & l) > 0  ", """
+                Async Filter workers: 1
+                  filter: 0<l&l
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test // jit doesn't work for bitwise operators
     public void testSelectWithNonJittedFilter17() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select * from tab where (l ^ l) > 0  ",
-                """
-                        Async Filter workers: 1
-                          filter: 0<l^l
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where (l ^ l) > 0  ", """
+                Async Filter workers: 1
+                  filter: 0<l^l
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithNonJittedFilter18() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select * from tab where (l ^ l) > 0 limit -1",
-                """
-                        Async Filter workers: 1
-                          limit: 1
-                          filter: 0<l^l
-                            PageFrame
-                                Row backward scan
-                                Frame backward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where (l ^ l) > 0 limit -1", """
+                Async Filter workers: 1
+                  limit: 1
+                  filter: 0<l^l
+                    PageFrame
+                        Row backward scan
+                        Frame backward scan on: tab
+                """);
     }
 
     @Test
@@ -11683,396 +9206,277 @@ public class ExplainPlanTest extends AbstractCairoTest {
         bindVariableService.clear();
         bindVariableService.setLong("maxRows", -1);
 
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select * from tab where (l ^ l) > 0 limit :maxRows",
-                """
-                        Async Filter workers: 1
-                          limit: 1
-                          filter: 0<l^l
-                            PageFrame
-                                Row backward scan
-                                Frame backward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where (l ^ l) > 0 limit :maxRows", """
+                Async Filter workers: 1
+                  limit: 1
+                  filter: 0<l^l
+                    PageFrame
+                        Row backward scan
+                        Frame backward scan on: tab
+                """);
     }
 
     @Test // jit is not used due to type mismatch
     public void testSelectWithNonJittedFilter2() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select * from tab where l = 12::byte ",
-                """
-                        Async Filter workers: 1
-                          filter: l=12::byte
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 12::byte ", """
+                Async Filter workers: 1
+                  filter: l=12::byte
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test // jit is not used due to type mismatch
     public void testSelectWithNonJittedFilter3() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select * from tab where l = '123' ",
-                """
-                        Async Filter workers: 1
-                          filter: l='123'
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = '123' ", """
+                Async Filter workers: 1
+                  filter: l='123'
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test // jit is not because rnd_long() value is not stable
     public void testSelectWithNonJittedFilter4() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select * from tab where l = rnd_long() ",
-                """
-                        Async Filter workers: 1
-                          filter: memoize(l=rnd_long())
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        // Async filter function doesn't support memoization.
+        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = rnd_long() ", """
+                Async Filter workers: 1
+                  filter: l=rnd_long()
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithNonJittedFilter5() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select * from tab where l = case when l > 0 then 1 when l = 0 then 0 else -1 end ",
-                """
-                        Async Filter workers: 1
-                          filter: l=case([0<l,1,l=0,0,-1])
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = case when l > 0 then 1 when l = 0 then 0 else -1 end ", """
+                Async Filter workers: 1
+                  filter: l=case([0<l,1,l=0,0,-1])
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test // interval scan is not used because of type mismatch
     public void testSelectWithNonJittedFilter6() throws Exception {
-        assertPlan(
-                "create table tab ( l long, ts timestamp);",
-                "select * from tab where l = $1::string ",
-                """
-                        Async Filter workers: 1
-                          filter: l=$0::string
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = $1::string ", """
+                Async Filter workers: 1
+                  filter: l=$0::string
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test // jit filter doesn't work for string type
     public void testSelectWithNonJittedFilter7() throws Exception {
-        assertPlan(
-                "create table tab ( s string, ts timestamp);",
-                "select * from tab where s = 'test' ",
-                """
-                        Async Filter workers: 1
-                          filter: s='test'
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( s string, ts timestamp);", "select * from tab where s = 'test' ", """
+                Async Filter workers: 1
+                  filter: s='test'
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test // jit filter doesn't work with type casts
     public void testSelectWithNonJittedFilter9() throws Exception {
-        assertPlan(
-                "create table tab ( b byte, ts timestamp);",
-                "select * from tab where b = 1::byte ",
-                """
-                        Async Filter workers: 1
-                          filter: b=1::byte
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                        """
-        );
+        assertPlan("create table tab ( b byte, ts timestamp);", "select * from tab where b = 1::byte ", """
+                Async Filter workers: 1
+                  filter: b=1::byte
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tab
+                """);
     }
 
     @Test
     public void testSelectWithNotOperator() throws Exception {
-        assertPlan(
-                "CREATE TABLE tst ( timestamp TIMESTAMP );",
-                "select * from tst where timestamp not between '2021-01-01' and '2021-01-10' ",
-                """
-                        Async Filter workers: 1
-                          filter: not (timestamp between 1609459200000000 and 1610236800000000)
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tst
-                        """
-        );
+        assertPlan("CREATE TABLE tst ( timestamp TIMESTAMP );", "select * from tst where timestamp not between '2021-01-01' and '2021-01-10' ", """
+                Async Filter workers: 1
+                  filter: not (timestamp between 1609459200000000 and 1610236800000000)
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: tst
+                """);
     }
 
     @Test
     public void testSelectWithOrderByTsDescLimitLo() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts) ;",
-                "select * from a order by ts desc limit 10",
-                """
-                        Limit lo: 10 skip-over-rows: 0 limit: 0
-                            PageFrame
-                                Row backward scan
-                                Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by ts desc limit 10", """
+                Limit value: 10 skip-rows: 0 take-rows: 0
+                    PageFrame
+                        Row backward scan
+                        Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testSelectWithOrderByTsDescLimitLoNegative1() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts) ;",
-                "select * from a order by ts desc limit -10",
-                """
-                        Limit lo: -10 skip-over-rows: 0 limit: 0
-                            PageFrame
-                                Row backward scan
-                                Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by ts desc limit -10", """
+                Limit value: -10 skip-rows: 0 take-rows: 0
+                    PageFrame
+                        Row backward scan
+                        Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testSelectWithOrderByTsDescLimitLoNegative2() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts) ;",
-                "select i from a order by ts desc limit -10",
-                """
-                        SelectedRecord
-                            Limit lo: -10 skip-over-rows: 0 limit: 0
-                                PageFrame
-                                    Row backward scan
-                                    Frame backward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select i from a order by ts desc limit -10", """
+                SelectedRecord
+                    Limit value: -10 skip-rows: 0 take-rows: 0
+                        PageFrame
+                            Row backward scan
+                            Frame backward scan on: a
+                """);
     }
 
     @Test
     public void testSelectWithOrderByTsLimitLoNegative1() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts) ;",
-                "select * from a order by ts limit -10",
-                """
-                        Limit lo: -10 skip-over-rows: 0 limit: 0
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by ts limit -10", """
+                Limit value: -10 skip-rows: 0 take-rows: 0
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectWithOrderByTsLimitLoNegative2() throws Exception {
-        assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts) ;",
-                "select i from a order by ts limit -10",
-                """
-                        SelectedRecord
-                            Limit lo: -10 skip-over-rows: 0 limit: 0
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select i from a order by ts limit -10", """
+                SelectedRecord
+                    Limit value: -10 skip-rows: 0 take-rows: 0
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectWithReorder1() throws Exception {
-        assertPlan(
-                "create table a ( i int, l long, ts timestamp) timestamp(ts) ;",
-                "select ts, l, i from a where l<i",
-                """
-                        Async JIT Filter workers: 1
-                          filter: l<i
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select ts, l, i from a where l<i", """
+                Async JIT Filter workers: 1
+                  filter: l<i
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectWithReorder2() throws Exception {
-        assertPlan(
-                "create table a ( i int, l long, ts timestamp) timestamp(ts) ;",
-                "select ts, l, i from a where l::short<i",
-                """
-                        Async Filter workers: 1
-                          filter: l::short<i
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select ts, l, i from a where l::short<i", """
+                Async Filter workers: 1
+                  filter: l::short<i
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testSelectWithReorder2a() throws Exception {
-        assertPlan(
-                "create table a ( i int, l long, ts timestamp) timestamp(ts) ;",
-                "select i2, i1, ts1 from " +
-                        "(select ts as ts1, l as l1, i as i1, i as i2 " +
-                        "from a " +
-                        "where l::short<i " +
-                        "limit 100) " +
-                        "where l1*i2 != 0",
-                """
+        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select i2, i1, ts1 from " + "(select ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "where l::short<i " + "limit 100) " + "where l1*i2 != 0", """
+                SelectedRecord
+                    Filter filter: l1*i2!=0
                         SelectedRecord
-                            Filter filter: l1*i2!=0
-                                SelectedRecord
-                                    Async Filter workers: 1
-                                      limit: 100
-                                      filter: l::short<i
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                        """
-        );
-    }
-
-    @Test
-    public void testSelectWithReorder2b() throws Exception {
-        assertPlan(
-                "create table a ( i int, l long, ts timestamp) timestamp(ts) ;",
-                "select i2, i1, ts1 from " +
-                        "(select ts as ts1, l as l1, i as i1, i as i2 " +
-                        "from a " +
-                        "order by ts, l1 " +
-                        "limit 100 ) " +
-                        "where i1*i2 != 0",
-                """
-                        Filter filter: i1*i2!=0
-                            SelectedRecord
-                                Sort light lo: 100 partiallySorted: true
-                                  keys: [ts, l1]
-                                    SelectedRecord
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                        """
-        );
-    }
-
-    @Test
-    public void testSelectWithReorder2c() throws Exception {
-        assertPlan(
-                "create table a ( i int, l long, ts timestamp) timestamp(ts) ;",
-                "select i2, i1, ts, ts1 from " +
-                        "(select ts, ts as ts1, l as l1, i as i1, i as i2 " +
-                        "from a " +
-                        "order by ts, l1 " +
-                        "limit 100 ) " +
-                        "where i1*i2 != 0",
-                """
-                        SelectedRecord
-                            Filter filter: i1*i2!=0
-                                Sort light lo: 100 partiallySorted: true
-                                  keys: [ts, l1]
-                                    SelectedRecord
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                        """
-        );
-    }
-
-    @Test
-    public void testSelectWithReorder2d() throws Exception {
-        assertPlan(
-                "create table a ( i int, l long, ts timestamp) timestamp(ts) ;",
-                "select i2, i1, ts, ts1 from " +
-                        "(select ts, ts as ts1, l as l1, i as i1, i as i2 " +
-                        "from a " +
-                        "order by 1, 3 " +
-                        "limit 100 ) " +
-                        "where i1*i2 != 0",
-                """
-                        SelectedRecord
-                            Filter filter: i1*i2!=0
-                                Sort light lo: 100 partiallySorted: true
-                                  keys: [ts, l1]
-                                    SelectedRecord
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                        """
-        );
-    }
-
-    @Test
-    public void testSelectWithReorder2e() throws Exception {
-        assertPlan(
-                "create table a ( i int, l long, ts timestamp) timestamp(ts) ;",
-                "select i2, i1, ts, ts1 from " +
-                        "(select ts, ts as ts1, l as l1, i as i1, i as i2 " +
-                        "from a " +
-                        "order by 2, 3 " +
-                        "limit 100 ) " +
-                        "where i1*i2 != 0",
-                """
-                        SelectedRecord
-                            Filter filter: i1*i2!=0
-                                Sort light lo: 100 partiallySorted: true
-                                  keys: [ts1, l1]
-                                    SelectedRecord
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                        """
-        );
-    }
-
-    @Test
-    public void testSelectWithReorder3() throws Exception {
-        assertPlan(
-                "create table a ( i int, l long, ts timestamp) timestamp(ts) ;",
-                "select k, max(ts) from ( select ts, l as k, i from a where l::short<i ) where k < 0 ",
-                """
-                        GroupBy vectorized: false
-                          keys: [k]
-                          values: [max(ts)]
-                            SelectedRecord
-                                Async Filter workers: 1
-                                  filter: (l::short<i and l<0)
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                        """
-        );
-    }
-
-    @Test
-    public void testSelectWithReorder4() throws Exception {
-        assertPlan(
-                "create table a ( i int, l long, ts timestamp) timestamp(ts) ;",
-                "select mil, k, minl, mini from " +
-                        "( select ts as k, max(i*l) as mil, min(i) as mini, min(l) as minl  " +
-                        "from a where l::short<i ) " +
-                        "where mil + mini> 1 ",
-                """
-                        Filter filter: 1<mil+mini
-                            Async Group By workers: 1
-                              keys: [k]
-                              values: [max(i*l),min(l),min(i)]
+                            Async Filter workers: 1
+                              limit: 100
                               filter: l::short<i
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: a
-                        """
-        );
+                """);
+    }
+
+    @Test
+    public void testSelectWithReorder2b() throws Exception {
+        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select i2, i1, ts1 from " + "(select ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by ts, l1 " + "limit 100 ) " + "where i1*i2 != 0", """
+                Filter filter: i1*i2!=0
+                    SelectedRecord
+                        Sort light lo: 100 partiallySorted: true
+                          keys: [ts, l1]
+                            SelectedRecord
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                """);
+    }
+
+    @Test
+    public void testSelectWithReorder2c() throws Exception {
+        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select i2, i1, ts, ts1 from " + "(select ts, ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by ts, l1 " + "limit 100 ) " + "where i1*i2 != 0", """
+                SelectedRecord
+                    Filter filter: i1*i2!=0
+                        Sort light lo: 100 partiallySorted: true
+                          keys: [ts, l1]
+                            SelectedRecord
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                """);
+    }
+
+    @Test
+    public void testSelectWithReorder2d() throws Exception {
+        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select i2, i1, ts, ts1 from " + "(select ts, ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by 1, 3 " + "limit 100 ) " + "where i1*i2 != 0", """
+                SelectedRecord
+                    Filter filter: i1*i2!=0
+                        Sort light lo: 100 partiallySorted: true
+                          keys: [ts, l1]
+                            SelectedRecord
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                """);
+    }
+
+    @Test
+    public void testSelectWithReorder2e() throws Exception {
+        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select i2, i1, ts, ts1 from " + "(select ts, ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by 2, 3 " + "limit 100 ) " + "where i1*i2 != 0", """
+                SelectedRecord
+                    Filter filter: i1*i2!=0
+                        Sort light lo: 100 partiallySorted: true
+                          keys: [ts1, l1]
+                            SelectedRecord
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                """);
+    }
+
+    @Test
+    public void testSelectWithReorder3() throws Exception {
+        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select k, max(ts) from ( select ts, l as k, i from a where l::short<i ) where k < 0 ", """
+                GroupBy vectorized: false
+                  keys: [k]
+                  values: [max(ts)]
+                    SelectedRecord
+                        Async Filter workers: 1
+                          filter: (l::short<i and l<0)
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                """);
+    }
+
+    @Test
+    public void testSelectWithReorder4() throws Exception {
+        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select mil, k, minl, mini from " + "( select ts as k, max(i*l) as mil, min(i) as mini, min(l) as minl  " + "from a where l::short<i ) " + "where mil + mini> 1 ", """
+                Filter filter: 1<mil+mini
+                    Async Group By workers: 1
+                      keys: [k]
+                      values: [max(i*l),min(l),min(i)]
+                      filter: l::short<i
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                """);
     }
 
     @Test
@@ -12080,15 +9484,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from (select * from a order by ts asc limit 10) order by ts asc",
-                    """
-                            Limit lo: 10 skip-over-rows: 0 limit: 0
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 10) order by ts asc", """
+                    Limit value: 10 skip-rows: 0 take-rows: 0
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
         });
     }
 
@@ -12097,16 +9498,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from (select * from a order by ts desc, l desc limit 10) order by ts desc",
-                    """
-                            Sort light lo: 10 partiallySorted: true
-                              keys: [ts desc, l desc]
-                                PageFrame
-                                    Row backward scan
-                                    Frame backward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from (select * from a order by ts desc, l desc limit 10) order by ts desc", """
+                    Sort light lo: 10 partiallySorted: true
+                      keys: [ts desc, l desc]
+                        PageFrame
+                            Row backward scan
+                            Frame backward scan on: a
+                    """);
         });
     }
 
@@ -12115,21 +9513,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from (select * from a order by ts asc, l limit 10) lt join (select * from a) order by ts asc",
-                    """
-                            SelectedRecord
-                                Lt Join Fast
-                                    Sort light lo: 10 partiallySorted: true
-                                      keys: [ts, l]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from (select * from a order by ts asc, l limit 10) lt join (select * from a) order by ts asc", """
+                    SelectedRecord
+                        Lt Join Fast
+                            Sort light lo: 10 partiallySorted: true
+                              keys: [ts, l]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    """);
         });
     }
 
@@ -12138,25 +9533,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "(select * from (select * from a order by ts asc, l) limit 10) " +
-                            "lt join " +
-                            "(select * from a) order by ts asc",
-                    """
-                            SelectedRecord
-                                Lt Join Fast
-                                    Limit lo: 10 skip-over-rows: 0 limit: 0
-                                        Sort light
-                                          keys: [ts, l]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+            assertPlanNoLeakCheck("select * from " + "(select * from (select * from a order by ts asc, l) limit 10) " + "lt join " + "(select * from a) order by ts asc", """
+                    SelectedRecord
+                        Lt Join Fast
+                            Limit value: 10 skip-rows: 0 take-rows: 0
+                                Sort light
+                                  keys: [ts, l]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: a
-                            """
-            );
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    """);
         });
     }
 
@@ -12165,21 +9554,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "(select * from (select * from a order by ts desc, l desc) limit 10) " +
-                            "order by ts asc",
-                    """
-                            Radix sort light
-                              keys: [ts]
-                                Limit lo: 10 skip-over-rows: 0 limit: 0
-                                    Sort light
-                                      keys: [ts desc, l desc]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from " + "(select * from (select * from a order by ts desc, l desc) limit 10) " + "order by ts asc", """
+                    Radix sort light
+                      keys: [ts]
+                        Limit value: 10 skip-rows: 0 take-rows: 0
+                            Sort light
+                              keys: [ts desc, l desc]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                    """);
         });
     }
 
@@ -12188,36 +9572,24 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "(select * from " +
-                            "   (select * from a) " +
-                            "    cross join " +
-                            "   (select * from a) " +
-                            " order by ts asc, l  " +
-                            " limit 10" +
-                            ") " +
-                            "lt join (select * from a) " +
-                            "order by ts asc",
-                    """
-                            SelectedRecord
-                                Lt Join Fast
-                                    Limit lo: 10 skip-over-rows: 0 limit: 0
-                                        Sort
-                                          keys: [ts, l]
-                                            SelectedRecord
-                                                Cross Join
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: a
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: a
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from " + "(select * from " + "   (select * from a) " + "    cross join " + "   (select * from a) " + " order by ts asc, l  " + " limit 10" + ") " + "lt join (select * from a) " + "order by ts asc", """
+                    SelectedRecord
+                        Lt Join Fast
+                            Limit value: 10 skip-rows: 0 take-rows: 0
+                                Sort
+                                  keys: [ts, l]
+                                    SelectedRecord
+                                        Cross Join
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    """);
         });
     }
 
@@ -12226,28 +9598,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "(select * from " +
-                            "   (select * from a) " +
-                            "    cross join " +
-                            "   (select * from a) " +
-                            " order by ts desc " +
-                            " limit 10" +
-                            ") " +
-                            "order by ts desc",
-                    """
-                            Limit lo: 10 skip-over-rows: 0 limit: 0
-                                SelectedRecord
-                                    Cross Join
-                                        PageFrame
-                                            Row backward scan
-                                            Frame backward scan on: a
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from " + "(select * from " + "   (select * from a) " + "    cross join " + "   (select * from a) " + " order by ts desc " + " limit 10" + ") " + "order by ts desc", """
+                    Limit value: 10 skip-rows: 0 take-rows: 0
+                        SelectedRecord
+                            Cross Join
+                                PageFrame
+                                    Row backward scan
+                                    Frame backward scan on: a
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                    """);
         });
     }
 
@@ -12256,17 +9617,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from (select * from a order by ts asc limit 10) order by ts desc",
-                    """
-                            Radix sort light
-                              keys: [ts desc]
-                                Limit lo: 10 skip-over-rows: 0 limit: 0
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 10) order by ts desc", """
+                    Radix sort light
+                      keys: [ts desc]
+                        Limit value: 10 skip-rows: 0 take-rows: 0
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    """);
         });
     }
 
@@ -12275,15 +9633,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from (select * from a order by ts desc limit 10) order by ts desc",
-                    """
-                            Limit lo: 10 skip-over-rows: 0 limit: 0
-                                PageFrame
-                                    Row backward scan
-                                    Frame backward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 10) order by ts desc", """
+                    Limit value: 10 skip-rows: 0 take-rows: 0
+                        PageFrame
+                            Row backward scan
+                            Frame backward scan on: a
+                    """);
         });
     }
 
@@ -12292,17 +9647,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from (select * from a order by ts desc limit 10) order by ts asc",
-                    """
-                            Radix sort light
-                              keys: [ts]
-                                Limit lo: 10 skip-over-rows: 0 limit: 0
-                                    PageFrame
-                                        Row backward scan
-                                        Frame backward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 10) order by ts asc", """
+                    Radix sort light
+                      keys: [ts]
+                        Limit value: 10 skip-rows: 0 take-rows: 0
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: a
+                    """);
         });
     }
 
@@ -12311,19 +9663,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long)");
 
-            assertPlanNoLeakCheck(
-                    "select * from (select * from a order by ts, l limit 10) order by ts, l",
-                    """
-                            Sort light
-                              keys: [ts, l]
-                                Async Top K lo: 10 workers: 1
-                                  filter: null
-                                  keys: [ts, l]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                            """
-            );
+            assertPlanNoLeakCheck("select * from (select * from a order by ts, l limit 10) order by ts, l", """
+                    Sort light
+                      keys: [ts, l]
+                        Async Top K lo: 10 workers: 1
+                          filter: null
+                          keys: [ts, l]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                    """);
         });
     }
 
@@ -12332,19 +9681,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long)");
 
-            assertPlanNoLeakCheck(
-                    "select * from (select * from a order by ts, l limit 10,-10) order by ts, l",
-                    """
+            assertPlanNoLeakCheck("select * from (select * from a order by ts, l limit 10,-10) order by ts, l", """
+                    Sort light
+                      keys: [ts, l]
+                        Limit left: 10 right: -10 skip-rows: 0 take-rows: 0
                             Sort light
                               keys: [ts, l]
-                                Limit lo: 10 hi: -10 skip-over-rows: 0 limit: 0
-                                    Sort light
-                                      keys: [ts, l]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                            """
-            );
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                    """);
         });
     }
 
@@ -12354,21 +9700,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
             execute("create table b ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a splice join b on ts where a.i = b.ts",
-                    """
-                            SelectedRecord
-                                Filter filter: a.i=b.ts
-                                    Splice Join
-                                      condition: b.ts=a.ts
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a splice join b on ts where a.i = b.ts", """
+                    SelectedRecord
+                        Filter filter: a.i=b.ts
+                            Splice Join
+                              condition: b.ts=a.ts
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                    """);
         });
     }
 
@@ -12378,21 +9721,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
             execute("create table b ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a splice join b on ts where a.i + b.i = 1",
-                    """
-                            SelectedRecord
-                                Filter filter: a.i+b.i=1
-                                    Splice Join
-                                      condition: b.ts=a.ts
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a splice join b on ts where a.i + b.i = 1", """
+                    SelectedRecord
+                        Filter filter: a.i+b.i=1
+                            Splice Join
+                              condition: b.ts=a.ts
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                    """);
         });
     }
 
@@ -12402,20 +9742,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a splice join b on ts",
-                    """
-                            SelectedRecord
-                                Splice Join
-                                  condition: b.ts=a.ts
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a splice join b on ts", """
+                    SelectedRecord
+                        Splice Join
+                          condition: b.ts=a.ts
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: b
+                    """);
         });
     }
 
@@ -12425,21 +9762,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a splice join (select * from b limit 10) on ts",
-                    """
-                            SelectedRecord
-                                Splice Join
-                                  condition: _xQdbA1.ts=a.ts
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    Limit lo: 10 skip-over-rows: 0 limit: 0
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a splice join (select * from b limit 10) on ts", """
+                    SelectedRecord
+                        Splice Join
+                          condition: _xQdbA1.ts=a.ts
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            Limit value: 10 skip-rows: 0 take-rows: 0
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                    """);
         });
     }
 
@@ -12449,22 +9783,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a splice join ((select * from b order by ts, i ) timestamp(ts))  on ts",
-                    """
-                            SelectedRecord
-                                Splice Join
-                                  condition: _xQdbA1.ts=a.ts
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    Sort light
-                                      keys: [ts, i]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a splice join ((select * from b order by ts, i ) timestamp(ts))  on ts", """
+                    SelectedRecord
+                        Splice Join
+                          condition: _xQdbA1.ts=a.ts
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            Sort light
+                              keys: [ts, i]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                    """);
         });
     }
 
@@ -12474,181 +9805,140 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck(
-                    "select * from a splice join b where a.i = b.i",
-                    """
-                            SelectedRecord
-                                Filter filter: a.i=b.i
-                                    Splice Join
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                            """
-            );
+            assertPlanNoLeakCheck("select * from a splice join b where a.i = b.i", """
+                    SelectedRecord
+                        Filter filter: a.i=b.i
+                            Splice Join
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                    """);
         });
     }
 
     @Test
     public void testStringToDoubleArrayPlanDimensionality() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck(
-                    "select '{}'::double[] from long_sequence(1)",
-                    """
-                            VirtualRecord
-                              functions: ['{}'::DOUBLE[]]
-                                long_sequence count: 1
-                            """
-            );
+            assertPlanNoLeakCheck("select '{}'::double[] from long_sequence(1)", """
+                    VirtualRecord
+                      functions: ['{}'::DOUBLE[]]
+                        long_sequence count: 1
+                    """);
 
 
-            assertPlanNoLeakCheck(
-                    "select '{}'::double[][][] from long_sequence(1)",
-                    """
-                            VirtualRecord
-                              functions: ['{}'::DOUBLE[][][]]
-                                long_sequence count: 1
-                            """
-            );
+            assertPlanNoLeakCheck("select '{}'::double[][][] from long_sequence(1)", """
+                    VirtualRecord
+                      functions: ['{}'::DOUBLE[][][]]
+                        long_sequence count: 1
+                    """);
         });
     }
 
     @Test
     public void testTimestampEqSubQueryFilter1() throws Exception {
-        assertPlan(
-                "create table x (l long, ts timestamp)",
-                "select * from x where ts = (select min(ts) from x)",
-                """
-                        Async Filter workers: 1
-                          filter: ts=cursor\s
-                            GroupBy vectorized: true workers: 1
-                              values: [min(ts)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: x
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: x
-                        """
-        );
+        assertPlan("create table x (l long, ts timestamp)", "select * from x where ts = (select min(ts) from x)", """
+                Async Filter workers: 1
+                  filter: ts=cursor\s
+                    GroupBy vectorized: true workers: 1
+                      values: [min(ts)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: x
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: x
+                """);
     }
 
     @Test
     public void testTimestampEqSubQueryFilter2() throws Exception {
-        assertPlan(
-                "create table x (l long, ts timestamp) timestamp(ts) partition by day",
-                "select * from x where ts = (select min(ts) from x)",
-                """
-                        PageFrame
-                            Row forward scan
-                            Interval forward scan on: x
-                              intervals: []
-                        """
-        );
+        assertPlan("create table x (l long, ts timestamp) timestamp(ts) partition by day", "select * from x where ts = (select min(ts) from x)", """
+                PageFrame
+                    Row forward scan
+                    Interval forward scan on: x
+                      intervals: []
+                """);
     }
 
     @Test
     public void testTimestampGtSubQueryFilter1() throws Exception {
-        assertPlan(
-                "create table x (l long, ts timestamp)",
-                "select * from x where ts > (select min(ts) from x)",
-                """
-                        Async Filter workers: 1
-                          filter: ts [thread-safe] > cursor\s
-                            GroupBy vectorized: true workers: 1
-                              values: [min(ts)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: x
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: x
-                        """
-        );
+        assertPlan("create table x (l long, ts timestamp)", "select * from x where ts > (select min(ts) from x)", """
+                Async Filter workers: 1
+                  filter: ts [thread-safe] > cursor\s
+                    GroupBy vectorized: true workers: 1
+                      values: [min(ts)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: x
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: x
+                """);
     }
 
     @Test
     public void testTimestampGtSubQueryFilter2() throws Exception {
-        assertPlan(
-                "create table x (l long, ts timestamp) timestamp(ts) partition by day",
-                "select * from x where ts > (select min(ts) from x)",
-                """
-                        PageFrame
-                            Row forward scan
-                            Interval forward scan on: x
-                              intervals: []
-                        """
-        );
+        assertPlan("create table x (l long, ts timestamp) timestamp(ts) partition by day", "select * from x where ts > (select min(ts) from x)", """
+                PageFrame
+                    Row forward scan
+                    Interval forward scan on: x
+                      intervals: []
+                """);
     }
 
     @Test
     public void testTimestampLtSubQueryFilter1() throws Exception {
-        assertPlan(
-                "create table x (l long, ts timestamp)",
-                "select * from x where ts < (select max(ts) from x)",
-                """
-                        Async Filter workers: 1
-                          filter: ts [thread-safe] < cursor\s
-                            GroupBy vectorized: true workers: 1
-                              values: [max(ts)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: x
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: x
-                        """
-        );
+        assertPlan("create table x (l long, ts timestamp)", "select * from x where ts < (select max(ts) from x)", """
+                Async Filter workers: 1
+                  filter: ts [thread-safe] < cursor\s
+                    GroupBy vectorized: true workers: 1
+                      values: [max(ts)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: x
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: x
+                """);
     }
 
     @Test
     public void testTimestampLtSubQueryFilter2() throws Exception {
-        assertPlan(
-                "create table x (l long, ts timestamp) timestamp(ts) partition by day",
-                "select * from x where ts < (select max(ts) from x)",
-                """
-                        PageFrame
-                            Row forward scan
-                            Interval forward scan on: x
-                              intervals: []
-                        """
-        );
+        assertPlan("create table x (l long, ts timestamp) timestamp(ts) partition by day", "select * from x where ts < (select max(ts) from x)", """
+                PageFrame
+                    Row forward scan
+                    Interval forward scan on: x
+                      intervals: []
+                """);
     }
 
     @Test
     public void testUnion() throws Exception {
-        assertPlan(
-                "create table a ( i int, s string);",
-                "select * from a union select * from a",
-                """
-                        Union
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s string);", "select * from a union select * from a", """
+                Union
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testUnionAll() throws Exception {
-        assertPlan(
-                "create table a ( i int, s string);",
-                "select * from a union all select * from a",
-                """
-                        Union All
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a ( i int, s string);", "select * from a union all select * from a", """
+                Union All
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
@@ -12657,101 +9947,76 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table t ( x long, ts timestamp) timestamp(ts)");
 
             String query = "select * from t where x < 100 order by ts desc limit -5";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
-                            Async JIT Filter workers: 1
-                              limit: 5
-                              filter: x<100
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                            """
-            );
+            assertPlanNoLeakCheck(query, """
+                    Async JIT Filter workers: 1
+                      limit: 5
+                      filter: x<100
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: t
+                    """);
 
             execute("insert into t select x, x::timestamp from long_sequence(10000)");
 
-            assertQueryNoLeakCheck(
-                    """
-                            x\tts
-                            5\t1970-01-01T00:00:00.000005Z
-                            4\t1970-01-01T00:00:00.000004Z
-                            3\t1970-01-01T00:00:00.000003Z
-                            2\t1970-01-01T00:00:00.000002Z
-                            1\t1970-01-01T00:00:00.000001Z
-                            """,
-                    query,
-                    "ts###DESC",
-                    true,
-                    true
-            );
+            assertQueryNoLeakCheck("""
+                    x\tts
+                    5\t1970-01-01T00:00:00.000005Z
+                    4\t1970-01-01T00:00:00.000004Z
+                    3\t1970-01-01T00:00:00.000003Z
+                    2\t1970-01-01T00:00:00.000002Z
+                    1\t1970-01-01T00:00:00.000001Z
+                    """, query, "ts###DESC", true, true);
         });
     }
 
     @Test
     public void testWhereUuid() throws Exception {
-        assertPlan(
-                "create table a (u uuid, ts timestamp) timestamp(ts);",
-                "select u, ts from a where u = '11111111-1111-1111-1111-111111111111' or u = '22222222-2222-2222-2222-222222222222' or u = '33333333-3333-3333-3333-333333333333'",
-                """
-                        Async JIT Filter workers: 1
-                          filter: ((u='11111111-1111-1111-1111-111111111111' or u='22222222-2222-2222-2222-222222222222') or u='33333333-3333-3333-3333-333333333333')
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlan("create table a (u uuid, ts timestamp) timestamp(ts);", "select u, ts from a where u = '11111111-1111-1111-1111-111111111111' or u = '22222222-2222-2222-2222-222222222222' or u = '33333333-3333-3333-3333-333333333333'", """
+                Async JIT Filter workers: 1
+                  filter: ((u='11111111-1111-1111-1111-111111111111' or u='22222222-2222-2222-2222-222222222222') or u='33333333-3333-3333-3333-333333333333')
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: a
+                """);
     }
 
     @Test
     public void testWindow0() throws Exception {
-        assertPlan(
-                "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
-                "select ts, str,  row_number() over (order by l), row_number() over (partition by l) from t",
-                """
-                        CachedWindow
-                          orderedFunctions: [[l] => [row_number()]]
-                          unorderedFunctions: [row_number() over (partition by [l])]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: t
-                        """
-        );
+        assertPlan("create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))", "select ts, str,  row_number() over (order by l), row_number() over (partition by l) from t", """
+                CachedWindow
+                  orderedFunctions: [[l] => [row_number()]]
+                  unorderedFunctions: [row_number() over (partition by [l])]
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: t
+                """);
     }
 
     @Test
     public void testWindow1() throws Exception {
-        assertPlan(
-                "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
-                "select str, ts, l, 10, row_number() over ( partition by l order by ts) from t",
-                """
-                        CachedWindow
-                          orderedFunctions: [[ts] => [row_number() over (partition by [l])]]
-                            VirtualRecord
-                              functions: [str,ts,l,10]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                        """
-        );
+        assertPlan("create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))", "select str, ts, l, 10, row_number() over ( partition by l order by ts) from t", """
+                CachedWindow
+                  orderedFunctions: [[ts] => [row_number() over (partition by [l])]]
+                    VirtualRecord
+                      functions: [str,ts,l,10]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: t
+                """);
     }
 
     @Test
     public void testWindow2() throws Exception {
-        assertPlan(
-                "create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))",
-                "select str, ts, l as l1, ts::long+l as tsum, row_number() over ( partition by l, ts order by str) from t",
-                """
-                        CachedWindow
-                          orderedFunctions: [[str] => [row_number() over (partition by [l1,ts])]]
-                            VirtualRecord
-                              functions: [str,ts,l1,ts::long+l1]
-                                SelectedRecord
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                        """
-        );
+        assertPlan("create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))", "select str, ts, l as l1, ts::long+l as tsum, row_number() over ( partition by l, ts order by str) from t", """
+                CachedWindow
+                  orderedFunctions: [[str] => [row_number() over (partition by [l1,ts])]]
+                    VirtualRecord
+                      functions: [str,ts,l1,ts::long+l1]
+                        SelectedRecord
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: t
+                """);
     }
 
     @Test
@@ -12759,75 +10024,192 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp, i long, j long) timestamp(ts)");
 
+            assertPlanNoLeakCheck("select ts, i, j, " + "avg(j) over (order by i, j rows unbounded preceding), " + "sum(j) over (order by i, j rows unbounded preceding), " + "first_value(j) over (order by i, j rows unbounded preceding), " + "from tab", """
+                    CachedWindow
+                      orderedFunctions: [[i, j] => [avg(j) over (rows between unbounded preceding and current row),\
+                    sum(j) over (rows between unbounded preceding and current row),first_value(j) over ()]]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: tab
+                    """);
+
+            assertPlanNoLeakCheck("select ts, i, j, " + "avg(j) over (partition by i order by ts rows between 1 preceding and current row), " + "sum(j) over (partition by i order by ts rows between 1 preceding and current row), " + "first_value(j) over (partition by i order by ts rows between 1 preceding and current row) " + "from tab", """
+                    Window
+                      functions: [avg(j) over (partition by [i] rows between 1 preceding and current row),\
+                    sum(j) over (partition by [i] rows between 1 preceding and current row),first_value(j) over (partition by [i] rows between 1 preceding and current row)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: tab
+                    """);
+
+            assertPlanNoLeakCheck("select row_number() over (partition by i order by i desc, j asc), " + "avg(j) over (partition by i order by j, i desc rows unbounded preceding), " + "sum(j) over (partition by i order by j, i desc rows unbounded preceding), " + "first_value(j) over (partition by i order by j, i desc rows unbounded preceding) " + "from tab " + "order by ts desc", """
+                    SelectedRecord
+                        CachedWindow
+                          orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])],\
+                    [j, i desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row),\
+                    sum(j) over (partition by [i] rows between unbounded preceding and current row),\
+                    first_value(j) over (partition by [i] rows between unbounded preceding and current row)]]
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: tab
+                    """);
+
+            assertPlanNoLeakCheck("select row_number() over (partition by i order by i desc, j asc), " + "        avg(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " + "        sum(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " + "        first_value(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " + "        rank() over (partition by j, i) " + "from tab order by ts desc", """
+                    SelectedRecord
+                        CachedWindow
+                          orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j] rows between unbounded preceding and current row),\
+                    sum(j) over (partition by [i,j] rows between unbounded preceding and current row),\
+                    first_value(j) over (partition by [i,j] rows between unbounded preceding and current row)]]
+                          unorderedFunctions: [rank() over (partition by [j,i])]
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: tab
+                    """);
+        });
+    }
+
+    @Test
+    public void testWindowJoinAndOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
+
             assertPlanNoLeakCheck(
-                    "select ts, i, j, " +
-                            "avg(j) over (order by i, j rows unbounded preceding), " +
-                            "sum(j) over (order by i, j rows unbounded preceding), " +
-                            "first_value(j) over (order by i, j rows unbounded preceding), " +
-                            "from tab",
+                    "select x1.a, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by x1.a",
                     """
-                            CachedWindow
-                              orderedFunctions: [[i, j] => [avg(j) over (rows between unbounded preceding and current row),\
-                            sum(j) over (rows between unbounded preceding and current row),first_value(j) over ()]]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                            Sort
+                              keys: [a]
+                                Async Window Join workers: 1
+                                  vectorized: false
+                                  window lo: 1000000 preceding (include prevailing)
+                                  window hi: 2000000 following
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """
             );
 
             assertPlanNoLeakCheck(
-                    "select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "sum(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts rows between 1 preceding and current row) " +
-                            "from tab",
-                    """
-                            Window
-                              functions: [avg(j) over (partition by [i] rows between 1 preceding and current row),\
-                            sum(j) over (partition by [i] rows between 1 preceding and current row),first_value(j) over (partition by [i] rows between 1 preceding and current row)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select row_number() over (partition by i order by i desc, j asc), " +
-                            "avg(j) over (partition by i order by j, i desc rows unbounded preceding), " +
-                            "sum(j) over (partition by i order by j, i desc rows unbounded preceding), " +
-                            "first_value(j) over (partition by i order by j, i desc rows unbounded preceding) " +
-                            "from tab " +
-                            "order by ts desc",
+                    "select x1.a, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a",
                     """
                             SelectedRecord
-                                CachedWindow
-                                  orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])],\
-                            [j, i desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row),\
-                            sum(j) over (partition by [i] rows between unbounded preceding and current row),\
-                            first_value(j) over (partition by [i] rows between unbounded preceding and current row)]]
-                                    PageFrame
-                                        Row backward scan
-                                        Frame backward scan on: tab
+                                Sort
+                                  keys: [column]
+                                    VirtualRecord
+                                      functions: [a,sum,10*a]
+                                        Async Window Join workers: 1
+                                          vectorized: false
+                                          window lo: 1000000 preceding (include prevailing)
+                                          window hi: 2000000 following
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                             """
             );
 
             assertPlanNoLeakCheck(
-                    "select row_number() over (partition by i order by i desc, j asc), " +
-                            "        avg(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " +
-                            "        sum(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " +
-                            "        first_value(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " +
-                            "        rank() over (partition by j, i) " +
-                            "from tab order by ts desc",
+                    "select x1.a, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 1 desc",
+                    """
+                            Sort
+                              keys: [a desc]
+                                Async Window Join workers: 1
+                                  vectorized: false
+                                  window lo: 1000000 preceding (include prevailing)
+                                  window hi: 2000000 following
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                            """
+            );
+
+            assertPlanNoLeakCheck(
+                    "select 10*x1.a as a10, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by a10",
+                    """
+                            Sort
+                              keys: [a10]
+                                VirtualRecord
+                                  functions: [10*a,sum]
+                                    Async Window Join workers: 1
+                                      vectorized: false
+                                      window lo: 1000000 preceding (include prevailing)
+                                      window hi: 2000000 following
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+
+            assertPlanNoLeakCheck(
+                    "select x1.a as a0, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a desc, 1 asc",
                     """
                             SelectedRecord
-                                CachedWindow
-                                  orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j] rows between unbounded preceding and current row),\
-                            sum(j) over (partition by [i,j] rows between unbounded preceding and current row),\
-                            first_value(j) over (partition by [i,j] rows between unbounded preceding and current row)]]
-                                  unorderedFunctions: [rank() over (partition by [j,i])]
-                                    PageFrame
-                                        Row backward scan
-                                        Frame backward scan on: tab
+                                Sort
+                                  keys: [column desc, a0]
+                                    VirtualRecord
+                                      functions: [a0,sum,10*a0]
+                                        Async Window Join workers: 1
+                                          vectorized: false
+                                          window lo: 1000000 preceding (include prevailing)
+                                          window hi: 2000000 following
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                            """
+            );
+
+            assertPlanNoLeakCheck(
+                    "select x1.a as a0, sum(x1.b), x1.ts from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a desc, 1 asc",
+                    """
+                            SelectedRecord
+                                Sort
+                                  keys: [column desc, a0]
+                                    VirtualRecord
+                                      functions: [a0,sum,ts,10*a0]
+                                        Async Window Join workers: 1
+                                          vectorized: false
+                                          window lo: 1000000 preceding (include prevailing)
+                                          window hi: 2000000 following
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                            """
+            );
+
+            assertPlanNoLeakCheck(
+                    "select x1.ts, to_utc(x1.ts, 'Europe/Berlin') berlin_ts, x1.a as a0, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a desc, 3 asc, berlin_ts desc",
+                    """
+                            SelectedRecord
+                                Sort
+                                  keys: [column desc, sum, berlin_ts desc]
+                                    VirtualRecord
+                                      functions: [ts,to_utc(ts),a0,sum,10*a0]
+                                        Async Window Join workers: 1
+                                          vectorized: false
+                                          window lo: 1000000 preceding (include prevailing)
+                                          window hi: 2000000 following
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                             """
             );
         });
@@ -12838,75 +10220,60 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
-            assertPlanNoLeakCheck(
-                    """
-                            select sum(avg), sum(sum), sum(first_value) from (
-                            select ts, hostname, usage_system, \
-                            avg(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) avg, \
-                            sum(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) sum, \
-                            first_value(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) first_value \
-                            from cpu_ts \
-                            order by ts desc
-                            )\s""",
-                    """
-                            GroupBy vectorized: false
-                              values: [sum(avg),sum(sum),sum(first_value)]
-                                Window
-                                  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                                    PageFrame
-                                        Row backward scan
-                                        Frame backward scan on: cpu_ts
-                            """
-            );
+            assertPlanNoLeakCheck("""
+                    select sum(avg), sum(sum), sum(first_value) from (
+                    select ts, hostname, usage_system, \
+                    avg(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) avg, \
+                    sum(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) sum, \
+                    first_value(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) first_value \
+                    from cpu_ts \
+                    order by ts desc
+                    )\s""", """
+                    GroupBy vectorized: false
+                      values: [sum(avg),sum(sum),sum(first_value)]
+                        Window
+                          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: cpu_ts
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select sum(avg), sum(sum), sum(first_value) from (\n" +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
-                            "from cpu_ts " +
-                            ") ",
-                    """
-                            GroupBy vectorized: false
-                              values: [sum(avg),sum(sum),sum(first_value)]
-                                Window
-                                  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: cpu_ts
-                            """
-            );
+            assertPlanNoLeakCheck("select sum(avg), sum(sum), sum(first_value) from (\n" + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from cpu_ts " + ") ", """
+                    GroupBy vectorized: false
+                      values: [sum(avg),sum(sum),sum(first_value)]
+                        Window
+                          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: cpu_ts
+                    """);
 
-            assertPlanNoLeakCheck(
-                    """
-                            select sum(avg), sum(sum) sm, sum(first_value) fst from (
-                            select ts, hostname, usage_system, \
-                            avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, \
-                            sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, \
-                            first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value \
-                            from cpu_ts \
-                            order by ts asc
-                            ) order by sm\s""",
-                    """
-                            Sort
-                              keys: [sm]
-                                GroupBy vectorized: false
-                                  values: [sum(avg),sum(sum),sum(first_value)]
-                                    Window
-                                      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)\
-                            ]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: cpu_ts
-                            """
-            );
+            assertPlanNoLeakCheck("""
+                    select sum(avg), sum(sum) sm, sum(first_value) fst from (
+                    select ts, hostname, usage_system, \
+                    avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, \
+                    sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, \
+                    first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value \
+                    from cpu_ts \
+                    order by ts asc
+                    ) order by sm\s""", """
+                    Sort
+                      keys: [sm]
+                        GroupBy vectorized: false
+                          values: [sum(avg),sum(sum),sum(first_value)]
+                            Window
+                              functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)\
+                    ]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: cpu_ts
+                    """);
         });
     }
 
@@ -12915,49 +10282,29 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
-            assertPlanNoLeakCheck(
-                    "select sum(avg), sum(sum), first(first_value) from ( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
-                            "from cpu_ts " +
-                            "order by ts desc" +
-                            ") ",
-                    """
-                            GroupBy vectorized: false
-                              values: [sum(avg),sum(sum),first(first_value)]
-                                Window
-                                  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                                    PageFrame
-                                        Row backward scan
-                                        Frame backward scan on: cpu_ts
-                            """
-            );
+            assertPlanNoLeakCheck("select sum(avg), sum(sum), first(first_value) from ( " + "select ts, hostname, usage_system, " + "avg(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from cpu_ts " + "order by ts desc" + ") ", """
+                    GroupBy vectorized: false
+                      values: [sum(avg),sum(sum),first(first_value)]
+                        Window
+                          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: cpu_ts
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select sum(avg), sum(sum), first(first_value) from ( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
-                            "from (select * from cpu_ts order by ts desc) " +
-                            ") order by 1 desc",
+            assertPlanNoLeakCheck("select sum(avg), sum(sum), first(first_value) from ( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + ") order by 1 desc", """
+                    Sort
+                      keys: [sum desc]
+                        GroupBy vectorized: false
+                          values: [sum(avg),sum(sum),first(first_value)]
+                            Window
+                              functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                                PageFrame
+                                    Row backward scan
+                                    Frame backward scan on: cpu_ts
                     """
-                            Sort
-                              keys: [sum desc]
-                                GroupBy vectorized: false
-                                  values: [sum(avg),sum(sum),first(first_value)]
-                                    Window
-                                      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                                        PageFrame
-                                            Row backward scan
-                                            Frame backward scan on: cpu_ts
-                            """
             );
 
             assertPlanNoLeakCheck(
@@ -12978,8 +10325,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: cpu_ts
-                            """
-            );
+                            """);
         });
     }
 
@@ -12989,233 +10335,127 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value, " +
-                            "from cpu_ts " +
-                            "order by ts desc " +
-                            ") order by ts asc",
-                    """
-                            Sort
-                              keys: [ts]
-                                Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0
-                                    Window
-                                      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                                        PageFrame
-                                            Row backward scan
-                                            Frame backward scan on: cpu_ts
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
-                            "from cpu_ts " +
-                            "order by ts asc " +
-                            ") order by ts desc",
-                    """
-                            Sort
-                              keys: [ts desc]
-                                Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0
-                                    Window
-                                      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: cpu_ts
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
-                            "from cpu_ts " +
-                            "order by ts asc " +
-                            ") order by hostname",
-                    """
-                            Sort
-                              keys: [hostname]
-                                Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0
-                                    Window
-                                      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: cpu_ts
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
-                            "from (select * from cpu_ts order by ts desc) " +
-                            ") order by ts asc ",
-                    """
-                            CachedWindow
-                              orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: cpu_ts
-                            """
-            );
-
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
-                            "from (select * from cpu_ts order by ts asc) " +
-                            ") order by ts desc ",
-                    """
-                            CachedWindow
-                              orderedFunctions: [[ts] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]
+            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value, " + "from cpu_ts " + "order by ts desc " + ") order by ts asc", """
+                    Sort
+                      keys: [ts]
+                        Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
+                            Window
+                              functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
                                 PageFrame
                                     Row backward scan
                                     Frame backward scan on: cpu_ts
-                            """
-            );
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
-                            "from (select * from cpu_ts order by ts asc) " +
-                            ") order by hostname ",
-                    """
-                            Sort
-                              keys: [hostname]
-                                Window
-                                  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: cpu_ts
-                            """
-            );
+            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from cpu_ts " + "order by ts asc " + ") order by ts desc", """
+                    Sort
+                      keys: [ts desc]
+                        Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
+                            Window
+                              functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: cpu_ts
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
-                            "from (select * from cpu_ts order by ts desc) " +
-                            ") order by hostname ",
-                    """
-                            Sort
-                              keys: [hostname]
-                                Window
-                                  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: cpu_ts
-                            """
-            );
+            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from cpu_ts " + "order by ts asc " + ") order by hostname", """
+                    Sort
+                      keys: [hostname]
+                        Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
+                            Window
+                              functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: cpu_ts
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
-                            "from (select * from cpu_ts order by ts asc) " +
-                            "order by ts desc " +
-                            ") order by ts asc ",
-                    """
-                            Sort
-                              keys: [ts]
-                                Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0
-                                    Window
-                                      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                                        PageFrame
-                                            Row backward scan
-                                            Frame backward scan on: cpu_ts
-                            """
-            );
+            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + ") order by ts asc ", """
+                    CachedWindow
+                      orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: cpu_ts
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
-                            "from (select * from cpu_ts order by ts desc) " +
-                            "order by ts asc " +
-                            ") order by ts desc ",
-                    """
-                            Sort
-                              keys: [ts desc]
-                                Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0
-                                    Window
-                                      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: cpu_ts
-                            """
-            );
+            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts asc) " + ") order by ts desc ", """
+                    CachedWindow
+                      orderedFunctions: [[ts] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]
+                        PageFrame
+                            Row backward scan
+                            Frame backward scan on: cpu_ts
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
-                            "from (select * from cpu_ts order by ts desc ) " +
-                            "order by ts asc " +
-                            ") order by hostname ",
-                    """
-                            Sort
-                              keys: [hostname]
-                                Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0
-                                    Window
-                                      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: cpu_ts
-                            """
-            );
+            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts asc) " + ") order by hostname ", """
+                    Sort
+                      keys: [hostname]
+                        Window
+                          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: cpu_ts
+                    """);
+
+            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + ") order by hostname ", """
+                    Sort
+                      keys: [hostname]
+                        Window
+                          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: cpu_ts
+                    """);
+
+            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts asc) " + "order by ts desc " + ") order by ts asc ", """
+                    Sort
+                      keys: [ts]
+                        Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
+                            Window
+                              functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                                PageFrame
+                                    Row backward scan
+                                    Frame backward scan on: cpu_ts
+                    """);
+
+            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + "order by ts asc " + ") order by ts desc ", """
+                    Sort
+                      keys: [ts desc]
+                        Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
+                            Window
+                              functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: cpu_ts
+                    """);
+
+            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc ) " + "order by ts asc " + ") order by hostname ", """
+                    Sort
+                      keys: [hostname]
+                        Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
+                            Window
+                              functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: cpu_ts
+                    """);
         });
     }
 
@@ -13234,91 +10474,28 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: cpu_ts
                     """;
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
-                            "from cpu_ts " +
-                            ") order by ts asc",
-                    expectedForwardPlan
-            );
+            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from cpu_ts " + ") order by ts asc", expectedForwardPlan);
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value, " +
-                            "from (select * from cpu_ts order by ts asc) " +
-                            ") order by ts asc",
-                    expectedForwardPlan
-            );
+            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value, " + "from (select * from cpu_ts order by ts asc) " + ") order by ts asc", expectedForwardPlan);
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
-                            "from (select * from cpu_ts order by ts desc) " +
-                            ") order by ts asc",
-                    expectedForwardPlan
-            );
+            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + ") order by ts asc", expectedForwardPlan);
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
-                            "from (select * from cpu_ts order by hostname) " +
-                            ") order by ts asc",
-                    expectedForwardPlan
-            );
+            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by hostname) " + ") order by ts asc", expectedForwardPlan);
 
-            String expectedForwardLimitPlan =
-                    """
-                            Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0
-                                Window
-                                  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: cpu_ts
-                            """;
+            String expectedForwardLimitPlan = """
+                    Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
+                        Window
+                          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: cpu_ts
+                    """;
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
-                            "from cpu_ts " +
-                            "order by ts asc  " +
-                            ") order by ts asc",
-                    expectedForwardLimitPlan
-            );
+            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from cpu_ts " + "order by ts asc  " + ") order by ts asc", expectedForwardLimitPlan);
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " +
-                            "from (select * from cpu_ts order by ts asc) " +
-                            "order by ts asc  " +
-                            ") order by ts asc",
-                    expectedForwardLimitPlan
-            );
+            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts asc) " + "order by ts asc  " + ") order by ts asc", expectedForwardLimitPlan);
 
             String expectedBackwardPlan = """
                     Window
@@ -13329,56 +10506,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Row backward scan
                             Frame backward scan on: cpu_ts
                     """;
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
-                            "from cpu_ts " +
-                            ") order by ts desc",
-                    expectedBackwardPlan
-            );
+            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from cpu_ts " + ") order by ts desc", expectedBackwardPlan);
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
-                            "from (select * from cpu_ts order by ts desc) " +
-                            ") order by ts desc",
-                    expectedBackwardPlan
-            );
+            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + ") order by ts desc", expectedBackwardPlan);
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
-                            "from (select * from cpu_ts order by ts asc) " +
-                            ") order by ts desc",
-                    expectedBackwardPlan
-            );
+            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts asc) " + ") order by ts desc", expectedBackwardPlan);
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
-                            "from (select * from cpu_ts order by hostname) " +
-                            ") order by ts desc",
-                    expectedBackwardPlan
-            );
+            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by hostname) " + ") order by ts desc", expectedBackwardPlan);
 
             String expectedBackwardLimitPlan = """
-                    Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0
+                    Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
                         Window
                           functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
                     sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
@@ -13388,75 +10525,36 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame backward scan on: cpu_ts
                     """;
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
-                            "from cpu_ts " +
-                            "order by ts desc  " +
-                            ") order by ts desc",
-                    expectedBackwardLimitPlan
-            );
+            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from cpu_ts " + "order by ts desc  " + ") order by ts desc", expectedBackwardLimitPlan);
 
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "( " +
-                            "select ts, hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
-                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
-                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
-                            "from (select * from cpu_ts order by ts desc) " +
-                            "order by ts desc  " +
-                            ") order by ts desc",
-                    expectedBackwardLimitPlan
-            );
+            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + "order by ts desc  " + ") order by ts desc", expectedBackwardLimitPlan);
         });
     }
 
     @Test
     public void testWindowRecordCursorFactoryWithLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x as ( " +
-                    "  select " +
-                    "    cast(x as int) i, " +
-                    "    rnd_symbol('a','b','c') sym, " +
-                    "    timestamp_sequence(0, 100000000) ts " +
-                    "   from long_sequence(100)" +
-                    ") timestamp(ts) partition by hour");
+            execute("create table x as ( " + "  select " + "    cast(x as int) i, " + "    rnd_symbol('a','b','c') sym, " + "    timestamp_sequence(0, 100000000) ts " + "   from long_sequence(100)" + ") timestamp(ts) partition by hour");
 
-            String sql = "select i, " +
-                    "row_number() over (partition by sym), " +
-                    "avg(i) over (partition by i rows unbounded preceding), " +
-                    "sum(i) over (partition by i rows unbounded preceding), " +
-                    "first_value(i) over (partition by i rows unbounded preceding) " +
-                    "from x limit 3";
-            assertPlanNoLeakCheck(
-                    sql,
-                    """
-                            Limit lo: 3 skip-over-rows: 0 limit: 3
-                                Window
-                                  functions: [row_number() over (partition by [sym]),\
-                            avg(i) over (partition by [i] rows between unbounded preceding and current row),\
-                            sum(i) over (partition by [i] rows between unbounded preceding and current row),\
-                            first_value(i) over (partition by [i] rows between unbounded preceding and current row)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: x
-                            """
-            );
+            String sql = "select i, " + "row_number() over (partition by sym), " + "avg(i) over (partition by i rows unbounded preceding), " + "sum(i) over (partition by i rows unbounded preceding), " + "first_value(i) over (partition by i rows unbounded preceding) " + "from x limit 3";
+            assertPlanNoLeakCheck(sql, """
+                    Limit value: 3 skip-rows: 0 take-rows: 3
+                        Window
+                          functions: [row_number() over (partition by [sym]),\
+                    avg(i) over (partition by [i] rows between unbounded preceding and current row),\
+                    sum(i) over (partition by [i] rows between unbounded preceding and current row),\
+                    first_value(i) over (partition by [i] rows between unbounded preceding and current row)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: x
+                    """);
 
-            assertSql(
-                    """
-                            i\trow_number\tavg\tsum\tfirst_value
-                            1\t1\t1.0\t1.0\t1
-                            2\t2\t2.0\t2.0\t2
-                            3\t1\t3.0\t3.0\t3
-                            """,
-                    sql
-            );
+            assertSql("""
+                    i\trow_number\tavg\tsum\tfirst_value
+                    1\t1\t1.0\t1.0\t1
+                    2\t2\t2.0\t2.0\t2
+                    3\t1\t3.0\t3.0\t3
+                    """, sql);
         });
     }
 
@@ -13534,10 +10632,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         if (factory instanceof NegatingFunctionFactory) {
             return isIPv4StrFactory(((NegatingFunctionFactory) factory).getDelegate());
         }
-        return factory instanceof EqIPv4FunctionFactory
-                || factory instanceof EqIPv4StrFunctionFactory
-                || factory instanceof LtIPv4StrFunctionFactory
-                || factory instanceof LtStrIPv4FunctionFactory;
+        return factory instanceof EqIPv4FunctionFactory || factory instanceof EqIPv4StrFunctionFactory || factory instanceof LtIPv4StrFunctionFactory || factory instanceof LtStrIPv4FunctionFactory;
     }
 
     private static boolean isLong256StrFactory(FunctionFactory factory) {
@@ -13551,14 +10646,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     private void assertBindVarPlan(String type) throws SqlException {
-        assertPlanNoLeakCheck(
-                "select * from t where x = :v1 ",
-                "Async Filter workers: 1\n" +
-                        "  filter: x=:v1::" + type + "\n" +
-                        "    PageFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: t\n"
-        );
+        assertPlanNoLeakCheck("select * from t where x = :v1 ", "Async Filter workers: 1\n" + "  filter: x=:v1::" + type + "\n" + "    PageFrame\n" + "        Row forward scan\n" + "        Frame forward scan on: t\n");
     }
 
     private void assertNotSupportedByExplain(String sql, SqlExecutionContextImpl sqlExecutionContext) {
@@ -13679,75 +10767,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         execute("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
 
         String asofJoinType = isFastAsOfJoin ? " Fast" : (isLight ? "Light" : "");
-        assertPlanNoLeakCheck(
-                compiler,
-                "select * " +
-                        "from taba " +
-                        "left join tabb on a1=b1 " +
-                        "asof join tabc on b1=c1",
-                "SelectedRecord\n" +
-                        "    AsOf Join" + asofJoinType + "\n" +
-                        "      condition: c1=b1\n" +
-                        "        Hash Left Outer Join" + (isLight ? " Light" : "") + "\n" +
-                        "          condition: b1=a1\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: taba\n" +
-                        "            Hash\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: tabb\n" +
-                        "        PageFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: tabc\n",
-                sqlExecutionContext
-        );
-        assertPlanNoLeakCheck(
-                compiler,
-                "select * " +
-                        "from taba " +
-                        "asof join tabb on a1=b1 " +
-                        "right join tabc on b1=c1",
-                "SelectedRecord\n" +
-                        "    Hash Right Outer Join" + (isLight ? " Light" : "") + "\n" +
-                        "      condition: c1=b1\n" +
-                        "        AsOf Join" + asofJoinType + "\n" +
-                        "          condition: b1=a1\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: taba\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: tabb\n" +
-                        "        Hash\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: tabc\n",
-                sqlExecutionContext
-        );
-        assertPlanNoLeakCheck(
-                compiler,
-                "select * " +
-                        "from taba " +
-                        "asof join tabb on a1=b1 " +
-                        "full join tabc on b1=c1",
-                "SelectedRecord\n" +
-                        "    Hash Full Outer Join" + (isLight ? " Light" : "") + "\n" +
-                        "      condition: c1=b1\n" +
-                        "        AsOf Join" + asofJoinType + "\n" +
-                        "          condition: b1=a1\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: taba\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: tabb\n" +
-                        "        Hash\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: tabc\n",
-                sqlExecutionContext
-        );
+        assertPlanNoLeakCheck(compiler, "select * " + "from taba " + "left join tabb on a1=b1 " + "asof join tabc on b1=c1", "SelectedRecord\n" + "    AsOf Join" + asofJoinType + "\n" + "      condition: c1=b1\n" + "        Hash Left Outer Join" + (isLight ? " Light" : "") + "\n" + "          condition: b1=a1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: tabc\n", sqlExecutionContext);
+        assertPlanNoLeakCheck(compiler, "select * " + "from taba " + "asof join tabb on a1=b1 " + "right join tabc on b1=c1", "SelectedRecord\n" + "    Hash Right Outer Join" + (isLight ? " Light" : "") + "\n" + "      condition: c1=b1\n" + "        AsOf Join" + asofJoinType + "\n" + "          condition: b1=a1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabc\n", sqlExecutionContext);
+        assertPlanNoLeakCheck(compiler, "select * " + "from taba " + "asof join tabb on a1=b1 " + "full join tabc on b1=c1", "SelectedRecord\n" + "    Hash Full Outer Join" + (isLight ? " Light" : "") + "\n" + "      condition: c1=b1\n" + "        AsOf Join" + asofJoinType + "\n" + "          condition: b1=a1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabc\n", sqlExecutionContext);
     }
 
     private void testSelectIndexedSymbol(String timestampAndPartitionByClause) throws Exception {
@@ -13762,50 +10784,44 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
         // even though plan shows cursors in S1, S2 order, FilterOnValues sorts them before query execution
         // actual order is S2, S1
-        assertPlanNoLeakCheck(
-                query,
-                """
-                        Limit lo: 5 skip-over-rows: 0 limit: 3
-                            FilterOnValues symbolOrder: desc
-                                Cursor-order scan
-                                    Index forward scan on: s deferred: true
-                                      filter: s=:s2::string
-                                    Index forward scan on: s deferred: true
-                                      filter: s=:s1::string
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlanNoLeakCheck(query, """
+                Limit value: 5 skip-rows-max: 0 take-rows-max: 5
+                    FilterOnValues symbolOrder: desc
+                        Cursor-order scan
+                            Index forward scan on: s deferred: true
+                              filter: s=:s2::string
+                            Index forward scan on: s deferred: true
+                              filter: s=:s1::string
+                        Frame forward scan on: a
+                """);
 
         assertQueryNoLeakCheck("""
                 s\tts
                 S2\t1970-01-01T00:00:00.000000Z
                 S2\t1970-01-01T01:00:00.000003Z
                 S1\t1970-01-01T00:00:00.000001Z
-                """, query, null, true, true);
+                """, query, null, true, false);
 
         //order by asc
         query = "select * from a where s in (:s1, :s2) order by s asc limit 5";
 
-        assertPlanNoLeakCheck(
-                query,
-                """
-                        Limit lo: 5 skip-over-rows: 0 limit: 3
-                            FilterOnValues symbolOrder: asc
-                                Cursor-order scan
-                                    Index forward scan on: s deferred: true
-                                      filter: s=:s1::string
-                                    Index forward scan on: s deferred: true
-                                      filter: s=:s2::string
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlanNoLeakCheck(query, """
+                Limit value: 5 skip-rows-max: 0 take-rows-max: 5
+                    FilterOnValues symbolOrder: asc
+                        Cursor-order scan
+                            Index forward scan on: s deferred: true
+                              filter: s=:s1::string
+                            Index forward scan on: s deferred: true
+                              filter: s=:s2::string
+                        Frame forward scan on: a
+                """);
 
         assertQueryNoLeakCheck("""
                 s\tts
                 S1\t1970-01-01T00:00:00.000001Z
                 S2\t1970-01-01T00:00:00.000000Z
                 S2\t1970-01-01T01:00:00.000003Z
-                """, query, null, true, true);
+                """, query, null, true, false);
     }
 
     @SuppressWarnings("SameParameterValue")
@@ -13821,52 +10837,46 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
         // even though plan shows cursors in S1, S2 order, FilterOnValues sorts them before query execution
         // actual order is S2, S1
-        assertPlanNoLeakCheck(
-                query,
-                """
-                        Limit lo: 5 skip-over-rows: 0 limit: 3
-                            FilterOnValues symbolOrder: desc
-                                Cursor-order scan
-                                    Index forward scan on: s deferred: true
-                                      filter: s=:s2::string
-                                    Index forward scan on: s deferred: true
-                                      filter: s=:s1::string
-                                Interval forward scan on: a
-                                  intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T23:59:59.999999Z")]
-                        """
-        );
+        assertPlanNoLeakCheck(query, """
+                Limit value: 5 skip-rows-max: 0 take-rows-max: 5
+                    FilterOnValues symbolOrder: desc
+                        Cursor-order scan
+                            Index forward scan on: s deferred: true
+                              filter: s=:s2::string
+                            Index forward scan on: s deferred: true
+                              filter: s=:s1::string
+                        Interval forward scan on: a
+                          intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T23:59:59.999999Z")]
+                """);
 
         assertQueryNoLeakCheck("""
                 s\tts
                 S2\t1970-01-01T00:00:00.000000Z
                 S2\t1970-01-01T01:00:00.000003Z
                 S1\t1970-01-01T00:00:00.000001Z
-                """, query, null, true, true);
+                """, query, null, true, false);
 
         //order by asc
         query = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s asc limit 5";
 
-        assertPlanNoLeakCheck(
-                query,
-                """
-                        Limit lo: 5 skip-over-rows: 0 limit: 3
-                            FilterOnValues symbolOrder: asc
-                                Cursor-order scan
-                                    Index forward scan on: s deferred: true
-                                      filter: s=:s1::string
-                                    Index forward scan on: s deferred: true
-                                      filter: s=:s2::string
-                                Interval forward scan on: a
-                                  intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T23:59:59.999999Z")]
-                        """
-        );
+        assertPlanNoLeakCheck(query, """
+                Limit value: 5 skip-rows-max: 0 take-rows-max: 5
+                    FilterOnValues symbolOrder: asc
+                        Cursor-order scan
+                            Index forward scan on: s deferred: true
+                              filter: s=:s1::string
+                            Index forward scan on: s deferred: true
+                              filter: s=:s2::string
+                        Interval forward scan on: a
+                          intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T23:59:59.999999Z")]
+                """);
 
         assertQueryNoLeakCheck("""
                 s\tts
                 S1\t1970-01-01T00:00:00.000001Z
                 S2\t1970-01-01T00:00:00.000000Z
                 S2\t1970-01-01T01:00:00.000003Z
-                """, query, null, true, true);
+                """, query, null, true, false);
     }
 
     private void testSelectIndexedSymbols10WithOrder(String partitionByClause) throws Exception {
@@ -13879,42 +10889,36 @@ public class ExplainPlanTest extends AbstractCairoTest {
         bindVariableService.setStr("s2", "S2");
 
         String queryAsc = "select * from a where s in (:s2, :s1) order by ts asc limit 5";
-        assertPlanNoLeakCheck(
-                queryAsc,
-                """
-                        Limit lo: 5 skip-over-rows: 0 limit: 4
-                            FilterOnValues
-                                Table-order scan
-                                    Index forward scan on: s deferred: true
-                                      filter: s=:s1::string
-                                    Index forward scan on: s deferred: true
-                                      filter: s=:s2::string
-                                Frame forward scan on: a
-                        """
-        );
+        assertPlanNoLeakCheck(queryAsc, """
+                Limit value: 5 skip-rows-max: 0 take-rows-max: 5
+                    FilterOnValues
+                        Table-order scan
+                            Index forward scan on: s deferred: true
+                              filter: s=:s1::string
+                            Index forward scan on: s deferred: true
+                              filter: s=:s2::string
+                        Frame forward scan on: a
+                """);
         assertQueryNoLeakCheck("""
                 s\tts
                 S2\t1970-01-01T00:00:00.000001Z
                 S1\t1970-01-01T01:00:00.000003Z
                 S2\t1970-01-01T01:00:00.000004Z
                 S1\t1970-01-01T01:00:00.000005Z
-                """, queryAsc, "ts", true, true);
+                """, queryAsc, "ts", true, false);
 
         String queryDesc = "select * from a where s in (:s2, :s1) order by ts desc limit 5";
-        assertPlanNoLeakCheck(
-                queryDesc,
-                """
-                        Sort light lo: 5
-                          keys: [ts desc]
-                            FilterOnValues symbolOrder: desc
-                                Cursor-order scan
-                                    Index forward scan on: s deferred: true
-                                      filter: s=:s2::string
-                                    Index forward scan on: s deferred: true
-                                      filter: s=:s1::string
-                                Frame backward scan on: a
-                        """
-        );
+        assertPlanNoLeakCheck(queryDesc, """
+                Sort light lo: 5
+                  keys: [ts desc]
+                    FilterOnValues symbolOrder: desc
+                        Cursor-order scan
+                            Index forward scan on: s deferred: true
+                              filter: s=:s2::string
+                            Index forward scan on: s deferred: true
+                              filter: s=:s1::string
+                        Frame backward scan on: a
+                """);
         assertQueryNoLeakCheck("""
                 s\tts
                 S1\t1970-01-01T01:00:00.000005Z

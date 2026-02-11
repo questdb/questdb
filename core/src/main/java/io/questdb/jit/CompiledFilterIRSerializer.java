@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -58,6 +58,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
@@ -74,8 +75,11 @@ import java.util.Arrays;
 public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
     public static final int ADD = 14; // a + b
     public static final int AND = 6;  // a && b
+    public static final int AND_SC = 18; // short-circuit AND: if false, jump to label[payload] (0 = next_row)
+    public static final int BEGIN_SC = 20; // create label at index payload
     public static final int BINARY_HEADER_TYPE = 8;
     public static final int DIV = 17; // a / b
+    public static final int END_SC = 21;   // bind label at index payload
     public static final int EQ = 8;   // a == b
     public static final int F4_TYPE = 3;
     public static final int F8_TYPE = 5;
@@ -100,6 +104,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     public static final int NEG = 4;  // -a
     public static final int NOT = 5;  // !a
     public static final int OR = 7;   // a || b
+    public static final int OR_SC = 19;  // short-circuit OR: if true, jump to label[payload] (0 = next_row)
     // Opcodes:
     // Return code. Breaks the loop
     public static final int RET = 0;  // ret
@@ -110,10 +115,30 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     public static final int VARCHAR_HEADER_TYPE = 9;
     // Stub value for opcodes and options
     static final int UNDEFINED_CODE = -1;
+    private static final int EXEC_HINT_MIXED_SIZE_TYPE = 2;
+    private static final int EXEC_HINT_SCALAR = 0;
+    private static final int EXEC_HINT_SINGLE_SIZE_TYPE = 1;
     private static final int INSTRUCTION_SIZE = Integer.BYTES + Integer.BYTES + Long.BYTES + Long.BYTES;
+    // Maximum number of labels supported by the backend (must match LabelArray::MAX_LABELS in x86.h)
+    private static final int MAX_LABELS = 8;
+    // Predicate priority for short-circuit evaluation
+    private static final int PRIORITY_I16_EQ = 0;  // highest priority
+    private static final int PRIORITY_I16_NEQ = 10; // lowest priority
+    private static final int PRIORITY_I4_EQ = 2;
+    private static final int PRIORITY_I4_NEQ = 8;
+    private static final int PRIORITY_I8_EQ = 1;
+    private static final int PRIORITY_I8_NEQ = 9;
+    private static final int PRIORITY_OTHER = 5;
+    private static final int PRIORITY_OTHER_EQ = 4;
+    private static final int PRIORITY_OTHER_NEQ = 6;
+    private static final int PRIORITY_SYM_EQ = 3;
+    private static final int PRIORITY_SYM_NEQ = 7;
     // contains <memory_offset, constant_node> pairs for backfilling purposes
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
+    // List to collect predicates from AND chains for reordering
+    private final ObjList<ExpressionNode> collectedPredicates = new ObjList<>();
     private final PredicateContext predicateContext = new PredicateContext();
+    private final ScalarModeDetector scalarModeDetector = new ScalarModeDetector();
     private final StringSink sink = new StringSink();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final IntStack typeStack = new IntStack();
@@ -134,6 +159,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         forceScalarMode = false;
         predicateContext.clear();
         backfillNodes.clear();
+        collectedPredicates.clear();
     }
 
     @Override
@@ -182,10 +208,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     /**
      * Writes IR of the filter described by the given expression tree to memory.
      *
-     * @param node       filter expression tree's root node.
-     * @param scalar     set use only scalar instruction set execution hint in the returned options.
-     * @param debug      set enable the debug flag in the returned options.
-     * @param nullChecks a flag for JIT, allowing or disallowing generation of null check
+     * @param node        filter expression tree's root node.
+     * @param forceScalar set use only scalar instruction set execution hint in the returned options.
+     * @param debug       set enable the debug flag in the returned options.
+     * @param nullChecks  a flag for JIT, allowing or disallowing generation of null check
      * @return JIT compiler options stored in a single int in the following way:
      * <ul>
      * <li>1 LSB - debug flag</li>
@@ -201,27 +227,42 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * </ul>
      * @throws SqlException thrown when IR serialization failed.
      */
-    public int serialize(ExpressionNode node, boolean scalar, boolean debug, boolean nullChecks) throws SqlException {
+    public int serialize(ExpressionNode node, boolean forceScalar, boolean debug, boolean nullChecks) throws SqlException {
+        // Detect if scalar mode is guaranteed by checking for mixed column sizes.
+        // Short-circuit optimizations (including IN() short-circuit) only work correctly
+        // in scalar mode, so we only enable them when scalar mode is certain.
+        boolean scalarModeDetected = forceScalar;
+        if (!scalarModeDetected) {
+            scalarModeDetector.clear();
+            traverseAlgo.traverse(node, scalarModeDetector);
+            scalarModeDetected = scalarModeDetector.hasMixedSizes();
+        }
+
+        // Check if we can apply predicate reordering for short-circuit evaluation
+        if (scalarModeDetected) {
+            if (isPureAndChain(node)) {
+                collectedPredicates.clear();
+                collectAndPredicates(node, collectedPredicates);
+                if (collectedPredicates.size() > 1) {
+                    sortPredicatesByPriority(collectedPredicates);
+                    return serializePredicatesAndSc(collectedPredicates, forceScalar, debug, nullChecks);
+                }
+            } else if (isPureOrChain(node)) {
+                collectedPredicates.clear();
+                collectOrPredicates(node, collectedPredicates);
+                if (collectedPredicates.size() > 1) {
+                    sortPredicatesByInvertedPriority(collectedPredicates);
+                    return serializePredicatesOrSc(collectedPredicates, forceScalar, debug, nullChecks);
+                }
+            }
+        }
+
+        // Not a pure AND/OR chain or SIMD mode possible, use normal serialization
         traverseAlgo.traverse(node, this);
         putOperator(RET);
 
         ensureOnlyVarSizeHeaderChecks();
-        TypesObserver typesObserver = predicateContext.globalTypesObserver;
-        int options = debug ? 1 : 0;
-        int typeSize = typesObserver.maxSize();
-        if (typeSize > 0) {
-            // typeSize is 2^n, so the number of trailing zeros is equal to log2
-            int log2 = Integer.numberOfTrailingZeros(typeSize);
-            options = options | (log2 << 1);
-        }
-        if (!scalar && !forceScalarMode) {
-            int executionHint = typesObserver.hasMixedSizes() ? 2 : 1;
-            options = options | (executionHint << 4);
-        }
-
-        options = options | ((nullChecks ? 1 : 0) << 6);
-
-        return options;
+        return getOptions(forceScalar, debug, nullChecks);
     }
 
     @Override
@@ -270,73 +311,34 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private static byte bindVariableTypeCode(int columnTypeTag) {
-        switch (columnTypeTag) {
-            case ColumnType.BOOLEAN:
-            case ColumnType.BYTE:
-            case ColumnType.GEOBYTE:
-                return I1_TYPE;
-            case ColumnType.SHORT:
-            case ColumnType.GEOSHORT:
-            case ColumnType.CHAR:
-                return I2_TYPE;
-            case ColumnType.INT:
-            case ColumnType.IPv4:
-            case ColumnType.GEOINT:
-            case ColumnType.STRING: // symbol variables are represented with the string type
-                return I4_TYPE;
-            case ColumnType.FLOAT:
-                return F4_TYPE;
-            case ColumnType.LONG:
-            case ColumnType.GEOLONG:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-                return I8_TYPE;
-            case ColumnType.DOUBLE:
-                return F8_TYPE;
-            case ColumnType.LONG128:
-            case ColumnType.UUID:
-                return I16_TYPE;
-            default:
-                return UNDEFINED_CODE;
-        }
+        return switch (columnTypeTag) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE -> I1_TYPE;
+            case ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.CHAR -> I2_TYPE;
+            case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT,
+                 ColumnType.STRING -> // symbol variables are represented with the string type
+                    I4_TYPE;
+            case ColumnType.FLOAT -> F4_TYPE;
+            case ColumnType.LONG, ColumnType.GEOLONG, ColumnType.DATE, ColumnType.TIMESTAMP -> I8_TYPE;
+            case ColumnType.DOUBLE -> F8_TYPE;
+            case ColumnType.LONG128, ColumnType.UUID -> I16_TYPE;
+            default -> UNDEFINED_CODE;
+        };
     }
 
     private static int columnTypeCode(int columnTypeTag) {
-        switch (columnTypeTag) {
-            case ColumnType.BOOLEAN:
-            case ColumnType.BYTE:
-            case ColumnType.GEOBYTE:
-                return I1_TYPE;
-            case ColumnType.SHORT:
-            case ColumnType.GEOSHORT:
-            case ColumnType.CHAR:
-                return I2_TYPE;
-            case ColumnType.INT:
-            case ColumnType.IPv4:
-            case ColumnType.GEOINT:
-            case ColumnType.SYMBOL:
-                return I4_TYPE;
-            case ColumnType.FLOAT:
-                return F4_TYPE;
-            case ColumnType.LONG:
-            case ColumnType.GEOLONG:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-                return I8_TYPE;
-            case ColumnType.DOUBLE:
-                return F8_TYPE;
-            case ColumnType.LONG128:
-            case ColumnType.UUID:
-                return I16_TYPE;
-            case ColumnType.STRING:
-                return STRING_HEADER_TYPE;
-            case ColumnType.BINARY:
-                return BINARY_HEADER_TYPE;
-            case ColumnType.VARCHAR:
-                return VARCHAR_HEADER_TYPE;
-            default:
-                return UNDEFINED_CODE;
-        }
+        return switch (columnTypeTag) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE -> I1_TYPE;
+            case ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.CHAR -> I2_TYPE;
+            case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL -> I4_TYPE;
+            case ColumnType.FLOAT -> F4_TYPE;
+            case ColumnType.LONG, ColumnType.GEOLONG, ColumnType.DATE, ColumnType.TIMESTAMP -> I8_TYPE;
+            case ColumnType.DOUBLE -> F8_TYPE;
+            case ColumnType.LONG128, ColumnType.UUID -> I16_TYPE;
+            case ColumnType.STRING -> STRING_HEADER_TYPE;
+            case ColumnType.BINARY -> BINARY_HEADER_TYPE;
+            case ColumnType.VARCHAR -> VARCHAR_HEADER_TYPE;
+            default -> UNDEFINED_CODE;
+        };
     }
 
     private static boolean isArithmeticOperation(ExpressionNode node) {
@@ -357,31 +359,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private static boolean isGeoHash(int columnType) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.GEOBYTE:
-            case ColumnType.GEOSHORT:
-            case ColumnType.GEOINT:
-            case ColumnType.GEOLONG:
-                return true;
-            default:
-                return false;
-        }
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG -> true;
+            default -> false;
+        };
     }
 
     // Stands for PredicateType.NUMERIC
     private static boolean isNumeric(int columnTypeTag) {
-        switch (columnTypeTag) {
-            case ColumnType.BYTE:
-            case ColumnType.SHORT:
-            case ColumnType.INT:
-            case ColumnType.LONG:
-            case ColumnType.FLOAT:
-            case ColumnType.DOUBLE:
-            case ColumnType.LONG128:
-                return true;
-            default:
-                return false;
-        }
+        return switch (columnTypeTag) {
+            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT,
+                 ColumnType.DOUBLE, ColumnType.LONG128 -> true;
+            default -> false;
+        };
     }
 
     private static boolean isTopLevelOperation(ExpressionNode node) {
@@ -484,6 +474,36 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         putOperand(offset, VAR, typeCode, index);
     }
 
+    /**
+     * Collects all predicates from an AND chain into the provided list.
+     */
+    private void collectAndPredicates(ExpressionNode node, ObjList<ExpressionNode> predicates) {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.OPERATION && SqlKeywords.isAndKeyword(node.token)) {
+            collectAndPredicates(node.lhs, predicates);
+            collectAndPredicates(node.rhs, predicates);
+        } else {
+            predicates.add(node);
+        }
+    }
+
+    /**
+     * Collects all predicates from an OR chain into the provided list.
+     */
+    private void collectOrPredicates(ExpressionNode node, ObjList<ExpressionNode> predicates) {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.OPERATION && SqlKeywords.isOrKeyword(node.token)) {
+            collectOrPredicates(node.lhs, predicates);
+            collectOrPredicates(node.rhs, predicates);
+        } else {
+            predicates.add(node);
+        }
+    }
+
     private void ensureOnlyVarSizeHeaderChecks() throws SqlException {
         typeStack.clear();
         for (long offset = 0; offset < memory.size(); offset += INSTRUCTION_SIZE) {
@@ -515,6 +535,28 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     typeStack.push(typeCode);
             }
         }
+    }
+
+    /**
+     * Finds the column type involved in an operation.
+     * Returns UNDEFINED if no column is found.
+     */
+    private int findOperandColumnType(ExpressionNode node) {
+        if (node == null) {
+            return ColumnType.UNDEFINED;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            int index = metadata.getColumnIndexQuiet(node.token);
+            if (index != -1) {
+                return ColumnType.tagOf(metadata.getColumnType(index));
+            }
+        }
+        // Recursively search children
+        int leftType = findOperandColumnType(node.lhs);
+        if (leftType != ColumnType.UNDEFINED) {
+            return leftType;
+        }
+        return findOperandColumnType(node.rhs);
     }
 
     private Function getBindVariableFunction(int position, CharSequence token) throws SqlException {
@@ -559,6 +601,69 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return bindVariableService;
     }
 
+    private int getExecHint(boolean forceScalar) {
+        final TypesObserver typesObserver = predicateContext.globalTypesObserver;
+        if (!forceScalar && !forceScalarMode) {
+            return typesObserver.hasMixedSizes() ? EXEC_HINT_MIXED_SIZE_TYPE : EXEC_HINT_SINGLE_SIZE_TYPE;
+        }
+        return EXEC_HINT_SCALAR;
+    }
+
+    private int getOptions(boolean forceScalar, boolean debug, boolean nullChecks) {
+        final TypesObserver typesObserver = predicateContext.globalTypesObserver;
+        int options = debug ? 1 : 0;
+        final int typeSize = typesObserver.maxSize();
+        if (typeSize > 0) {
+            // typeSize is 2^n, so the number of trailing zeros is equal to log2
+            final int log2 = Integer.numberOfTrailingZeros(typeSize);
+            options = options | (log2 << 1);
+        }
+
+        final int execHint = getExecHint(forceScalar);
+        options = options | (execHint << 4);
+
+        options = options | ((nullChecks ? 1 : 0) << 6);
+        return options;
+    }
+
+    /**
+     * Determines the priority of a predicate for short-circuit evaluation.
+     * Lower value = higher priority (evaluated first).
+     * Priority: uuid eq > long eq > ... > others > ... > long neq > uuid neq
+     */
+    private int getPredicatePriority(ExpressionNode node) {
+        if (node == null || node.type != ExpressionNode.OPERATION) {
+            return PRIORITY_OTHER;
+        }
+        // Check if it's an equality operation
+        if (Chars.equals(node.token, '=')) {
+            // Find the column type involved in this equality
+            return getPredicatePriority0(node, PRIORITY_I16_EQ, PRIORITY_I8_EQ, PRIORITY_I4_EQ, PRIORITY_SYM_EQ, PRIORITY_OTHER_EQ);
+        } else if (Chars.equals(node.token, "<>") || Chars.equals(node.token, "!=")) {
+            // Find the column type involved in this inequality
+            return getPredicatePriority0(node, PRIORITY_I16_NEQ, PRIORITY_I8_NEQ, PRIORITY_I4_NEQ, PRIORITY_SYM_NEQ, PRIORITY_OTHER_NEQ);
+        }
+        return PRIORITY_OTHER;
+    }
+
+    private int getPredicatePriority0(
+            ExpressionNode node,
+            int priorityI16Neq,
+            int priorityI8Neq,
+            int priorityI4Neq,
+            int prioritySymNeq,
+            int priorityOtherNeq
+    ) {
+        final int columnType = findOperandColumnType(node);
+        return switch (columnType) {
+            case ColumnType.UUID, ColumnType.LONG128 -> priorityI16Neq;
+            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG -> priorityI8Neq;
+            case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT -> priorityI4Neq;
+            case ColumnType.SYMBOL -> prioritySymNeq;
+            default -> priorityOtherNeq;
+        };
+    }
+
     private boolean isBooleanColumn(ExpressionNode node) {
         if (node.type != ExpressionNode.LITERAL) {
             return false;
@@ -579,6 +684,40 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         // check predicate type is timestamp
         return ColumnType.isTimestamp(predicateContext.columnType);
+    }
+
+    /**
+     * Checks if the expression tree is a pure AND chain (no OR at top level).
+     */
+    private boolean isPureAndChain(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.OPERATION) {
+            if (SqlKeywords.isAndKeyword(node.token)) {
+                return isPureAndChain(node.lhs) && isPureAndChain(node.rhs);
+            }
+            return !SqlKeywords.isOrKeyword(node.token);
+        }
+        // Leaf predicate or non-OR operation
+        return true;
+    }
+
+    /**
+     * Checks if the expression tree is a pure OR chain (no AND at top level).
+     */
+    private boolean isPureOrChain(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.OPERATION) {
+            if (SqlKeywords.isOrKeyword(node.token)) {
+                return isPureOrChain(node.lhs) && isPureOrChain(node.rhs);
+            }
+            return !SqlKeywords.isAndKeyword(node.token);
+        }
+        // Leaf predicate or non-AND operation
+        return true;
     }
 
     private boolean isTopLevelBooleanColumn(ExpressionNode node) {
@@ -625,6 +764,20 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         memory.putInt(0);
         memory.putLong(0L);
         memory.putLong(0L);
+    }
+
+    // Emit operator with label index in payload (for short-circuit opcodes)
+    // Label conventions:
+    // - Label 0 (l_next_row): skip row storage, move to next row (used by AND_SC on false)
+    // - Label 1 (l_store_row): store row, then move to next row (used by OR_SC on true)
+    // - Labels 2+: user-defined labels for IN() short-circuit, etc.
+    private void putOperatorWithLabel(int opcode, int labelIndex) {
+        // Currently we use up to 3 labels simultaneously
+        assert labelIndex >= 0 && labelIndex < MAX_LABELS : "label index out of bounds: " + labelIndex;
+        memory.putInt(opcode);
+        memory.putInt(0); // options unused
+        memory.putLong(labelIndex); // payload.lo = label index
+        memory.putLong(0L); // payload.hi unused
     }
 
     private void rejectSymbol(final CharSequence token, int position) throws SqlException {
@@ -849,6 +1002,44 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     .put(", actual=").put(args.size()).put(']');
         }
 
+        // Short-circuit mode: only use when IN() is the root of the predicate (top-level) AND
+        // we're in an AND chain. For OR chains, the l_next_row label skips row storage which is
+        // wrong when IN() matches (we want to store the row). For nested IN() we must also fall
+        // back to boolean ORs because AND_SC(0) would incorrectly skip the row.
+        final boolean isTopLevelIn = predicateContext.inOperationNode == predicateContext.rootNode;
+        if (predicateContext.shortCircuitMode == PredicateContext.SC_AND && isTopLevelIn) {
+            if (args.size() < 3) {
+                // Single value: short-circuit, unrolled version of the below loop
+                // Two values: short-circuit, unrolled version of the below loop
+                traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
+                traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
+                putOperator(EQ);
+                putOperatorWithLabel(AND_SC, 0); // if false, jump to next_row
+            } else {
+                // Multiple values: BEGIN_SC(2), [EQ, OR_SC(2)]*, EQ, AND_SC(0), END_SC(2)
+                // Label 0 = next_row (skip this row) - reserved by backend
+                // Label 1 = store_row (accept row) - reserved by backend
+                // Label 2 = success (at least one IN match)
+                putOperatorWithLabel(BEGIN_SC, 2); // create success label
+                for (int i = 0, n = predicateContext.inOperationNode.args.size() - 1; i < n; i++) {
+                    traverseAlgo.traverse(args.get(i), this);
+                    traverseAlgo.traverse(args.getLast(), this);
+                    putOperator(EQ);
+                    if (i < n - 1) {
+                        putOperatorWithLabel(OR_SC, 2); // if true, jump to success
+                    } else {
+                        putOperatorWithLabel(AND_SC, 0); // if false, jump to next_row
+                        putOperatorWithLabel(END_SC, 2); // bind success label
+                    }
+                }
+            }
+            // Mark that this predicate handled its own short-circuit exit
+            // so the parent AND chain doesn't emit another AND_SC
+            predicateContext.handledShortCircuitExit = true;
+            return;
+        }
+
+        // Non-short-circuit mode: use traditional boolean ORs
         if (args.size() < 3) {
             traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
             traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
@@ -856,14 +1047,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         int orCount = -1;
-        for (int i = 0; i < predicateContext.inOperationNode.args.size() - 1; ++i) {
+        for (int i = 0, n = predicateContext.inOperationNode.args.size() - 1; i < n; i++) {
             traverseAlgo.traverse(args.get(i), this);
             traverseAlgo.traverse(args.getLast(), this);
             putOperator(EQ);
             orCount++;
         }
 
-        for (int i = 0; i < orCount; ++i) {
+        for (int i = 0; i < orCount; i++) {
             putOperator(OR);
         }
     }
@@ -875,11 +1066,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final CharSequence intervalEx = token == null || SqlKeywords.isNullKeyword(token) ? null : GenericLexer.unquote(token);
 
         final LongList intervals = predicateContext.inIntervals;
-        IntervalUtils.parseAndApplyInterval(
+        IntervalUtils.parseTickExprAndIntersect(
                 ColumnType.getTimestampDriver(predicateContext.columnType),
+                executionContext.getCairoEngine().getConfiguration(),
                 intervalEx,
                 intervals,
-                position
+                position,
+                sink,
+                true
         );
 
         final ExpressionNode lhs = predicateContext.inOperationNode.lhs;
@@ -898,7 +1092,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             orCount++;
         }
 
-        for (int i = 0; i < orCount; ++i) {
+        for (int i = 0; i < orCount; i++) {
             putOperator(OR);
         }
     }
@@ -1085,6 +1279,94 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         throw SqlException.position(position).put("invalid operator: ").put(token);
     }
 
+    /**
+     * Serializes predicates in priority order with short-circuit ANDs for high-priority ones.
+     * Must be used only in scalar compilation mode.
+     */
+    private int serializePredicatesAndSc(
+            @NotNull ObjList<ExpressionNode> predicates,
+            boolean forceScalar,
+            boolean debug,
+            boolean nullChecks
+    ) throws SqlException {
+        final int n = predicates.size();
+        assert n > 0;
+
+        // Enable AND short-circuit mode for IN() optimization
+        predicateContext.shortCircuitMode = PredicateContext.SC_AND;
+        try {
+            // Serialize all predicates in the priority order with short-circuit ANDs
+            for (int i = 0; i < n; i++) {
+                traverseAlgo.traverse(predicates.getQuick(i), this);
+                if (i != n - 1) {
+                    // Only emit AND_SC if the predicate didn't handle its own short-circuit exit.
+                    // IN() with short-circuit mode emits its own AND_SC(0), so we skip it here.
+                    if (!predicateContext.handledShortCircuitExit) {
+                        putOperatorWithLabel(AND_SC, 0); // label 0 = next_row
+                    }
+                }
+            }
+
+            // Check if the backend is going to use SIMD, although we expected scalar mode.
+            final int execHint = getExecHint(forceScalar);
+            if (execHint == EXEC_HINT_SINGLE_SIZE_TYPE) {
+                // We could handle this via the non-short-circuit code path, but if we get here,
+                // it means that scalarModeDetector did a false-positive scalar mode detection.
+                // In such case, it's a bug we should fix, so let's fail JIT compilation to flag that.
+                throw SqlException.position(0).put("expected scalar compilation mode, got: ").put(execHint);
+            }
+
+            putOperator(RET);
+
+            ensureOnlyVarSizeHeaderChecks();
+            return getOptions(forceScalar, debug, nullChecks);
+        } finally {
+            predicateContext.shortCircuitMode = PredicateContext.SC_NONE;
+        }
+    }
+
+    /**
+     * Serializes predicates in priority order with short-circuit ORs for low-priority ones.
+     * Must be used only in scalar compilation mode.
+     */
+    private int serializePredicatesOrSc(
+            @NotNull ObjList<ExpressionNode> predicates,
+            boolean forceScalar,
+            boolean debug,
+            boolean nullChecks
+    ) throws SqlException {
+        final int n = predicates.size();
+        assert n > 0;
+
+        // Enable OR short-circuit mode (IN() should NOT use short-circuit in OR chains)
+        predicateContext.shortCircuitMode = PredicateContext.SC_OR;
+        try {
+            // Serialize all predicates in the inverted priority order with short-circuit ORs
+            for (int i = 0; i < n; i++) {
+                traverseAlgo.traverse(predicates.getQuick(i), this);
+                if (i != n - 1) {
+                    putOperatorWithLabel(OR_SC, 1); // label 1 = store_row (accept row on true)
+                }
+            }
+
+            // Check if the backend is going to use SIMD, although we expected scalar mode.
+            final int execHint = getExecHint(forceScalar);
+            if (execHint == EXEC_HINT_SINGLE_SIZE_TYPE) {
+                // We could handle this via the non-short-circuit code path, but if we get here,
+                // it means that scalarModeDetector did a false-positive scalar mode detection.
+                // In such case, it's a bug we should fix, so let's fail JIT compilation to flag that.
+                throw SqlException.position(0).put("expected scalar compilation mode, got: ").put(execHint);
+            }
+
+            putOperator(RET);
+
+            ensureOnlyVarSizeHeaderChecks();
+            return getOptions(forceScalar, debug, nullChecks);
+        } finally {
+            predicateContext.shortCircuitMode = PredicateContext.SC_NONE;
+        }
+    }
+
     private void serializeSymbolConstant(long offset, int position, final CharSequence token) throws SqlException {
         final int len = token.length();
         CharSequence symbol = token;
@@ -1149,6 +1431,40 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         throw SqlException.position(position).put("unexpected non-numeric constant: ").put(token);
+    }
+
+    /**
+     * Sorts predicates by inverted priority using simple insertion sort.
+     * Stable sort to preserve original order for equal priorities.
+     */
+    private void sortPredicatesByInvertedPriority(ObjList<ExpressionNode> predicates) {
+        for (int i = 1, n = predicates.size(); i < n; i++) {
+            final ExpressionNode key = predicates.getQuick(i);
+            final int keyPriority = getPredicatePriority(key);
+            int j = i - 1;
+            while (j >= 0 && getPredicatePriority(predicates.getQuick(j)) < keyPriority) {
+                predicates.setQuick(j + 1, predicates.getQuick(j));
+                j--;
+            }
+            predicates.setQuick(j + 1, key);
+        }
+    }
+
+    /**
+     * Sorts predicates by priority using simple insertion sort.
+     * Stable sort to preserve original order for equal priorities.
+     */
+    private void sortPredicatesByPriority(ObjList<ExpressionNode> predicates) {
+        for (int i = 1, n = predicates.size(); i < n; i++) {
+            final ExpressionNode key = predicates.getQuick(i);
+            final int keyPriority = getPredicatePriority(key);
+            int j = i - 1;
+            while (j >= 0 && getPredicatePriority(predicates.getQuick(j)) > keyPriority) {
+                predicates.setQuick(j + 1, predicates.getQuick(j));
+                j--;
+            }
+            predicates.setQuick(j + 1, key);
+        }
     }
 
     private static class SqlWrapperException extends RuntimeException {
@@ -1230,65 +1546,56 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         public void observe(int code) {
-            switch (code) {
-                case I1_TYPE:
-                    sizes[I1_INDEX] = 1;
-                    break;
-                case I2_TYPE:
-                    sizes[I2_INDEX] = 2;
-                    break;
-                case I4_TYPE:
-                    sizes[I4_INDEX] = 4;
-                    break;
-                case F4_TYPE:
-                    sizes[F4_INDEX] = 4;
-                    break;
-                case I8_TYPE:
-                    sizes[I8_INDEX] = 8;
-                    break;
-                case F8_TYPE:
-                    sizes[F8_INDEX] = 8;
-                    break;
-                case I16_TYPE:
-                    sizes[I16_INDEX] = 16;
-                    break;
-                case STRING_HEADER_TYPE:
-                    sizes[STRING_HEADER_INDEX] = 8;
-                    break;
-                case BINARY_HEADER_TYPE:
-                    sizes[BINARY_HEADER_INDEX] = 8;
-                    break;
-                case VARCHAR_HEADER_TYPE:
-                    // We only read the first 8 bytes from the aux vector.
-                    sizes[VARCHAR_HEADER_TYPE] = 8;
-                    break;
+            int index = typeCodeToIndex(code);
+            if (index >= 0) {
+                sizes[index] = typeSizeBytes(code);
             }
         }
 
-        private int indexToTypeCode(int index) {
-            switch (index) {
-                case I1_INDEX:
-                    return I1_TYPE;
-                case I2_INDEX:
-                    return I2_TYPE;
-                case I4_INDEX:
-                    return I4_TYPE;
-                case F4_INDEX:
-                    return F4_TYPE;
-                case I8_INDEX:
-                    return I8_TYPE;
-                case F8_INDEX:
-                    return F8_TYPE;
-                case I16_INDEX:
-                    return I16_TYPE;
-                case STRING_HEADER_INDEX:
-                    return STRING_HEADER_TYPE;
-                case BINARY_HEADER_INDEX:
-                    return BINARY_HEADER_TYPE;
-                case VARCHAR_HEADER_INDEX:
-                    return VARCHAR_HEADER_TYPE;
-            }
-            return UNDEFINED_CODE;
+        private static int indexToTypeCode(int index) {
+            return switch (index) {
+                case I1_INDEX -> I1_TYPE;
+                case I2_INDEX -> I2_TYPE;
+                case I4_INDEX -> I4_TYPE;
+                case F4_INDEX -> F4_TYPE;
+                case I8_INDEX -> I8_TYPE;
+                case F8_INDEX -> F8_TYPE;
+                case I16_INDEX -> I16_TYPE;
+                case STRING_HEADER_INDEX -> STRING_HEADER_TYPE;
+                case BINARY_HEADER_INDEX -> BINARY_HEADER_TYPE;
+                case VARCHAR_HEADER_INDEX -> VARCHAR_HEADER_TYPE;
+                default -> UNDEFINED_CODE;
+            };
+        }
+
+        private static int typeCodeToIndex(int code) {
+            return switch (code) {
+                case I1_TYPE -> I1_INDEX;
+                case I2_TYPE -> I2_INDEX;
+                case I4_TYPE -> I4_INDEX;
+                case F4_TYPE -> F4_INDEX;
+                case I8_TYPE -> I8_INDEX;
+                case F8_TYPE -> F8_INDEX;
+                case I16_TYPE -> I16_INDEX;
+                case STRING_HEADER_TYPE -> STRING_HEADER_INDEX;
+                case BINARY_HEADER_TYPE -> BINARY_HEADER_INDEX;
+                case VARCHAR_HEADER_TYPE -> VARCHAR_HEADER_INDEX;
+                default -> -1;
+            };
+        }
+
+        /**
+         * Returns the size in bytes for a given type code.
+         */
+        private static byte typeSizeBytes(int typeCode) {
+            return switch (typeCode) {
+                case I1_TYPE -> 1;
+                case I2_TYPE -> 2;
+                case I4_TYPE, F4_TYPE -> 4;
+                case I8_TYPE, F8_TYPE, STRING_HEADER_TYPE, BINARY_HEADER_TYPE, VARCHAR_HEADER_TYPE -> 8;
+                case I16_TYPE -> 16;
+                default -> 0;
+            };
         }
     }
 
@@ -1311,15 +1618,21 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * </pre>
      */
     private class PredicateContext implements Mutable {
+        static final int SC_AND = 1;   // AND chain short-circuit (scalar only)
+        static final int SC_NONE = 0;  // not in short-circuit mode
+        static final int SC_OR = 2;    // OR chain short-circuit (scalar only)
+
         final TypesObserver globalTypesObserver = new TypesObserver();
         final TypesObserver localTypesObserver = new TypesObserver();
         private final LongList inIntervals = new LongList();
         int columnType;
         boolean hasArithmeticOperations;
+        int shortCircuitMode = SC_NONE; // short-circuit evaluation mode
         boolean singleBooleanColumn;
         int symbolColumnIndex; // used for symbol deferred constants and bind variables
         StaticSymbolTable symbolTable; // used for known symbol constant lookups
         private boolean currentInSerialization = false;
+        private boolean handledShortCircuitExit = false; // true if predicate emitted its own AND_SC/OR_SC exit
         private ExpressionNode inOperationNode = null;
         private ExpressionNode rootNode;
 
@@ -1434,8 +1747,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             hasArithmeticOperations = false;
             localTypesObserver.clear();
             currentInSerialization = false;
+            handledShortCircuitExit = false;
             inOperationNode = null;
             inIntervals.clear();
+            // Note: shortCircuitMode is NOT reset here; it's managed by serializePredicates*Sc methods
         }
 
         private void updateType(int position, int columnType0) throws SqlException {
@@ -1517,6 +1832,48 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     columnType = columnType0;
                     break;
             }
+        }
+    }
+
+    /**
+     * A lightweight visitor that pre-scans the expression tree to detect if scalar mode
+     * will be used by the JIT backend.
+     * <p>
+     * This detector is run BEFORE predicate reordering and short-circuit serialization
+     * to determine if short-circuit optimizations can be safely applied. Short-circuit
+     * evaluation (AND_SC, OR_SC opcodes) only works correctly in scalar mode because
+     * SIMD processes multiple rows in parallel and cannot branch per-lane.
+     * <p>
+     * Scalar mode is guaranteed when columns of different sizes are found (mixed sizes),
+     * which sets exec_hint to EXEC_HINT_MIXED_SIZE_TYPE, forcing the scalar code path.
+     */
+    private class ScalarModeDetector implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
+        private final TypesObserver typesObserver = new TypesObserver();
+
+        @Override
+        public void clear() {
+            typesObserver.clear();
+        }
+
+        @Override
+        public boolean descend(ExpressionNode node) {
+            return true; // Always descend
+        }
+
+        @Override
+        public void visit(ExpressionNode node) {
+            if (node.type == ExpressionNode.LITERAL) {
+                int columnIndex = metadata.getColumnIndexQuiet(node.token);
+                if (columnIndex != -1) {
+                    int columnType = metadata.getColumnType(columnIndex);
+                    int typeCode = columnTypeCode(ColumnType.tagOf(columnType));
+                    typesObserver.observe(typeCode);
+                }
+            }
+        }
+
+        boolean hasMixedSizes() {
+            return typesObserver.hasMixedSizes();
         }
     }
 }

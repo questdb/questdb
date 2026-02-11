@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -215,7 +215,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                         .col("i", ColumnType.INT)
                         .col("s", ColumnType.SYMBOL).symbolCapacity(32)
                         .timestamp("ts");
-                tableToken = engine.lockTableName(tableName, 1, false, false);
+                tableToken = engine.lockTableName(tableName, 1, false, false, false);
                 Assert.assertNotNull(tableToken);
                 createTable(tableModel, cairoConfig, ColumnType.VERSION, 1, tableToken);
                 engine.registerTableToken(tableToken);

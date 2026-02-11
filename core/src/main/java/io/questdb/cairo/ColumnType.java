@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -68,7 +68,7 @@ public final class ColumnType {
     public static final int GEOSHORT_MAX_BITS = 15;
     public static final int GEOSHORT_MIN_BITS = 8;
     public static final int LEGACY_VAR_SIZE_AUX_SHL = 3;
-    public static final int MIGRATION_VERSION = 427;
+    public static final int MIGRATION_VERSION = 426;
     public static final short OVERLOAD_FULL = -1; // akin to no distance
     public static final short OVERLOAD_NONE = 10000; // akin to infinite distance
     // our type system is absolutely ordered ranging
@@ -706,9 +706,13 @@ public final class ColumnType {
     public static int sizeOf(int columnType) {
         short tag = tagOf(columnType);
         if (tag < TYPE_SIZE.length) {
-            return TYPE_SIZE[tag];
+            return sizeOfTag(tag);
         }
         return -1;
+    }
+
+    public static int sizeOfTag(short tag) {
+        return TYPE_SIZE[tag];
     }
 
     public static short tagOf(int type) {

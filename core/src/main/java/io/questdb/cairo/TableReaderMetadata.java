@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -65,6 +65,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private MemoryMR transitionMeta;
     private int ttlHoursOrMonths;
     private boolean walEnabled;
+    private int writerColumnCount;
 
     public TableReaderMetadata(CairoConfiguration configuration, TableToken tableToken) {
         try {
@@ -120,6 +121,14 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         Misc.free(metaCopyMem);
         Misc.free(transitionMeta);
         isCopy = false;
+        partitionBy = 0;
+        walEnabled = false;
+        metadataVersion = 0;
+        tableId = 0;
+        maxUncommittedRows = 0;
+        o3MaxLag = 0;
+        ttlHoursOrMonths = 0;
+        writerColumnCount = 0;
     }
 
     @Override
@@ -201,6 +210,10 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     @Override
     public int getTtlHoursOrMonths() {
         return ttlHoursOrMonths;
+    }
+
+    public int getWriterColumnCount() {
+        return writerColumnCount;
     }
 
     @Override
@@ -289,6 +302,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
     public void readFromMem(MemoryR mem) {
         int columnCount = mem.getInt(TableUtils.META_OFFSET_COUNT);
+        this.writerColumnCount = columnCount;
         int timestampIndex = mem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.partitionBy = mem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
         this.tableId = mem.getInt(TableUtils.META_OFFSET_TABLE_ID);
@@ -353,6 +367,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         columnNameIndexMap.clear();
 
         int columnCount = newMetaMem.getInt(TableUtils.META_OFFSET_COUNT);
+        this.writerColumnCount = columnCount;
         assert columnCount >= existingColumnCount;
         columnMetadata.setPos(columnCount);
         int timestampIndex = newMetaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);

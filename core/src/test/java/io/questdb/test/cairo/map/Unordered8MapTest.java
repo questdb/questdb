@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -64,11 +64,6 @@ public class Unordered8MapTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
 
-            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-            keyTypes.add(ColumnType.BYTE);
-            keyTypes.add(ColumnType.SHORT);
-            keyTypes.add(ColumnType.INT);
-
             ArrayColumnTypes valueTypes = new ArrayColumnTypes();
             valueTypes.add(ColumnType.BYTE);
             valueTypes.add(ColumnType.SHORT);
@@ -90,13 +85,11 @@ public class Unordered8MapTest extends AbstractCairoTest {
             valueTypes.add(ColumnType.getDecimalType(32, 0)); // DECIMAL128
             valueTypes.add(ColumnType.getDecimalType(64, 0)); // DECIMAL256
 
-            try (Unordered8Map map = new Unordered8Map(keyTypes, valueTypes, 64, 0.8, 24)) {
+            try (Unordered8Map map = new Unordered8Map(ColumnType.DATE, valueTypes, 64, 0.8, 24)) {
                 final int N = 100;
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putByte(rnd.nextByte());
-                    key.putShort(rnd.nextShort());
-                    key.putInt(rnd.nextInt());
+                    key.putDate(rnd.nextLong());
 
                     MapValue value = key.createValue();
                     Assert.assertTrue(value.isNew());
@@ -139,9 +132,7 @@ public class Unordered8MapTest extends AbstractCairoTest {
                 // assert that all values are good
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putByte(rnd.nextByte());
-                    key.putShort(rnd.nextShort());
-                    key.putInt(rnd.nextInt());
+                    key.putDate(rnd.nextLong());
 
                     MapValue value = key.createValue();
                     Assert.assertFalse(value.isNew());
@@ -177,16 +168,12 @@ public class Unordered8MapTest extends AbstractCairoTest {
                 }
 
                 try (RecordCursor cursor = map.getCursor()) {
-                    HashMap<String, Long> keyToRowIds = new HashMap<>();
+                    HashMap<Long, Long> keyToRowIds = new HashMap<>();
                     LongList rowIds = new LongList();
                     final Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
                         // key part, comes after value part in records
-                        int col = 19;
-                        byte b = record.getByte(col++);
-                        short sh = record.getShort(col++);
-                        int i = record.getInt(col);
-                        String key = b + "," + sh + "," + i;
+                        long key = record.getDate(19);
                         keyToRowIds.put(key, record.getRowId());
                         rowIds.add(record.getRowId());
                     }
@@ -195,11 +182,7 @@ public class Unordered8MapTest extends AbstractCairoTest {
                     cursor.toTop();
                     int i = 0;
                     while (cursor.hasNext()) {
-                        int col = 19;
-                        byte b = record.getByte(col++);
-                        short sh = record.getShort(col++);
-                        int i2 = record.getInt(col);
-                        String key = b + "," + sh + "," + i2;
+                        long key = record.getDate(19);
                         Assert.assertEquals((long) keyToRowIds.get(key), record.getRowId());
                         Assert.assertEquals(rowIds.getQuick(i++), record.getRowId());
                     }
@@ -207,10 +190,7 @@ public class Unordered8MapTest extends AbstractCairoTest {
                     // Validate that recordAt jumps to what we previously inserted.
                     rnd.reset();
                     for (i = 0; i < N; i++) {
-                        byte b = rnd.nextByte();
-                        short sh = rnd.nextShort();
-                        int i2 = rnd.nextInt();
-                        String key = b + "," + sh + "," + i2;
+                        long key = rnd.nextLong();
                         long rowId = keyToRowIds.get(key);
                         cursor.recordAt(record, rowId);
 
@@ -254,11 +234,10 @@ public class Unordered8MapTest extends AbstractCairoTest {
     public void testFuzz() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {
-            SingleColumnType keyTypes = new SingleColumnType(ColumnType.LONG);
             SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
 
             HashMap<Long, Long> oracle = new HashMap<>();
-            try (Unordered8Map map = new Unordered8Map(keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE)) {
+            try (Unordered8Map map = new Unordered8Map(ColumnType.LONG, valueTypes, 64, 0.8, Integer.MAX_VALUE)) {
                 final int N = 100000;
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
@@ -303,6 +282,11 @@ public class Unordered8MapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutDoubleUnsupported() throws Exception {
+        assertUnsupported(key -> key.putDouble(0.0));
+    }
+
+    @Test
     public void testPutLong128Unsupported() throws Exception {
         assertUnsupported(key -> key.putLong128(0, 0));
     }
@@ -334,7 +318,7 @@ public class Unordered8MapTest extends AbstractCairoTest {
 
     @Test
     public void testSingleZeroKey() {
-        try (Unordered8Map map = new Unordered8Map(new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 16, 0.8, 24)) {
+        try (Unordered8Map map = new Unordered8Map(ColumnType.LONG, new SingleColumnType(ColumnType.LONG), 16, 0.8, 24)) {
             MapKey key = map.withKey();
             key.putLong(0);
             MapValue value = key.createValue();
@@ -360,16 +344,15 @@ public class Unordered8MapTest extends AbstractCairoTest {
     public void testTopK() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int heapCapacity = 5;
-            SingleColumnType keyTypes = new SingleColumnType(ColumnType.LONG);
             SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
 
             try (
-                    Unordered8Map map = new Unordered8Map(keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE);
+                    Unordered8Map map = new Unordered8Map(ColumnType.TIMESTAMP, valueTypes, 64, 0.8, Integer.MAX_VALUE);
                     DirectLongLongSortedList list = new DirectLongLongAscList(heapCapacity, MemoryTag.NATIVE_DEFAULT)
             ) {
                 for (int i = 0; i < 100; i++) {
                     MapKey key = map.withKey();
-                    key.putLong(i);
+                    key.putTimestamp(i);
 
                     MapValue value = key.createValue();
                     value.putLong(0, i);
@@ -393,7 +376,7 @@ public class Unordered8MapTest extends AbstractCairoTest {
 
     @Test
     public void testTwoKeysIncludingZero() {
-        try (Unordered8Map map = new Unordered8Map(new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 16, 0.8, 24)) {
+        try (Unordered8Map map = new Unordered8Map(ColumnType.LONG, new SingleColumnType(ColumnType.LONG), 16, 0.8, 24)) {
             MapKey key = map.withKey();
             key.putLong(0);
             MapValue value = key.createValue();
@@ -435,6 +418,7 @@ public class Unordered8MapTest extends AbstractCairoTest {
                 ColumnType.STRING,
                 ColumnType.VARCHAR,
                 ColumnType.LONG128,
+                ColumnType.DOUBLE,
                 ColumnType.UUID,
                 ColumnType.LONG256,
                 ColumnType.DECIMAL128,
@@ -442,10 +426,10 @@ public class Unordered8MapTest extends AbstractCairoTest {
         };
         for (short columnType : columnTypes) {
             TestUtils.assertMemoryLeak(() -> {
-                try (Unordered8Map ignore = new Unordered8Map(new SingleColumnType(columnType), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1)) {
+                try (Unordered8Map ignore = new Unordered8Map(columnType, new SingleColumnType(ColumnType.LONG), 64, 0.5, 1)) {
                     Assert.fail();
                 } catch (CairoException e) {
-                    Assert.assertTrue(Chars.contains(e.getMessage(), "unexpected key size"));
+                    Assert.assertTrue(Chars.contains(e.getMessage(), "unexpected key type"));
                 }
             });
         }
@@ -453,7 +437,7 @@ public class Unordered8MapTest extends AbstractCairoTest {
 
     private static void assertUnsupported(Consumer<? super MapKey> putKeyFn) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (Unordered8Map map = new Unordered8Map(new SingleColumnType(ColumnType.BOOLEAN), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1)) {
+            try (Unordered8Map map = new Unordered8Map(ColumnType.TIMESTAMP, new SingleColumnType(ColumnType.LONG), 64, 0.5, 1)) {
                 MapKey key = map.withKey();
                 try {
                     putKeyFn.accept(key);

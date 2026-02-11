@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,9 @@ package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
@@ -145,13 +148,34 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testParallelTopKWithBindVariablesInFilter() throws Exception {
+        testParallelTopK(
+                (sqlExecutionContext) -> {
+                    BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+                    bindVariableService.clear();
+                    bindVariableService.setStr("asym", "k0");
+                },
+                "SELECT * FROM tab WHERE key = :asym ORDER BY price DESC LIMIT 1;",
+                "ts\tkey\tprice\tquantity\tcolTop\n" +
+                        "1970-02-10T12:00:00.000000Z\tk0\t4050.0\t4050\t4050.0\n"
+        );
+    }
+
     private void testParallelTopK(String... queriesAndExpectedResults) throws Exception {
+        testParallelTopK(null, queriesAndExpectedResults);
+    }
+
+    private void testParallelTopK(BindVariablesInitializer initializer, String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                        if (initializer != null) {
+                            initializer.init(sqlExecutionContext);
+                        }
 
                         engine.execute(
                                 "CREATE TABLE tab (" +
@@ -182,5 +206,9 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
                     LOG
             );
         });
+    }
+
+    private interface BindVariablesInitializer {
+        void init(SqlExecutionContext sqlExecutionContext) throws SqlException;
     }
 }

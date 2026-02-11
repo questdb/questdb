@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.BuildInformationHolder;
+import io.questdb.ConfigPropertyKey;
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.FreeOnExit;
@@ -157,11 +158,11 @@ public class Overrides {
         this.mangleTableDirNames = mangle;
     }
 
-    public void setProperty(PropertyKey propertyKey, long value) {
+    public void setProperty(ConfigPropertyKey propertyKey, long value) {
         setProperty(propertyKey, String.valueOf(value));
     }
 
-    public void setProperty(PropertyKey propertyKey, String value) {
+    public void setProperty(ConfigPropertyKey propertyKey, String value) {
         String propertyPath = propertyKey.getPropertyPath();
         if (value != null) {
             String existing = properties.getProperty(propertyPath);
@@ -177,7 +178,7 @@ public class Overrides {
         }
     }
 
-    public void setProperty(PropertyKey propertyKey, boolean value) {
+    public void setProperty(ConfigPropertyKey propertyKey, boolean value) {
         setProperty(propertyKey, value ? "true" : "false");
     }
 
@@ -294,6 +295,7 @@ public class Overrides {
         properties.setProperty(PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE.getPropertyPath(), "32");
         properties.setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY.getPropertyPath(), "64");
         properties.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS.getPropertyPath(), "1000");
+        properties.setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS.getPropertyPath(), "100");
         properties.setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT.getPropertyPath(), "4");
         properties.setProperty(PropertyKey.DEBUG_ENABLE_TEST_FACTORIES.getPropertyPath(), "true");
         properties.setProperty(PropertyKey.CAIRO_O3_MAX_LAG.getPropertyPath(), "300000");
@@ -303,6 +305,7 @@ public class Overrides {
         properties.setProperty(PropertyKey.CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT.getPropertyPath(), "false");
         properties.setProperty(PropertyKey.CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED.getPropertyPath(), "true");
         properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL.getPropertyPath(), "true");
     }
 
     private CairoConfiguration getDefaultConfiguration(String root) {

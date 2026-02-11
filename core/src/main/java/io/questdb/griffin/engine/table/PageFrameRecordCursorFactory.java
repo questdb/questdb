@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursorFactory;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -56,7 +56,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     private final boolean supportsRandomAccess;
     protected FwdTableReaderPageFrameCursor fwdPageFrameCursor;
     private BwdTableReaderPageFrameCursor bwdPageFrameCursor;
-    private TimeFrameRecordCursorImpl timeFrameCursor;
+    private TimeFrameCursorImpl timeFrameCursor;
 
     public PageFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -98,7 +98,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         if (framingSupported) {
-            PartitionFrameCursor partitionFrameCursor = partitionFrameCursorFactory.getCursor(executionContext, order);
+            PartitionFrameCursor partitionFrameCursor = partitionFrameCursorFactory.getCursor(executionContext, columnIndexes, order);
             if (order == ORDER_ASC || order == ORDER_ANY) {
                 return initFwdPageFrameCursor(partitionFrameCursor, executionContext);
             }
@@ -123,24 +123,30 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             // "forward".
             return SCAN_DIRECTION_FORWARD;
         }
-        switch (partitionFrameCursorFactory.getOrder()) {
-            case ORDER_ASC:
-                return SCAN_DIRECTION_FORWARD;
-            case ORDER_DESC:
-                return SCAN_DIRECTION_BACKWARD;
-            default:
-                throw CairoException.critical(0).put("Unexpected factory order [order=").put(partitionFrameCursorFactory.getOrder()).put("]");
-        }
+        return switch (partitionFrameCursorFactory.getOrder()) {
+            case ORDER_ASC -> SCAN_DIRECTION_FORWARD;
+            case ORDER_DESC -> SCAN_DIRECTION_BACKWARD;
+            default ->
+                    throw CairoException.critical(0).put("Unexpected factory order [order=").put(partitionFrameCursorFactory.getOrder()).put("]");
+        };
     }
 
     @Override
-    public TimeFrameRecordCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+    public TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         if (framingSupported) {
             TablePageFrameCursor pageFrameCursor = initPageFrameCursor(executionContext);
             if (timeFrameCursor == null) {
-                timeFrameCursor = new TimeFrameRecordCursorImpl(configuration, getMetadata());
+                timeFrameCursor = new TimeFrameCursorImpl(configuration, getMetadata());
             }
             return timeFrameCursor.of(pageFrameCursor);
+        }
+        return null;
+    }
+
+    @Override
+    public ConcurrentTimeFrameCursor newTimeFrameCursor() {
+        if (framingSupported) {
+            return new ConcurrentTimeFrameCursor(configuration, getMetadata());
         }
         return null;
     }
@@ -201,12 +207,10 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             bwdPageFrameCursor = new BwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
-                    executionContext.getSharedQueryWorkerCount(),
-                    pageFrameMinRows,
-                    pageFrameMaxRows
+                    executionContext.getSharedQueryWorkerCount()
             );
         }
-        return bwdPageFrameCursor.of(partitionFrameCursor);
+        return bwdPageFrameCursor.of(partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
     }
 
     protected PageFrameCursor initFwdPageFrameCursor(
@@ -217,12 +221,10 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             fwdPageFrameCursor = new FwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
-                    executionContext.getSharedQueryWorkerCount(),
-                    pageFrameMinRows,
-                    pageFrameMaxRows
+                    executionContext.getSharedQueryWorkerCount()
             );
         }
-        return fwdPageFrameCursor.of(partitionFrameCursor);
+        return fwdPageFrameCursor.of(partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
     }
 
     @Override

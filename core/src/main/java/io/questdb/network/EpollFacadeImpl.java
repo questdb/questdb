@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -52,22 +52,7 @@ public class EpollFacadeImpl implements EpollFacade {
     }
 
     @Override
-    public int eventFd() {
-        return EpollAccessor.eventFd();
-    }
-
-    @Override
     public NetworkFacade getNetworkFacade() {
         return NetworkFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public long readEventFd(long fd) {
-        return EpollAccessor.readEventFd(fd);
-    }
-
-    @Override
-    public int writeEventFd(long fd) {
-        return EpollAccessor.writeEventFd(fd);
     }
 }

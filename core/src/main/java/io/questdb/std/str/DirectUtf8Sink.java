@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@
 package io.questdb.std.str;
 
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
 import io.questdb.std.bytes.DirectByteSink;
 import io.questdb.std.bytes.NativeByteSink;
 import org.jetbrains.annotations.NotNull;
@@ -46,7 +45,11 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
     }
 
     public DirectUtf8Sink(long initialCapacity, boolean alloc) {
-        sink = new DirectByteSink(initialCapacity, alloc, MemoryTag.NATIVE_DIRECT_UTF8_SINK);
+        sink = new DirectByteSink(initialCapacity, MemoryTag.NATIVE_DIRECT_UTF8_SINK, !alloc);
+    }
+
+    public DirectUtf8Sink(long initialCapacity, boolean alloc, int memoryTag) {
+        sink = new DirectByteSink(initialCapacity, memoryTag, !alloc);
     }
 
     @Override
@@ -96,9 +99,7 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
         setAscii(isAscii() & us.isAscii());
         final int size = us.size();
         final long dest = sink.ensureCapacity(size);
-        for (int i = 0; i < size; i++) {
-            Unsafe.getUnsafe().putByte(dest + i, us.byteAt(i));
-        }
+        us.writeTo(dest, 0, size);
         sink.advance(size);
         return this;
     }

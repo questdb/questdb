@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -66,7 +66,7 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
         try {
             this.groupByFunctions = groupByFunctions;
             // sink will be storing record columns to map key
-            mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter);
+            mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, configuration);
             // this is the map itself, which we must not forget to free when factory closes
             map = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
         } catch (Throwable th) {

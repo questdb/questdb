@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,7 +29,6 @@ import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -53,9 +52,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.QueryPausedException;
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -70,39 +67,25 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
 
     private static final Log LOG = LogFactory.getLog(SqlValidationProcessor.class);
     private static final LocalValue<SqlValidationProcessorState> LV = new LocalValue<>();
-    private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final JsonQueryProcessorConfiguration configuration;
     private final CairoEngine engine;
     private final NanosecondClock nanosecondClock;
     private final Path path;
     private final byte requiredAuthType;
-    private final SqlExecutionContextImpl sqlExecutionContext;
+    private final int sharedWorkerCount;
 
     public SqlValidationProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
             int sharedWorkerCount
     ) {
-        this(
-                configuration,
-                engine,
-                new SqlExecutionContextImpl(engine, sharedWorkerCount)
-        );
-    }
-
-    public SqlValidationProcessor(
-            JsonQueryProcessorConfiguration configuration,
-            CairoEngine engine,
-            SqlExecutionContextImpl sqlExecutionContext
-    ) {
         try {
             this.configuration = configuration;
             this.path = new Path();
             this.engine = engine;
+            this.sharedWorkerCount = sharedWorkerCount;
             requiredAuthType = configuration.getRequiredAuthType();
-            this.sqlExecutionContext = sqlExecutionContext;
             this.nanosecondClock = configuration.getNanosecondClock();
-            this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB3);
         } catch (Throwable th) {
             close();
             throw th;
@@ -112,7 +95,6 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
     @Override
     public void close() {
         Misc.free(path);
-        Misc.free(circuitBreaker);
     }
 
     @Override
@@ -139,9 +121,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
     }
 
     @Override
-    public void onRequestComplete(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
+    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         SqlValidationProcessorState state = LV.get(context);
         if (state == null) {
             LV.set(context, state = new SqlValidationProcessorState(
@@ -163,9 +143,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
     }
 
     @Override
-    public void onRequestRetry(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
+    public void onRequestRetry(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         validate0(LV.get(context));
     }
 
@@ -174,14 +152,13 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
         final SqlValidationProcessorState state = LV.get(context);
         if (state != null) {
             // preserve random when we park the context
+            SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
             state.setRnd(sqlExecutionContext.getRandom());
         }
     }
 
     @Override
-    public void resumeSend(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
+    public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final SqlValidationProcessorState state = LV.get(context);
         if (state != null) {
             context.resumeResponseSend();
@@ -195,8 +172,9 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
         }
     }
 
-    public void validate0(SqlValidationProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
+    public void validate0(SqlValidationProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
+        NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
         circuitBreaker.resetTimer();
         try {
             // new query
@@ -213,13 +191,10 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
         } catch (EntryUnavailableException e) {
             LOG.info().$("[fd=").$(context.getFd()).$("] resource busy, will retry").$();
             throw RetryOperationException.INSTANCE;
-        } catch (DataUnavailableException e) {
-            LOG.info().$("[fd=").$(context.getFd()).$("] data is in cold storage, will retry").$();
-            throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
         } catch (CairoException e) {
             internalError(state, getStatusCode(e), e);
             readyForNextRequest(context);
-        } catch (PeerIsSlowToReadException | PeerDisconnectedException | QueryPausedException e) {
+        } catch (PeerIsSlowToReadException | PeerDisconnectedException e) {
             // re-throw the exception
             throw e;
         } catch (Throwable e) {
@@ -283,10 +258,12 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
 
     private void compileAndValidate(
             SqlValidationProcessorState state
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+        HttpConnectionContext context = state.getHttpConnectionContext();
+        NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
+        SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             final long compilationStart = nanosecondClock.getTicks();
-            HttpConnectionContext context = state.getHttpConnectionContext();
             sqlExecutionContext.with(
                     context.getSecurityContext(),
                     null,
@@ -296,7 +273,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
             );
             sqlExecutionContext.setValidationOnly(true);
             final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
-            sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_JSON);
+            sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_QUERY_VALIDATE);
             state.setCompilerNanos(nanosecondClock.getTicks() - compilationStart);
             state.setQueryType(cc.getType());
             try {
@@ -320,8 +297,8 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
                     case CompiledQuery.RENAME_TABLE ->
                             sendConfirmation(state, configuration.getKeepAliveHeader(), "RENAME TABLE");
                     case CompiledQuery.REPAIR -> sendConfirmation(state, configuration.getKeepAliveHeader(), "REPAIR");
-                    case CompiledQuery.BACKUP_TABLE ->
-                            sendConfirmation(state, configuration.getKeepAliveHeader(), "BACKUP TABLE");
+                    case CompiledQuery.BACKUP_DATABASE ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "BACKUP DATABASE");
                     case CompiledQuery.UPDATE -> sendConfirmation(state, configuration.getKeepAliveHeader(), "UPDATE");
                     case CompiledQuery.VACUUM -> sendConfirmation(state, configuration.getKeepAliveHeader(), "VACUUM");
                     case CompiledQuery.BEGIN -> sendConfirmation(state, configuration.getKeepAliveHeader(), "BEGIN");
@@ -355,6 +332,10 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
                             sendConfirmation(state, configuration.getKeepAliveHeader(), "CREATE MAT VIEW");
                     case CompiledQuery.REFRESH_MAT_VIEW ->
                             sendConfirmation(state, configuration.getKeepAliveHeader(), "REFRESH MAT VIEW");
+                    case CompiledQuery.CREATE_VIEW ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "CREATE VIEW");
+                    case CompiledQuery.ALTER_VIEW ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "ALTER VIEW");
                     default -> sendConfirmation(state, configuration.getKeepAliveHeader(), "UNKNOWN");
                 }
             } catch (TableReferenceOutOfDateException e) {
@@ -368,7 +349,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
     private void doResumeSend(
             SqlValidationProcessorState state,
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         LOG.debug().$("resume [fd=").$(context.getFd()).I$();
 
         final HttpChunkedResponse response = context.getChunkedResponse();
@@ -385,9 +366,6 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
                 );
                 // close the factory on reset instead of caching it
                 break;
-            } catch (DataUnavailableException e) {
-                response.resetToBookmark();
-                throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
             } catch (NoSpaceLeftInResponseBufferException ignored) {
                 if (response.resetToBookmark()) {
                     response.sendChunk(false);
@@ -408,7 +386,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
     private void executeNewSelect(
             SqlValidationProcessorState state,
             CompiledQuery cq
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         RecordCursorFactory factory = cq.getRecordCursorFactory();
         final HttpConnectionContext context = state.getHttpConnectionContext();
         if (!state.of(factory)) {

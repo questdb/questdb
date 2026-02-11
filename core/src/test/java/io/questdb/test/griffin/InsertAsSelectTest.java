@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,12 +25,14 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -183,5 +185,33 @@ public class InsertAsSelectTest extends AbstractCairoTest {
         Assert.assertNull(insertException.get());
         drainWalQueue();
         assertSql("count\n100\n", "select count(*) from target");
+    }
+
+    @Test
+    public void testSelectAsInsertManyColumns() throws SqlException {
+        createTableManyCols("main");
+        createTableManyCols("temp");
+
+        execute("insert into main select * from temp");
+    }
+
+    @Test
+    public void testSelectAsInsertManyColumnsWithUnion() throws SqlException {
+        createTableManyCols("main");
+        createTableManyCols("temp");
+
+        execute("insert into main select * from temp " +
+                "except " +
+                "select * from main");
+    }
+
+    private static void createTableManyCols(String name) {
+        TableModel tm = new TableModel(configuration, name, PartitionBy.DAY);
+        tm.col("index", ColumnType.SYMBOL);
+        tm.timestamp();
+        for (int i = 0; i < 6000; i++) {
+            tm.col("a" + i, ColumnType.INT);
+        }
+        createTable(tm);
     }
 }

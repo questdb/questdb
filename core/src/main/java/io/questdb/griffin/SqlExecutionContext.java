@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,6 +39,7 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
@@ -58,6 +59,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // Returns true when the context doesn't require all SQL functions to be deterministic.
     // Deterministic-only functions are enforced e.g. when compiling a mat view.
     boolean allowNonDeterministicFunctions();
+
+    void changePageFrameSizes(int minRows, int maxRows);
 
     void clearWindowContext();
 
@@ -145,6 +148,10 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     int getNowTimestampType();
 
+    int getPageFrameMaxRows();
+
+    int getPageFrameMinRows();
+
     QueryFutureUpdateListener getQueryFutureUpdateListener();
 
     Rnd getRandom();
@@ -192,6 +199,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     WindowContext getWindowContext();
 
+    int hasInterval();
+
     void initNow();
 
     boolean isCacheHit();
@@ -209,13 +218,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isParallelTopKEnabled();
 
-    boolean isTimestampRequired();
+    boolean isParallelWindowJoinEnabled();
 
-    boolean isValidationOnly();
+    boolean isTimestampRequired();
 
     default boolean isUninterruptible() {
         return false;
     }
+
+    boolean isValidationOnly();
 
     boolean isWalApplication();
 
@@ -225,11 +236,23 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     default void overrideWhereIntrinsics(TableToken tableToken, IntrinsicModel intrinsicModel, int timestampType) {
     }
 
+    RuntimeIntrinsicIntervalModel peekIntervalModel();
+
+    void popHasInterval();
+
+    void popIntervalModel();
+
     void popTimestampRequiredFlag();
+
+    void pushHasInterval(int hasInterval);
+
+    void pushIntervalModel(RuntimeIntrinsicIntervalModel intervalModel);
 
     void pushTimestampRequiredFlag(boolean flag);
 
-    void resetFlags();
+    void reset();
+
+    void restoreToDefaultPageFrameSizes();
 
     void setAllowNonDeterministicFunction(boolean value);
 
@@ -252,6 +275,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled);
 
     void setParallelTopKEnabled(boolean parallelTopKEnabled);
+
+    void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled);
 
     void setRandom(Rnd rnd);
 

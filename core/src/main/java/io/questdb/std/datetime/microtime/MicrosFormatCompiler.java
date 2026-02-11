@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -866,7 +866,8 @@ public class MicrosFormatCompiler {
                     parseDigits(assertRemainingIndex, parseIntIndex, 3, -1);
                     break;
                 case OP_NANOS_GREEDY:
-                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, -1);
+                    stackState &= ~(1 << LOCAL_TEMP_LONG);
+                    invokeParseIntSafelyAndStore(parseInt000GreedyIndex, decodeLenIndex, decodeIntIndex, -1);
                     break;
                 case OP_MILLIS_ONE_DIGIT:
                     stackState &= ~(1 << LOCAL_MILLIS);

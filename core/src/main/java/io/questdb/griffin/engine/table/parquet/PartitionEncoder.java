@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,6 +37,26 @@ import io.questdb.std.str.Utf8Sequence;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
 
 public class PartitionEncoder {
+
+    public static native void closeStreamingParquetWriter(
+            long writerPtr
+    ) throws CairoException;
+
+    public static native long createStreamingParquetWriter(
+            long allocator,
+            int columnCount,
+            long columnNamesPtr,
+            int columnNamesSize,
+            long columnMetadataPtr,
+            int timestampIndex,
+            boolean descending,
+            long compressionCodec,
+            boolean statisticsEnabled,
+            boolean rawArrayEncoding,
+            long rowGroupSize,
+            long dataPageSize,
+            int version
+    ) throws CairoException;
 
     public static void encode(PartitionDescriptor descriptor, Path destPath) {
         encodeWithOptions(
@@ -90,7 +110,9 @@ public class PartitionEncoder {
         }
     }
 
-    public static void populateEmptyPartition(TableReader tableReader, PartitionDescriptor descriptor, int partitionIndex) throws CairoException {
+    public static native long finishStreamingParquetWrite(long writerPtr) throws CairoException;
+
+    public static void populateEmptyPartition(TableReader tableReader, PartitionDescriptor descriptor) throws CairoException {
         final int timestampIndex = tableReader.getMetadata().getTimestampIndex();
         descriptor.of(tableReader.getTableToken().getTableName(), 0, timestampIndex);
         final TableReaderMetadata metadata = tableReader.getMetadata();
@@ -143,9 +165,13 @@ public class PartitionEncoder {
                     SymbolMapReader symbolMapReader = tableReader.getSymbolMapReader(i);
                     final MemoryR symbolValuesMem = symbolMapReader.getSymbolValuesColumn();
                     final MemoryR symbolOffsetsMem = symbolMapReader.getSymbolOffsetsColumn();
+                    int encodeColumnType = columnType;
+                    if (!symbolMapReader.containsNullValue()) {
+                        encodeColumnType |= Integer.MIN_VALUE;
+                    }
                     descriptor.addColumn(
                             columnName,
-                            columnType,
+                            encodeColumnType,
                             columnId,
                             colTop,
                             primaryMem.addressOf(0),
@@ -186,6 +212,23 @@ public class PartitionEncoder {
             }
         }
     }
+
+    public static native long writeStreamingParquetChunk(
+            long writerPtr,
+            long columnDataPtr,
+            long rowCount
+    ) throws CairoException;
+
+    public static native long writeStreamingParquetChunkFromRowGroup(
+            long writerPtr,
+            long allocatorPtr,
+            long columnDataPtr,
+            long sourceParquetAddr,
+            long sourceParquetSize,
+            int rowGroupIndex,
+            int rowGroupLo,
+            int rowGroupHi
+    ) throws CairoException;
 
     private static native void encodePartition(
             long tableNamePtr,

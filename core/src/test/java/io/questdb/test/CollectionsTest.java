@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -152,6 +152,23 @@ public class CollectionsTest {
         Assert.assertEquals(-1, list.binarySearch(6, Vect.BIN_SEARCH_SCAN_UP));
         Assert.assertEquals(-25, list.binarySearch(240, Vect.BIN_SEARCH_SCAN_UP));
         Assert.assertEquals(-201, list.binarySearch(2010, Vect.BIN_SEARCH_SCAN_UP));
+    }
+
+    @Test
+    public void testLongSearch3() {
+        final int N = 100;
+        final LongList list = new LongList();
+
+        for (int i = 0; i < N; i++) {
+            list.add(2 * i);
+        }
+
+        for (int i = 0; i < N; i++) {
+            Assert.assertEquals(i, list.binarySearch(2 * i, Vect.BIN_SEARCH_SCAN_UP));
+            Assert.assertEquals(i, list.binarySearch(2 * i, Vect.BIN_SEARCH_SCAN_DOWN));
+            Assert.assertEquals(-i - 2, list.binarySearch(2 * i + 1, Vect.BIN_SEARCH_SCAN_UP));
+            Assert.assertEquals(-i - 2, list.binarySearch(2 * i + 1, Vect.BIN_SEARCH_SCAN_DOWN));
+        }
     }
 
     @Test

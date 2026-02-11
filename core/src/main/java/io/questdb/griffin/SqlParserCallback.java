@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,8 +30,10 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.engine.table.ShowCreateMatViewRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory;
+import io.questdb.griffin.engine.table.ShowCreateViewRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.GenericLexer;
@@ -58,6 +60,16 @@ public interface SqlParserCallback {
         );
     }
 
+    static @NotNull TableToken getViewToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path) throws SqlException {
+        final TableToken viewToken = getTableToken(tableNameExpr, executionContext, path,
+                SqlException.viewDoesNotExist(tableNameExpr.position, tableNameExpr.token)
+        );
+        if (!viewToken.isView()) {
+            throw SqlException.$(tableNameExpr.position, "view name expected, got table name");
+        }
+        return viewToken;
+    }
+
     default RecordCursorFactory generateShowCreateMatViewFactory(QueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
         final TableToken viewToken = getMatViewToken(model.getTableNameExpr(), executionContext, path);
         return new ShowCreateMatViewRecordCursorFactory(viewToken, model.getTableNameExpr().position);
@@ -66,6 +78,11 @@ public interface SqlParserCallback {
     default RecordCursorFactory generateShowCreateTableFactory(QueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
         final TableToken tableToken = getTableToken(model.getTableNameExpr(), executionContext, path);
         return new ShowCreateTableRecordCursorFactory(tableToken, model.getTableNameExpr().position);
+    }
+
+    default RecordCursorFactory generateShowCreateViewFactory(QueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
+        final TableToken viewToken = getViewToken(model.getTableNameExpr(), executionContext, path);
+        return new ShowCreateViewRecordCursorFactory(viewToken, model.getTableNameExpr().position);
     }
 
     default RecordCursorFactory generateShowSqlFactory(QueryModel model) {
@@ -89,6 +106,18 @@ public interface SqlParserCallback {
             GenericLexer lexer,
             SecurityContext securityContext,
             CreateTableOperationBuilder builder,
+            @Nullable CharSequence tok
+    ) throws SqlException {
+        if (tok != null) {
+            throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+        }
+        return builder;
+    }
+
+    default CreateViewOperationBuilder parseCreateViewExt(
+            GenericLexer lexer,
+            SecurityContext securityContext,
+            CreateViewOperationBuilder builder,
             @Nullable CharSequence tok
     ) throws SqlException {
         if (tok != null) {

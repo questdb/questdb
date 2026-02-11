@@ -8,7 +8,7 @@
 #    \__\_\\__,_|\___||___/\__|____/|____/
 #
 #  Copyright (c) 2014-2019 Appsicle
-#  Copyright (c) 2019-2024 QuestDB
+#  Copyright (c) 2019-2026 QuestDB
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -148,15 +148,41 @@ function export_java {
 }
 
 function export_jemalloc() {
+    local arch=$(uname -m)
+
+    # auto-enable jemalloc on Linux x86_64 for open source edition with bundled JRE
+    # if QDB_JEMALLOC is not explicitly set
+    if [[ -z "${QDB_JEMALLOC+x}" ]]; then
+        if [[ "$QDB_OS" == "Linux" && "$arch" == "x86_64" && "$JAVA_MAIN" == *"io.questdb"* && "$QDB_PACKAGE" == "withjre" ]]; then
+            QDB_JEMALLOC="true"
+        fi
+    fi
+
     if [[ "$QDB_JEMALLOC" = "true" ]]; then
-      jemalloc_so=$(ls $BASE/libjemalloc*)
-      if [[ "$QDB_OS" != "FreeBSD" && -r "${jemalloc_so}" ]]; then
-          if [[ "$QDB_OS" == "Darwin" ]]; then
-              export DYLD_INSERT_LIBRARIES=${jemalloc_so}
-          else
-              export LD_PRELOAD=${jemalloc_so}
-          fi
+      if [[ "$QDB_OS" != "Linux" ]]; then
+          echo "Error: QDB_JEMALLOC is enabled but jemalloc is only supported on Linux (detected OS: $QDB_OS)"
+          echo "QuestDB works with the default system allocator on this platform."
+          echo ""
+          echo "To disable jemalloc, either:"
+          echo "  - Unset the environment variable: unset QDB_JEMALLOC"
+          echo "  - Set the environment variable to false: export QDB_JEMALLOC=false"
+          echo "  - Remove or comment out 'export QDB_JEMALLOC=true' from your env.sh or shell profile"
+          exit 55
+      fi
+      jemalloc_so=$(ls $BASE/libjemalloc.so* 2>/dev/null | head -1)
+      if [[ -r "${jemalloc_so}" ]]; then
+          export QDB_JEMALLOC_LIB=${jemalloc_so}
           echo "Using jemalloc"
+      else
+          echo "Error: QDB_JEMALLOC is enabled but jemalloc library not found in ${BASE}"
+          echo "Your QuestDB distribution may not include jemalloc."
+          echo "QuestDB works with the default system allocator too."
+          echo ""
+          echo "To disable jemalloc, either:"
+          echo "  - Unset the environment variable: unset QDB_JEMALLOC"
+          echo "  - Set the environment variable to false: export QDB_JEMALLOC=false"
+          echo "  - Remove or comment out 'export QDB_JEMALLOC=true' from your env.sh or shell profile"
+          exit 55
       fi
     fi
 }
@@ -354,14 +380,21 @@ function start {
     DATE=`date +%Y-%m-%dT%H-%M-%S`
     HELLO_FILE=${QDB_ROOT}/hello.txt
     rm ${HELLO_FILE} 2> /dev/null
+
+    # Set LD_PRELOAD only for the Java process, not the shell
+    JAVA_CMD="${JAVA}"
+    if [ -n "${QDB_JEMALLOC_LIB}" ]; then
+        JAVA_CMD="env LD_PRELOAD=${QDB_JEMALLOC_LIB} ${JAVA}"
+    fi
+
     if [ "${QDB_CONTAINER_MODE}" != "" ]; then
-        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1
+        ${JAVA_CMD} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1
     elif [ "${QDB_DISABLE_HUP_HANDLER}" = "" ]; then
-        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1 &
+        ${JAVA_CMD} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1 &
         $BASE/print-hello.sh ${HELLO_FILE}
     else
         $BASE/print-hello.sh ${HELLO_FILE} &
-        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} ${QDB_DISABLE_HUP_HANDLER} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1
+        ${JAVA_CMD} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} ${QDB_DISABLE_HUP_HANDLER} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1
     fi
 }
 

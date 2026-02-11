@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,8 +24,20 @@
 
 package org.questdb;
 
-import io.questdb.std.*;
-import org.openjdk.jmh.annotations.*;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Level;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
@@ -39,8 +51,9 @@ import java.util.concurrent.TimeUnit;
 public class SumDoubleBenchmark {
     private final static long memSize = 1024 * 16;
     private final static int doubleCount = (int) (memSize / Double.BYTES);
-    private double[] darr;
-    private long mem;
+    private long countAddr;
+    private long doubleAddr;
+    private double[] doubleArray;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -56,28 +69,30 @@ public class SumDoubleBenchmark {
     @Setup(Level.Iteration)
     public void setup() {
         Os.init();
-        mem = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);
-        darr = new double[doubleCount];
+        doubleAddr = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);
+        countAddr = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        doubleArray = new double[doubleCount];
         final Rnd rnd = new Rnd();
-        long p = mem;
+        long p = doubleAddr;
         for (int i = 0; i < doubleCount; i++) {
             double d = rnd.nextDouble();
             Unsafe.getUnsafe().putDouble(p, d);
-            darr[i] = d;
+            doubleArray[i] = d;
             p += Double.BYTES;
         }
     }
 
     @TearDown(Level.Iteration)
     public void tearDown() {
-        Unsafe.free(mem, memSize, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(doubleAddr, memSize, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(countAddr, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
     }
 
     @Benchmark
     public double testJavaHeapSum() {
         double result = 0.0;
         for (int i = 0; i < doubleCount; i++) {
-            result += darr[i];
+            result += doubleArray[i];
         }
         return result;
     }
@@ -86,13 +101,28 @@ public class SumDoubleBenchmark {
     public double testJavaNativeSum() {
         double result = 0.0;
         for (int i = 0; i < doubleCount; i++) {
-            result += Unsafe.getUnsafe().getDouble(mem + i * 8);
+            result += Unsafe.getUnsafe().getDouble(doubleAddr + i * 8);
         }
         return result;
     }
 
     @Benchmark
-    public double testNativeSum() {
-        return Vect.sumDouble(mem, doubleCount);
+    public double testVectMaxDouble() {
+        return Vect.maxDouble(doubleAddr, doubleCount);
+    }
+
+    @Benchmark
+    public double testVectMinDouble() {
+        return Vect.minDouble(doubleAddr, doubleCount);
+    }
+
+    @Benchmark
+    public double testVectSumDouble() {
+        return Vect.sumDouble(doubleAddr, doubleCount);
+    }
+
+    @Benchmark
+    public double testVectSumDoubleAcc() {
+        return Vect.sumDoubleAcc(doubleAddr, doubleCount, countAddr);
     }
 }

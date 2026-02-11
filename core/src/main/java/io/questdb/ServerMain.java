@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,9 +27,12 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.DataID;
 import io.questdb.cairo.FlushQueryCacheJob;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
+import io.questdb.cairo.view.ViewCompilerJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.Services;
@@ -38,6 +41,7 @@ import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.cutlass.text.CopyImportJob;
 import io.questdb.cutlass.text.CopyImportRequestJob;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -48,7 +52,9 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.Clock;
+import io.questdb.std.Uuid;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -58,8 +64,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import static io.questdb.PropertyKey.EXPORT_WORKER_COUNT;
-import static io.questdb.PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT;
+import static io.questdb.PropertyKey.*;
 
 public class ServerMain implements Closeable {
     private final Bootstrap bootstrap;
@@ -68,6 +73,7 @@ public class ServerMain implements Closeable {
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean running = new AtomicBoolean();
     protected PGServer pgServer;
+    private Thread compileViewsThread;
     private HttpServer httpServer;
     private Thread hydrateMetadataThread;
     private boolean initialized;
@@ -150,6 +156,17 @@ public class ServerMain implements Closeable {
         return "QDB_" + propertyPath.replace('.', '_').toUpperCase();
     }
 
+    /**
+     * Waits for startup background tasks to complete, including metadata cache
+     * and recent write tracker hydration. This should be called after {@link #start()}
+     * if immediate DDL operations (like DROP TABLE) are planned, to avoid conflicts
+     * with background hydration threads that may hold table metadata locks.
+     */
+    public void awaitStartup() {
+        joinThread(hydrateMetadataThread, false);
+        joinThread(compileViewsThread, false);
+    }
+
     public void awaitTable(String tableName) {
         getEngine().awaitTable(tableName, 30, TimeUnit.SECONDS);
     }
@@ -162,12 +179,8 @@ public class ServerMain implements Closeable {
     @Override
     public void close() {
         if (closed.compareAndSet(false, true)) {
-            if (hydrateMetadataThread != null) {
-                try {
-                    hydrateMetadataThread.join();
-                } catch (InterruptedException ignored) {
-                }
-            }
+            joinThread(hydrateMetadataThread, true);
+            joinThread(compileViewsThread, true);
             System.err.println("QuestDB is shutting down...");
             System.out.println("QuestDB is shutting down...");
             if (bootstrap != null && bootstrap.getLog() != null) {
@@ -248,6 +261,11 @@ public class ServerMain implements Closeable {
             }
             workerPoolManager.start(bootstrap.getLog());
             bootstrap.logBannerAndEndpoints(webConsoleSchema());
+            final DataID dataID = engine.getDataID();
+            if (dataID.isInitialized()) {
+                final Uuid uuid = dataID.get();
+                bootstrap.getLog().advisoryW().$("data id: ").$(uuid).$();
+            }
             System.gc(); // final GC
             bootstrap.getLog().advisoryW().$("enjoy").$();
         }
@@ -345,8 +363,6 @@ public class ServerMain implements Closeable {
                                 exportWorkerPool.assign(i, copyExportRequestJob);
                                 exportWorkerPool.freeOnExit(copyExportRequestJob);
                             }
-
-                            log.info().$("export workers count: ").$(workerCount).$();
                         } else {
                             log.advisory().$("export is disabled; set ")
                                     .$(EXPORT_WORKER_COUNT.getPropertyPath())
@@ -370,7 +386,9 @@ public class ServerMain implements Closeable {
             }
         };
 
-        engine.buildMatViewGraph();
+        // make sure view definitions are loaded before the view compiler job is started,
+        // all views have to be loaded with their dependencies before the compiler starts processing notifications
+        engine.buildViewGraphs();
 
         if (matViewEnabled && !isReadOnly) {
             if (config.getMatViewRefreshPoolConfiguration().getWorkerCount() > 0) {
@@ -380,18 +398,28 @@ public class ServerMain implements Closeable {
                         config.getMatViewRefreshPoolConfiguration(),
                         WorkerPoolManager.Requester.MAT_VIEW_REFRESH
                 );
-
-                setupMatViewJobs(
-                        mvRefreshWorkerPool,
-                        engine,
-                        workerPoolManager.getSharedQueryWorkerCount()
-                );
+                setupMatViewJobs(mvRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
             } else {
                 log.advisory().$("mat view refresh is disabled; set ")
                         .$(MAT_VIEW_REFRESH_WORKER_COUNT.getPropertyPath())
                         .$(" to a positive value or keep default to enable mat view refresh.")
                         .$();
             }
+        }
+
+        if (config.getViewCompilerPoolConfiguration().getWorkerCount() > 0) {
+            // This starts view compiler jobs only when there is a dedicated pool configured
+            // this will not use shared pool write because getWorkerCount() > 0
+            WorkerPool viewCompilerWorkerPool = workerPoolManager.getSharedPoolWrite(
+                    config.getViewCompilerPoolConfiguration(),
+                    WorkerPoolManager.Requester.VIEW_COMPILER
+            );
+            setupViewJobs(viewCompilerWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
+        } else {
+            log.advisory().$("view compiler job is disabled; set ")
+                    .$(VIEW_COMPILER_WORKER_COUNT.getPropertyPath())
+                    .$(" to a positive value or keep default to enable view compiler.")
+                    .$();
         }
 
         if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
@@ -444,12 +472,37 @@ public class ServerMain implements Closeable {
             ));
         }
 
-        // metadata hydration
-        hydrateMetadataThread = new Thread(engine.getMetadataCache()::onStartupAsyncHydrator);
+        // metadata and write tracker hydration
+        hydrateMetadataThread = new Thread(() -> {
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.hydrateRecentWriteTracker();
+        });
         hydrateMetadataThread.start();
+
+        // populate view state store and hydrate metadata cache with view metadata
+        compileViewsThread = new Thread(() -> {
+            // temporary list to re-use for listing dependent views
+            ObjList<TableToken> tempSink = new ObjList<>();
+            try (SqlExecutionContext executionContext = engine.createViewCompilerContext(0)) {
+                ViewCompilerJob.compileAllViews(engine, executionContext, tempSink);
+            }
+        });
+        compileViewsThread.start();
 
         System.gc(); // GC 1
         bootstrap.getLog().advisoryW().$("server is ready to be started").$();
+    }
+
+    private void joinThread(Thread thread, boolean ignoreInterrupt) {
+        if (thread != null) {
+            try {
+                thread.join();
+            } catch (InterruptedException e) {
+                if (!ignoreInterrupt) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
     }
 
     protected <T extends Closeable> T freeOnExit(T closeable) {
@@ -473,6 +526,15 @@ public class ServerMain implements Closeable {
         }
         final MatViewTimerJob matViewTimerJob = new MatViewTimerJob(engine);
         mvWorkerPool.assign(matViewTimerJob);
+    }
+
+    protected void setupViewJobs(WorkerPool vWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {
+        for (int i = 0, workerCount = vWorkerPool.getWorkerCount(); i < workerCount; i++) {
+            // create job per worker
+            final ViewCompilerJob viewCompilerJob = new ViewCompilerJob(i, engine, sharedQueryWorkerCount);
+            vWorkerPool.assign(i, viewCompilerJob);
+            vWorkerPool.freeOnExit(viewCompilerJob);
+        }
     }
 
     protected void setupWalApplyJob(

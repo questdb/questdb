@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -166,9 +166,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
         private final RecordValueSink valueSink;
         private Map currentJoinKeyMap;
         private boolean danglingSlaveRecord = false;
-        private boolean isMasterHasNextPending;
         private boolean isOpen;
-        private boolean masterHasNext;
         private Record masterRecord;
         private Record slaveRecord;
         private long slaveTimestamp = Long.MIN_VALUE;
@@ -222,11 +220,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            if (isMasterHasNextPending) {
-                masterHasNext = masterCursor.hasNext();
-                isMasterHasNextPending = false;
-            }
-            if (masterHasNext) {
+            if (masterCursor.hasNext()) {
                 final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
                 final long minSlaveTimestamp = toleranceInterval == Numbers.LONG_NULL ? Long.MIN_VALUE : masterTimestamp - toleranceInterval;
                 MapKey key;
@@ -278,7 +272,6 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
                     record.hasSlave(false);
                 }
 
-                isMasterHasNextPending = true;
                 return true;
             }
             return false;
@@ -303,7 +296,6 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
             danglingSlaveRecord = false;
             masterCursor.toTop();
             slaveCursor.toTop();
-            isMasterHasNextPending = true;
         }
 
         /**
@@ -370,7 +362,6 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
                 MapRecord mapRecordB = joinKeyMapB.getRecord();
                 mapRecordB.setSymbolTableResolver(slaveCursor, slaveColumnIndex);
             }
-            isMasterHasNextPending = true;
         }
     }
 }

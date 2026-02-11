@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -56,7 +56,6 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -1082,15 +1081,13 @@ public class AggregateTest extends AbstractCairoTest {
 
     @Test
     public void testIntSymbolResolution() throws Exception {
-        // Fractional part is slightly different between parallel and non-parallel factories.
-        Assume.assumeTrue(enableParallelGroupBy);
         assertQuery(
                 """
-                        s2\tsum
-                        \t104119.88094816262
-                        a1\t103804.6224230062
-                        a2\t104433.68659571264
-                        a3\t104341.2885251736
+                        s2	sum
+                        	104119.880948161
+                        a1	103804.62242300605
+                        a2	104433.68659571148
+                        a3	104341.28852517322
                         """,
                 "select s2, sum(val) from tab order by s2",
                 "create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_symbol('a1','a2','a3', null) s2, rnd_double(2) val from long_sequence(1000000))",
@@ -1358,6 +1355,219 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMinMaxDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table tab as (" +
+                            "select timestamp_sequence('2024-01-01', 1000000)::" + timestampTypeName + " ts, x val " +
+                            "from long_sequence(10000)" +
+                            ") timestamp(ts) partition by DAY"
+            );
+
+            // min(ts) should return the first value (due to optimization)
+            assertQuery(
+                    replaceTimestampSuffix1(
+                            """
+                                    min
+                                    2024-01-01T00:00:00.000000Z
+                                    """,
+                            timestampTypeName
+                    ),
+                    "select min(ts) from tab",
+                    "min",
+                    true,
+                    true
+            );
+
+            // max(ts) should return the last value (due to optimization)
+            assertQuery(
+                    replaceTimestampSuffix1(
+                            """
+                                    max
+                                    2024-01-01T02:46:39.000000Z
+                                    """,
+                            timestampTypeName
+                    ),
+                    "select max(ts) from tab",
+                    "max###DESC",
+                    true,
+                    true
+            );
+
+            // both min and max together
+            assertQuery(
+                    replaceTimestampSuffix1(
+                            """
+                                    min\tmax
+                                    2024-01-01T00:00:00.000000Z\t2024-01-01T02:46:39.000000Z
+                                    """,
+                            timestampTypeName
+                    ),
+                    "select min(ts), max(ts) from tab",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxDesignatedTimestampEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (" +
+                    "ts " + timestampTypeName + ", val long" +
+                    ") timestamp(ts) partition by DAY");
+
+            // Empty table should return nulls
+            assertQuery(
+                    replaceTimestampSuffix1(
+                            """
+                                    min\tmax
+                                    \t
+                                    """,
+                            timestampTypeName
+                    ),
+                    "select min(ts), max(ts) from tab",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxDesignatedTimestampMultiplePartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create table spanning multiple partitions (days)
+            execute(
+                    "create table tab as (" +
+                            "select timestamp_sequence('2024-01-01', 60000000)::" + timestampTypeName + " ts, x val " +
+                            "from long_sequence(10000)" +
+                            ") timestamp(ts) partition by DAY"
+            );
+
+            // min(ts) should return the first value
+            assertQuery(
+                    replaceTimestampSuffix1(
+                            """
+                                    min
+                                    2024-01-01T00:00:00.000000Z
+                                    """,
+                            timestampTypeName
+                    ),
+                    "select min(ts) from tab",
+                    "min",
+                    true,
+                    true
+            );
+
+            // max(ts) should return the last value
+            assertQuery(
+                    replaceTimestampSuffix1(
+                            """
+                                    max
+                                    2024-01-07T22:39:00.000000Z
+                                    """,
+                            timestampTypeName
+                    ),
+                    "select max(ts) from tab",
+                    "max###DESC",
+                    true,
+                    true
+            );
+
+            // both together
+            assertQuery(
+                    replaceTimestampSuffix1(
+                            """
+                                    min\tmax
+                                    2024-01-01T00:00:00.000000Z\t2024-01-07T22:39:00.000000Z
+                                    """,
+                            timestampTypeName
+                    ),
+                    "select min(ts), max(ts) from tab",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxDesignatedTimestampSingleRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table tab as (" +
+                            "select timestamp_sequence('2024-06-15T12:30:45', 1000000)::" + timestampTypeName + " ts, x val " +
+                            "from long_sequence(1)" +
+                            ") timestamp(ts) partition by DAY"
+            );
+
+            // min and max should return the same value for single row
+            assertQuery(
+                    replaceTimestampSuffix1(
+                            """
+                                    min\tmax
+                                    2024-06-15T12:30:45.000000Z\t2024-06-15T12:30:45.000000Z
+                                    """,
+                            timestampTypeName
+                    ),
+                    "select min(ts), max(ts) from tab",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxNonDesignatedTimestamp() throws Exception {
+        // Test that non-designated timestamp columns are still scanned correctly
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table tab as (" +
+                            "select timestamp_sequence('2024-01-01', 1000000)::" + timestampTypeName + " ts, " +
+                            "       timestamp_sequence('2024-06-01', -500000)::" + timestampTypeName + " other_ts, " +
+                            "       x val " +
+                            "from long_sequence(1000)" +
+                            ") timestamp(ts) partition by DAY"
+            );
+
+            // min/max on designated timestamp (ts)
+            assertQuery(
+                    replaceTimestampSuffix1(
+                            """
+                                    min\tmax
+                                    2024-01-01T00:00:00.000000Z\t2024-01-01T00:16:39.000000Z
+                                    """,
+                            timestampTypeName
+                    ),
+                    "select min(ts), max(ts) from tab",
+                    null,
+                    false,
+                    true
+            );
+
+            // min/max on non-designated timestamp (other_ts) - values are descending
+            // other_ts starts at 2024-06-01 and decreases by 500000 microseconds per row
+            // So min is at the end (row 1000), max is at the beginning (row 1)
+            assertQuery(
+                    replaceTimestampSuffix1(
+                            """
+                                    min\tmax
+                                    2024-05-31T23:51:40.500000Z\t2024-06-01T00:00:00.000000Z
+                                    """,
+                            timestampTypeName
+                    ),
+                    "select min(other_ts), max(other_ts) from tab",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testNonRostiWithManyAggregateFunctions1() throws Exception {
         executeWithPool(1, 32, AggregateTest::runGroupByWithAgg);
     }
@@ -1545,7 +1755,8 @@ public class AggregateTest extends AbstractCairoTest {
                                     "rnd_long() l, " +
                                     "rnd_date(to_date('2015', 'yyyy'), to_date('2022', 'yyyy'), 0) dat, " +
                                     "rnd_timestamp(to_timestamp('2015','yyyy'),to_timestamp('2022','yyyy'),0) tstmp, " +
-                                    "cast('s' || x as symbol)  from long_sequence(896)", sqlExecutionContext
+                                    "cast('s' || x as symbol)  from long_sequence(896)",
+                            sqlExecutionContext
                     );
 
                     final String[] functions = {

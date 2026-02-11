@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class MinCharGroupByFunction extends CharFunction implements GroupByFunction, UnaryFunction {
@@ -40,6 +41,22 @@ public class MinCharGroupByFunction extends CharFunction implements GroupByFunct
 
     public MinCharGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            final long hi = ptr + count * (long) Character.BYTES;
+            char min = Unsafe.getUnsafe().getChar(ptr);
+            ptr += Character.BYTES;
+            for (; ptr < hi; ptr += Character.BYTES) {
+                char value = Unsafe.getUnsafe().getChar(ptr);
+                if (value > 0 && value < min) {
+                    min = value;
+                }
+            }
+            mapValue.putChar(valueIndex, min);
+        }
     }
 
     @Override
@@ -109,6 +126,11 @@ public class MinCharGroupByFunction extends CharFunction implements GroupByFunct
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putChar(valueIndex, (char) 0);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return true;
     }
 
     @Override

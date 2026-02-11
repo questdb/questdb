@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,10 +32,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class NumericException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
-    /**
-     * @deprecated use {@link #instance()}
-     */
-    @Deprecated
     public static final NumericException INSTANCE = new NumericException();
     private static final io.questdb.std.ThreadLocal<NumericException> tlInstance = new ThreadLocal<>(NumericException::new);
     private final StringSink message = new StringSink();

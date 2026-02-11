@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.Map;
@@ -43,6 +44,7 @@ import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.groupby.GroupByLongTopKJob;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.log.Log;
@@ -55,16 +57,19 @@ import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.tasks.GroupByLongTopKTask;
 import io.questdb.tasks.GroupByMergeShardTask;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 class AsyncGroupByRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncGroupByRecordCursor.class);
-    private final AtomicBooleanCircuitBreaker mergeCircuitBreaker; // used to signal cancellation to merge shard workers
-    private final SOUnboundedCountDownLatch mergeDoneLatch = new SOUnboundedCountDownLatch(); // used for merge shard workers
-    private final AtomicInteger mergeStartedCounter = new AtomicInteger();
+    private final CairoConfiguration configuration;
     private final MessageBus messageBus;
+    private final AtomicBooleanCircuitBreaker postAggregationCircuitBreaker; // used to signal cancellation to merge shard workers
+    private final SOUnboundedCountDownLatch postAggregationDoneLatch = new SOUnboundedCountDownLatch(); // used for merge shard workers
+    private final AtomicInteger postAggregationStartedCounter = new AtomicInteger();
     private final VirtualRecord recordA;
     private final VirtualRecord recordB;
     private final ObjList<Function> recordFunctions;
@@ -77,15 +82,16 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     private MapRecordCursor mapCursor;
 
     public AsyncGroupByRecordCursor(
-            CairoEngine engine,
-            ObjList<Function> recordFunctions,
-            MessageBus messageBus
+            @NotNull CairoEngine engine,
+            @NotNull ObjList<Function> recordFunctions,
+            @NotNull MessageBus messageBus
     ) {
+        this.configuration = engine.getConfiguration();
         this.recordFunctions = recordFunctions;
         this.messageBus = messageBus;
         recordA = new VirtualRecord(recordFunctions);
         recordB = new VirtualRecord(recordFunctions);
-        mergeCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+        postAggregationCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
         isOpen = true;
     }
 
@@ -98,19 +104,21 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     @Override
     public void close() {
         if (isOpen) {
-            isOpen = false;
-            mapCursor = Misc.free(mapCursor);
+            try {
+                if (frameSequence != null) {
+                    LOG.debug()
+                            .$("closing [shard=").$(frameSequence.getShard())
+                            .$(", frameCount=").$(frameLimit)
+                            .I$();
 
-            if (frameSequence != null) {
-                LOG.debug()
-                        .$("closing [shard=").$(frameSequence.getShard())
-                        .$(", frameCount=").$(frameLimit)
-                        .I$();
-
-                if (frameLimit > -1) {
-                    frameSequence.await();
+                    if (frameLimit > -1) {
+                        frameSequence.await();
+                    }
+                    frameSequence.reset();
                 }
-                frameSequence.clear();
+            } finally {
+                mapCursor = Misc.free(mapCursor);
+                isOpen = false;
             }
         }
     }
@@ -139,7 +147,19 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     @Override
     public void longTopK(DirectLongLongSortedList list, int columnIndex) {
         buildMapConditionally();
-        mapCursor.longTopK(list, recordFunctions.getQuick(columnIndex));
+        final Function recordFunction = recordFunctions.getQuick(columnIndex);
+        // Only run in parallel when the function is thread-safe. This is a simplified check that won't
+        // pass for functions like count(varchar), but it's good enough for now since it'll pass for
+        // count() and count() over a fixed-size column.
+        //
+        // Later on, we can introduce a special method for GroupByFunction that will stand for aggregation
+        // thread-safety (the current value of the isThreadSafe() flag) while the isThreadSafe() flag
+        // will stand for read thread-safety, just like for non-GROUP BY functions.
+        if (recordFunction.isThreadSafe() && mapCursor == shardedCursor && mapCursor.size() > configuration.getGroupByParallelTopKThreshold()) {
+            parallelLongTopK(list, recordFunction);
+        } else {
+            mapCursor.longTopK(list, recordFunction);
+        }
     }
 
     @Override
@@ -253,9 +273,9 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     }
 
     private ObjList<Map> mergeShards(AsyncGroupByAtom atom) {
-        mergeCircuitBreaker.reset();
-        mergeStartedCounter.set(0);
-        mergeDoneLatch.reset();
+        postAggregationCircuitBreaker.reset();
+        postAggregationStartedCounter.set(0);
+        postAggregationDoneLatch.reset();
 
         // First, make sure to shard all non-sharded maps, if any.
         atom.shardAll();
@@ -265,7 +285,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         final RingQueue<GroupByMergeShardTask> queue = messageBus.getGroupByMergeShardQueue();
         final MPSequence pubSeq = messageBus.getGroupByMergeShardPubSeq();
         final MCSequence subSeq = messageBus.getGroupByMergeShardSubSeq();
-        final WorkStealingStrategy workStealingStrategy = frameSequence.getWorkStealingStrategy().of(mergeStartedCounter);
+        final WorkStealingStrategy workStealingStrategy = frameSequence.getWorkStealingStrategy().of(postAggregationStartedCounter);
 
         int queuedCount = 0;
         int ownCount = 0;
@@ -284,12 +304,12 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                             atom.mergeShard(-1, i);
                             ownCount++;
                             total++;
-                            mergedCount = mergeDoneLatch.getCount();
+                            mergedCount = postAggregationDoneLatch.getCount();
                             break;
                         }
-                        mergedCount = mergeDoneLatch.getCount();
+                        mergedCount = postAggregationDoneLatch.getCount();
                     } else {
-                        queue.get(cursor).of(mergeCircuitBreaker, mergeStartedCounter, mergeDoneLatch, atom, i);
+                        queue.get(cursor).of(postAggregationCircuitBreaker, postAggregationStartedCounter, postAggregationDoneLatch, atom, i);
                         pubSeq.done(cursor);
                         queuedCount++;
                         total++;
@@ -298,16 +318,16 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                 }
             }
         } catch (Throwable th) {
-            mergeCircuitBreaker.cancel();
+            postAggregationCircuitBreaker.cancel();
             throw th;
         } finally {
             // All done? Great, start consuming the queue we just published.
             // How do we get to the end? If we consume our own queue there is chance we will be consuming
             // aggregation tasks not related to this execution (we work in concurrent environment).
             // To deal with that we need to check our latch.
-            while (!mergeDoneLatch.done(queuedCount)) {
+            while (!postAggregationDoneLatch.done(queuedCount)) {
                 if (circuitBreaker.checkIfTripped()) {
-                    mergeCircuitBreaker.cancel();
+                    postAggregationCircuitBreaker.cancel();
                 }
 
                 if (workStealingStrategy.shouldSteal(mergedCount)) {
@@ -322,11 +342,11 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                 } else {
                     Os.pause();
                 }
-                mergedCount = mergeDoneLatch.getCount();
+                mergedCount = postAggregationDoneLatch.getCount();
             }
         }
 
-        if (mergeCircuitBreaker.checkIfTripped()) {
+        if (postAggregationCircuitBreaker.checkIfTripped()) {
             throwTimeoutException();
         }
 
@@ -338,6 +358,117 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                 .$(", queuedCount=").$(queuedCount).I$();
 
         return atom.getDestShards();
+    }
+
+    private void parallelLongTopK(DirectLongLongSortedList destList, Function longFunc) {
+        postAggregationCircuitBreaker.reset();
+        postAggregationStartedCounter.set(0);
+        postAggregationDoneLatch.reset();
+
+        final AsyncGroupByAtom atom = frameSequence.getAtom();
+        final int shardCount = atom.getShardCount();
+        final RingQueue<GroupByLongTopKTask> queue = messageBus.getGroupByLongTopKQueue();
+        final MPSequence pubSeq = messageBus.getGroupByLongTopKPubSeq();
+        final MCSequence subSeq = messageBus.getGroupByLongTopKSubSeq();
+        final WorkStealingStrategy workStealingStrategy = frameSequence.getWorkStealingStrategy().of(postAggregationStartedCounter);
+
+        int queuedCount = 0;
+        int ownCount = 0;
+        int reclaimed = 0;
+        int total = 0;
+        int processedCount = 0; // used for work stealing decisions
+
+        try {
+            for (int i = 0; i < shardCount; i++) {
+                while (true) {
+                    long cursor = pubSeq.next();
+                    if (cursor < 0) {
+                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+
+                        if (workStealingStrategy.shouldSteal(processedCount)) {
+                            final Map shard = atom.getDestShards().getQuick(i);
+                            final DirectLongLongSortedList ownerList = atom.getLongTopKList(-1, destList.getOrder(), destList.getCapacity());
+                            shard.getCursor().longTopK(ownerList, longFunc);
+                            ownCount++;
+                            total++;
+                            processedCount = postAggregationDoneLatch.getCount();
+                            break;
+                        }
+                        processedCount = postAggregationDoneLatch.getCount();
+                    } else {
+                        queue.get(cursor).of(
+                                postAggregationCircuitBreaker,
+                                postAggregationStartedCounter,
+                                postAggregationDoneLatch,
+                                atom,
+                                longFunc,
+                                i,
+                                destList.getOrder(),
+                                destList.getCapacity()
+                        );
+                        pubSeq.done(cursor);
+                        queuedCount++;
+                        total++;
+                        break;
+                    }
+                }
+            }
+        } catch (Throwable th) {
+            postAggregationCircuitBreaker.cancel();
+            throw th;
+        } finally {
+            // All done? Great, start consuming the queue we just published.
+            // How do we get to the end? If we consume our own queue there is chance we will be consuming
+            // aggregation tasks not related to this execution (we work in concurrent environment).
+            // To deal with that we need to check our latch.
+            while (!postAggregationDoneLatch.done(queuedCount)) {
+                if (circuitBreaker.checkIfTripped()) {
+                    postAggregationCircuitBreaker.cancel();
+                }
+
+                if (workStealingStrategy.shouldSteal(processedCount)) {
+                    long cursor = subSeq.next();
+                    if (cursor > -1) {
+                        GroupByLongTopKTask task = queue.get(cursor);
+                        GroupByLongTopKJob.run(-1, task, subSeq, cursor, atom);
+                        reclaimed++;
+                    } else {
+                        Os.pause();
+                    }
+                } else {
+                    Os.pause();
+                }
+                processedCount = postAggregationDoneLatch.getCount();
+            }
+        }
+
+        if (postAggregationCircuitBreaker.checkIfTripped()) {
+            throwTimeoutException();
+        }
+
+        // Now merge everything into the destination list.
+        final DirectLongLongSortedList ownerList = atom.getOwnerLongTopKList();
+        if (ownerList != null) {
+            final DirectLongLongSortedList.Cursor cursor = ownerList.getCursor();
+            while (cursor.hasNext()) {
+                destList.add(cursor.index(), cursor.value());
+            }
+        }
+        final ObjList<DirectLongLongSortedList> perWorkerLists = atom.getPerWorkerLongTopKLists();
+        for (int i = 0, n = perWorkerLists.size(); i < n; i++) {
+            final DirectLongLongSortedList workerList = perWorkerLists.getQuick(i);
+            if (workerList != null) {
+                final DirectLongLongSortedList.Cursor cursor = workerList.getCursor();
+                while (cursor.hasNext()) {
+                    destList.add(cursor.index(), cursor.value());
+                }
+            }
+        }
+
+        LOG.debug().$("parallel long top K done [total=").$(total)
+                .$(", ownCount=").$(ownCount)
+                .$(", reclaimed=").$(reclaimed)
+                .$(", queuedCount=").$(queuedCount).I$();
     }
 
     private void throwTimeoutException() {

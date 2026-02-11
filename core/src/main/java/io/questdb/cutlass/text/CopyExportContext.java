@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -79,6 +79,10 @@ public class CopyExportContext {
     public CopyExportContext(CairoEngine engine) {
         this.engine = engine;
         this.copyIDSupplier = engine.getConfiguration().getCopyIDSupplier();
+    }
+
+    public static boolean canStreamExportParquet(RecordCursorFactory factory) throws SqlException {
+        return factory.supportsPageFrameCursor();
     }
 
     public ExportTaskEntry assignExportEntry(
@@ -209,6 +213,7 @@ public class CopyExportContext {
                 entry.fileName.put(e.fileName);
                 entry.phase = e.phase;
                 entry.populatedRowCount = e.populatedRowCount;
+                entry.streamingSendRowCount = e.streamingSendRowCount;
                 entry.startTime = e.startTime;
                 entry.workerId = e.workerId;
                 entry.finishedPartitionCount = e.finishedPartitionCount;
@@ -286,10 +291,8 @@ public class CopyExportContext {
             @Nullable final CharSequence msg,
             long errors,
             String tableName,
-            long copyID,
-            CopyExportResult result
+            long copyID
     ) {
-
         Throwable error = null;
         synchronized (this) {
             if (!initialized) {
@@ -344,10 +347,6 @@ public class CopyExportContext {
                     .$(", msg=").$safe(msg)
                     .$(", errors=").$(errors)
                     .I$();
-        }
-
-        if (result != null) {
-            result.report(phase, status, msg);
         }
     }
 
@@ -420,6 +419,7 @@ public class CopyExportContext {
         private CopyExportRequestTask.Phase phase;
         private long populatedRowCount = 0;
         private long startTime;
+        private long streamingSendRowCount = 0;
         private int totalPartitionCount = 0;
         private long totalRowCount = 0;
         private CharSequence trigger;
@@ -457,6 +457,10 @@ public class CopyExportContext {
             return startTime;
         }
 
+        public long getStreamingSendRowCount() {
+            return streamingSendRowCount;
+        }
+
         public int getTotalPartitionCount() {
             return totalPartitionCount;
         }
@@ -485,6 +489,7 @@ public class CopyExportContext {
         SqlExecutionCircuitBreaker realCircuitBreaker;
         SecurityContext securityContext;
         long startTime = Numbers.LONG_NULL;
+        long streamingSendRowCount = 0;
         int totalPartitionCount = 0;
         long totalRowCount = 0;
         CopyTrigger trigger = CopyTrigger.NONE;
@@ -508,6 +513,7 @@ public class CopyExportContext {
             this.totalPartitionCount = 0;
             this.totalRowCount = 0;
             this.trigger = CopyTrigger.NONE;
+            this.streamingSendRowCount = 0;
         }
 
         public SqlExecutionCircuitBreaker getCircuitBreaker() {
@@ -565,6 +571,10 @@ public class CopyExportContext {
         public void setStartTime(long startTime, int workerId) {
             this.startTime = startTime;
             this.workerId = workerId;
+        }
+
+        public void setStreamingSendRowCount(long streamingSendRowCount) {
+            this.streamingSendRowCount = streamingSendRowCount;
         }
 
         public void setTotalPartitionCount(int totalPartitionCount) {

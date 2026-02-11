@@ -1,0 +1,128 @@
+statement ok
+PRAGMA enable_verification
+
+statement ok
+CREATE TABLE sales AS
+(
+ SELECT "2018" AS year, "1" AS quarter, east AS region, "100" as sales FROM (
+    SELECT 2018, 1, 'east', 100
+          UNION SELECT 2018, 2, 'east',  20
+          UNION SELECT 2018, 3, 'east',  40
+          UNION SELECT 2018, 4, 'east',  40
+          UNION SELECT 2019, 1, 'east', 120
+          UNION SELECT 2019, 2, 'east', 110
+          UNION SELECT 2019, 3, 'east',  80
+          UNION SELECT 2019, 4, 'east',  60
+          UNION SELECT 2018, 1, 'west', 105
+          UNION SELECT 2018, 2, 'west',  25
+          UNION SELECT 2018, 3, 'west',  45
+          UNION SELECT 2018, 4, 'west',  45
+          UNION SELECT 2019, 1, 'west', 125
+          UNION SELECT 2019, 2, 'west', 115
+          UNION SELECT 2019, 3, 'west',  85
+          UNION SELECT 2019, 4, 'west',  65
+ )
+);
+
+#SELECT year, region, q1, q2, q3, q4
+#  FROM sales
+#  PIVOT (sum(sales)
+#    FOR quarter
+#    IN (1 AS q1, 2 AS q2, 3 AS q3, 4 AS q4));
+query IIIIII rowsort
+sales PIVOT (
+    sum(sales)
+    FOR quarter IN (1 AS q1, 2 AS q2, 3 AS q3, 4 AS q4)
+    GROUP BY year, region
+) ORDER BY year, region;
+----
+2018	east	100	20	40	40
+2018	west	105	25	45	45
+2019	east	120	110	80	60
+2019	west	125	115	85	65
+
+# multiple matches with aliases
+#SELECT year, q1_east, q1_west, q2_east, q2_west, q3_east, q3_west, q4_east, q4_west
+#    FROM sales
+#    PIVOT (sum(sales)
+#      FOR (quarter, region)
+#      IN ((1, 'east') AS q1_east, (1, 'west') AS q1_west, (2, 'east') AS q2_east, (2, 'west') AS q2_west,
+#          (3, 'east') AS q3_east, (3, 'west') AS q3_west, (4, 'east') AS q4_east, (4, 'west') AS q4_west));
+query IIIIIIIII rowsort
+  sales
+  PIVOT (
+    sum(sales)
+    FOR quarter IN (1 as q1, 2 as q2, 3 as q3, 4 as q4)
+        region IN ('east', 'west')
+    GROUP BY year
+);
+----
+2018	100	105	20	25	40	45	40	45
+2019	120	125	110	115	80	85	60	65
+
+# duplicate values in IN list
+#statement error
+#SELECT *
+#    FROM sales
+#    PIVOT (sum(sales)
+#      FOR (quarter, region)
+#      IN ((1, 'east') AS q1_east, (1, 'east') AS q1_east_2));
+#----
+#specified multiple times in the IN clause
+
+statement error
+SELECT * FROM sales PIVOT (sum(sales) FOR quarter IN (1, 1) region IN ('east', 'east'));
+----
+db error: ERROR: duplicate value in PIVOT IN list: 1
+
+#SELECT year, q1, q2, q3, q4
+#  FROM (SELECT year, quarter, sales FROM sales) AS s
+#  PIVOT (sum(sales)
+#    FOR quarter
+#    IN (1 AS q1, 2 AS q2, 3 AS q3, 4 AS q4));
+query IIIII rowsort
+sales
+PIVOT (
+  sum(sales)
+  FOR quarter IN (1 AS q1, 2 AS q2, 3 AS q3, 4 AS q4)
+  GROUP BY Year
+) ORDER BY Year;
+----
+2018	205	45	85	85
+2019	245	225	165	125
+
+# multiple aggregations
+#SELECT year, q1_total, q1_avg, q2_total, q2_avg, q3_total, q3_avg, q4_total, q4_avg
+#    FROM (SELECT year, quarter, sales FROM sales) AS s
+#    PIVOT (sum(sales) AS total, avg(sales) AS avg
+#      FOR quarter
+#      IN (1 AS q1, 2 AS q2, 3 AS q3, 4 AS q4));
+query IIIIIIIII rowsort
+sales
+PIVOT (
+    sum(sales) AS total,
+    avg(sales)
+    FOR quarter IN (1 as q1, 2 as q2, 3 as q3, 4 as q4)
+    GROUP BY Year
+) ORDER BY Year;
+----
+2018 205 102.500000 45 22.500000 85 42.500000 85 42.500000
+2019 245 122.500000 225 112.500000 165 82.500000 125 62.500000
+
+# multiple aggregations without aliases
+#SELECT *
+#    FROM (SELECT year, quarter, sales FROM sales) AS s
+#    PIVOT (sum(sales), avg(sales)
+#      FOR quarter
+#      IN (1 AS q1, 2 AS q2, 3 AS q3, 4 AS q4));
+query IIIIIIIII rowsort
+sales
+PIVOT (
+  sum(sales),
+  avg(sales)
+  FOR quarter IN (1 AS q1, 2 AS q2, 3 AS q3, 4 AS q4)
+  GROUP BY Year
+) ORDER BY Year;
+----
+2018 205 102.500000 45 22.500000 85 42.500000 85 42.500000
+2019 245 122.500000 225 112.500000 165 82.500000 125 62.500000

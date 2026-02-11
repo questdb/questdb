@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,7 +28,6 @@ import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByLongHashSet;
 import io.questdb.griffin.engine.groupby.GroupByLongLongHashMap;
-import io.questdb.std.LongLongHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.Benchmark;
@@ -56,7 +55,6 @@ public class GroupByLongLongHashMapBenchmark {
     private static final double loadFactor = 0.5;
     private static final GroupByLongLongHashMap groupByLongLongHashMap = new GroupByLongLongHashMap(initialCapacity, loadFactor, 0, 0);
     private static final GroupByLongHashSet groupByLongHashSet = new GroupByLongHashSet(initialCapacity, loadFactor, 0);
-    private static final LongLongHashMap longLongHashMap = new LongLongHashMap(initialCapacity, loadFactor);
     private static final Rnd rnd = new Rnd();
     private static long mapPtr = 0;
     private static long setPtr = 0;
@@ -76,10 +74,9 @@ public class GroupByLongLongHashMapBenchmark {
 
     @Setup(Level.Iteration)
     public void reset() {
-        allocator.close();
+        allocator.clear();
         groupByLongLongHashMap.setAllocator(allocator);
         groupByLongHashSet.setAllocator(allocator);
-        longLongHashMap.clear();
         mapPtr = 0;
         setPtr = 0;
         rnd.reset();
@@ -101,12 +98,5 @@ public class GroupByLongLongHashMapBenchmark {
         long value = rnd.nextLong(size);
         groupByLongLongHashMap.of(mapPtr).put(key, value);
         mapPtr = groupByLongLongHashMap.ptr();
-    }
-
-    @Benchmark
-    public void testLongLongHashMap() {
-        long key = rnd.nextLong(size);
-        long value = rnd.nextLong(size);
-        longLongHashMap.put(key, value);
     }
 }

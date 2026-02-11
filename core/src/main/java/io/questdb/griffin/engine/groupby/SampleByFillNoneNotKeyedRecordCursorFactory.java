@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,12 +32,14 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
     private final SampleByFillNoneNotKeyedRecordCursor cursor;
+    private final SimpleMapValue value;
 
     public SampleByFillNoneNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -60,26 +62,31 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
             int sampleToFuncPos
     ) {
         super(base, groupByMetadata, recordFunctions);
-        final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
-        final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-        this.cursor = new SampleByFillNoneNotKeyedRecordCursor(
-                configuration,
-                simpleMapValue,
-                groupByFunctions,
-                updater,
-                recordFunctions,
-                timestampIndex,
-                timestampType,
-                timestampSampler,
-                timezoneNameFunc,
-                timezoneNameFuncPos,
-                offsetFunc,
-                offsetFuncPos,
-                sampleFromFunc,
-                sampleFromFuncPos,
-                sampleToFunc,
-                sampleToFuncPos
-        );
+        try {
+            final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
+            this.value = new SimpleMapValue(valueCount);
+            this.cursor = new SampleByFillNoneNotKeyedRecordCursor(
+                    configuration,
+                    value,
+                    groupByFunctions,
+                    updater,
+                    recordFunctions,
+                    timestampIndex,
+                    timestampType,
+                    timestampSampler,
+                    timezoneNameFunc,
+                    timezoneNameFuncPos,
+                    offsetFunc,
+                    offsetFuncPos,
+                    sampleFromFunc,
+                    sampleFromFuncPos,
+                    sampleToFunc,
+                    sampleToFuncPos
+            );
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
@@ -91,6 +98,13 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
         }
         sink.optAttr("values", cursor.groupByFunctions, true);
         sink.child(base);
+    }
+
+    @Override
+    protected void _close() {
+        super._close();
+        Misc.free(value);
+        Misc.free(cursor);
     }
 
     @Override

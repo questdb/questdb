@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,37 +34,6 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class LowerCaseCharSequenceObjHashMapTest {
-
-    @Test
-    public void testEqualsAndHashCode() {
-        final int items = 1000;
-
-        final LowerCaseCharSequenceObjHashMap<Integer> mapA = new LowerCaseCharSequenceObjHashMap<>();
-        final LowerCaseCharSequenceObjHashMap<Integer> mapB = new LowerCaseCharSequenceObjHashMap<>();
-
-        Assert.assertEquals(mapA, mapB);
-        Assert.assertEquals(mapA.hashCode(), mapB.hashCode());
-
-        for (int i = 0; i < items; i++) {
-            mapA.put(Integer.toString(i), i);
-        }
-
-        Assert.assertNotEquals(mapA, mapB);
-
-        // Reverse the addition order, so that the elements of the underlying arrays aren't 1-to-1 between the maps.
-        for (int i = items - 1; i > -1; i--) {
-            mapB.put(Integer.toString(i), i);
-        }
-
-        Assert.assertEquals(mapA, mapB);
-        Assert.assertEquals(mapA.hashCode(), mapB.hashCode());
-
-        mapA.clear();
-        mapB.clear();
-
-        Assert.assertEquals(mapA, mapB);
-        Assert.assertEquals(mapA.hashCode(), mapB.hashCode());
-    }
 
     @Test
     public void testPutIfAbsent() {

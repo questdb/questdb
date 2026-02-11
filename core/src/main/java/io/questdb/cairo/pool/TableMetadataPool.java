@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -42,10 +42,11 @@ public class TableMetadataPool extends AbstractMultiTenantPool<TableReaderMetada
     @Override
     protected TableReaderMetadataTenantImpl newTenant(
             TableToken tableToken,
+            Entry<TableReaderMetadataTenantImpl> rootEntry,
             Entry<TableReaderMetadataTenantImpl> entry,
             int index,
             @Nullable ResourcePoolSupervisor<TableReaderMetadataTenantImpl> supervisor
     ) {
-        return new TableReaderMetadataTenantImpl(this, entry, index, tableToken, false);
+        return new TableReaderMetadataTenantImpl(this, rootEntry, entry, index, tableToken, false);
     }
 }

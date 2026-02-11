@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 public class MinTimestampGroupByFunction extends TimestampFunction implements GroupByFunction, UnaryFunction {
@@ -41,6 +42,13 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     public MinTimestampGroupByFunction(@NotNull Function arg, int timestampType) {
         super(timestampType);
         this.arg = arg;
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            mapValue.putLong(valueIndex, Vect.minLong(ptr, count));
+        }
     }
 
     @Override
@@ -106,6 +114,11 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putTimestamp(valueIndex, Numbers.LONG_NULL);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return true;
     }
 
     @Override

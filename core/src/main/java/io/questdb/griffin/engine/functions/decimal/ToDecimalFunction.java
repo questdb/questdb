@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -91,7 +91,8 @@ public abstract class ToDecimalFunction extends DecimalFunction {
      * The implementation must fill the decimal with the store value following the target scale and precision.
      * If the value to store is null, it must return false without doing additional work.
      *
-     * @return whether the result is not null.
+     * @param rec the record to read from
+     * @return whether the result is not null
      */
     protected abstract boolean store(Record rec);
 }

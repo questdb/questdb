@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -60,7 +60,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
-import io.questdb.std.ObjList;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
@@ -70,6 +69,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -94,7 +94,6 @@ public class HttpQueryTestBuilder {
     private SecurityContext securityContext = null;
     private int sendBufferSize = -1;
     private HttpServerConfigurationBuilder serverConfigBuilder;
-    private ObjList<SqlExecutionContextImpl> sqlExecutionContexts;
     private long startWriterWaitTimeout = 500;
     private boolean telemetry;
     private String temp;
@@ -121,7 +120,8 @@ public class HttpQueryTestBuilder {
                 .withHealthCheckAuthRequired(httpHealthCheckAuthType)
                 .withNanosClock(nanosecondClock)
                 .withForceSendFragmentationChunkSize(forceSendFragmentationChunkSize)
-                .withForceRecvFragmentationChunkSize(forceRecvFragmentationChunkSize);
+                .withForceRecvFragmentationChunkSize(forceRecvFragmentationChunkSize)
+                .withQueryFutureUpdateListener(queryFutureUpdateListener);
         if (sendBufferSize != -1) {
             serverConfigBuilder.withSendBufferSize(sendBufferSize);
         }
@@ -142,6 +142,8 @@ public class HttpQueryTestBuilder {
         CairoConfiguration cairoConfiguration = configuration;
         if (cairoConfiguration == null) {
             cairoConfiguration = new DefaultTestCairoConfiguration(baseDir) {
+                private final AtomicLong copyIdGenerator = new AtomicLong(0);
+
                 @Override
                 public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                     return new DefaultSqlExecutionCircuitBreakerConfiguration() {
@@ -156,7 +158,7 @@ public class HttpQueryTestBuilder {
 
                 @Override
                 public @NotNull LongSupplier getCopyIDSupplier() {
-                    return () -> 0;
+                    return copyIdGenerator::getAndIncrement;
                 }
 
                 public @NotNull FilesFacade getFilesFacade() {
@@ -221,7 +223,7 @@ public class HttpQueryTestBuilder {
                 workerPool.freeOnExit(copyExportRequestJob);
             }
 
-            httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+            httpServer.bind(new StaticContentProcessorFactory(engine, httpConfiguration));
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
@@ -237,8 +239,6 @@ public class HttpQueryTestBuilder {
                 }
             });
 
-            this.sqlExecutionContexts = new ObjList<>();
-
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
                 public ObjHashSet<String> getUrls() {
@@ -249,19 +249,10 @@ public class HttpQueryTestBuilder {
 
                 @Override
                 public HttpRequestHandler newInstance() {
-                    SqlExecutionContextImpl newContext = new SqlExecutionContextImpl(engine, workerCount) {
-                        @Override
-                        public QueryFutureUpdateListener getQueryFutureUpdateListener() {
-                            return queryFutureUpdateListener != null ? queryFutureUpdateListener : QueryFutureUpdateListener.EMPTY;
-                        }
-                    };
-
-                    sqlExecutionContexts.add(newContext);
-
                     return new JsonQueryProcessor(
                             httpConfiguration.getJsonQueryProcessorConfiguration(),
                             engine,
-                            newContext
+                            workerCount
                     );
                 }
             });

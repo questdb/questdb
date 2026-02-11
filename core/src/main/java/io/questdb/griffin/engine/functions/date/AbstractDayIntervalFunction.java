@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,10 +35,24 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Interval;
 import org.jetbrains.annotations.NotNull;
 
+/**
+ * Abstract base class for day-based interval functions.
+ */
 public abstract class AbstractDayIntervalFunction extends IntervalFunction implements FunctionExtension {
+    /**
+     * The interval result value.
+     */
     protected final Interval interval = new Interval();
+    /**
+     * The timestamp driver for interval calculations.
+     */
     protected TimestampDriver timestampDriver;
 
+    /**
+     * Constructs a new day interval function.
+     *
+     * @param intervalType the interval type
+     */
     protected AbstractDayIntervalFunction(int intervalType) {
         super(intervalType);
     }
@@ -110,5 +124,10 @@ public abstract class AbstractDayIntervalFunction extends IntervalFunction imple
         return true;
     }
 
+    /**
+     * Returns the number of days to shift from today.
+     *
+     * @return the shift in days
+     */
     protected abstract int shiftFromToday();
 }

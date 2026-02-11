@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -300,6 +300,21 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 LOG
         );
 
+    }
+
+    @Test
+    public void testCountJitDisabled() throws Exception {
+        testCount(SqlJitMode.JIT_MODE_DISABLED);
+    }
+
+    @Test
+    public void testCountJitEnabled() throws Exception {
+        testCount(SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    @Test
+    public void testCountJitForceScalar() throws Exception {
+        testCount(SqlJitMode.JIT_MODE_FORCE_SCALAR);
     }
 
     @Test
@@ -907,6 +922,173 @@ public class ParallelFilterTest extends AbstractCairoTest {
         );
     }
 
+    private void testCount(int jitMode) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
+
+        WorkerPool pool = new WorkerPool(() -> 4);
+        TestUtils.execute(
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE x (\n" +
+                                    "  ts timestamp," +
+                                    "  i8 byte," +
+                                    "  i16 short," +
+                                    "  i32 int," +
+                                    "  i64 long) TIMESTAMP(ts) PARTITION BY DAY;",
+                            sqlExecutionContext
+                    );
+                    engine.execute(
+                            "insert into x select x::timestamp, rnd_byte(), rnd_short(), rnd_int(), rnd_long() " +
+                                    "from long_sequence(100000)",
+                            sqlExecutionContext
+                    );
+                    // edge case: table with <4 rows
+                    engine.execute(
+                            "CREATE TABLE y AS (SELECT * FROM x LIMIT 3) TIMESTAMP(ts) PARTITION BY DAY;",
+                            sqlExecutionContext
+                    );
+                    if (convertToParquet) {
+                        execute(
+                                compiler,
+                                "alter table x convert partition to parquet where ts >= 0",
+                                sqlExecutionContext
+                        );
+                    }
+
+                    // scalar
+                    final String scalarExpected = """
+                            count
+                            12535
+                            """;
+                    sqlExecutionContext.getBindVariableService().clear();
+                    sqlExecutionContext.getBindVariableService().setLong(0, 0);
+                    sqlExecutionContext.getBindVariableService().setInt(1, 1);
+                    sqlExecutionContext.getBindVariableService().setInt(2, 2);
+                    sqlExecutionContext.getBindVariableService().setInt(3, 3);
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count(*) from x where i64 > $1 and i32 > $2 and i16 > $3 and i8 > $4",
+                            sink,
+                            scalarExpected
+                    );
+
+                    // scalar, no bind vars
+                    sqlExecutionContext.getBindVariableService().clear();
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count(*) from x where i64 > 0 and i32 > 1 and i16 > 2 and i8 > 3",
+                            sink,
+                            scalarExpected
+                    );
+
+                    // simd
+                    final String simdExpected = """
+                            count
+                            1
+                            """;
+                    sqlExecutionContext.getBindVariableService().clear();
+                    sqlExecutionContext.getBindVariableService().setLong(0, 8080548038033927892L);
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count(*) from x where i64 = $1",
+                            sink,
+                            simdExpected
+                    );
+
+                    // simd, no bind vars
+                    sqlExecutionContext.getBindVariableService().clear();
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count(*) from x where i64 = 8080548038033927892L",
+                            sink,
+                            simdExpected
+                    );
+
+                    // simd, neq
+                    final String simdExpected2 = """
+                            count
+                            99999
+                            """;
+                    sqlExecutionContext.getBindVariableService().clear();
+                    sqlExecutionContext.getBindVariableService().setLong(0, 8080548038033927892L);
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count(*) from x where i64 != $1",
+                            sink,
+                            simdExpected2
+                    );
+
+                    // simd, neq, no bind vars
+                    sqlExecutionContext.getBindVariableService().clear();
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count(*) from x where i64 != 8080548038033927892L",
+                            sink,
+                            simdExpected2
+                    );
+
+                    // simd, i32
+                    final String simdExpected3 = """
+                            count
+                            1
+                            """;
+                    sqlExecutionContext.getBindVariableService().clear();
+                    sqlExecutionContext.getBindVariableService().setInt(0, 2137862371);
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count(*) from x where i32 = $1",
+                            sink,
+                            simdExpected3
+                    );
+
+                    // simd, i32, no bind vars
+                    sqlExecutionContext.getBindVariableService().clear();
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count(*) from x where i32 = 2137862371",
+                            sink,
+                            simdExpected3
+                    );
+
+                    // simd, table with <4 rows
+                    final String simdExpected4 = """
+                            count
+                            3
+                            """;
+                    sqlExecutionContext.getBindVariableService().clear();
+                    sqlExecutionContext.getBindVariableService().setInt(0, 0);
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count(*) from y where i64 != $1",
+                            sink,
+                            simdExpected4
+                    );
+
+                    // simd, table with <4 rows, no bind vars
+                    sqlExecutionContext.getBindVariableService().clear();
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count(*) from y where i64 != 0",
+                            sink,
+                            simdExpected4
+                    );
+                },
+                configuration,
+                LOG
+        );
+    }
+
     private void testEqDecimal(int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
@@ -1007,7 +1189,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     TestUtils.assertSql(
                             engine,
                             sqlExecutionContext,
-                            "select * from tab where preciseTs in '1970-01-01T00:00:00;3m;1d;5' and value IN ('t1', 't3') limit 10",
+                            "select * from tab where preciseTs in '1970-01-01T00:00:00;4m;1d;5' and value IN ('t1', 't3') limit 10",
                             sink,
                             """
                                     ts\tpreciseTs\ttype\tvalue
@@ -1056,7 +1238,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     TestUtils.assertSql(
                             engine,
                             sqlExecutionContext,
-                            "select * from tab where preciseTs in '1970-01-01T00:00:00;3m;1d;5' and value = 't3' limit 10",
+                            "select * from tab where preciseTs in '1970-01-01T00:00:00;4m;1d;5' and value = 't3' limit 10",
                             sink,
                             """
                                     ts\tpreciseTs\ttype\tvalue

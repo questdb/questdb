@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@
 package io.questdb.std;
 
 import java.util.Arrays;
-import java.util.Objects;
 
 public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSequenceHashMap {
     private T[] values;
@@ -50,32 +49,6 @@ public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSeq
         Arrays.fill(values, null);
     }
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        LowerCaseCharSequenceObjHashMap<?> that = (LowerCaseCharSequenceObjHashMap<?>) o;
-        if (size() != that.size()) {
-            return false;
-        }
-        for (CharSequence key : keys) {
-            if (key == null) {
-                continue;
-            }
-            if (that.excludes(key)) {
-                return false;
-            }
-            Object value = get(key);
-            if (value != null) {
-                Object thatValue = that.get(key);
-                if (!Objects.equals(value, thatValue)) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-
     public void forEach(CharSequenceObjConsumer<T> action) {
         for (int i = 0, n = values.length; i < n; i++) {
             if (keys[i] == null) {
@@ -91,17 +64,6 @@ public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSeq
 
     public T get(CharSequence key, int lo, int hi) {
         return valueAt(keyIndex(key, lo, hi));
-    }
-
-    @Override
-    public int hashCode() {
-        int hashCode = 0;
-        for (int i = 0, n = keys.length; i < n; i++) {
-            if (keys[i] != noEntryKey) {
-                hashCode += Chars.hashCode(keys[i]) ^ Objects.hashCode(values[i]);
-            }
-        }
-        return hashCode;
     }
 
     public CharSequence keyAt(int index) {

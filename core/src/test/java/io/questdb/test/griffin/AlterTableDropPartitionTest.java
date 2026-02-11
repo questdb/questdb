@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -914,22 +914,14 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     public void testSimpleWhere() throws Exception {
         assertMemoryLeak(() -> {
                     createX("YEAR", 3 * 72000000000L);
+                    assertPartitionResult("count\n145\n", "2018");
+                    assertPartitionResult("count\n147\n", "2020");
 
-                    assertPartitionResult("count\n" +
-                                    "145\n",
-                            "2018");
-
-                    assertPartitionResult("count\n" +
-                            "147\n", "2020");
-
-                    execute("alter table x drop partition where timestamp  < to_timestamp('2020', 'yyyy')) ");
-
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
+                    execute("alter table x drop partition where timestamp  < to_timestamp('2020', 'yyyy')");
+                    String expectedAfterDrop = "count\n0\n";
 
                     assertPartitionResult(expectedAfterDrop, "2018");
-                    assertPartitionResult("count\n" +
-                            "147\n", "2020");
+                    assertPartitionResult("count\n147\n", "2020");
                 }
         );
     }

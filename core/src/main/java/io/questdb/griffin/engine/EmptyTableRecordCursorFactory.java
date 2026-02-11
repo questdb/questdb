@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,9 +33,15 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
 public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final TableToken tableToken;
 
     public EmptyTableRecordCursorFactory(RecordMetadata metadata) {
+        this(metadata, null);
+    }
+
+    public EmptyTableRecordCursorFactory(RecordMetadata metadata, TableToken tableToken) {
         super(metadata);
+        this.tableToken = tableToken;
     }
 
     @Override
@@ -50,12 +56,16 @@ public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
-        return true;
+        return this.tableToken == null || this.tableToken == tableToken;
     }
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Empty table");
+        if (tableToken != null) {
+            sink.type("on").val(": ").val(tableToken.getTableName());
+        } else {
+            sink.type("Empty table");
+        }
     }
 
     @Override

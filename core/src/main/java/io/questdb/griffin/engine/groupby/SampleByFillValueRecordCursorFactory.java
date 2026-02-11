@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -149,29 +149,24 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             ExpressionNode fillNode
     ) throws SqlException {
         try {
-            switch (ColumnType.tagOf(type)) {
-                case ColumnType.INT:
-                    return IntConstant.newInstance(Numbers.parseInt(fillNode.token));
-                case ColumnType.IPv4:
-                    return IPv4Constant.newInstance(Numbers.parseIPv4(fillNode.token));
-                case ColumnType.LONG:
-                    return LongConstant.newInstance(Numbers.parseLong(fillNode.token));
-                case ColumnType.FLOAT:
-                    return FloatConstant.newInstance(Numbers.parseFloat(fillNode.token));
-                case ColumnType.DOUBLE:
-                    return DoubleConstant.newInstance(Numbers.parseDouble(fillNode.token));
-                case ColumnType.SHORT:
-                    return ShortConstant.newInstance((short) Numbers.parseInt(fillNode.token));
-                case ColumnType.BYTE:
-                    return ByteConstant.newInstance((byte) Numbers.parseInt(fillNode.token));
-                case ColumnType.TIMESTAMP:
+            return switch (ColumnType.tagOf(type)) {
+                case ColumnType.INT -> IntConstant.newInstance(Numbers.parseInt(fillNode.token));
+                case ColumnType.IPv4 -> IPv4Constant.newInstance(Numbers.parseIPv4(fillNode.token));
+                case ColumnType.LONG -> LongConstant.newInstance(Numbers.parseLong(fillNode.token));
+                case ColumnType.FLOAT -> FloatConstant.newInstance(Numbers.parseFloat(fillNode.token));
+                case ColumnType.DOUBLE -> DoubleConstant.newInstance(Numbers.parseDouble(fillNode.token));
+                case ColumnType.SHORT -> ShortConstant.newInstance((short) Numbers.parseInt(fillNode.token));
+                case ColumnType.BYTE -> ByteConstant.newInstance((byte) Numbers.parseInt(fillNode.token));
+                case ColumnType.TIMESTAMP -> {
                     if (!Chars.isQuoted(fillNode.token)) {
-                        throw SqlException.position(fillNode.position).put("Invalid fill value: '").put(fillNode.token).put("'. Timestamp fill value must be in quotes. Example: '2019-01-01T00:00:00.000Z'");
+                        throw SqlException.position(fillNode.position).put("Invalid fill value: '").put(fillNode.token)
+                                .put("'. Timestamp fill value must be in quotes. Example: '2019-01-01T00:00:00.000Z'");
                     }
-                    return TimestampConstant.newInstance(timestampDriver.parseQuotedLiteral(fillNode.token), type);
-                default:
-                    throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
-            }
+                    yield TimestampConstant.newInstance(timestampDriver.parseQuotedLiteral(fillNode.token), type);
+                }
+                default ->
+                        throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
+            };
         } catch (NumericException e) {
             throw SqlException.position(fillNode.position).put("invalid fill value: ").put(fillNode.token);
         }

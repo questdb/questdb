@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -54,45 +54,8 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         Arrays.fill(values, noEntryValue);
     }
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        LowerCaseCharSequenceIntHashMap that = (LowerCaseCharSequenceIntHashMap) o;
-        if (size() != that.size()) {
-            return false;
-        }
-        for (CharSequence key : keys) {
-            if (key == null) {
-                continue;
-            }
-            if (that.excludes(key)) {
-                return false;
-            }
-            int value = get(key);
-            if (value != noEntryValue) {
-                int thatValue = that.get(key);
-                if (value != thatValue) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-
     public int get(CharSequence key) {
         return valueAt(keyIndex(key));
-    }
-
-    @Override
-    public int hashCode() {
-        int hashCode = 0;
-        for (int i = 0, n = keys.length; i < n; i++) {
-            if (keys[i] != noEntryKey) {
-                hashCode += Chars.hashCode(keys[i]) ^ values[i];
-            }
-        }
-        return hashCode;
     }
 
     public void inc(@NotNull CharSequence key) {

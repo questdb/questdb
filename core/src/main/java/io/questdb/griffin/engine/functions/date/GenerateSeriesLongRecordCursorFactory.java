@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
@@ -119,12 +118,14 @@ public class GenerateSeriesLongRecordCursorFactory extends AbstractGenerateSerie
         }
 
         @Override
-        public void skipRows(Counter rowCount) throws DataUnavailableException {
-            long newRowId = recordA.getRowId() + rowCount.get()
-                    - 1 // one-indexed
-                    - 1 // we increment at the start of hasNext()
-                    ;
+        public void skipRows(Counter rowCount) {
+            long currentRowId = recordA.getRowId()
+                    - 1  // one-indexed
+                    - 1; // we increment at the start of hasNext()
+            long rowsToSkip = Math.min(rowCount.get(), size() - currentRowId);
+            long newRowId = currentRowId + rowsToSkip;
             recordAt(recordA, newRowId);
+            rowCount.dec(rowsToSkip);
         }
 
         @Override

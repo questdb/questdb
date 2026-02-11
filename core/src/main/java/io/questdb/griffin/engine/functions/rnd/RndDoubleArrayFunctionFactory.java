@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -182,6 +182,11 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean shouldMemoize() {
+            return true;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_double_array").val('(')
                     .val(array.getDimCount()).val(',')
@@ -243,6 +248,11 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isRandom() {
+            return true;
+        }
+
+        @Override
+        public boolean shouldMemoize() {
             return true;
         }
 

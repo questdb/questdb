@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,6 +36,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.conditional.CaseCommon;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
@@ -63,6 +64,17 @@ public class InStrFunctionFactory implements FunctionFactory {
             return BooleanConstant.FALSE;
         }
 
+        // try to append cast to STR for first argument
+        args.setQuick(
+                0,
+                CaseCommon.getCastFunction(
+                        args.getQuick(0),
+                        argPositions.getQuick(0),
+                        ColumnType.STRING,
+                        configuration,
+                        sqlExecutionContext
+                )
+        );
         boolean allConst = true;
         for (int i = 1; i < n; i++) {
             Function func = args.getQuick(i);
@@ -102,6 +114,11 @@ public class InStrFunctionFactory implements FunctionFactory {
         final IntList positions = new IntList();
         positions.addAll(argPositions);
         return new RuntimeConstFunc(new ObjList<>(args), positions);
+    }
+
+    @Override
+    public boolean variadicTypeSupportUndefinedBindVariables(ObjList<Function> args) {
+        return args.size() > 2;
     }
 
     private static void parseToString(ObjList<Function> args, IntList argPositions, CharSequenceHashSet set) throws SqlException {

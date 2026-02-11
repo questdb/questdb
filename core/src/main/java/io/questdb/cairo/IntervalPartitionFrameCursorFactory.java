@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 
 public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameCursorFactory {
@@ -45,9 +46,12 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
             RuntimeIntrinsicIntervalModel intervalModel,
             int timestampIndex,
             RecordMetadata metadata,
-            int baseOrder
+            int baseOrder,
+            String viewName,
+            int viewPosition,
+            boolean updateQuery
     ) {
-        super(tableToken, metadataVersion, metadata);
+        super(tableToken, metadataVersion, metadata, viewName, viewPosition, updateQuery);
         this.timestampIndex = timestampIndex;
         this.intervalModel = intervalModel;
         this.baseOrder = baseOrder;
@@ -62,7 +66,8 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
     }
 
     @Override
-    public PartitionFrameCursor getCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+    public PartitionFrameCursor getCursor(SqlExecutionContext executionContext, IntList columnIndexes, int order) throws SqlException {
+        authorizeSelect(executionContext, columnIndexes);
         final TableReader reader = getReader(executionContext);
         try {
             if (order == ORDER_ASC || ((order == ORDER_ANY || order < 0) && baseOrder != ORDER_DESC)) {
@@ -85,11 +90,6 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
     @Override
     public int getOrder() {
         return baseOrder;
-    }
-
-    @Override
-    public boolean hasInterval() {
-        return true;
     }
 
     @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -47,16 +47,26 @@ public interface VectorAggregateFunction extends Function, Mutable {
      * If valueAddress == 0 it means that value page frame is 'empty' (due to column tops) and contains null values,
      * so only keys should be processed.
      *
-     * @param pRosti       pointer to rosti
-     * @param keyAddress   key address
-     * @param valueAddress value address
+     * @param pRosti        pointer to rosti
+     * @param keyAddress    key address
+     * @param valueAddress  value address
+     * @param frameRowCount row count in the frame
      * @return true if processing went fine and false if it failed on memory allocation
      */
     boolean aggregate(long pRosti, long keyAddress, long valueAddress, long frameRowCount);
 
+    /**
+     * Returns the column index for this aggregate function.
+     *
+     * @return the column index
+     */
     int getColumnIndex();
 
-    // value offset in map
+    /**
+     * Returns the value offset in the map.
+     *
+     * @return the value offset
+     */
     int getValueOffset();
 
     /**
@@ -75,6 +85,11 @@ public interface VectorAggregateFunction extends Function, Mutable {
      */
     boolean merge(long pRostiA, long pRostiB);
 
+    /**
+     * Pushes value types to the column types array.
+     *
+     * @param types the column types array to add value types to
+     */
     void pushValueTypes(ArrayColumnTypes types);
 
     @Override

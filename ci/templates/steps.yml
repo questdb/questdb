@@ -44,7 +44,7 @@ steps:
       echo "JAVA_HOME will be set to: $JAVA_PATH"
     displayName: "Install JDK and Maven"
     condition: |
-      eq(variables['poolName'], 'hetzner-docker-graal')
+      eq(variables['System.JobName'], 'linux_x64_graal')
   - task: Cache@2
     displayName: "Cache non-default Maven"
     continueOnError: true
@@ -170,7 +170,7 @@ steps:
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
   - task: Maven@3
-    displayName: "Run tests with Coverage"
+    displayName: "Run tests with Coverage (jemalloc)"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
       mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
@@ -188,6 +188,7 @@ steps:
       codeCoverageClassFilter: "$(COVERAGE_DIFF)"
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
+      LD_PRELOAD: $(Build.SourcesDirectory)/core/src/main/bin/linux-x86-64/libjemalloc.so
     timeoutInMinutes: 55
     condition: |
       and(

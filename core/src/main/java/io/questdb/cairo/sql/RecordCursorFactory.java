@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,6 +31,8 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.IntList;
@@ -70,6 +72,15 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     int SCAN_DIRECTION_FORWARD = 1;
     int SCAN_DIRECTION_OTHER = 0;
 
+    /**
+     * Changes the page frame sizes for this factory.
+     *
+     * @param minRows minimum rows per page frame
+     * @param maxRows maximum rows per page frame
+     */
+    default void changePageFrameSizes(int minRows, int maxRows) {
+    }
+
     @Override
     default void close() {
     }
@@ -80,10 +91,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
 
     default PageFrameSequence<?> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
         return null;
-    }
-
-    default boolean followedLimitAdvice() {
-        return false;
     }
 
     /**
@@ -110,10 +117,21 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
+    /**
+     * Returns the base column name at the given index.
+     *
+     * @param idx the column index
+     * @return the column name
+     */
     default String getBaseColumnName(int idx) {
         return getBaseFactory().getMetadata().getColumnName(idx);
     }
 
+    /**
+     * Returns the base factory, if any.
+     *
+     * @return the base factory, or null if none
+     */
     default RecordCursorFactory getBaseFactory() {
         return null;
     }
@@ -178,9 +196,23 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * Note: tables with designated timestamp keep rows in timestamp order, so:
      * - forward scan produces rows in ascending ts order
      * - backward scan produces rows in descending ts order
+     *
+     * @return the scan direction
      */
     default int getScanDirection() {
         return SCAN_DIRECTION_FORWARD;
+    }
+
+    /**
+     * Returns the original filter expression that can be stolen by parent factories.
+     * When {@link #supportsFilterStealing()} returns true, this method should return
+     * the original expression of the stolen filter.
+     *
+     * @return the original filter expression that can be stolen, or null if
+     * filter stealing is not supported
+     */
+    default ExpressionNode getStealFilterExpr() {
+        return null;
     }
 
     /**
@@ -194,7 +226,14 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return null;
     }
 
-    default TimeFrameRecordCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+    /**
+     * Returns time frame cursor or null if time frames aren't supported by the factory.
+     *
+     * @param executionContext the SQL execution context
+     * @return the time frame cursor, or null if not supported
+     * @throws SqlException if an error occurs
+     */
+    default TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         return null;
     }
 
@@ -205,9 +244,11 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
-     * Returns true if this factory handles limit M , N clause already and false otherwise .
-     * If true then separate limit cursor factory is not needed (and could actually cause problem
+     * Returns true if this factory handles {@code limit(M, N)} clause.
+     * If true, then a separate limit cursor factory is not needed (and could actually cause problem
      * by re-applying limit logic).
+     *
+     * @return true if limit is implemented
      */
     default boolean implementsLimit() {
         return false;
@@ -218,7 +259,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * the above factory (e.g. a parallel GROUP BY one) can steal the projection.
      * <p>
      * Projection consist of cross-indexes and metadata columns.
-     * <p>
      *
      * @return true if the factory stands for nothing more but a projection
      * @see #getColumnCrossIndex()
@@ -226,6 +266,20 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      */
     default boolean isProjection() {
         return false;
+    }
+
+    /**
+     * Returns a new time frame cursor instance or null if time frames aren't supported by the factory.
+     * The returned instance can be used by a worker thread, i.e. the underlying interaction with
+     * table reader is synchronized between the time frame instances returned by this method.
+     * <p>
+     * Unlike with {@link #getTimeFrameCursor(SqlExecutionContext)}, the returned cursor has to be
+     * initialized before usage.
+     *
+     * @return a new concurrent time frame cursor, or null if not supported
+     */
+    default ConcurrentTimeFrameCursor newTimeFrameCursor() {
+        return null;
     }
 
     /**
@@ -239,6 +293,11 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
+    /**
+     * Returns true if the record cursor supports random access.
+     *
+     * @return true if random access is supported
+     */
     boolean recordCursorSupportsRandomAccess();
 
     default void revertFromSampleByIndexPageFrameCursorFactory() {
@@ -247,11 +306,18 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     /**
      * Returns true if the factory stands for nothing more but a filter, so that
      * the above factory (e.g. a parallel GROUP BY one) can steal the filter.
+     *
+     * @return true if filter stealing is supported
      */
     default boolean supportsFilterStealing() {
         return false;
     }
 
+    /**
+     * Returns true if the factory supports page frame cursor.
+     *
+     * @return true if page frame cursor is supported
+     */
     default boolean supportsPageFrameCursor() {
         return false;
     }
@@ -260,12 +326,19 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * Time frames are supported only for full table scan cursors, i.e. "x" queries.
      *
      * @return true if the factory supports time frames
-     * and {@link #getTimeFrameCursor(SqlExecutionContext)} can be safely called.
+     * and {@link #getTimeFrameCursor(SqlExecutionContext)}
+     * or {@link #newTimeFrameCursor()} can be safely called.
      */
     default boolean supportsTimeFrameCursor() {
         return false;
     }
 
+    /**
+     * Returns true if the factory supports UPDATE row ID for the given table.
+     *
+     * @param tableName the table token
+     * @return true if UPDATE row ID is supported
+     */
     default boolean supportsUpdateRowId(TableToken tableName) {
         return false;
     }
@@ -291,6 +364,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
 
     /**
      * Returns true if the factory uses index-based access.
+     *
+     * @return true if the factory uses index-based access
      */
     default boolean usesIndex() {
         return false;

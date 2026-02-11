@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -588,7 +588,7 @@ public class NanosTimestampDriver implements TimestampDriver {
             case YEAR -> PARTITION_YEAR_FORMAT;
             case HOUR -> PARTITION_HOUR_FORMAT;
             case WEEK -> PARTITION_WEEK_FORMAT;
-            case NONE -> DEFAULT_FORMAT;
+            case NONE, NOT_APPLICABLE -> DEFAULT_FORMAT;
             default ->
                     throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
         };
@@ -853,6 +853,10 @@ public class NanosTimestampDriver implements TimestampDriver {
         boolean l = CommonUtils.isLeapYear(year);
         if (CommonUtils.checkLen3(p, hi)) {
             CommonUtils.checkChar(str, p++, hi, '-');
+            // Check for ISO week format: YYYY-Www[-D]
+            if (p < hi && str.byteAt(p) == 'W') {
+                return parseIsoWeekFloor(str, p, hi, year);
+            }
             int month = Numbers.parseInt(str, p, p += 2);
             CommonUtils.checkRange(month, 1, 12);
             if (CommonUtils.checkLen3(p, hi)) {
@@ -951,6 +955,10 @@ public class NanosTimestampDriver implements TimestampDriver {
         boolean l = CommonUtils.isLeapYear(year);
         if (CommonUtils.checkLen3(p, hi)) {
             CommonUtils.checkChar(str, p++, hi, '-');
+            // Check for ISO week format: YYYY-Www[-D]
+            if (p < hi && str.charAt(p) == 'W') {
+                return parseIsoWeekFloor(str, p, hi, year);
+            }
             int month = Numbers.parseInt(str, p, p += 2);
             CommonUtils.checkRange(month, 1, 12);
             if (CommonUtils.checkLen3(p, hi)) {
@@ -1048,6 +1056,11 @@ public class NanosTimestampDriver implements TimestampDriver {
         boolean l = CommonUtils.isLeapYear(year);
         if (CommonUtils.checkLen3(p, lim)) {
             CommonUtils.checkChar(input, p++, lim, '-');
+            // Check for ISO week format: YYYY-Www[-D]
+            if (p < lim && input.charAt(p) == 'W') {
+                parseIsoWeekInterval(input, p, lim, year, operation, out);
+                return;
+            }
             int month = Numbers.parseInt(input, p, p += 2);
             CommonUtils.checkRange(month, 1, 12);
             if (CommonUtils.checkLen3(p, lim)) {
@@ -1202,6 +1215,287 @@ public class NanosTimestampDriver implements TimestampDriver {
         }
     }
 
+    /**
+     * Parses ISO week date format: YYYY-Www[-D][THH:MM:SS...]
+     *
+     * @param str  input string
+     * @param p    position at 'W'
+     * @param hi   end of string
+     * @param year the year already parsed
+     * @return timestamp in nanoseconds for the start of the week/day/time
+     */
+    private static long parseIsoWeekFloor(CharSequence str, int p, int hi, int year) throws NumericException {
+        // Skip 'W'
+        p++;
+        if (hi - p < 2) {
+            throw NumericException.instance();
+        }
+        int week = Numbers.parseInt(str, p, p + 2);
+        p += 2;
+        CommonUtils.checkRange(week, 1, CommonUtils.getWeeks(year));
+
+        // Calculate Monday of the week
+        boolean leap = CommonUtils.isLeapYear(year);
+        long ts = Nanos.yearNanos(year, leap)
+                + CommonUtils.getIsoYearDayOffset(year) * Nanos.DAY_NANOS
+                + (week - 1) * Nanos.WEEK_NANOS;
+
+        // Check for day-of-week (-D)
+        if (p < hi && str.charAt(p) == '-') {
+            p++;
+            if (p >= hi) {
+                throw NumericException.instance();
+            }
+            int dow = Numbers.parseInt(str, p, p + 1);
+            p++;
+            CommonUtils.checkRange(dow, 1, 7);
+            ts += (dow - 1) * Nanos.DAY_NANOS;
+
+            // Check for time part (T... or space)
+            if (p < hi && (str.charAt(p) == 'T' || str.charAt(p) == ' ')) {
+                p++;
+                // Parse time: HH[:MM[:SS[.nnnnnnnnn]]]
+                if (hi - p < 2) {
+                    throw NumericException.instance();
+                }
+                int hour = Numbers.parseInt(str, p, p + 2);
+                p += 2;
+                CommonUtils.checkRange(hour, 0, 23);
+                ts += hour * Nanos.HOUR_NANOS;
+
+                if (CommonUtils.checkLen3(p, hi)) {
+                    CommonUtils.checkChar(str, p++, hi, ':');
+                    int min = Numbers.parseInt(str, p, p + 2);
+                    p += 2;
+                    CommonUtils.checkRange(min, 0, 59);
+                    ts += min * Nanos.MINUTE_NANOS;
+
+                    if (CommonUtils.checkLen3(p, hi)) {
+                        CommonUtils.checkChar(str, p++, hi, ':');
+                        int sec = Numbers.parseInt(str, p, p + 2);
+                        p += 2;
+                        CommonUtils.checkRange(sec, 0, 59);
+                        ts += sec * Nanos.SECOND_NANOS;
+
+                        if (p < hi && str.charAt(p) == '.') {
+                            p++;
+                            // varlen milli, micros, and nanos
+                            int nanoLim = p + 9;
+                            int nlim = Math.min(hi, nanoLim);
+                            int nano = 0;
+                            for (; p < nlim; p++) {
+                                char c = str.charAt(p);
+                                if (Numbers.notDigit(c)) {
+                                    break;
+                                }
+                                nano *= 10;
+                                nano += c - '0';
+                            }
+                            nano *= CommonUtils.tenPow(nanoLim - p);
+                            ts += nano;
+                        }
+                    }
+                }
+            }
+        }
+        return ts;
+    }
+
+    /**
+     * Parses ISO week date format for Utf8Sequence: YYYY-Www[-D][THH:MM:SS...]
+     */
+    private static long parseIsoWeekFloor(Utf8Sequence str, int p, int hi, int year) throws NumericException {
+        // Skip 'W'
+        p++;
+        if (hi - p < 2) {
+            throw NumericException.instance();
+        }
+        int week = Numbers.parseInt(str, p, p + 2);
+        p += 2;
+        CommonUtils.checkRange(week, 1, CommonUtils.getWeeks(year));
+
+        // Calculate Monday of the week
+        boolean leap = CommonUtils.isLeapYear(year);
+        long ts = Nanos.yearNanos(year, leap)
+                + CommonUtils.getIsoYearDayOffset(year) * Nanos.DAY_NANOS
+                + (week - 1) * Nanos.WEEK_NANOS;
+
+        // Check for day-of-week (-D)
+        if (p < hi && str.byteAt(p) == '-') {
+            p++;
+            if (p >= hi) {
+                throw NumericException.instance();
+            }
+            int dow = Numbers.parseInt(str, p, p + 1);
+            p++;
+            CommonUtils.checkRange(dow, 1, 7);
+            ts += (dow - 1) * Nanos.DAY_NANOS;
+
+            // Check for time part (T... or space)
+            if (p < hi && (str.byteAt(p) == 'T' || str.byteAt(p) == ' ')) {
+                p++;
+                // Parse time: HH[:MM[:SS[.nnnnnnnnn]]]
+                if (hi - p < 2) {
+                    throw NumericException.instance();
+                }
+                int hour = Numbers.parseInt(str, p, p + 2);
+                p += 2;
+                CommonUtils.checkRange(hour, 0, 23);
+                ts += hour * Nanos.HOUR_NANOS;
+
+                if (CommonUtils.checkLen3(p, hi)) {
+                    CommonUtils.checkChar(str, p++, hi, ':');
+                    int min = Numbers.parseInt(str, p, p + 2);
+                    p += 2;
+                    CommonUtils.checkRange(min, 0, 59);
+                    ts += min * Nanos.MINUTE_NANOS;
+
+                    if (CommonUtils.checkLen3(p, hi)) {
+                        CommonUtils.checkChar(str, p++, hi, ':');
+                        int sec = Numbers.parseInt(str, p, p + 2);
+                        p += 2;
+                        CommonUtils.checkRange(sec, 0, 59);
+                        ts += sec * Nanos.SECOND_NANOS;
+
+                        if (p < hi && str.byteAt(p) == '.') {
+                            p++;
+                            // varlen milli, micros, and nanos
+                            int nanoLim = p + 9;
+                            int nlim = Math.min(hi, nanoLim);
+                            int nano = 0;
+                            for (; p < nlim; p++) {
+                                char c = (char) str.byteAt(p);
+                                if (Numbers.notDigit(c)) {
+                                    break;
+                                }
+                                nano *= 10;
+                                nano += c - '0';
+                            }
+                            nano *= CommonUtils.tenPow(nanoLim - p);
+                            ts += nano;
+                        }
+                    }
+                }
+            }
+        }
+        return ts;
+    }
+
+    /**
+     * Parses ISO week interval format: YYYY-Www[-D][THH:MM:SS...]
+     * Produces interval from start to end of the specified week/day/time.
+     */
+    private static void parseIsoWeekInterval(CharSequence input, int p, int lim, int year, short operation, LongList out) throws NumericException {
+        // Skip 'W'
+        p++;
+        if (lim - p < 2) {
+            throw NumericException.instance();
+        }
+        int week = Numbers.parseInt(input, p, p + 2);
+        p += 2;
+        CommonUtils.checkRange(week, 1, CommonUtils.getWeeks(year));
+
+        // Calculate Monday of the week
+        boolean leap = CommonUtils.isLeapYear(year);
+        long mondayTs = Nanos.yearNanos(year, leap)
+                + CommonUtils.getIsoYearDayOffset(year) * Nanos.DAY_NANOS
+                + (week - 1) * Nanos.WEEK_NANOS;
+
+        if (p < lim && input.charAt(p) == '-') {
+            p++;
+            if (p >= lim) {
+                throw NumericException.instance();
+            }
+            int dow = Numbers.parseInt(input, p, p + 1);
+            p++;
+            CommonUtils.checkRange(dow, 1, 7);
+            long dayStart = mondayTs + (dow - 1) * Nanos.DAY_NANOS;
+
+            if (p < lim && (input.charAt(p) == 'T' || input.charAt(p) == ' ')) {
+                p++;
+                // Parse time part with interval range
+                if (lim - p < 2) {
+                    throw NumericException.instance();
+                }
+                int hour = Numbers.parseInt(input, p, p + 2);
+                p += 2;
+                CommonUtils.checkRange(hour, 0, 23);
+
+                if (CommonUtils.checkLen3(p, lim)) {
+                    CommonUtils.checkChar(input, p++, lim, ':');
+                    int min = Numbers.parseInt(input, p, p + 2);
+                    p += 2;
+                    CommonUtils.checkRange(min, 0, 59);
+
+                    if (CommonUtils.checkLen3(p, lim)) {
+                        CommonUtils.checkChar(input, p++, lim, ':');
+                        int sec = Numbers.parseInt(input, p, p + 2);
+                        p += 2;
+                        CommonUtils.checkRange(sec, 0, 59);
+
+                        if (p < lim && input.charAt(p) == '.') {
+                            p++;
+                            // varlen milli, micros, and nanos
+                            int nanoLim = p + 9;
+                            if (nanoLim < lim) {
+                                throw NumericException.instance();
+                            }
+
+                            int nanos = 0;
+                            for (; p < lim; p++) {
+                                char c = input.charAt(p);
+                                if (c < '0' || c > '9') {
+                                    throw NumericException.instance();
+                                }
+                                nanos *= 10;
+                                nanos += c - '0';
+                            }
+                            int remainingDigits = nanoLim - p;
+                            nanos *= CommonUtils.tenPow(remainingDigits);
+
+                            long baseTime = dayStart
+                                    + hour * Nanos.HOUR_NANOS
+                                    + min * Nanos.MINUTE_NANOS
+                                    + sec * Nanos.SECOND_NANOS;
+                            int rangeNanos = CommonUtils.tenPow(remainingDigits) - 1;
+                            IntervalUtils.encodeInterval(baseTime + nanos, baseTime + nanos + rangeNanos, operation, out);
+                        } else if (p == lim) {
+                            // seconds
+                            IntervalUtils.encodeInterval(
+                                    dayStart + hour * Nanos.HOUR_NANOS + min * Nanos.MINUTE_NANOS + sec * Nanos.SECOND_NANOS,
+                                    dayStart + hour * Nanos.HOUR_NANOS + min * Nanos.MINUTE_NANOS + sec * Nanos.SECOND_NANOS + 999999999,
+                                    operation, out);
+                        } else {
+                            throw NumericException.instance();
+                        }
+                    } else {
+                        // minute
+                        IntervalUtils.encodeInterval(
+                                dayStart + hour * Nanos.HOUR_NANOS + min * Nanos.MINUTE_NANOS,
+                                dayStart + hour * Nanos.HOUR_NANOS + min * Nanos.MINUTE_NANOS + 59 * Nanos.SECOND_NANOS + 999999999,
+                                operation, out);
+                    }
+                } else {
+                    // hour only
+                    IntervalUtils.encodeInterval(
+                            dayStart + hour * Nanos.HOUR_NANOS,
+                            dayStart + hour * Nanos.HOUR_NANOS + 59 * Nanos.MINUTE_NANOS + 59 * Nanos.SECOND_NANOS + 999999999,
+                            operation, out);
+                }
+            } else if (p == lim) {
+                // Entire day
+                IntervalUtils.encodeInterval(dayStart, dayStart + Nanos.DAY_NANOS - 1, operation, out);
+            } else {
+                throw NumericException.instance();
+            }
+        } else if (p == lim) {
+            // No day specified - entire week (Mon 00:00:00 to Sun 23:59:59.999999999)
+            IntervalUtils.encodeInterval(mondayTs, mondayTs + 7 * Nanos.DAY_NANOS - 1, operation, out);
+        } else {
+            throw NumericException.instance();
+        }
+    }
+
     @Override
     public long parsePartitionDirName(@NotNull CharSequence partitionName, int partitionBy, int lo, int hi) {
         CharSequence fmtStr;
@@ -1228,7 +1522,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                     fmtMethod = PARTITION_WEEK_FORMAT;
                     yield CommonUtils.WEEK_PATTERN;
                 }
-                case NONE -> {
+                case NONE, NOT_APPLICABLE -> {
                     fmtMethod = DEFAULT_FORMAT;
                     yield partitionName;
                 }

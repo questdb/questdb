@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,12 +31,34 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.decimal.ToDecimal64Function;
 
+/**
+ * Abstract base class for functions that cast values to decimal64.
+ */
 public abstract class AbstractCastToDecimal64Function extends ToDecimal64Function implements UnaryFunction {
+    /**
+     * The function argument to cast.
+     */
     protected final Function arg;
+    /**
+     * The position in the SQL statement.
+     */
     protected final int position;
+    /**
+     * The target decimal precision.
+     */
     protected final int precision;
+    /**
+     * The target decimal scale.
+     */
     protected final int scale;
 
+    /**
+     * Constructs a new cast to decimal64 function.
+     *
+     * @param arg        the function argument to cast
+     * @param targetType the target decimal type
+     * @param position   the position in the SQL statement
+     */
     public AbstractCastToDecimal64Function(Function arg, int targetType, int position) {
         super(targetType);
         this.arg = arg;
@@ -68,7 +90,8 @@ public abstract class AbstractCastToDecimal64Function extends ToDecimal64Functio
      * The implementation must fill the decimal with the cast value following the target scale and precision.
      * If the value to cast is null, it must return false without doing additional work.
      *
-     * @return whether the result is not null.
+     * @param rec the record to read from
+     * @return whether the result is not null
      */
     protected abstract boolean cast(Record rec);
 }

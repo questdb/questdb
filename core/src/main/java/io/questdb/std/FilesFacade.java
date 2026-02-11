@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -122,7 +122,18 @@ public interface FilesFacade {
 
     long mmap(long fd, long len, long offset, int flags, int memoryTag);
 
+    /**
+     * Memory map without using the MmapCache. Useful for streaming reads where
+     * we want each mapping to be independent and release page cache via madvise.
+     */
+    long mmapNoCache(long fd, long len, long offset, int flags, int memoryTag);
+
     long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag);
+
+    /**
+     * Remap memory without using the MmapCache. Useful for streaming reads.
+     */
+    long mremapNoCache(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag);
 
     void msync(long addr, long len, boolean async);
 

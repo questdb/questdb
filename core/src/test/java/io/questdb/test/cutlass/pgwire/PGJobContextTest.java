@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -46,7 +46,6 @@ import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
@@ -55,7 +54,6 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.network.SuspendEvent;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -1344,6 +1342,49 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
+    public void testAlterViewInvalidatesCachedPlan() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement stmt = connection.createStatement()) {
+                stmt.execute("create view v as (select x from long_sequence(5))");
+
+                drainViewQueue();
+
+                try (PreparedStatement stmt2 = connection.prepareStatement("select * from v")) {
+                    sink.clear();
+                    try (ResultSet rs = stmt2.executeQuery()) {
+                        assertResultSet("""
+                                        x[BIGINT]
+                                        1
+                                        2
+                                        3
+                                        4
+                                        5
+                                        """,
+                                sink,
+                                rs
+                        );
+                    }
+                    stmt.execute("create or replace view v as (select x * 10 as x from long_sequence(5))");
+                    sink.clear();
+                    try (ResultSet rs = stmt2.executeQuery()) {
+                        assertResultSet("""
+                                        x[BIGINT]
+                                        10
+                                        20
+                                        30
+                                        40
+                                        50
+                                        """,
+                                sink,
+                                rs
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testArrayBindingVars() throws Exception {
         // In simple mode bind vars are interpolated into the query text,
         // and we don't have implicit cast from string to array, so test extended mode only.
@@ -2247,6 +2288,28 @@ if __name__ == "__main__":
         });
     }
 
+//Testing through postgres - need to establish connection
+//    @Test
+//    public void testReadINet() throws SQLException, IOException {
+//        Properties properties = new Properties();
+//        properties.setProperty("user", "admin");
+//        properties.setProperty("password", "postgres");
+//        properties.setProperty("sslmode", "disable");
+//        properties.setProperty("binaryTransfer", Boolean.toString(true));
+//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
+//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+//
+//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
+//
+//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
+//            var stmt = connection.prepareStatement("select * from ipv4");
+//            ResultSet rs = stmt.executeQuery();
+//            assertResultSet("a[OTHER]\n" +
+//                    "1.1.1.1\n" +
+//                    "12.2.65.90\n", sink, rs);
+//        }
+//    }
+
     @Test
     public void testBindVariableInVarArg() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -2520,28 +2583,6 @@ if __name__ == "__main__":
             }
         });
     }
-
-//Testing through postgres - need to establish connection
-//    @Test
-//    public void testReadINet() throws SQLException, IOException {
-//        Properties properties = new Properties();
-//        properties.setProperty("user", "admin");
-//        properties.setProperty("password", "postgres");
-//        properties.setProperty("sslmode", "disable");
-//        properties.setProperty("binaryTransfer", Boolean.toString(true));
-//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
-//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-//
-//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
-//
-//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
-//            var stmt = connection.prepareStatement("select * from ipv4");
-//            ResultSet rs = stmt.executeQuery();
-//            assertResultSet("a[OTHER]\n" +
-//                    "1.1.1.1\n" +
-//                    "12.2.65.90\n", sink, rs);
-//        }
-//    }
 
     @Test
     public void testBindVariableIsNull() throws Exception {
@@ -2967,6 +3008,51 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testCancelRunningQueryWithPivotInSubquery() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            execute("create table if not exists pivot_data (grp symbol, cat symbol, val int)");
+            execute("create table if not exists pivot_cats as " +
+                    "(select ('sym' || x) as sym from long_sequence(10))");
+            mayDrainWalQueue();
+            String query = """
+                    select * from pivot_data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT distinct sym FROM pivot_cats WHERE sleep(120000))
+                        GROUP BY grp
+                    )
+                    """;
+
+            AtomicBoolean isCancelled = new AtomicBoolean(false);
+            CountDownLatch finished = new CountDownLatch(1);
+
+            try (final PreparedStatement stmt = connection.prepareStatement(query)) {
+                new Thread(() -> {
+                    PGConnection pgCon = (PGConnection) connection;
+                    try {
+                        while (!isCancelled.get()) {
+                            Os.sleep(1);
+                            pgCon.cancelQuery();
+                        }
+                    } catch (SQLException e) {
+                        throw new RuntimeException(e);
+                    } finally {
+                        finished.countDown();
+                    }
+                }, "cancellation thread").start();
+                try {
+                    stmt.execute();
+                    Assert.fail("expected PSQLException with cancel message for PIVOT IN subquery");
+                } catch (PSQLException e) {
+                    isCancelled.set(true);
+                    finished.await();
+                    assertContains(e.getMessage(), "cancelled by user");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCharIntLongDoubleBooleanParametersWithoutExplicitParameterTypeHex() throws Exception {
         String script = """
                 >0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
@@ -3124,10 +3210,10 @@ if __name__ == "__main__":
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             try (Statement stmt = connection.createStatement()) {
                 stmt.execute("create table x as (select x::timestamp as ts from long_sequence(100)) timestamp (ts)");
-                try (ResultSet rs = stmt.executeQuery("tables();")) {
+                try (ResultSet rs = stmt.executeQuery("select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView, table_type from tables();")) {
                     assertResultSet("""
-                                    id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT]
-                                    2,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false
+                                    id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT],table_type[CHAR]
+                                    2,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false,T
                                     """,
                             sink, rs
                     );
@@ -3137,10 +3223,10 @@ if __name__ == "__main__":
                 drainWalQueue();
                 stmt.execute("create table x as (select x::timestamp as ts from long_sequence(100)) timestamp (ts)");
 
-                try (ResultSet rs = stmt.executeQuery("tables();")) {
+                try (ResultSet rs = stmt.executeQuery("select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView, table_type from tables();")) {
                     assertResultSet("""
-                                    id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT]
-                                    3,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false
+                                    id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT],table_type[CHAR]
+                                    3,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false,T
                                     """,
                             sink, rs
                     );
@@ -3509,16 +3595,16 @@ if __name__ == "__main__":
     public void testDropTable() throws Exception {
         String[][] sqlExpectedErrMsg = {
                 {"drop table doesnt", "ERROR: table does not exist [table=doesnt]"},
-                {"drop table", "ERROR: expected IF EXISTS table-name"},
-                {"drop doesnt", "ERROR: 'table' or 'materialized view' or 'all' expected"},
-                {"drop", "ERROR: 'table' or 'materialized view' or 'all' expected"},
+                {"drop table", "ERROR: expected [IF EXISTS] table-name"},
+                {"drop doesnt", "ERROR: 'table' or 'view' or 'materialized view' or 'all' expected"},
+                {"drop", "ERROR: 'table' or 'view' or 'materialized view' or 'all' expected"},
                 {"drop table if doesnt", "ERROR: expected EXISTS"},
                 {"drop table exists doesnt", "ERROR: table and column names that are SQL keywords have to be enclosed in double quotes, such as \"exists\""},
                 {"drop table if exists", "ERROR: table name expected"},
                 {"drop table if exists;", "ERROR: table name expected"},
                 {"drop all table if exists;", "ERROR: ';' or 'tables' expected"},
                 {"drop all tables if exists;", "ERROR: ';' or 'tables' expected"},
-                {"drop database ;", "ERROR: 'table' or 'materialized view' or 'all' expected"}
+                {"drop database ;", "ERROR: 'table' or 'view' or 'materialized view' or 'all' expected"}
         };
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             for (int i = 0, n = sqlExpectedErrMsg.length; i < n; i++) {
@@ -3930,7 +4016,7 @@ if __name__ == "__main__":
                     assertResultSet(
                             """
                                     QUERY PLAN[VARCHAR]
-                                    Limit lo: 10 skip-over-rows: 0 limit: 10
+                                    Limit value: 10 skip-rows: 0 take-rows: 10
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: xx
@@ -7410,7 +7496,7 @@ nodejs code:
             try (PreparedStatement pstmt = connection.prepareStatement("begin")) {
                 pstmt.execute();
             }
-            try (PreparedStatement pstmt = connection.prepareStatement("set")) {
+            try (PreparedStatement pstmt = connection.prepareStatement("set a = b")) {
                 pstmt.execute();
             }
             try (PreparedStatement pstmt = connection.prepareStatement("commit")) {
@@ -8909,170 +8995,6 @@ nodejs code:
     }
 
     @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
-        maxQueryTime = 100;
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
-            TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-            try {
-                String query = "select * from test_data_unavailable(1, 10)";
-                String expected = """
-                        x[BIGINT],y[BIGINT],z[BIGINT]
-                        1,1,1
-                        """;
-                try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
-                    sink.clear();
-                    assertResultSet(expected, sink, resultSet);
-                    Assert.fail();
-                } catch (SQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
-                }
-            } finally {
-                // Make sure to close the event on the producer side.
-                Misc.free(eventRef.get());
-            }
-        });
-    }
-
-    @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredAfterDelay() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            int totalRows = 3;
-            int backoffCount = 3;
-
-            final AtomicInteger totalEvents = new AtomicInteger();
-            final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
-            final AtomicBoolean stopDelayThread = new AtomicBoolean();
-            final AtomicInteger errorCount = new AtomicInteger();
-
-            final Thread delayThread = new Thread(() -> {
-                while (!stopDelayThread.get()) {
-                    SuspendEvent event = eventRef.getAndSet(null);
-                    if (event != null) {
-                        Os.sleep(1);
-                        try {
-                            event.trigger();
-                            event.close();
-                            totalEvents.incrementAndGet();
-                        } catch (Exception e) {
-                            errorCount.incrementAndGet();
-                        }
-                    } else {
-                        Os.pause();
-                    }
-                }
-            });
-            delayThread.start();
-
-            TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-
-            String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
-            String expected = """
-                    x[BIGINT],y[BIGINT],z[BIGINT]
-                    1,1,1
-                    2,2,2
-                    3,3,3
-                    """;
-            try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
-                sink.clear();
-                assertResultSet(expected, sink, resultSet);
-            }
-            stopDelayThread.set(true);
-
-            delayThread.join();
-            Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
-            Assert.assertEquals(0, errorCount.get());
-        });
-    }
-
-    @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            int totalRows = 3;
-            int backoffCount = 10;
-
-            final AtomicInteger totalEvents = new AtomicInteger();
-            TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                event.trigger();
-                event.close();
-                totalEvents.incrementAndGet();
-            };
-
-            String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
-            String expected = """
-                    x[BIGINT],y[BIGINT],z[BIGINT]
-                    1,1,1
-                    2,2,2
-                    3,3,3
-                    """;
-            try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
-                sink.clear();
-                assertResultSet(expected, sink, resultSet);
-            }
-
-            Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
-        });
-    }
-
-    @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableSmallSendBuffer() throws Exception {
-        assertMemoryLeak(() -> {
-            PGConfiguration configuration = new Port0PGConfiguration() {
-                @Override
-                public int getSendBufferSize() {
-                    return 192;
-                }
-            };
-
-            try (
-                    PGServer server = createPGServer(configuration);
-                    WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                int port = server.getPort();
-                try (Connection connection = getConnection(Mode.EXTENDED, port, true)) {
-                    int totalRows = 16;
-                    int backoffCount = 3;
-
-                    final AtomicInteger totalEvents = new AtomicInteger();
-                    TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                        event.trigger();
-                        event.close();
-                        totalEvents.incrementAndGet();
-                    };
-
-                    String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
-                    String expected = """
-                            x[BIGINT],y[BIGINT],z[BIGINT]
-                            1,1,1
-                            2,2,2
-                            3,3,3
-                            4,4,4
-                            5,5,5
-                            6,6,6
-                            7,7,7
-                            8,8,8
-                            9,9,9
-                            10,10,10
-                            11,11,11
-                            12,12,12
-                            13,13,13
-                            14,14,14
-                            15,15,15
-                            16,16,16
-                            """;
-                    try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
-                        sink.clear();
-                        assertResultSet(expected, sink, resultSet);
-                    }
-
-                    Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
-                }
-            }
-        });
-    }
-
-    @Test
     public void testQueryTimeout() throws Exception {
         maxQueryTime = 100;
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -10033,6 +9955,101 @@ create table tab as (
     }
 
     @Test
+    public void testSendBufferOverflowVarchar() throws Exception {
+        // Similar to testSendBufferOverflowVanilla in PGArraysTest, but for VARCHAR.
+        // VARCHAR values larger than the send buffer should be sent in multiple parts.
+        final int sndBufSize = 512;
+        final int varcharSize = sndBufSize * 3; // VARCHAR larger than send buffer
+
+        StringSink expectedValue = new StringSink();
+        expectedValue.repeat("x", varcharSize);
+
+        assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "SELECT x n, lpad('', " + varcharSize + ", 'x')::varchar v FROM long_sequence(3)")) {
+                try (ResultSet rs = stmt.executeQuery()) {
+                    for (int i = 1; i <= 3; i++) {
+                        Assert.assertTrue("Expected row " + i, rs.next());
+                        Assert.assertEquals(i, rs.getLong(1));
+                        String actualValue = rs.getString(2);
+                        Assert.assertEquals("VARCHAR length mismatch at row " + i, varcharSize, actualValue.length());
+                        TestUtils.assertEquals("VARCHAR content mismatch at row " + i, expectedValue, actualValue);
+                    }
+                    Assert.assertFalse("Expected no more rows", rs.next());
+                }
+            }
+        }, () -> {
+            sendBufferSize = sndBufSize;
+            recvBufferSize = varcharSize * 2;
+            forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
+        });
+    }
+
+    @Test
+    public void testSendBufferOverflowVarcharExactBufferSize() throws Exception {
+        // Test VARCHAR that is exactly the buffer size
+        final int sndBufSize = 512;
+        // Account for message header (~7 bytes) and column header (4 bytes)
+        final int varcharSize = sndBufSize - 20;
+
+        StringSink expectedValue = new StringSink();
+        expectedValue.repeat("x", varcharSize);
+
+        assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "SELECT x n, lpad('', " + varcharSize + ", 'x')::varchar v FROM long_sequence(5)")) {
+                try (ResultSet rs = stmt.executeQuery()) {
+                    for (int i = 1; i <= 5; i++) {
+                        Assert.assertTrue("Expected row " + i, rs.next());
+                        Assert.assertEquals(i, rs.getLong(1));
+                        Assert.assertEquals("VARCHAR length mismatch at row " + i, varcharSize, rs.getString(2).length());
+                        TestUtils.assertContains("VARCHAR content mismatch at row " + i, expectedValue, rs.getString(2));
+                    }
+                    Assert.assertFalse("Expected no more rows", rs.next());
+                }
+            }
+        }, () -> {
+            sendBufferSize = sndBufSize;
+            recvBufferSize = varcharSize * 4;
+            forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
+        });
+    }
+
+    @Test
+    public void testSendBufferOverflowVarcharMultipleColumns() throws Exception {
+        // Test with multiple large VARCHAR columns in the same row
+        final int sndBufSize = 512;
+        final int varcharSize = sndBufSize * 2;
+
+        StringSink expectedA = new StringSink();
+        StringSink expectedB = new StringSink();
+        expectedA.repeat("a", varcharSize);
+        expectedB.repeat("b", varcharSize);
+
+
+        assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "SELECT x n, lpad('', " + varcharSize + ", 'a')::varchar v1, lpad('', " + varcharSize + ", 'b')::varchar v2 FROM long_sequence(2)")) {
+                try (ResultSet rs = stmt.executeQuery()) {
+                    for (int i = 1; i <= 2; i++) {
+                        Assert.assertTrue("Expected row " + i, rs.next());
+                        Assert.assertEquals(i, rs.getLong(1));
+                        Assert.assertEquals("v1 length mismatch at row " + i, varcharSize, rs.getString(2).length());
+                        TestUtils.assertContains("v1 content mismatch at row " + i, expectedA, rs.getString(2));
+                        Assert.assertEquals("v2 length mismatch at row " + i, varcharSize, rs.getString(3).length());
+                        TestUtils.assertContains("v2 content mismatch at row " + i, expectedB, rs.getString(3));
+                    }
+                    Assert.assertFalse("Expected no more rows", rs.next());
+                }
+            }
+        }, () -> {
+            sendBufferSize = sndBufSize;
+            recvBufferSize = varcharSize * 6;
+            forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
+        });
+    }
+
+    @Test
     public void testSendingBufferWhenFlushMessageReceivedHex() throws Exception {
         assertHexScriptAltCreds(
                 """
@@ -10585,8 +10602,9 @@ create table tab as (
         final int sndBufSize = 256 + bufferSizeRnd.nextInt(256);
 
         // varchar, string, binary
+        // only string and binary can be oversized (varchar supports fragmented sending)
         int[] sizes = {sndBufSize / 4, sndBufSize / 2, sndBufSize - 4 - 1};
-        sizes[bufferSizeRnd.nextInt(sizes.length)] = 2 * sndBufSize;
+        sizes[1 + bufferSizeRnd.nextInt(2)] = 2 * sndBufSize;
 
         final int varcharSize = sizes[0];
         final int stringSize = sizes[1];
@@ -10623,9 +10641,7 @@ create table tab as (
 
     @Test
     public void testSmallSendBufferBigColumnValueNotEnoughSpace2() throws Exception {
-        Assume.assumeFalse(walEnabled);
-
-        final int varcharSize = 600;
+        final int strSize = 600;
 
         final String ddl = "create table x as (" +
                 "select " +
@@ -10649,10 +10665,10 @@ create table tab as (
                 "  rnd_symbol(4,4,4,2) f18," +
                 "  rnd_str(10,10,0) f19," +
                 "  rnd_bin(16,16,0) f20," +
-                "  rnd_varchar(" + varcharSize + "," + varcharSize + ",2) f21," +
+                "  rnd_str(" + strSize + "," + strSize + ",0) f21," +
                 "  timestamp_sequence(500000000000L,100000000L) ts " +
                 "from long_sequence(1)" +
-                ") timestamp (ts) partition by DAY";
+                ") timestamp (ts) partition by DAY WAL";
 
         // We need to be in full control of binary/text format since the buffer size depends on that,
         // so we run just a few combinations.
@@ -10663,13 +10679,14 @@ create table tab as (
                 (connection, binary, mode, port) -> {
                     try (Statement statement = connection.createStatement()) {
                         statement.executeUpdate(ddl);
+                        drainWalQueue();
 
                         try (PreparedStatement stmt = connection.prepareStatement("x")) {
                             try (ResultSet ignore = stmt.executeQuery()) {
                                 Assert.fail("exception expected");
                             }
                         } catch (SQLException e) {
-                            TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1788]");
+                            TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1063]");
                         }
                     }
                 },
@@ -10683,13 +10700,14 @@ create table tab as (
                 (connection, binary, mode, port) -> {
                     try (Statement statement = connection.createStatement()) {
                         statement.executeUpdate(ddl);
+                        drainWalQueue();
 
                         try (PreparedStatement stmt = connection.prepareStatement("x")) {
                             try (ResultSet ignore = stmt.executeQuery()) {
                                 Assert.fail("exception expected");
                             }
                         } catch (SQLException e) {
-                            TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1629]");
+                            TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1024]");
                         }
                     }
                 },
@@ -12074,6 +12092,123 @@ create table tab as (
         });
     }
 
+    @Test
+    public void testVarcharArrayBindVarsWithSpecialChars() throws Exception {
+        // Tests varchar[] bind variables with special characters (backslash, quotes, commas, braces)
+        // in extended protocol mode with both binary and text transfer.
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement(
+                    "create table special_chars (ts timestamp, val varchar) timestamp(ts) partition by day"
+            ).execute();
+
+            // Insert rows with special characters
+            connection.prepareStatement(
+                    "insert into special_chars values " +
+                            "('2023-01-01T09:10:00.000000Z', 'hello\\world')," +  // backslash
+                            "('2023-01-01T09:11:00.000000Z', 'say\"hi')," +       // quote
+                            "('2023-01-01T09:12:00.000000Z', 'a,b,c')," +         // commas
+                            "('2023-01-01T09:13:00.000000Z', '{braces}')," +      // braces
+                            "('2023-01-01T09:14:00.000000Z', 'normal')"
+            ).execute();
+            connection.commit();
+            connection.setAutoCommit(true);
+            mayDrainWalQueue();
+
+            // Test with backslash in array
+            try (PreparedStatement stmt = connection.prepareStatement(
+                    "SELECT * FROM special_chars WHERE val IN (?)"
+            )) {
+                Array array = connection.createArrayOf("varchar", new String[]{"hello\\world", "normal"});
+                stmt.setArray(1, array);
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet(
+                            """
+                                    ts[TIMESTAMP],val[VARCHAR]
+                                    2023-01-01 09:10:00.0,hello\\world
+                                    2023-01-01 09:14:00.0,normal
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            // Test with quote in array
+            try (PreparedStatement stmt = connection.prepareStatement(
+                    "SELECT * FROM special_chars WHERE val IN (?)"
+            )) {
+                Array array = connection.createArrayOf("varchar", new String[]{"say\"hi"});
+                stmt.setArray(1, array);
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet(
+                            """
+                                    ts[TIMESTAMP],val[VARCHAR]
+                                    2023-01-01 09:11:00.0,say"hi
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            // Test with commas and braces
+            try (PreparedStatement stmt = connection.prepareStatement(
+                    "SELECT * FROM special_chars WHERE val IN (?)"
+            )) {
+                Array array = connection.createArrayOf("varchar", new String[]{"a,b,c", "{braces}"});
+                stmt.setArray(1, array);
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet(
+                            """
+                                    ts[TIMESTAMP],val[VARCHAR]
+                                    2023-01-01 09:12:00.0,a,b,c
+                                    2023-01-01 09:13:00.0,{braces}
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            // Test with symbol column too
+            connection.setAutoCommit(false);
+            connection.prepareStatement(
+                    "create table special_symbols (ts timestamp, sym symbol) timestamp(ts) partition by day"
+            ).execute();
+
+            connection.prepareStatement(
+                    "insert into special_symbols values " +
+                            "('2023-01-01T09:10:00.000000Z', 'path\\to\\file')," +
+                            "('2023-01-01T09:11:00.000000Z', 'normal')"
+            ).execute();
+            connection.commit();
+            connection.setAutoCommit(true);
+            mayDrainWalQueue();
+
+            try (PreparedStatement stmt = connection.prepareStatement(
+                    "SELECT * FROM special_symbols WHERE sym IN (?)"
+            )) {
+                Array array = connection.createArrayOf("varchar", new String[]{"path\\to\\file"});
+                stmt.setArray(1, array);
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet(
+                            """
+                                    ts[TIMESTAMP],sym[VARCHAR]
+                                    2023-01-01 09:10:00.0,path\\to\\file
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
     /*
         use sqlx::postgres::PgPoolOptions;
 
@@ -12184,6 +12319,147 @@ create table tab as (
     public void testVarcharBindvarEqStringyCol() throws Exception {
         testVarcharBindVars(
                 "select v,s from x where ?::varchar != v and ?::varchar != s");
+    }
+
+    @Test
+    public void testViewCyclePrevention() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement stmt = connection.createStatement()) {
+                stmt.execute("create table tango (x int, y int, ts timestamp) timestamp(ts) partition by hour");
+                stmt.execute("create view v1 as select * from tango");
+                stmt.execute("create view v2 as select * from tango");
+            }
+
+            drainWalAndViewQueues();
+
+            try (PreparedStatement stmt1 = connection.prepareStatement("ALTER VIEW v1 AS SELECT * FROM v2");
+                 PreparedStatement stmt2 = connection.prepareStatement("ALTER VIEW v2 AS SELECT * FROM v1")) {
+                stmt1.execute();
+                stmt2.execute();
+                drainWalAndViewQueues();
+                Assert.fail("expected SQLException due to cycle in view definitions");
+            } catch (SQLException e) {
+                assertContains(e.getMessage(), "v2' cannot depend on 'v1' because 'v1' already depends on 'v2");
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from v1")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("""
+                                    x[INTEGER],y[INTEGER],ts[TIMESTAMP]
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testViewDropAndRecreate() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement stmt = connection.createStatement()) {
+                stmt.execute("create table tango (x int, y int, ts timestamp) timestamp(ts) partition by hour");
+                stmt.execute("create view v_tango as select x from tango");
+            }
+
+            drainWalQueue();
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from v_tango")) {
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("""
+                                    x[INTEGER]
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            try (Statement stmt = connection.createStatement()) {
+                stmt.execute("drop view v_tango");
+                stmt.execute("create view v_tango as select y from tango");
+            }
+        });
+    }
+
+    @Test
+    public void testViewDroppedAndRecreatedWithDifferentDefinition() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement stmt = connection.createStatement()) {
+                stmt.execute("create table tango (x int, y int, ts timestamp) timestamp(ts) partition by hour");
+                stmt.execute("insert into tango values (1, 2, '2000'), (3, 4, '2001')");
+                stmt.execute("create view v_tango as select x from tango");
+            }
+
+            drainWalQueue();
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from v_tango")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("""
+                                    x[INTEGER]
+                                    1
+                                    3
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            try (Statement stmt = connection.createStatement()) {
+                stmt.execute("drop view v_tango");
+                stmt.execute("create view v_tango as select y from tango");
+            }
+
+            drainViewQueue();
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from v_tango")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("""
+                                    y[INTEGER]
+                                    2
+                                    4
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+
+        });
+    }
+
+    @Test
+    public void testViewWithBindingVars() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement stmt = connection.createStatement()) {
+                stmt.execute("create table tango (x int, y int, ts timestamp) timestamp(ts) partition by hour");
+                stmt.execute("insert into tango values (1, 2, '2000'), (3, 4, '2001')");
+                // note: we switched the column
+                stmt.execute("create view v_tango as select x as y, y as x from tango");
+            }
+
+            drainWalQueue();
+
+            try (PreparedStatement stmt = connection.prepareStatement("select y, x from v_tango where y = ?")) {
+                stmt.setInt(1, 1);
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("""
+                                    y[INTEGER],x[INTEGER]
+                                    1,2
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
     }
 
     private static int executeAndCancelQuery(PgConnection connection) throws SQLException, InterruptedException {

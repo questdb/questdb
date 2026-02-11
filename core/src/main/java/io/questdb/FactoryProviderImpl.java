@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,9 @@
 
 package io.questdb;
 
+import io.questdb.cairo.DefaultTickCalendarServiceFactory;
 import io.questdb.cairo.DefaultWalJobFactory;
+import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.WalJobFactory;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
@@ -149,6 +151,11 @@ public class FactoryProviderImpl implements FactoryProvider {
     @Override
     public @NotNull WalJobFactory getWalJobFactory() {
         return defaultWalJobFactory;
+    }
+
+    @Override
+    public @NotNull TickCalendarServiceFactory getTickCalendarServiceFactory() {
+        return DefaultTickCalendarServiceFactory.INSTANCE;
     }
 
     private static HttpAuthenticatorFactory getHttpAuthenticatorFactory(ServerConfiguration configuration) {

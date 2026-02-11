@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,7 +38,6 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.griffin.engine.table.parquet.ParquetCompression.*;
 
 public class ExportModel implements ExecutionModel, Mutable, Sinkable {
-
     public static final int COPY_FORMAT_CSV = 1;
     public static final int COPY_FORMAT_PARQUET = 2;
     public static final int COPY_FORMAT_UNKNOWN = 0;
@@ -60,26 +59,26 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
     public static final int PARQUET_VERSION_V1 = 1;
     public static final int PARQUET_VERSION_V2 = 2;
     private static final LowerCaseCharSequenceIntHashMap copyOptionsNameToEnumMap = new LowerCaseCharSequenceIntHashMap();
-    private int atomicity;
+    private int atomicity = -1;
     private boolean cancel;
-    private int compressionCodec;
-    private int compressionLevel;
+    private int compressionCodec = -1;
+    private int compressionLevel = -1;
     private int compressionLevelPos;
     private boolean compressionLevelSet;
-    private int dataPageSize;
-    private byte delimiter;
+    private int dataPageSize = -1;
+    private byte delimiter = -1;
     private ExpressionNode fileName;
     private int format;
     private boolean header;
     private boolean noDelay;
-    private int parquetVersion;
-    private int partitionBy;
+    private int parquetVersion = -1;
+    private int partitionBy = -1;
     private boolean rawArrayEncoding;
-    private int rowGroupSize;
+    private int rowGroupSize = -1;
     private int selectStartPos;
     @Nullable
     private CharSequence selectText;
-    private boolean statisticsEnabled;
+    private boolean statisticsEnabled = true;
     private ExpressionNode target; // holds table name (new import) or import id (cancel model)
     private CharSequence timestampColumnName;
     private CharSequence timestampFormat;
@@ -169,10 +168,6 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
         return selectStartPos;
     }
 
-    public boolean isNoDelay() {
-        return noDelay;
-    }
-
     @Override
     public @Nullable CharSequence getTableName() {
         return target != null ? target.token : null;
@@ -223,6 +218,10 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
 
     public boolean isHeader() {
         return header;
+    }
+
+    public boolean isNoDelay() {
+        return noDelay;
     }
 
     public boolean isParquetFormat() {

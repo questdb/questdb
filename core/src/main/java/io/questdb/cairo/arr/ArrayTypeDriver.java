@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,6 +43,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -120,49 +121,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     public static final long OFFSET_MAX = (1L << 48) - 1L;
     private static final ArrayValueAppender VALUE_APPENDER_DOUBLE = ArrayTypeDriver::appendDoubleFromArrayToSink;
     private static final ArrayValueAppender VALUE_APPENDER_LONG = ArrayTypeDriver::appendLongFromArrayToSink;
-
-    public static void appendDoubleFromArrayToSink(
-            @NotNull ArrayView array,
-            int index,
-            @NotNull CharSink<?> sink,
-            @NotNull String nullLiteral
-    ) {
-        double d = array.getDouble(index);
-        if (Numbers.isFinite(d)) {
-            sink.put(d);
-        } else {
-            sink.put(nullLiteral);
-        }
-    }
-
-    public static long appendPlainValue(long appendAddress, ArrayView value) {
-        long startAddress = appendAddress;
-        if (value == null || value.isNull()) {
-            Unsafe.getUnsafe().putLong(appendAddress, TableUtils.NULL_LEN);
-            return Long.BYTES;
-        }
-        Unsafe.getUnsafe().putLong(appendAddress, value.getVanillaMemoryLayoutSize());
-        appendAddress += Long.BYTES;
-        Unsafe.getUnsafe().putInt(appendAddress, value.getType());
-        appendAddress += Integer.BYTES;
-        for (int nDims = value.getDimCount(), i = 0; i < nDims; i++) {
-            Unsafe.getUnsafe().putInt(appendAddress, value.getDimLen(i));
-            appendAddress += Integer.BYTES;
-        }
-        if (value.isVanilla()) {
-            short elemType = value.getElemType();
-            if (elemType == ColumnType.DOUBLE) {
-                appendAddress = value.flatView().appendPlainDoubleValue(appendAddress, value.getFlatViewOffset(), value.getFlatViewLength());
-            } else {
-                throw new UnsupportedOperationException("Unsupported array element type: " + elemType);
-            }
-        } else {
-            appendAddress = appendToMemRecursive(value, 0, 0, appendAddress);
-        }
-        long bytesWritten = appendAddress - startAddress;
-        assert bytesWritten > 0;
-        return bytesWritten;
-    }
+    private static final ArrayValueAppender VALUE_APPENDER_VARCHAR = ArrayTypeDriver::appendVarcharFromArrayToSink;
 
     /**
      * Appends an array in compact format, used by {@link io.questdb.griffin.engine.groupby.GroupByArraySink}.
@@ -210,6 +169,49 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         } else {
             appendToMemRecursive(value, 0, 0, addr);
         }
+    }
+
+    public static void appendDoubleFromArrayToSink(
+            @NotNull ArrayView array,
+            int index,
+            @NotNull CharSink<?> sink,
+            @NotNull String nullLiteral
+    ) {
+        double d = array.getDouble(index);
+        if (Numbers.isFinite(d)) {
+            sink.put(d);
+        } else {
+            sink.put(nullLiteral);
+        }
+    }
+
+    public static long appendPlainValue(long appendAddress, ArrayView value) {
+        long startAddress = appendAddress;
+        if (value == null || value.isNull()) {
+            Unsafe.getUnsafe().putLong(appendAddress, TableUtils.NULL_LEN);
+            return Long.BYTES;
+        }
+        Unsafe.getUnsafe().putLong(appendAddress, value.getVanillaMemoryLayoutSize());
+        appendAddress += Long.BYTES;
+        Unsafe.getUnsafe().putInt(appendAddress, value.getType());
+        appendAddress += Integer.BYTES;
+        for (int nDims = value.getDimCount(), i = 0; i < nDims; i++) {
+            Unsafe.getUnsafe().putInt(appendAddress, value.getDimLen(i));
+            appendAddress += Integer.BYTES;
+        }
+        if (value.isVanilla()) {
+            short elemType = value.getElemType();
+            if (elemType == ColumnType.DOUBLE) {
+                appendAddress = value.flatView().appendPlainDoubleValue(appendAddress, value.getFlatViewOffset(), value.getFlatViewLength());
+            } else {
+                throw new UnsupportedOperationException("Unsupported array element type: " + elemType);
+            }
+        } else {
+            appendAddress = appendToMemRecursive(value, 0, 0, appendAddress);
+        }
+        long bytesWritten = appendAddress - startAddress;
+        assert bytesWritten > 0;
+        return bytesWritten;
     }
 
     public static void appendValue(
@@ -320,22 +322,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return ARRAY_AUX_WIDTH_BYTES * row;
     }
 
-    public static BorrowedArray getPlainValue(long addr, @NotNull BorrowedArray value) {
-        final long totalSize = Unsafe.getUnsafe().getLong(addr);
-        addr += Long.BYTES;
-        if (totalSize <= 0) {
-            value.ofNull();
-            return value;
-        }
-        final int type = Unsafe.getUnsafe().getInt(addr);
-        addr += Integer.BYTES;
-        int nDims = ColumnType.decodeArrayDimensionality(type);
-        int shapeLen = nDims * Integer.BYTES;
-        int headerLen = Integer.BYTES + shapeLen;
-        value.of(type, addr, addr + shapeLen, (int) (totalSize - headerLen));
-        return value;
-    }
-
     /**
      * Reads an array from compact format (see {@link #appendCompactPlainValue} for layout).
      * <p>
@@ -361,14 +347,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return value;
     }
 
-    public static long getPlainValueSize(long arrayAddress) {
-        return Long.BYTES + Unsafe.getUnsafe().getLong(arrayAddress);
-    }
-
-    public static long getPlainValueSize(@NotNull ArrayView value) {
-        return Long.BYTES + value.getVanillaMemoryLayoutSize();
-    }
-
     /**
      * Calculates the size needed to store an array in compact format.
      * This is used by {@link io.questdb.griffin.engine.groupby.GroupByArraySink}.
@@ -389,6 +367,30 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         long elemSize = ColumnType.sizeOf(ColumnType.decodeArrayElementType(value.getType()));
         long intBytes = Integer.BYTES;
         return intBytes + value.getDimCount() * intBytes + value.getCardinality() * elemSize;
+    }
+
+    public static BorrowedArray getPlainValue(long addr, @NotNull BorrowedArray value) {
+        final long totalSize = Unsafe.getUnsafe().getLong(addr);
+        addr += Long.BYTES;
+        if (totalSize <= 0) {
+            value.ofNull();
+            return value;
+        }
+        final int type = Unsafe.getUnsafe().getInt(addr);
+        addr += Integer.BYTES;
+        int nDims = ColumnType.decodeArrayDimensionality(type);
+        int shapeLen = nDims * Integer.BYTES;
+        int headerLen = Integer.BYTES + shapeLen;
+        value.of(type, addr, addr + shapeLen, (int) (totalSize - headerLen));
+        return value;
+    }
+
+    public static long getPlainValueSize(long arrayAddress) {
+        return Long.BYTES + Unsafe.getUnsafe().getLong(arrayAddress);
+    }
+
+    public static long getPlainValueSize(@NotNull ArrayView value) {
+        return Long.BYTES + value.getVanillaMemoryLayoutSize();
     }
 
     @Override
@@ -839,6 +841,8 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             case ColumnType.LONG:
             case ColumnType.NULL:
                 return VALUE_APPENDER_LONG;
+            case ColumnType.VARCHAR:
+                return VALUE_APPENDER_VARCHAR;
             default:
                 if (array.isEmpty()) {
                     return VALUE_APPENDER_LONG;
@@ -906,6 +910,15 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         } else {
             // todo: wtf is this?
             sink.put(d);
+        }
+    }
+
+    static void appendVarcharFromArrayToSink(@NotNull ArrayView array, int index, @NotNull CharSink<?> sink, @NotNull String nullLiteral) {
+        Utf8Sequence utf8Sequence = array.getVarchar(index);
+        if (utf8Sequence == null) {
+            sink.put(nullLiteral);
+        } else {
+            sink.put(utf8Sequence);
         }
     }
 

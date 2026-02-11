@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -47,6 +47,7 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.engine.ops.GenericDropOperationBuilder;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
@@ -88,6 +89,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.griffin.CompiledQuery.BEGIN;
+import static io.questdb.griffin.CompiledQuery.COMMIT;
+import static io.questdb.griffin.CompiledQuery.ROLLBACK;
 import static io.questdb.griffin.CompiledQuery.SET;
 
 public class SqlCompilerImplTest extends AbstractCairoTest {
@@ -170,17 +174,17 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             for (String frameType : Arrays.asList("rows ", "range")) {
                 String queryPrefix = prefix + frameType;
 
-                assertExceptionNoLeakCheck(queryPrefix + " between preceding and current row)  from trips", 60, "integer expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " between preceding and current row)  from trips", 60, "frame bound value expected before 'preceding'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " between 10 preceding and preceding)  from trips", 77, "integer expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " between 10 preceding and preceding)  from trips", 77, "frame bound value expected before 'preceding'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " between 10 preceding and following)  from trips", 77, "integer expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " between 10 preceding and following)  from trips", 77, "frame bound value expected before 'following'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " preceding)  from trips", 52, "integer expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " preceding)  from trips", 52, "frame bound value expected before 'preceding'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " following)  from trips", 52, "integer expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " following)  from trips", 52, "frame bound value expected before 'following'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " between)  from trips", 59, "Expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " between)  from trips", 59, "'preceding' or 'following' expected");
 
                 assertExceptionNoLeakCheck(queryPrefix + " between '' preceding and current row)  from trips", 60, "integer expression expected");
 
@@ -2571,6 +2575,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCompileBeginTransaction() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(BEGIN, compiler.compile("BEGIN TRANSACTION", sqlExecutionContext).getType());
+            }
+        });
+    }
+
     // close command is a no-op in qdb
     @Test
     public void testCompileCloseDoesNothing() throws Exception {
@@ -2578,6 +2591,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 Assert.assertEquals(SET, compiler.compile(query, sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileCommitTransaction() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(COMMIT, compiler.compile("COMMIT TRANSACTION", sqlExecutionContext).getType());
             }
         });
     }
@@ -2594,11 +2616,108 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCompileRollbackTransaction() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(ROLLBACK, compiler.compile("ROLLBACK TRANSACTION", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
     public void testCompileSet() throws Exception {
         String query = "SET x = y";
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 Assert.assertEquals(SET, compiler.compile(query, sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetDanglingComma() throws Exception {
+        assertException("SET x = y,", 10, "value expected");
+    }
+
+    @Test
+    public void testCompileSetNonStandardForm() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET x GARBAGE y", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetMissingName() throws Exception {
+        assertException("SET", 3, "parameter name expected");
+    }
+
+    @Test
+    public void testCompileSetMissingNameSemicolon() throws Exception {
+        assertException("SET;", 3, "parameter name expected");
+    }
+
+    @Test
+    public void testCompileSetMissingOperator() throws Exception {
+        assertException("SET x", 5, "'=' or 'TO' expected");
+    }
+
+    @Test
+    public void testCompileSetMissingValue() throws Exception {
+        assertException("SET x =", 7, "value expected");
+    }
+
+    @Test
+    public void testCompileSetMultipleValues() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET x TO y, z", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetQuotedValue() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET x = 'quoted'", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetTimeZone() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET TIME ZONE 'UTC'", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetWithLocal() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET LOCAL x = y", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetWithSession() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET SESSION x = y", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetWithTo() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET x TO y", sqlExecutionContext).getType());
             }
         });
     }
@@ -3854,13 +3973,31 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDependencyColumnsWithSameAliasError() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            create table tab (
+                              x1 int,
+                              ts TIMESTAMP
+                            ) timestamp(ts);
+                            """
+            );
+
+            assertExceptionNoLeakCheck("select x1 as a, a as a from t", 18, "Duplicate column [name=a]");
+        });
+    }
+
+    @Test
     public void testDistinctDependencyColumnsThrowError() throws Exception {
         assertMemoryLeak(() -> {
             execute(
-                    "create table tab (" +
-                            "  x1 int," +
-                            "  ts TIMESTAMP" +
-                            ") timestamp(ts);"
+                    """
+                            create table tab (
+                              x1 int,
+                              ts TIMESTAMP
+                            ) timestamp(ts);
+                            """
             );
 
             assertExceptionNoLeakCheck("select distinct x1 as a, a from tab", 25, "Invalid column: a");
@@ -3948,7 +4085,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test(time TIMESTAMP, symbol STRING);");
 
-            assertExceptionNoLeakCheck("SELECT test.time AS ref0, test.symbol AS ref1 FROM test GROUP BY test.time, test.symbol ORDER BY SUM(1, -1)", 97, "there is no matching function `SUM` with the argument types: (INT, INT)");
+            assertExceptionNoLeakCheck(
+                    "SELECT test.time AS ref0, test.symbol AS ref1 FROM test GROUP BY test.time, test.symbol ORDER BY SUM(1, -1)",
+                    97,
+                    "there is no matching function `SUM` with the argument types: (INT, INT)"
+            );
         });
     }
 
@@ -4014,7 +4155,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                     Filter filter: T2.created in [now(),now()]
                                         Nested Loop Full Join
                                           filter: T1.created<T2.created
-                                            Limit lo: 0 skip-over-rows: 0 limit: 0
+                                            Limit value: 0 skip-rows-max: 0 take-rows-max: 0
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: tab
@@ -5618,7 +5759,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                     Filter filter: T2.created in [now(),now()]
                                         Nested Loop Left Join
                                           filter: T1.created<T2.created
-                                            Limit lo: 0 skip-over-rows: 0 limit: 0
+                                            Limit value: 0 skip-rows-max: 0 take-rows-max: 0
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: tab
@@ -5665,7 +5806,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                 Filter filter: (null=T2.created or 0<T2.created::long)
                                     Nested Loop Left Join
                                       filter: T1.created<T2.created
-                                        Limit lo: -1 skip-over-rows: 2 limit: 1
+                                        Limit value: -1 skip-rows: 2 take-rows: 1
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab
@@ -5841,7 +5982,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                           condition: T3.created=T2.created
                                             Nested Loop Left Join
                                               filter: T1.created<T2.created
-                                                Limit lo: 2 skip-over-rows: 0 limit: 2
+                                                Limit value: 2 skip-rows: 0 take-rows: 2
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: tab
@@ -5849,11 +5990,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                                     Row forward scan
                                                     Frame forward scan on: tab
                                             Hash
-                                                Limit lo: 3 skip-over-rows: 0 limit: 3
+                                                Limit value: 3 skip-rows: 0 take-rows: 3
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: tab
-                                        Limit lo: 4 skip-over-rows: 0 limit: 3
+                                        Limit value: 4 skip-rows: 0 take-rows: 3
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab
@@ -6099,7 +6240,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}", sink);
                     }
                 }
-                engine.dropTableOrMatView(path, tt);
+                engine.dropTableOrViewOrMatView(path, tt);
             }
         });
     }
@@ -6336,7 +6477,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                     Filter filter: T2.created in [now(),now()]
                                         Nested Loop Right Join
                                           filter: T1.created<T2.created
-                                            Limit lo: 0 skip-over-rows: 0 limit: 0
+                                            Limit value: 0 skip-rows-max: 0 take-rows-max: 0
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: tab
@@ -6383,7 +6524,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                 Filter filter: (null=T2.created or 0<T2.created::long)
                                     Nested Loop Right Join
                                       filter: T1.created<T2.created
-                                        Limit lo: -1 skip-over-rows: 2 limit: 1
+                                        Limit value: -1 skip-rows: 2 take-rows: 1
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab
@@ -6567,7 +6708,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                           condition: T3.created=T2.created
                                             Nested Loop Right Join
                                               filter: T1.created<T2.created
-                                                Limit lo: 2 skip-over-rows: 0 limit: 2
+                                                Limit value: 2 skip-rows: 0 take-rows: 2
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: tab
@@ -6575,11 +6716,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                                     Row forward scan
                                                     Frame forward scan on: tab
                                             Hash
-                                                Limit lo: 3 skip-over-rows: 0 limit: 3
+                                                Limit value: 3 skip-rows: 0 take-rows: 3
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: tab
-                                        Limit lo: 4 skip-over-rows: 0 limit: 3
+                                        Limit value: 4 skip-rows: 0 take-rows: 3
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab
@@ -7147,6 +7288,149 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTrailingContentAfterBeginRejected() throws Exception {
+        assertException("BEGIN extra_token", 6, "unexpected token [extra_token]");
+    }
+
+    @Test
+    public void testTrailingContentAfterBeginTransactionRejected() throws Exception {
+        assertException("BEGIN TRANSACTION extra_token", 18, "unexpected token [extra_token]");
+    }
+
+    @Test
+    public void testTrailingContentAfterCommitRejected() throws Exception {
+        assertException("COMMIT extra_token", 7, "unexpected token [extra_token]");
+    }
+
+    @Test
+    public void testTrailingContentAfterDdlRejected() throws Exception {
+        assertException(
+                "create table tab (x int) select",
+                25,
+                "unexpected token [select]"
+        );
+    }
+
+    @Test
+    public void testCloseMissingArgRejected() throws Exception {
+        assertException("CLOSE", 5, "argument expected");
+    }
+
+    @Test
+    public void testCloseSemicolonNotAcceptedAsArg() throws Exception {
+        assertException("CLOSE;", 5, "argument expected");
+    }
+
+    @Test
+    public void testDiscardMissingArgRejected() throws Exception {
+        assertException("DISCARD", 7, "argument expected");
+    }
+
+    @Test
+    public void testDiscardSemicolonNotAcceptedAsArg() throws Exception {
+        assertException("DISCARD;", 7, "argument expected");
+    }
+
+    @Test
+    public void testResetMissingArgRejected() throws Exception {
+        assertException("RESET", 5, "argument expected");
+    }
+
+    @Test
+    public void testResetSemicolonNotAcceptedAsArg() throws Exception {
+        assertException("RESET;", 5, "argument expected");
+    }
+
+    @Test
+    public void testTrailingContentAfterCloseRejected() throws Exception {
+        assertException("CLOSE ALL extra", 10, "unexpected token [extra]");
+    }
+
+    @Test
+    public void testTrailingContentAfterDiscardRejected() throws Exception {
+        assertException("DISCARD ALL extra", 12, "unexpected token [extra]");
+    }
+
+    @Test
+    public void testTrailingContentAfterNoOpRejected() throws Exception {
+        assertException(
+                "RESET ALL extra",
+                10,
+                "unexpected token [extra]"
+        );
+    }
+
+    @Test
+    public void testTrailingContentAfterUnlistenRejected() throws Exception {
+        assertException("UNLISTEN * extra", 11, "unexpected token [extra]");
+    }
+
+    @Test
+    public void testUnlistenMissingArgRejected() throws Exception {
+        assertException("UNLISTEN", 8, "argument expected");
+    }
+
+    @Test
+    public void testTrailingContentAfterRollbackRejected() throws Exception {
+        assertException("ROLLBACK extra_token", 9, "unexpected token [extra_token]");
+    }
+
+    @Test
+    public void testTrailingContentAfterSelectRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (x int)");
+            assertExceptionNoLeakCheck(
+                    "select x from tab limit 10 extra_token",
+                    27,
+                    "unexpected token [extra_token]"
+            );
+        });
+    }
+
+    @Test
+    public void testTrailingContentAfterSetRejected() throws Exception {
+        assertException(
+                "SET x = y extra_token",
+                10,
+                "unexpected token [extra_token]"
+        );
+    }
+
+    @Test
+    public void testTrailingSemicolonAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (x int)");
+            // trailing semicolon should not cause an error
+            assertQuery("x\n",
+                    "select x from tab;",
+                    "", true, true);
+        });
+    }
+
+    @Test
+    public void testTrailingContentAfterSemicolonRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (x int)");
+            assertExceptionNoLeakCheck(
+                    "select x from tab; select x from tab",
+                    19,
+                    "unexpected token [select]"
+            );
+        });
+    }
+
+    @Test
+    public void testTrailingTokenAbsentIsOk() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (x int)");
+            // no trailing content should not cause an error
+            assertQuery("x\n",
+                    "select x from tab",
+                    "", true, true);
+        });
+    }
+
+    @Test
     public void testUnionAllWithFirstSubQueryUsingDistinct() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table ict ( event int );");
@@ -7157,9 +7441,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             avg
                             500.5
                             """,
-                    "union",
-                    "select avg(event) from ict ",
-                    "select distinct avg(event) from ict"
+                    "union"
             );
 
             assertWithReorder(
@@ -7168,9 +7450,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             500.5
                             500.5
                             """,
-                    "union all",
-                    "select avg(event) from ict ",
-                    "select distinct avg(event) from ict"
+                    "union all"
             );
 
             assertWithReorder(
@@ -7178,16 +7458,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             avg
                             500.5
                             """,
-                    "intersect",
-                    "select avg(event) from ict ",
-                    "select distinct avg(event) from ict"
+                    "intersect"
             );
 
             assertWithReorder(
                     "avg\n",
-                    "except",
-                    "select avg(event) from ict ",
-                    "select distinct avg(event) from ict"
+                    "except"
             );
         });
     }
@@ -7272,6 +7548,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     Assert.fail();
                 } catch (Exception e) {
                     Assert.assertTrue(compiler.createMatViewSuffixCalled);
+                }
+
+                try {
+                    execute(compiler, "create table price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL", sqlExecutionContext);
+                    execute(compiler, "create view price_view as (select sym, last(price) as price, ts from price sample by 1h) foobar", sqlExecutionContext);
+                    Assert.fail();
+                } catch (Exception e) {
+                    Assert.assertTrue(compiler.createViewSuffixCalled);
                 }
             }
         });
@@ -7522,9 +7806,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         );
     }
 
-    private void assertWithReorder(String expected, String setOperation, String... subqueries) throws Exception {
-        assertSql(expected, subqueries[0] + " " + setOperation + " " + subqueries[1]);
-        assertSql(expected, subqueries[1] + " " + setOperation + " " + subqueries[0]);
+    private void assertWithReorder(String expected, String setOperation) throws Exception {
+        assertSql(expected, "select avg(event) from ict " + " " + setOperation + " " + "select distinct avg(event) from ict");
+        assertSql(expected, "select distinct avg(event) from ict" + " " + setOperation + " " + "select avg(event) from ict ");
     }
 
     private void selectDoubleInListWithBindVariable() throws Exception {
@@ -7612,6 +7896,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         boolean compileDropTableExtCalled;
         boolean createMatViewSuffixCalled;
         boolean createTableSuffixCalled;
+        boolean createViewSuffixCalled;
         boolean dropTableCalled;
         boolean parseShowSqlCalled;
         boolean unknownAlterStatementCalled;
@@ -7641,6 +7926,17 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         ) throws SqlException {
             createTableSuffixCalled = true;
             return super.parseCreateTableExt(lexer, securityContext, builder, tok);
+        }
+
+        @Override
+        public CreateViewOperationBuilder parseCreateViewExt(
+                GenericLexer lexer,
+                SecurityContext securityContext,
+                CreateViewOperationBuilder builder,
+                @Nullable CharSequence tok
+        ) throws SqlException {
+            createViewSuffixCalled = true;
+            return super.parseCreateViewExt(lexer, securityContext, builder, tok);
         }
 
         @Override

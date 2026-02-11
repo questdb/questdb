@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,7 +34,8 @@ public class WorkStealingStrategyFactory {
     public static WorkStealingStrategy getInstance(CairoConfiguration configuration, int workerCount) {
         final int noStealingThreshold = configuration.getSqlParallelWorkStealingThreshold();
         if (workerCount >= 4 * noStealingThreshold) {
-            return new AdaptiveWorkStealingStrategy(noStealingThreshold);
+            final long spinTimeoutNanos = configuration.getSqlParallelWorkStealingSpinTimeout();
+            return new AdaptiveWorkStealingStrategy(noStealingThreshold, spinTimeoutNanos);
         }
         return AlwaysWorkStealingStrategy.INSTANCE;
     }

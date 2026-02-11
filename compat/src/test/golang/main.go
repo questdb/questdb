@@ -161,6 +161,36 @@ func (tr *TestRunner) parseArrayString(arrayStr string) ([]interface{}, error) {
 	return result, nil
 }
 
+// parseVarcharArrayString parses a Postgres varchar array string into a slice
+func (tr *TestRunner) parseVarcharArrayString(arrayStr string) ([]interface{}, error) {
+	// Handle empty array
+	if arrayStr == "{}" {
+		return []interface{}{}, nil
+	}
+
+	// Strip curly braces
+	stripped := strings.TrimPrefix(strings.TrimSuffix(arrayStr, "}"), "{")
+
+	// Split by comma
+	elements := strings.Split(stripped, ",")
+	result := make([]interface{}, 0, len(elements))
+
+	for _, element := range elements {
+		trimmed := strings.TrimSpace(element)
+		if trimmed == "" {
+			continue
+		}
+
+		if strings.EqualFold(trimmed, "null") {
+			result = append(result, nil)
+		} else {
+			result = append(result, trimmed)
+		}
+	}
+
+	return result, nil
+}
+
 // resolveParameters converts and types parameters for query execution
 // resolveParameters converts and types parameters for query execution
 func (tr *TestRunner) resolveParameters(typedParameters []Parameter, variables map[string]interface{}) ([]interface{}, error) {
@@ -297,6 +327,42 @@ func (tr *TestRunner) resolveParameters(typedParameters []Parameter, variables m
 
 			// Let the driver handle the final conversion (pq.Array wrapping for pq, []interface{} for pgx)
 			parsedArray, err := tr.driver.ParseArrayFloat8(floatArr)
+			if err != nil {
+				return nil, err
+			}
+			resolvedParameters = append(resolvedParameters, parsedArray)
+
+		case "array_varchar":
+			var strArr []interface{}
+
+			switch v := value.(type) {
+			case string:
+				arr, err := tr.parseVarcharArrayString(v)
+				if err != nil {
+					return nil, fmt.Errorf("invalid array_varchar value: %v - %w", v, err)
+				}
+				strArr = arr
+
+			case []interface{}:
+				// Convert each element to string
+				strArr = make([]interface{}, 0, len(v))
+				for _, item := range v {
+					if item == nil {
+						if tr.driver.DriverName() == drivers.DriverNamePq {
+							return nil, fmt.Errorf("pq driver does not support null values in arrays")
+						}
+						strArr = append(strArr, nil)
+						continue
+					}
+					strArr = append(strArr, fmt.Sprintf("%v", item))
+				}
+
+			default:
+				return nil, fmt.Errorf("invalid array_varchar value type: %T", value)
+			}
+
+			// Let the driver handle the final conversion (pq.Array wrapping for pq, []interface{} for pgx)
+			parsedArray, err := tr.driver.ParseArrayVarchar(strArr)
 			if err != nil {
 				return nil, err
 			}

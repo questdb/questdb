@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,8 +27,8 @@ package io.questdb.cairo.security;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.catalogue.Constants;
-import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
@@ -99,6 +99,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeAlterView(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
     }
 
@@ -139,6 +143,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeSelect(ViewDefinition viewDefinition) {
+    }
+
+    @Override
     public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 
@@ -162,7 +170,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeTableBackup(ObjHashSet<TableToken> tableTokens) {
+    public void authorizeDatabaseBackup() {
     }
 
     @Override
@@ -191,6 +199,18 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void authorizeTableVacuum(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeViewCompile(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeViewCreate() {
+    }
+
+    @Override
+    public void authorizeViewDrop(TableToken tableToken) {
     }
 
     @Override

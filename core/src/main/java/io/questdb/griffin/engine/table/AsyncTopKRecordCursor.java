@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,6 +43,7 @@ import io.questdb.std.Rows;
 class AsyncTopKRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncTopKRecordCursor.class);
     private LimitedSizeLongTreeChain.TreeCursor chainCursor;
+    private long consumedCount;
     private int frameLimit;
     private PageFrameMemoryPool frameMemoryPool;
     private PageFrameSequence<AsyncTopKAtom> frameSequence;
@@ -53,26 +54,29 @@ class AsyncTopKRecordCursor implements RecordCursor {
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-        buildChainConditionally();
-        final AsyncTopKAtom atom = frameSequence.getAtom();
-        counter.add(atom.getOwnerChain().size());
+        ensureChainBuilt();
+        long size = size();
+        counter.add(size - consumedCount);
+        consumedCount = size;
     }
 
     @Override
     public void close() {
         if (isOpen) {
-            isOpen = false;
+            try {
+                if (frameSequence != null) {
+                    LOG.debug()
+                            .$("closing [shard=").$(frameSequence.getShard())
+                            .$(", frameCount=").$(frameLimit)
+                            .I$();
 
-            if (frameSequence != null) {
-                LOG.debug()
-                        .$("closing [shard=").$(frameSequence.getShard())
-                        .$(", frameCount=").$(frameLimit)
-                        .I$();
-
-                if (frameLimit > -1) {
-                    frameSequence.await();
+                    if (frameLimit > -1) {
+                        frameSequence.await();
+                    }
+                    frameSequence.reset();
                 }
-                frameSequence.clear();
+            } finally {
+                isOpen = false;
             }
         }
     }
@@ -94,9 +98,13 @@ class AsyncTopKRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
-        buildChainConditionally();
+        ensureChainBuilt();
+        if (consumedCount == size()) {
+            return false;
+        }
         if (chainCursor.hasNext()) {
             recordAt(recordA, chainCursor.next());
+            consumedCount++;
             return true;
         }
         return false;
@@ -133,6 +141,7 @@ class AsyncTopKRecordCursor implements RecordCursor {
         if (isChainBuilt && chainCursor != null) {
             chainCursor.toTop();
         }
+        consumedCount = 0;
     }
 
     private void buildChain() {
@@ -187,7 +196,7 @@ class AsyncTopKRecordCursor implements RecordCursor {
         mergeChains();
     }
 
-    private void buildChainConditionally() {
+    private void ensureChainBuilt() {
         if (!isChainBuilt) {
             buildChain();
             isChainBuilt = true;
@@ -239,5 +248,6 @@ class AsyncTopKRecordCursor implements RecordCursor {
         atom.initMemoryPools(frameSequence.getPageFrameAddressCache());
         frameLimit = -1;
         isChainBuilt = false;
+        consumedCount = 0;
     }
 }

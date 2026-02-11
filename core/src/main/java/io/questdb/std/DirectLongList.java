@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,13 +43,32 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     private long limit;
     private long pos;
 
+
+    /**
+     * Creates a DirectLongList with optional deferred memory allocation.
+     * <p>
+     * When alloc=false, this constructor uses deferred allocation pattern:
+     * - No memory is allocated immediately (address remains 0)
+     * - Memory will be allocated later when reopen() is called
+     * <p>
+     *
+     * @param capacity  the initial capacity in number of long elements (not bytes)
+     * @param memoryTag memory tag for tracking allocations
+     */
     public DirectLongList(long capacity, int memoryTag) {
+        this(capacity, memoryTag, false);
+    }
+
+    public DirectLongList(long capacity, int memoryTag, boolean keepClosed) {
         this.memoryTag = memoryTag;
-        this.capacity = (capacity * Long.BYTES);
-        this.address = Unsafe.malloc(this.capacity, memoryTag);
-        this.pos = address;
-        this.limit = pos + this.capacity;
-        this.initialCapacity = this.capacity;
+        final long capacityBytes = capacity * Long.BYTES;
+        this.initialCapacity = capacityBytes;
+        if (!keepClosed) {
+            this.address = capacityBytes > 0 ? Unsafe.malloc(capacityBytes, memoryTag) : 0;
+            this.capacity = capacityBytes;
+            this.pos = address;
+            this.limit = pos + capacityBytes;
+        }
     }
 
     public void add(long value) {
@@ -91,6 +110,15 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         }
     }
 
+    // allocates space for the required number of long values
+    public void ensureCapacity(long required) {
+        final long requiredBytes = required << 3;
+        if (pos + requiredBytes <= limit) {
+            return;
+        }
+        setCapacityBytes(Math.max(capacity << 1, capacity + requiredBytes));
+    }
+
     public void fill(int v) {
         Vect.memset(address, capacity, v);
     }
@@ -102,6 +130,10 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     // base address of native memory
     public long getAddress() {
         return address;
+    }
+
+    public long getAppendAddress() {
+        return pos;
     }
 
     // capacity in LONGs
@@ -158,6 +190,11 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
 
     public long size() {
         return (pos - address) >>> 3;
+    }
+
+    public void skip(long p) {
+        assert pos + p * Long.BYTES <= limit;
+        pos += p << 3;
     }
 
     public void sortAsUnsigned() {

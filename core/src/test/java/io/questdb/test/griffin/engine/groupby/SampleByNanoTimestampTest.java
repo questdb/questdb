@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -2210,12 +2210,12 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
         assertWithSymbolColumnTop(
                 """
                         k\ts\tlat\tlon
-                        1970-01-01T00:00:00.000000000Z\t\t-1.0\t4.0
-                        1970-01-01T04:00:00.000000000Z\t\t-31.0\t34.0
-                        1970-01-01T10:00:00.000000000Z\t\t-61.0\t64.0
-                        1970-01-01T14:00:00.000000000Z\t\t-91.0\t94.0
-                        1970-01-01T20:00:00.000000000Z\t\t-121.0\t124.0
-                        1970-01-02T00:00:00.000000000Z\t\t-151.0\t154.0
+                        1970-01-01T00:00:00.000000000Z\t\t-1.0\t3.0
+                        1970-01-01T04:00:00.000000000Z\t\t-31.0\t33.0
+                        1970-01-01T10:00:00.000000000Z\t\t-61.0\t63.0
+                        1970-01-01T14:00:00.000000000Z\t\t-91.0\t93.0
+                        1970-01-01T20:00:00.000000000Z\t\t-121.0\t123.0
+                        1970-01-02T00:00:00.000000000Z\t\t-151.0\t153.0
                         """,
                 "select k, s, first(lat) lat, last(lon) lon " +
                         "from xx " +
@@ -6231,7 +6231,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         ") timestamp(cal_timestamp_time) partition by hour",
                 "period_start_time",
                 false,
-                true
+                false
         );
     }
 
@@ -6290,7 +6290,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         ") timestamp(created_at) partition by day",
                 "timestamp###DESC",
                 true,
-                true
+                false
         );
 
         assertQuery(
@@ -6322,7 +6322,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         ") timestamp(created_at) partition by day",
                 "timestamp###DESC",
                 true,
-                true
+                false
         );
     }
 
@@ -14118,7 +14118,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         )
                         select * from sampled;""",
                 525,
-                "base query does not provide ASC order over designated TIMESTAMP column"
+                "base query does not provide designated TIMESTAMP column"
         );
     }
 
@@ -14145,7 +14145,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         )
                         select * from sampled;""",
                 501,
-                "base query does not provide ASC order over designated TIMESTAMP column"
+                "base query does not provide designated TIMESTAMP column"
         );
     }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -131,15 +131,6 @@ public interface CairoConfiguration {
     @NotNull
     String getAttachPartitionSuffix();
 
-    DateFormat getBackupDirTimestampFormat();
-
-    int getBackupMkDirMode();
-
-    // null disables backups
-    CharSequence getBackupRoot();
-
-    CharSequence getBackupTempDirName();
-
     int getBinaryEncodingMaxLength();
 
     int getBindVariablePoolSize();
@@ -154,6 +145,23 @@ public interface CairoConfiguration {
     }
 
     boolean getCairoSqlLegacyOperatorPrecedence();
+
+    /**
+     * Enable/disable full rebuild of bitmap indexes for symbol columns in partitions
+     */
+    boolean getCheckpointRecoveryRebuildColumnIndexes();
+
+    /**
+     * Maximum thread pool size for checkpoint recovery operations.
+     * The actual size is determined by clamping the available processor count between min and max.
+     */
+    int getCheckpointRecoveryThreadpoolMax();
+
+    /**
+     * Minimum thread pool size for checkpoint recovery operations.
+     * The actual size is determined by clamping the available processor count between min and max.
+     */
+    int getCheckpointRecoveryThreadpoolMin();
 
     @NotNull
     CharSequence getCheckpointRoot(); // same as root/../.checkpoint
@@ -185,8 +193,18 @@ public interface CairoConfiguration {
 
     int getCommitMode();
 
+    int getCompileViewModelPoolCapacity();
+
     @NotNull
     CharSequence getConfRoot(); // same as root/../conf
+
+    /**
+     * Returns the forced copier type for testing, or COPIER_TYPE_DEFAULT for auto-selection.
+     * See RecordToRowCopierUtils.COPIER_TYPE_* constants.
+     */
+    default int getCopierType() {
+        return 0; // COPIER_TYPE_DEFAULT
+    }
 
     @NotNull
     LongSupplier getCopyIDSupplier();
@@ -259,6 +277,8 @@ public interface CairoConfiguration {
 
     int getGroupByMergeShardQueueCapacity();
 
+    long getGroupByParallelTopKThreshold();
+
     int getGroupByPoolCapacity();
 
     long getGroupByPresizeMaxCapacity();
@@ -266,6 +286,8 @@ public interface CairoConfiguration {
     long getGroupByPresizeMaxHeapSize();
 
     int getGroupByShardingThreshold();
+
+    int getGroupByTopKQueueCapacity();
 
     @NotNull
     default IOURingFacade getIOURingFacade() {
@@ -279,6 +301,8 @@ public interface CairoConfiguration {
     int getInactiveReaderMaxOpenPartitions();
 
     long getInactiveReaderTTL();
+
+    long getInactiveViewWalWriterTTL();
 
     long getInactiveWalWriterTTL();
 
@@ -325,7 +349,7 @@ public interface CairoConfiguration {
 
     long getMatViewRefreshOomRetryTimeout();
 
-    int getMatViewRowsPerQueryEstimate();
+    long getMatViewRowsPerQueryEstimate();
 
     int getMaxCrashFiles();
 
@@ -441,6 +465,10 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
+    int getPivotColumnPoolCapacity();
+
+    int getPoolSegmentSize();
+
     int getPreferencesStringPoolCapacity();
 
     int getQueryCacheEventQueueCapacity();
@@ -461,6 +489,8 @@ public interface CairoConfiguration {
     }
 
     int getReaderPoolMaxSegments();
+
+    int getRecentWriteTrackerCapacity();
 
     int getRenameTableModelPoolCapacity();
 
@@ -553,8 +583,6 @@ public interface CairoConfiguration {
 
     int getSqlJitMode();
 
-    int getSqlJitPageAddressCacheThreshold();
-
     int getSqlJoinContextPoolCapacity();
 
     int getSqlJoinMetadataMaxResizes();
@@ -590,11 +618,19 @@ public interface CairoConfiguration {
 
     int getSqlParallelWorkStealingThreshold();
 
+    long getSqlParallelWorkStealingSpinTimeout();
+
     int getSqlParquetFrameCacheCapacity();
+
+    int getSqlPivotMaxProducedColumns();
 
     int getSqlSmallMapKeyCapacity();
 
     long getSqlSmallMapPageSize();
+
+    int getSqlSmallPageFrameMaxRows();
+
+    int getSqlSmallPageFrameMinRows();
 
     int getSqlSortKeyMaxPages();
 
@@ -625,6 +661,23 @@ public interface CairoConfiguration {
     int getSqlWindowTreeKeyMaxPages();
 
     int getSqlWindowTreeKeyPageSize();
+
+    /**
+     * When the number of intervals exceeds this threshold during bracket expansion,
+     * intervals are merged to prevent unbounded memory growth.
+     */
+    int getSqlIntervalIncrementalMergeThreshold();
+
+    /**
+     * Maximum recursion depth for bracket expansion in interval parsing (one level per bracket group).
+     */
+    int getSqlIntervalMaxBracketDepth();
+
+    /**
+     * Maximum number of intervals allowed after bracket expansion and merging.
+     * This limit prevents memory exhaustion from large non-adjacent interval sets.
+     */
+    int getSqlIntervalMaxIntervalsAfterMerge();
 
     int getStrFunctionMaxBufferLength();
 
@@ -658,6 +711,10 @@ public interface CairoConfiguration {
     int getTxnScoreboardEntryCount();
 
     int getVectorAggregateQueueCapacity();
+
+    int getViewLexerPoolCapacity();
+
+    int getViewWalWriterPoolMaxSegments();
 
     @NotNull
     VolumeDefinitions getVolumeDefinitions();
@@ -742,6 +799,8 @@ public interface CairoConfiguration {
      */
     boolean isColumnAliasExpressionEnabled();
 
+    boolean isCopierChunkedEnabled();
+
     boolean isDevModeEnabled();
 
     boolean isGroupByPresizeEnabled();
@@ -751,6 +810,8 @@ public interface CairoConfiguration {
     boolean isMatViewEnabled();
 
     boolean isMatViewParallelSqlEnabled();
+
+    boolean isMatViewRefreshMissingWalFilesFatal();
 
     boolean isMultiKeyDedupEnabled();
 
@@ -784,7 +845,23 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelTopKEnabled();
 
+    boolean isSqlParallelWindowJoinEnabled();
+
     boolean isTableTypeConversionEnabled();
+
+    /**
+     * When true (the default), TTL enforcement uses the minimum of the max timestamp in the table
+     * and the current wall clock time. This prevents accidental data loss when future timestamps
+     * are inserted into a table with TTL enabled.
+     * <p>
+     * When false, TTL enforcement uses only the max timestamp in the table, which can cause
+     * unexpected partition eviction if future timestamps are inserted.
+     *
+     * @return true if wall clock should be used for TTL enforcement (default), false otherwise
+     */
+    default boolean isTtlWallClockEnabled() {
+        return true;
+    }
 
     /**
      * A compatibility switch that controls validation of sample-by fill type.

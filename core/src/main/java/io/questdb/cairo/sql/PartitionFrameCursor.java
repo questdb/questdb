@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,12 +37,15 @@ public interface PartitionFrameCursor extends QuietCloseable, SymbolTableSource 
     default void calculateSize(RecordCursor.Counter counter) {
     }
 
-    // same TableReader is available on each partition frame
+    /**
+     * Returns the table reader. The same TableReader is available on each partition frame.
+     *
+     * @return the table reader
+     */
     TableReader getTableReader();
 
     /**
      * @return the next element in the partition frame
-     * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
     default @Nullable PartitionFrame next() {
         return next(0);

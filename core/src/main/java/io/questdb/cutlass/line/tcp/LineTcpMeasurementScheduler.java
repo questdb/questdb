@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,8 +25,8 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Telemetry;
+import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
-import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
@@ -486,13 +486,19 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             }
                             continue; // go for another spin
                         }
+                        if (tableToken.isView()) {
+                            throw CairoException.nonCritical()
+                                    .put("cannot modify view [view=")
+                                    .put(tableToken.getTableName())
+                                    .put(']');
+                        }
                         if (tableToken.isMatView()) {
                             throw CairoException.nonCritical()
                                     .put("cannot modify materialized view [view=")
                                     .put(tableToken.getTableName())
                                     .put(']');
                         }
-                        TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetrySystemEvent.ILP_RESERVE_WRITER);
+                        TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetryEvent.ILP_RESERVE_WRITER);
                         if (engine.isWalTable(tableToken)) {
                             // create WAL-oriented TUD and DON'T add it to the global cache
                             tud = new WalTableUpdateDetails(

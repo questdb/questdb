@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -53,11 +53,6 @@ public class IntList implements Mutable, Sinkable {
         addAll(source);
     }
 
-    public void add(int value) {
-        checkCapacity(pos + 1);
-        data[pos++] = value;
-    }
-
     @SuppressWarnings("ForLoopReplaceableByForEach")
     public static IntList createWithValues(int... values) {
         IntList list = new IntList();
@@ -65,6 +60,11 @@ public class IntList implements Mutable, Sinkable {
             list.add(values[i]);
         }
         return list;
+    }
+
+    public void add(int value) {
+        checkCapacity(pos + 1);
+        data[pos++] = value;
     }
 
     public void addAll(IntList that) {

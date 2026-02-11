@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -50,8 +50,8 @@ public interface CompiledQuery {
     short INSERT_AS_SELECT = CREATE_TABLE + 1; // 10
     short COPY_REMOTE = INSERT_AS_SELECT + 1; // 11
     short RENAME_TABLE = COPY_REMOTE + 1; // 12
-    short BACKUP_TABLE = RENAME_TABLE + 1; // 13
-    short UPDATE = BACKUP_TABLE + 1; // 14
+    short BACKUP_DATABASE = RENAME_TABLE + 1; // 13
+    short UPDATE = BACKUP_DATABASE + 1; // 14
     short VACUUM = UPDATE + 3; // 17 , gap
     short BEGIN = VACUUM + 1; // 18
     short COMMIT = BEGIN + 1; // 19
@@ -69,7 +69,10 @@ public interface CompiledQuery {
     short TABLE_SUSPEND = CANCEL_QUERY + 1; // 31
     short CREATE_MAT_VIEW = TABLE_SUSPEND + 1; // 32
     short REFRESH_MAT_VIEW = CREATE_MAT_VIEW + 1; // 33
-    short EMPTY = REFRESH_MAT_VIEW + 1;
+    short CREATE_VIEW = REFRESH_MAT_VIEW + 1; // 34
+    short COMPILE_VIEW = CREATE_VIEW + 1; // 35
+    short ALTER_VIEW = COMPILE_VIEW + 1; // 36
+    short EMPTY = ALTER_VIEW + 1;
     short TYPES_COUNT = EMPTY;
 
     void closeAllButSelect();
@@ -118,6 +121,8 @@ public interface CompiledQuery {
     short getType();
 
     UpdateOperation getUpdateOperation();
+
+    boolean isCacheable();
 
     /**
      * Returns and move ownership of the current insertion operation.

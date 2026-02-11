@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -84,8 +84,10 @@ public class CreateTableTest extends AbstractCairoTest {
     @Test
     public void testCreateTableAsSelectIndexSupportedColumnTypeAfterCast() throws Exception {
         assertQuery(
-                "x\n" +
-                        "1\n",
+                """
+                        x
+                        1
+                        """,
                 "select * from tab",
                 "CREATE TABLE tab AS (" +
                         "SELECT CAST(x as SYMBOL) AS x FROM long_sequence(1)" +
@@ -99,8 +101,10 @@ public class CreateTableTest extends AbstractCairoTest {
     @Test
     public void testCreateTableAsSelectIndexSupportedColumnTypeAfterCast2() throws Exception {
         assertQuery(
-                "x\n" +
-                        "1\n",
+                """
+                        x
+                        1
+                        """,
                 "select * from tab",
                 "CREATE TABLE tab AS (" +
                         "SELECT CAST(x as STRING) AS x FROM long_sequence(1)" +
@@ -611,11 +615,12 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableWithArrayColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (arr double[]);");
-            assertSql("ddl\n" +
-                            "CREATE TABLE 'x' ( \n" +
-                            "\tarr DOUBLE[]\n" +
-                            ")\n" +
-                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'x' (\s
+                            \tarr DOUBLE[]
+                            );
+                            """,
                     "show create table x;");
         });
     }
@@ -649,12 +654,13 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableWithTimestampNSColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (ns timestamp_ns, s symbol) timestamp(ns) partition by DAY WAL;");
-            assertSql("ddl\n" +
-                            "CREATE TABLE 'x' ( \n" +
-                            "\tns TIMESTAMP_NS,\n" +
-                            "\ts SYMBOL CAPACITY 128 CACHE\n" +
-                            ") timestamp(ns) PARTITION BY DAY WAL\n" +
-                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'x' (\s
+                            \tns TIMESTAMP_NS,
+                            \ts SYMBOL
+                            ) timestamp(ns) PARTITION BY DAY;
+                            """,
                     "show create table x;");
             execute("create table y (like x);");
             assertSql("ns\ts\n", "select * from x");
@@ -667,9 +673,8 @@ public class CreateTableTest extends AbstractCairoTest {
             assertSql("ddl\n" +
                             "CREATE TABLE 'y' ( \n" +
                             "\tns TIMESTAMP_NS,\n" +
-                            "\ts SYMBOL CAPACITY 128 CACHE\n" +
-                            ") timestamp(ns) PARTITION BY DAY WAL\n" +
-                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                            "\ts SYMBOL\n" +
+                            ") timestamp(ns) PARTITION BY DAY;\n",
                     "show create table y;");
             assertSql(
                     "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
@@ -693,8 +698,7 @@ public class CreateTableTest extends AbstractCairoTest {
                             "\tns TIMESTAMP_NS,\n" +
                             "\ta INT,\n" +
                             "\tb STRING\n" +
-                            ") timestamp(ns) PARTITION BY DAY WAL\n" +
-                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us\n" +
+                            ") timestamp(ns) PARTITION BY DAY\n" +
                             "DEDUP UPSERT KEYS(ns,a);\n",
                     "show create table z;");
         });

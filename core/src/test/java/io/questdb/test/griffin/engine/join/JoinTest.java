@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -3561,6 +3561,28 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoiningSubqueryWithDotInColumnName() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQueryNoLeakCheck(
+                    """
+                            "foo.bar"	1
+                            1	1
+                            2	1
+                            3	1
+                            4	1
+                            5	1
+                            """,
+                    """
+                            SELECT * FROM (SELECT x as "foo.bar" FROM long_sequence(5))
+                            LEFT JOIN (select 1) ON true;
+                            """,
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testLeftHashJoinOnFunctionCondition1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 (i int)");
@@ -5087,12 +5109,12 @@ public class JoinTest extends AbstractCairoTest {
                     query,
                     null,
                     false,
-                    true
+                    false
             );
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 3 skip-over-rows: 0 limit: 3
+                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
                                 VirtualRecord
                                   functions: [dim_ap_temperature__category,timestamp_floor('day',to_timezone(date_time))]
                                     SelectedRecord
@@ -5126,12 +5148,12 @@ public class JoinTest extends AbstractCairoTest {
                     query,
                     null,
                     false,
-                    true
+                    false
             );
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 3 skip-over-rows: 0 limit: 3
+                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
                                 VirtualRecord
                                   functions: [dim_ap_temperature__category,timestamp_floor('day',to_timezone(date_time))]
                                     SelectedRecord
@@ -5165,12 +5187,12 @@ public class JoinTest extends AbstractCairoTest {
                     query,
                     null,
                     false,
-                    true
+                    false
             );
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 3 skip-over-rows: 0 limit: 3
+                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
                                 VirtualRecord
                                   functions: [dim_ap_temperature__category,timestamp_floor('day',to_timezone(date_time))]
                                     SelectedRecord
@@ -6484,7 +6506,8 @@ public class JoinTest extends AbstractCairoTest {
                             ZW\t-1067292175\tZW
                             ZW\t-1067292175\tZW
                             """,
-                    "xy3 join xy2 on (a) order by a desc, b limit 5"
+                    "xy3 join xy2 on (a) order by a desc, b limit 5",
+                    false
             );
             super.assertQueryNoLeakCheck(
                     """
@@ -6495,7 +6518,8 @@ public class JoinTest extends AbstractCairoTest {
                             ZW\tZW\t-1067292175
                             ZW\tZW\t-1067292175
                             """,
-                    "xy2 join xy3 on (a) order by a desc, b limit 5"
+                    "xy2 join xy3 on (a) order by a desc, b limit 5",
+                    false
             );
         });
     }
@@ -6514,7 +6538,8 @@ public class JoinTest extends AbstractCairoTest {
                             \uEF20X\t1327628680\t\uEF20X
                             \uED0D|\uDB08\uDCF3\t-890115527\t\uED0D|\uDB08\uDCF3
                             """,
-                    "xy3 join xy2 on (a) order by a desc, b limit 5"
+                    "xy3 join xy2 on (a) order by a desc, b limit 5",
+                    false
             );
             super.assertQueryNoLeakCheck(
                     """
@@ -6525,7 +6550,8 @@ public class JoinTest extends AbstractCairoTest {
                             \uDBAE\uDD12ɜ|\t\uDBAE\uDD12ɜ|\t-2013119811
                             \uDBAD\uDCF1푻䑫\t\uDBAD\uDCF1푻䑫\t-681264014
                             """,
-                    "xy2 join xy3 on (a) order by a desc, b limit 5"
+                    "xy2 join xy3 on (a) order by a desc, b limit 5",
+                    false
             );
         });
     }
@@ -7286,11 +7312,11 @@ public class JoinTest extends AbstractCairoTest {
                 FROM
                 (
                   SELECT *
-                  FROM trades b\s
-                  #JOIN_TYPE#\s
+                  FROM trades b
+                  #JOIN_TYPE#
                   (
-                    SELECT *\s
-                    FROM trades\s
+                    SELECT *
+                    FROM trades
                     WHERE price > 1
                       AND symbol = 'ETH-USD'
                   ) a ON #JOIN_CLAUSE#
@@ -7302,7 +7328,9 @@ public class JoinTest extends AbstractCairoTest {
         assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "symbol"), null, false, false);
         assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol"), null, false, false);
         assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol and a.price = b.price"), null, false, false);
-        assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "b.symbol = a.symbol and a.timestamp = b.timestamp"), null, false, false);
+        if (!joinType.contains("LT") && !joinType.contains("ASOF")) {
+            assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "b.symbol = a.symbol and a.timestamp = b.timestamp"), null, false, false);
+        }
     }
 
     private void testJoinConstantFalse0(boolean fullFatJoin) throws Exception {

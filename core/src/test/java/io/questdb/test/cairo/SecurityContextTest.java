@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -40,7 +41,10 @@ import java.lang.reflect.Method;
 
 import static org.junit.Assert.*;
 
-public class SecurityContextTest {
+public class
+
+
+SecurityContextTest {
     private static final Object[] NO_PARAM_ARGS = {};
     private static final ObjList<CharSequence> columns = new ObjList<>();
     private static final LongList permissions = new LongList();
@@ -65,11 +69,18 @@ public class SecurityContextTest {
                         method.invoke(sc, NO_PARAM_ARGS);
                         break;
                     case 1:
-                        switch (name) {
-                            case "authorizeCopyCancel" -> method.invoke(sc, sc);
-                            case "authorizeTableBackup" -> method.invoke(sc, new ObjHashSet<CharSequence>());
-                            case "authorizeTableCreate" -> method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
-                            default -> method.invoke(sc, ONE_PARAM_ARGS);
+                        if (name.equals("authorizeCopyCancel")) {
+                            method.invoke(sc, sc);
+                        } else if (name.equals("authorizeTableBackup")) {
+                            method.invoke(sc, new ObjHashSet<CharSequence>());
+                        } else if (name.equals("authorizeTableCreate")) {
+                            method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
+                        } else if (name.equals("authorizeSelect") && parameters[0] == ViewDefinition.class) {
+                            final ViewDefinition viewDefinition = new ViewDefinition();
+                            viewDefinition.init(userTableToken, tableName, 0L);
+                            method.invoke(sc, viewDefinition);
+                        } else {
+                            method.invoke(sc, ONE_PARAM_ARGS);
                         }
                         break;
                     case 2:
@@ -102,11 +113,16 @@ public class SecurityContextTest {
                             fail();
                             break;
                         case 1:
-                            switch (name) {
-                                case "authorizeCopyCancel" -> method.invoke(sc, sc);
-                                case "authorizeTableBackup" -> method.invoke(sc, new ObjHashSet<CharSequence>());
-                                case "authorizeTableCreate" -> method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
-                                default -> method.invoke(sc, ONE_PARAM_ARGS);
+                            if (name.equals("authorizeCopyCancel")) {
+                                method.invoke(sc, sc);
+                            } else if (name.equals("authorizeTableCreate")) {
+                                method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
+                            } else if (name.equals("authorizeSelect") && parameters[0] == ViewDefinition.class) {
+                                final ViewDefinition viewDefinition = new ViewDefinition();
+                                viewDefinition.init(userTableToken, tableName, 0L);
+                                method.invoke(sc, viewDefinition);
+                            } else {
+                                method.invoke(sc, ONE_PARAM_ARGS);
                             }
                             fail();
                             break;
@@ -150,14 +166,20 @@ public class SecurityContextTest {
                             fail();
                             break;
                         case 1:
-                            switch (name) {
-                                case "authorizeCopyCancel" -> method.invoke(sc, sc);
-                                case "authorizeTableBackup" -> method.invoke(sc, new ObjHashSet<CharSequence>());
-                                case "authorizeTableCreate" -> method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
-                                default -> method.invoke(sc, ONE_PARAM_ARGS);
+                            if (name.equals("authorizeCopyCancel")) {
+                                method.invoke(sc, sc);
+                            } else if (name.equals("authorizeTableBackup")) {
+                                method.invoke(sc, new ObjHashSet<CharSequence>());
+                            } else if (name.equals("authorizeTableCreate")) {
+                                method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
+                            } else if (name.equals("authorizeSelect") && parameters[0] == ViewDefinition.class) {
+                                final ViewDefinition viewDefinition = new ViewDefinition();
+                                viewDefinition.init(userTableToken, tableName, 0L);
+                                method.invoke(sc, viewDefinition);
+                            } else {
+                                method.invoke(sc, ONE_PARAM_ARGS);
                             }
-                            if (name.startsWith("authorizeShow")
-                                    || name.startsWith("authorizeSelect")) {
+                            if (name.startsWith("authorizeShow") || name.startsWith("authorizeSelect")) {
                                 continue;
                             }
                             fail();

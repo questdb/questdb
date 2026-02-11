@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,6 +29,23 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class EqSymFunctionFactoryTest extends AbstractCairoTest {
+
+    @Test
+    public void testLargeSymbolTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select rnd_symbol(4000,1,7,3) a, rnd_symbol(4000,1,7,3) b from long_sequence(5000))");
+            assertQuery(
+                    """
+                            count
+                            288
+                            """,
+                    "select count() from x where a = b",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
 
     @Test
     public void testSmoke() throws Exception {

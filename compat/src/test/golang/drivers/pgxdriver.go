@@ -62,6 +62,25 @@ func (d *PgxDriver) ParseArrayFloat8(value interface{}) (interface{}, error) {
 	}
 }
 
+// ParseArrayVarchar converts a value to a format suitable for pgx.
+// Returns []interface{} directly - pgx can encode this properly.
+func (d *PgxDriver) ParseArrayVarchar(value interface{}) (interface{}, error) {
+	switch v := value.(type) {
+	case []interface{}:
+		// Already in the right format, return as-is
+		return v, nil
+	case []string:
+		// Convert to []interface{}
+		result := make([]interface{}, len(v))
+		for i, s := range v {
+			result[i] = s
+		}
+		return result, nil
+	default:
+		return nil, fmt.Errorf("unsupported array type: %T", value)
+	}
+}
+
 // PgxQueryResult wraps pgx.Rows to implement QueryResult
 type PgxQueryResult struct {
 	rows pgx.Rows

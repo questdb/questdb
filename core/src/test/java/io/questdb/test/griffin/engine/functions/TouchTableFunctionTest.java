@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -41,6 +41,41 @@ public class TouchTableFunctionTest extends AbstractCairoTest {
             "    timestamp_sequence(0, 100000000000) k" +
             " from long_sequence(20)" +
             "), index(b) timestamp(k) partition by DAY";
+
+    @Test
+    public void testNoSegfaultWhenAddingNewColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t1 AS (
+                      SELECT generate_series as t,\s
+                             (generate_series % 123456)::int as i\s
+                      FROM generate_series('2025-12-25', '2025-12-26', '1s')
+                    ) PARTITION BY DAY WAL;
+                    """);
+
+            drainWalQueue();
+
+            String query = "select touch(select * from t1);";
+
+            sink.clear();
+            TestUtils.printSql(engine, sqlExecutionContext, query, sink);
+            TestUtils.assertContains(sink, "data_pages");
+
+            execute("alter table t1 add column f float;");
+            drainWalQueue();
+
+            sink.clear();
+            TestUtils.printSql(engine, sqlExecutionContext, query, sink);
+            TestUtils.assertContains(sink, "data_pages");
+
+            execute("update t1 set f = 5.2f");
+            drainWalQueue();
+
+            sink.clear();
+            TestUtils.printSql(engine, sqlExecutionContext, query, sink);
+            TestUtils.assertContains(sink, "data_pages");
+        });
+    }
 
     @Test
     public void testTouchTableNoTimestampColumnSelected() throws Exception {

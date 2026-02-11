@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -582,7 +582,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
             case YEAR -> PARTITION_YEAR_FORMAT;
             case HOUR -> PARTITION_HOUR_FORMAT;
             case WEEK -> PARTITION_WEEK_FORMAT;
-            case NONE -> DEFAULT_FORMAT;
+            case NONE, NOT_APPLICABLE -> DEFAULT_FORMAT;
             default ->
                     throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
         };
@@ -840,6 +840,10 @@ public class MicrosTimestampDriver implements TimestampDriver {
         boolean l = CommonUtils.isLeapYear(year);
         if (CommonUtils.checkLen3(p, hi)) {
             CommonUtils.checkChar(str, p++, hi, '-');
+            // Check for ISO week format: YYYY-Www[-D]
+            if (p < hi && str.byteAt(p) == 'W') {
+                return parseIsoWeekFloor(str, p, hi, year);
+            }
             int month = Numbers.parseInt(str, p, p += 2);
             CommonUtils.checkRange(month, 1, 12);
             if (CommonUtils.checkLen3(p, hi)) {
@@ -949,6 +953,10 @@ public class MicrosTimestampDriver implements TimestampDriver {
         boolean l = CommonUtils.isLeapYear(year);
         if (CommonUtils.checkLen3(p, hi)) {
             CommonUtils.checkChar(str, p++, hi, '-');
+            // Check for ISO week format: YYYY-Www[-D]
+            if (p < hi && str.charAt(p) == 'W') {
+                return parseIsoWeekFloor(str, p, hi, year);
+            }
             int month = Numbers.parseInt(str, p, p += 2);
             CommonUtils.checkRange(month, 1, 12);
             if (CommonUtils.checkLen3(p, hi)) {
@@ -1055,6 +1063,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
         boolean l = CommonUtils.isLeapYear(year);
         if (CommonUtils.checkLen3(p, lim)) {
             CommonUtils.checkChar(input, p++, lim, '-');
+            // Check for ISO week format: YYYY-Www[-D]
+            if (p < lim && input.charAt(p) == 'W') {
+                parseIsoWeekInterval(input, p, lim, year, operation, out);
+                return;
+            }
             int month = Numbers.parseInt(input, p, p += 2);
             CommonUtils.checkRange(month, 1, 12);
             if (CommonUtils.checkLen3(p, lim)) {
@@ -1218,6 +1231,302 @@ public class MicrosTimestampDriver implements TimestampDriver {
         }
     }
 
+    /**
+     * Parses ISO week date format: YYYY-Www[-D][THH:MM:SS...]
+     *
+     * @param str  input string
+     * @param p    position after 'W'
+     * @param hi   end of string
+     * @param year the year already parsed
+     * @return timestamp in microseconds for the start of the week/day/time
+     */
+    private static long parseIsoWeekFloor(CharSequence str, int p, int hi, int year) throws NumericException {
+        // Skip 'W'
+        p++;
+        if (hi - p < 2) {
+            throw NumericException.instance();
+        }
+        int week = Numbers.parseInt(str, p, p + 2);
+        p += 2;
+        CommonUtils.checkRange(week, 1, CommonUtils.getWeeks(year));
+
+        // Calculate Monday of the week
+        boolean leap = CommonUtils.isLeapYear(year);
+        long ts = Micros.yearMicros(year, leap)
+                + CommonUtils.getIsoYearDayOffset(year) * Micros.DAY_MICROS
+                + (week - 1) * Micros.WEEK_MICROS;
+
+        // Check for day-of-week (-D)
+        if (p < hi && str.charAt(p) == '-') {
+            p++;
+            if (p >= hi) {
+                throw NumericException.instance();
+            }
+            int dow = Numbers.parseInt(str, p, p + 1);
+            p++;
+            CommonUtils.checkRange(dow, 1, 7);
+            ts += (dow - 1) * Micros.DAY_MICROS;
+
+            // Check for time part (T... or space)
+            if (p < hi && (str.charAt(p) == 'T' || str.charAt(p) == ' ')) {
+                p++;
+                // Parse time: HH[:MM[:SS[.ffffff]]]
+                if (hi - p < 2) {
+                    throw NumericException.instance();
+                }
+                int hour = Numbers.parseInt(str, p, p + 2);
+                p += 2;
+                CommonUtils.checkRange(hour, 0, 23);
+                ts += hour * Micros.HOUR_MICROS;
+
+                if (CommonUtils.checkLen3(p, hi)) {
+                    CommonUtils.checkChar(str, p++, hi, ':');
+                    int min = Numbers.parseInt(str, p, p + 2);
+                    p += 2;
+                    CommonUtils.checkRange(min, 0, 59);
+                    ts += min * Micros.MINUTE_MICROS;
+
+                    if (CommonUtils.checkLen3(p, hi)) {
+                        CommonUtils.checkChar(str, p++, hi, ':');
+                        int sec = Numbers.parseInt(str, p, p + 2);
+                        p += 2;
+                        CommonUtils.checkRange(sec, 0, 59);
+                        ts += sec * Micros.SECOND_MICROS;
+
+                        if (p < hi && str.charAt(p) == '.') {
+                            p++;
+                            // varlen milli and micros
+                            int micrLim = p + 6;
+                            int mlim = Math.min(hi, micrLim);
+                            int micr = 0;
+                            for (; p < mlim; p++) {
+                                char c = str.charAt(p);
+                                if (Numbers.notDigit(c)) {
+                                    break;
+                                }
+                                micr *= 10;
+                                micr += c - '0';
+                            }
+                            micr *= CommonUtils.tenPow(micrLim - p);
+                            ts += micr;
+                        }
+                    }
+                }
+            }
+        }
+        return ts;
+    }
+
+    /**
+     * Parses ISO week date format for Utf8Sequence: YYYY-Www[-D][THH:MM:SS...]
+     */
+    private static long parseIsoWeekFloor(Utf8Sequence str, int p, int hi, int year) throws NumericException {
+        // Skip 'W'
+        p++;
+        if (hi - p < 2) {
+            throw NumericException.instance();
+        }
+        int week = Numbers.parseInt(str, p, p + 2);
+        p += 2;
+        CommonUtils.checkRange(week, 1, CommonUtils.getWeeks(year));
+
+        // Calculate Monday of the week
+        boolean leap = CommonUtils.isLeapYear(year);
+        long ts = Micros.yearMicros(year, leap)
+                + CommonUtils.getIsoYearDayOffset(year) * Micros.DAY_MICROS
+                + (week - 1) * Micros.WEEK_MICROS;
+
+        // Check for day-of-week (-D)
+        if (p < hi && str.byteAt(p) == '-') {
+            p++;
+            if (p >= hi) {
+                throw NumericException.instance();
+            }
+            int dow = Numbers.parseInt(str, p, p + 1);
+            p++;
+            CommonUtils.checkRange(dow, 1, 7);
+            ts += (dow - 1) * Micros.DAY_MICROS;
+
+            // Check for time part (T... or space)
+            if (p < hi && (str.byteAt(p) == 'T' || str.byteAt(p) == ' ')) {
+                p++;
+                // Parse time: HH[:MM[:SS[.ffffff]]]
+                if (hi - p < 2) {
+                    throw NumericException.instance();
+                }
+                int hour = Numbers.parseInt(str, p, p + 2);
+                p += 2;
+                CommonUtils.checkRange(hour, 0, 23);
+                ts += hour * Micros.HOUR_MICROS;
+
+                if (CommonUtils.checkLen3(p, hi)) {
+                    CommonUtils.checkChar(str, p++, hi, ':');
+                    int min = Numbers.parseInt(str, p, p + 2);
+                    p += 2;
+                    CommonUtils.checkRange(min, 0, 59);
+                    ts += min * Micros.MINUTE_MICROS;
+
+                    if (CommonUtils.checkLen3(p, hi)) {
+                        CommonUtils.checkChar(str, p++, hi, ':');
+                        int sec = Numbers.parseInt(str, p, p + 2);
+                        p += 2;
+                        CommonUtils.checkRange(sec, 0, 59);
+                        ts += sec * Micros.SECOND_MICROS;
+
+                        if (p < hi && str.byteAt(p) == '.') {
+                            p++;
+                            // varlen milli and micros
+                            int micrLim = p + 6;
+                            int mlim = Math.min(hi, micrLim);
+                            int micr = 0;
+                            for (; p < mlim; p++) {
+                                char c = (char) str.byteAt(p);
+                                if (Numbers.notDigit(c)) {
+                                    break;
+                                }
+                                micr *= 10;
+                                micr += c - '0';
+                            }
+                            micr *= CommonUtils.tenPow(micrLim - p);
+                            ts += micr;
+                        }
+                    }
+                }
+            }
+        }
+        return ts;
+    }
+
+    /**
+     * Parses ISO week interval format: YYYY-Www[-D][THH:MM:SS...]
+     * Produces interval from start to end of the specified week/day/time.
+     *
+     * @param input     input string
+     * @param p         position at 'W'
+     * @param lim       end of string
+     * @param year      the year already parsed
+     * @param operation interval operation
+     * @param out       output list
+     */
+    private static void parseIsoWeekInterval(CharSequence input, int p, int lim, int year, short operation, LongList out) throws NumericException {
+        // Skip 'W'
+        p++;
+        if (lim - p < 2) {
+            throw NumericException.instance();
+        }
+        int week = Numbers.parseInt(input, p, p + 2);
+        p += 2;
+        CommonUtils.checkRange(week, 1, CommonUtils.getWeeks(year));
+
+        // Calculate Monday of the week
+        boolean leap = CommonUtils.isLeapYear(year);
+        long mondayTs = Micros.yearMicros(year, leap)
+                + CommonUtils.getIsoYearDayOffset(year) * Micros.DAY_MICROS
+                + (week - 1) * Micros.WEEK_MICROS;
+
+        if (p < lim && input.charAt(p) == '-') {
+            p++;
+            if (p >= lim) {
+                throw NumericException.instance();
+            }
+            int dow = Numbers.parseInt(input, p, p + 1);
+            p++;
+            CommonUtils.checkRange(dow, 1, 7);
+            long dayStart = mondayTs + (dow - 1) * Micros.DAY_MICROS;
+
+            if (p < lim && (input.charAt(p) == 'T' || input.charAt(p) == ' ')) {
+                p++;
+                // Parse time part with interval range
+                if (lim - p < 2) {
+                    throw NumericException.instance();
+                }
+                int hour = Numbers.parseInt(input, p, p + 2);
+                p += 2;
+                CommonUtils.checkRange(hour, 0, 23);
+
+                if (CommonUtils.checkLen3(p, lim)) {
+                    CommonUtils.checkChar(input, p++, lim, ':');
+                    int min = Numbers.parseInt(input, p, p + 2);
+                    p += 2;
+                    CommonUtils.checkRange(min, 0, 59);
+
+                    if (CommonUtils.checkLen3(p, lim)) {
+                        CommonUtils.checkChar(input, p++, lim, ':');
+                        int sec = Numbers.parseInt(input, p, p + 2);
+                        p += 2;
+                        CommonUtils.checkRange(sec, 0, 59);
+
+                        if (p < lim && input.charAt(p) == '.') {
+                            p++;
+                            // varlen milli and micros
+                            int micrLim = p + 6;
+                            int mlim = Math.min(lim, micrLim);
+                            int micr = 0;
+                            for (; p < mlim; p++) {
+                                char c = input.charAt(p);
+                                if (c < '0' || c > '9') {
+                                    throw NumericException.instance();
+                                }
+                                micr *= 10;
+                                micr += c - '0';
+                            }
+                            int remainingDigits = micrLim - p;
+                            micr *= CommonUtils.tenPow(remainingDigits);
+
+                            if (p + 3 < lim) {
+                                throw NumericException.instance();
+                            }
+                            // ignore nanos for MicroTimestamp
+                            for (; p < lim; p++) {
+                                char c = input.charAt(p);
+                                if (c < '0' || c > '9') {
+                                    throw NumericException.instance();
+                                }
+                            }
+
+                            long baseTime = dayStart
+                                    + hour * Micros.HOUR_MICROS
+                                    + min * Micros.MINUTE_MICROS
+                                    + sec * Micros.SECOND_MICROS;
+                            int rangeMicros = CommonUtils.tenPow(remainingDigits) - 1;
+                            IntervalUtils.encodeInterval(baseTime + micr, baseTime + micr + rangeMicros, operation, out);
+                        } else if (p == lim) {
+                            // seconds
+                            IntervalUtils.encodeInterval(
+                                    dayStart + hour * Micros.HOUR_MICROS + min * Micros.MINUTE_MICROS + sec * Micros.SECOND_MICROS,
+                                    dayStart + hour * Micros.HOUR_MICROS + min * Micros.MINUTE_MICROS + sec * Micros.SECOND_MICROS + 999999,
+                                    operation, out);
+                        } else {
+                            throw NumericException.instance();
+                        }
+                    } else {
+                        // minute
+                        IntervalUtils.encodeInterval(
+                                dayStart + hour * Micros.HOUR_MICROS + min * Micros.MINUTE_MICROS,
+                                dayStart + hour * Micros.HOUR_MICROS + min * Micros.MINUTE_MICROS + 59 * Micros.SECOND_MICROS + 999999,
+                                operation, out);
+                    }
+                } else {
+                    // hour only
+                    IntervalUtils.encodeInterval(
+                            dayStart + hour * Micros.HOUR_MICROS,
+                            dayStart + hour * Micros.HOUR_MICROS + 59 * Micros.MINUTE_MICROS + 59 * Micros.SECOND_MICROS + 999999,
+                            operation, out);
+                }
+            } else if (p == lim) {
+                // Entire day
+                IntervalUtils.encodeInterval(dayStart, dayStart + Micros.DAY_MICROS - 1, operation, out);
+            } else {
+                throw NumericException.instance();
+            }
+        } else if (p == lim) {
+            // No day specified - entire week (Mon 00:00:00 to Sun 23:59:59.999999)
+            IntervalUtils.encodeInterval(mondayTs, mondayTs + 7 * Micros.DAY_MICROS - 1, operation, out);
+        } else {
+            throw NumericException.instance();
+        }
+    }
+
     @Override
     public long parsePartitionDirName(@NotNull CharSequence partitionName, int partitionBy, int lo, int hi) {
         CharSequence fmtStr;
@@ -1244,7 +1553,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
                     fmtMethod = PARTITION_WEEK_FORMAT;
                     yield CommonUtils.WEEK_PATTERN;
                 }
-                case NONE -> {
+                case NONE, NOT_APPLICABLE -> {
                     fmtMethod = DEFAULT_FORMAT;
                     yield partitionName;
                 }

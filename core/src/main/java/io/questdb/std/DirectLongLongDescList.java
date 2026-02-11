@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,9 +25,9 @@
 package io.questdb.std;
 
 public class DirectLongLongDescList implements DirectLongLongSortedList {
-    private final int capacity;
     private final Cursor cursor = new Cursor();
     private final int memoryTag;
+    private int capacity;
     private long ptr;
     private int size;
 
@@ -82,11 +82,25 @@ public class DirectLongLongDescList implements DirectLongLongSortedList {
     }
 
     @Override
+    public int getOrder() {
+        return DirectLongLongSortedList.DESC_ORDER;
+    }
+
+    @Override
+    public void reopen(int capacity) {
+        if (ptr == 0) {
+            ptr = Unsafe.malloc(16L * capacity, memoryTag);
+            this.capacity = capacity;
+            clear();
+        }
+    }
+
+    @Override
     public void reopen() {
         if (ptr == 0) {
             ptr = Unsafe.malloc(16L * capacity, memoryTag);
+            clear();
         }
-        clear();
     }
 
     @Override

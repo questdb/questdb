@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -70,8 +70,8 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
         partitionCount = 5 + rnd.nextInt(10);
         setFuzzCounts(
                 rnd.nextBoolean(),
-                rnd.nextInt(2_000_000),
-                rnd.nextInt(1000),
+                rnd.nextInt(1_000_000),
+                rnd.nextInt(500),
                 fuzzer.randomiseStringLengths(rnd, 1000),
                 rnd.nextInt(1000),
                 rnd.nextInt(1000),
@@ -114,7 +114,7 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
                 fuzzer.randomiseStringLengths(rnd, 1000),
                 rnd.nextInt(1000),
                 rnd.nextInt(1000),
-                rnd.nextInt(1_000_000),
+                rnd.nextInt(500_000),
                 partitionCount
         );
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,8 +37,9 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
+
 public class UpdateOperation extends AbstractOperation {
-    public static final String CMD_NAME = "UPDATE";
     public static final String MAT_VIEW_INVALIDATION_REASON = "update operation";
     public static final int SENDER_CLOSED_INCREMENT = 7;
     public static final int WRITER_CLOSED_INCREMENT = 10;
@@ -65,7 +66,7 @@ public class UpdateOperation extends AbstractOperation {
             int tableNamePosition,
             RecordCursorFactory factory
     ) {
-        init(TableWriterTask.CMD_UPDATE_TABLE, CMD_NAME, tableToken, tableId, tableVersion, tableNamePosition);
+        init(CMD_UPDATE_TABLE, TableWriterTask.getCommandName(CMD_UPDATE_TABLE), tableToken, tableId, tableVersion, tableNamePosition);
         this.factory = factory;
     }
 

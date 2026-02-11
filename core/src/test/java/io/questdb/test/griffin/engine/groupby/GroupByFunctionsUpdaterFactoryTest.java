@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,6 +43,57 @@ import org.junit.Test;
 public class GroupByFunctionsUpdaterFactoryTest {
 
     @Test
+    public void testFallbackUpdaterForManyFunctions() {
+        // When there are many group by functions, the factory should return
+        // SimpleGroupByFunctionUpdater to avoid "Bytecode is too long" error.
+        // See issue #3326.
+        final int functionCount = 6000;
+        ObjList<GroupByFunction> functions = new ObjList<>();
+        for (int i = 0; i < functionCount; i++) {
+            functions.add(new TestGroupByFunction());
+        }
+
+        // Verify that getInstanceClass returns the fallback class
+        Class<? extends GroupByFunctionsUpdater> clazz = GroupByFunctionsUpdaterFactory.getInstanceClass(
+                new BytecodeAssembler(),
+                functionCount
+        );
+        Assert.assertEquals("SimpleGroupByFunctionUpdater", clazz.getSimpleName());
+
+        // Verify the updater works correctly
+        GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(clazz, functions);
+
+        try (
+                SimpleMapValue value = new SimpleMapValue(2);
+                SimpleMapValue destValue = new SimpleMapValue(2);
+                SimpleMapValue srcValue = new SimpleMapValue(2)
+        ) {
+            Record record = new TestRecord();
+
+            updater.updateNew(value, record, 42);
+            Assert.assertEquals(1, value.getLong(0));
+            Assert.assertEquals(42, value.getLong(1));
+
+            updater.updateExisting(value, record, 43);
+            Assert.assertEquals(1 + functionCount, value.getLong(0));
+            Assert.assertEquals(43, value.getLong(1));
+
+            updater.updateEmpty(value);
+            Assert.assertEquals(-1, value.getLong(0));
+            Assert.assertEquals(-1, value.getLong(1));
+
+            destValue.putLong(0, 0);
+            destValue.putLong(1, 0);
+
+            srcValue.putLong(0, 42);
+            srcValue.putLong(1, 1);
+            updater.merge(destValue, srcValue);
+            Assert.assertEquals(42, destValue.getLong(0));
+            Assert.assertEquals(0, destValue.getLong(1));
+        }
+    }
+
+    @Test
     public void testSmoke() {
         ObjList<GroupByFunction> functions = new ObjList<>();
         functions.add(new TestGroupByFunction());
@@ -50,30 +101,34 @@ public class GroupByFunctionsUpdaterFactoryTest {
         functions.add(new TestGroupByFunction());
         GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(new BytecodeAssembler(), functions);
 
-        MapValue value = new SimpleMapValue(2);
-        Record record = new TestRecord();
+        try (
+                SimpleMapValue value = new SimpleMapValue(2);
+                SimpleMapValue destValue = new SimpleMapValue(2);
+                SimpleMapValue srcValue = new SimpleMapValue(2)
+        ) {
+            Record record = new TestRecord();
 
-        updater.updateNew(value, record, 42);
-        Assert.assertEquals(1, value.getLong(0));
-        Assert.assertEquals(42, value.getLong(1));
+            updater.updateNew(value, record, 42);
+            Assert.assertEquals(1, value.getLong(0));
+            Assert.assertEquals(42, value.getLong(1));
 
-        updater.updateExisting(value, record, 43);
-        Assert.assertEquals(1 + functions.size(), value.getLong(0));
-        Assert.assertEquals(43, value.getLong(1));
+            updater.updateExisting(value, record, 43);
+            Assert.assertEquals(1 + functions.size(), value.getLong(0));
+            Assert.assertEquals(43, value.getLong(1));
 
-        updater.updateEmpty(value);
-        Assert.assertEquals(-1, value.getLong(0));
-        Assert.assertEquals(-1, value.getLong(1));
+            updater.updateEmpty(value);
+            Assert.assertEquals(-1, value.getLong(0));
+            Assert.assertEquals(-1, value.getLong(1));
 
-        MapValue destValue = new SimpleMapValue(2);
-        destValue.putLong(0, 0);
-        destValue.putLong(1, 0);
-        MapValue srcValue = new SimpleMapValue(2);
-        srcValue.putLong(0, 42);
-        srcValue.putLong(1, 1);
-        updater.merge(destValue, srcValue);
-        Assert.assertEquals(42, destValue.getLong(0));
-        Assert.assertEquals(0, destValue.getLong(1));
+            destValue.putLong(0, 0);
+            destValue.putLong(1, 0);
+
+            srcValue.putLong(0, 42);
+            srcValue.putLong(1, 1);
+            updater.merge(destValue, srcValue);
+            Assert.assertEquals(42, destValue.getLong(0));
+            Assert.assertEquals(0, destValue.getLong(1));
+        }
     }
 
     private static class TestGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {

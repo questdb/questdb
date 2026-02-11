@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,17 +30,17 @@ import io.questdb.std.ObjectFactory;
 
 public class CreateTableColumnModel implements Mutable {
     public static final ObjectFactory<CreateTableColumnModel> FACTORY = CreateTableColumnModel::new;
-    private int columnNamePos;
-    private int columnType;
-    private int columnTypePos;
-    private int dedupColumnPos;
+    private int columnNamePos = -1;
+    private int columnType = ColumnType.UNDEFINED;
+    private int columnTypePos = -1;
+    private int dedupColumnPos = -1;
     private boolean dedupKeyFlag;
-    private int indexColumnPos;
+    private int indexColumnPos = -1;
     private int indexValueBlockSize;
     private boolean indexedFlag;
     private boolean isCast;
     private boolean symbolCacheFlag;
-    private int symbolCapacity;
+    private int symbolCapacity = -1;
 
     private CreateTableColumnModel() {
         clear();

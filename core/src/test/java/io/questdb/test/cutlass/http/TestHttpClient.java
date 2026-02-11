@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,10 +24,8 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.cutlass.http.client.Response;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -154,7 +152,14 @@ public class TestHttpClient implements QuietCloseable {
             }
 
             reqToSink(req, sink, username, password, token, null);
-            TestUtils.assertEquals(expectedResponse, sink);
+            try {
+                TestUtils.assertEquals(expectedResponse, sink);
+            } catch (AssertionError e) {
+                LOG.info().$("=== ACTUAL RESULT IN \\u NOTATION ===").$();
+                LOG.info().$(toUnicodeEscape(sink)).$();
+                LOG.info().$("=== END ===").$();
+                throw e;
+            }
         } finally {
             if (!keepConnection) {
                 httpClient.disconnect();
@@ -266,6 +271,14 @@ public class TestHttpClient implements QuietCloseable {
                 httpClient.disconnect();
             }
         }
+    }
+
+    public void assertGetContains(
+            CharSequence url,
+            CharSequence expectedResponse,
+            @Nullable CharSequenceObjHashMap<String> queryParams
+    ) {
+        assertGetContains(url, expectedResponse, queryParams, null, null, 9001);
     }
 
     public void assertGetContains(
@@ -445,6 +458,37 @@ public class TestHttpClient implements QuietCloseable {
         }
     }
 
+    private static String toUnicodeEscape(Utf8StringSink sink) {
+        // Convert UTF-8 to UTF-16 first (same as assertion does)
+        io.questdb.std.str.StringSink utf16 = new io.questdb.std.str.StringSink();
+        Utf8s.utf8ToUtf16(sink, utf16);
+
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < utf16.length(); i++) {
+            char c = utf16.charAt(i);
+            if (c >= 32 && c < 127 && c != '\\' && c != '"') {
+                sb.append(c);
+            } else if (c == '\\') {
+                sb.append("\\\\");
+            } else if (c == '"') {
+                sb.append("\\\"");
+            } else if (c == '\b') {
+                sb.append("\\b");
+            } else if (c == '\t') {
+                sb.append("\\t");
+            } else if (c == '\n') {
+                sb.append("\\n");
+            } else if (c == '\f') {
+                sb.append("\\f");
+            } else if (c == '\r') {
+                sb.append("\\r");
+            } else {
+                sb.append(String.format("\\u%04x", (int) c));
+            }
+        }
+        return sb.toString();
+    }
+
     protected String reqToSink(
             HttpClient.Request req,
             MutableUtf8Sink sink,
@@ -483,20 +527,13 @@ public class TestHttpClient implements QuietCloseable {
         @SuppressWarnings("resource") HttpClient.ResponseHeaders rsp = req.send();
         rsp.await();
 
-        Response chunkedResponse = rsp.getResponse();
-        Fragment fragment;
-
         String statusCode = Utf8s.toString(rsp.getStatusCode());
-
         sink.clear();
-        while ((fragment = chunkedResponse.recv()) != null) {
-            Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
-        }
-
+        rsp.getResponse().copyTextTo(sink);
         return statusCode;
     }
 
-    protected String reqToSinkUtf8Params(
+    protected void reqToSinkUtf8Params(
             HttpClient.Request req,
             MutableUtf8Sink sink,
             @Nullable CharSequence username,
@@ -511,7 +548,7 @@ public class TestHttpClient implements QuietCloseable {
             }
         }
 
-        return reqToSink0(req, sink, username, password, token);
+        reqToSink0(req, sink, username, password, token);
     }
 
     protected void toSink0(

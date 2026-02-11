@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -508,7 +508,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         StringSink resultSink = new StringSink();
         try (
                 Connection conn = DriverManager.getConnection(getPgConnectionUri(pgPort), PG_CONNECTION_PROPERTIES);
-                PreparedStatement stmt = conn.prepareStatement("tables()");
+                PreparedStatement stmt = conn.prepareStatement("select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView from tables()");
                 ResultSet result = stmt.executeQuery()
         ) {
             ResultSetMetaData meta = result.getMetaData();
@@ -527,6 +527,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                             resultSink.put(result.getLong(i));
                             break;
                         case Types.VARCHAR:
+                        case Types.CHAR:
                             resultSink.put(result.getString(i));
                             break;
                         default:
@@ -552,7 +553,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             boolean inVolume
     ) throws Exception {
         StringSink resultSink = new StringSink();
-        CompiledQuery cc = compiler.compile("tables()", context);
+        CompiledQuery cc = compiler.compile("select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView from tables()", context);
         try (
                 RecordCursorFactory factory = cc.getRecordCursorFactory();
                 RecordCursor cursor = factory.getCursor(context)

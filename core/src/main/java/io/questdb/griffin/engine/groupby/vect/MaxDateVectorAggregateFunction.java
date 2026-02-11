@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,7 +39,6 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
 import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
 
 public class MaxDateVectorAggregateFunction extends DateFunction implements VectorAggregateFunction {
-
     public static final LongBinaryOperator MAX = Math::max;
     private final int columnIndex;
     private final DistinctFunc distinctFunc;
@@ -49,7 +48,7 @@ public class MaxDateVectorAggregateFunction extends DateFunction implements Vect
     );
     private int valueOffset;
 
-    public MaxDateVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
+    public MaxDateVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
             this.distinctFunc = Rosti::keyedMicroHourDistinct;

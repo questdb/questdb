@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpMinServerConfigurationWrapper;
 import io.questdb.cutlass.http.HttpServerConfiguration;
@@ -44,9 +45,11 @@ import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
@@ -94,7 +97,8 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY,
             PropertyKey.CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD,
             PropertyKey.CAIRO_PARQUET_EXPORT_COPY_REPORT_FREQUENCY_LINES,
-            PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT
+            PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT,
+            PropertyKey.CAIRO_SQL_COPIER_CHUNKED
     ));
     private static final Function<String, ? extends ConfigPropertyKey> keyResolver = (k) -> {
         Optional<PropertyKey> prop = PropertyKey.getByString(k);
@@ -102,6 +106,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     };
     private final BuildInformation buildInformation;
     private final CairoConfigurationWrapper cairoConfig;
+    private final ObjHashSet<String> changedKeys = new ObjHashSet<>();
     private final java.nio.file.Path confPath;
     private final boolean configReloadEnabled;
     private final @Nullable Map<String, String> env;
@@ -120,6 +125,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     private final Properties properties;
     private final Object reloadLock = new Object();
     private final AtomicReference<PropServerConfiguration> serverConfig;
+    private final @NotNull ConfigReloader.WatchRegistry watchRegistry = new WatchRegistry();
     private long version;
 
     public DynamicPropServerConfiguration(
@@ -217,12 +223,10 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             Properties newProperties,
             Set<? extends ConfigPropertyKey> reloadableProps,
             Function<String, ? extends ConfigPropertyKey> keyResolver,
+            ObjHashSet<String> changedKeys,
             Log log
     ) {
-        if (newProperties.equals(oldProperties)) {
-            return false;
-        }
-
+        changedKeys.clear();
         boolean changed = false;
         // Compare the new and existing properties
         for (Map.Entry<Object, Object> entry : newProperties.entrySet()) {
@@ -231,6 +235,18 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             if (oldVal == null || !oldVal.equals(entry.getValue())) {
                 final ConfigPropertyKey propKey = keyResolver.apply(key);
                 if (propKey == null) {
+                    // Check if this is a .file property for a sensitive reloadable property
+                    if (key.endsWith(PropServerConfiguration.SECRET_FILE_PROPERTY_SUFFIX)) {
+                        String baseKey = key.substring(0, key.length() - PropServerConfiguration.SECRET_FILE_PROPERTY_SUFFIX.length());
+                        ConfigPropertyKey basePropKey = keyResolver.apply(baseKey);
+                        if (basePropKey != null && basePropKey.isSensitive() && reloadableProps.contains(basePropKey)) {
+                            log.info().$("reloaded config option [update, key=").$(key).I$();
+                            oldProperties.setProperty(key, (String) entry.getValue());
+                            changed = true;
+                            changedKeys.add(basePropKey.getPropertyPath());
+                            continue;
+                        }
+                    }
                     log.error().$("unknown property, ignoring [update, key=").$(key).I$();
                     continue;
                 }
@@ -246,6 +262,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
 
                     oldProperties.setProperty(key, (String) entry.getValue());
                     changed = true;
+                    changedKeys.add(propKey.getPropertyPath());
                 } else {
                     log.advisory().$("property ").$(key).$(" was modified in the config file but cannot be reloaded. Ignoring new value").$();
                 }
@@ -259,6 +276,19 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             if (!newProperties.containsKey(key)) {
                 final ConfigPropertyKey propKey = keyResolver.apply((String) key);
                 if (propKey == null) {
+                    // Check if this is a .file property for a sensitive reloadable property
+                    String keyStr = (String) key;
+                    if (keyStr.endsWith(PropServerConfiguration.SECRET_FILE_PROPERTY_SUFFIX)) {
+                        String baseKey = keyStr.substring(0, keyStr.length() - PropServerConfiguration.SECRET_FILE_PROPERTY_SUFFIX.length());
+                        ConfigPropertyKey basePropKey = keyResolver.apply(baseKey);
+                        if (basePropKey != null && basePropKey.isSensitive() && reloadableProps.contains(basePropKey)) {
+                            log.info().$("reloaded config option [remove, key=").$(key).I$();
+                            oldPropsIter.remove();
+                            changed = true;
+                            changedKeys.add(basePropKey.getPropertyPath());
+                            continue;
+                        }
+                    }
                     log.error().$("unknown property, ignoring [remove, key=").$(key).I$();
                     continue;
                 }
@@ -271,6 +301,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
                     rec.I$();
 
                     oldPropsIter.remove();
+                    changedKeys.add(propKey.getPropertyPath());
                     changed = true;
                 } else {
                     log.advisory().$("property ").$(key).$(" was removed from the config file but cannot be reloaded. Ignoring").$();
@@ -372,6 +403,12 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     @Override
+    public WorkerPoolConfiguration getViewCompilerPoolConfiguration() {
+        // nested object is kept non-reloadable
+        return serverConfig.get().getViewCompilerPoolConfiguration();
+    }
+
+    @Override
     public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
         // nested object is kept non-reloadable
         return serverConfig.get().getWalApplyPoolConfiguration();
@@ -393,6 +430,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             synchronized (reloadLock) {
                 // Check that the file has been modified since the last trigger
                 // Then load the config properties
+                changedKeys.clear();
 
                 Properties newProperties = new Properties();
                 try (InputStream is = java.nio.file.Files.newInputStream(confPath)) {
@@ -402,15 +440,92 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
                     return false;
                 }
 
-                if (updateSupportedProperties(properties, newProperties, dynamicProps, keyResolver, LOG)) {
+                // Fast-path: skip property comparison if properties are equal
+                boolean propsChanged = false;
+                if (!newProperties.equals(properties)) {
+                    propsChanged = updateSupportedProperties(properties, newProperties, dynamicProps, keyResolver, changedKeys, LOG);
+                }
+
+                boolean secretFilesChanged;
+                try {
+                    secretFilesChanged = checkSecretFileChanges(newProperties, changedKeys);
+                } catch (CairoException e) {
+                    LOG.error().$("could not read secret file, reload aborted [error=").$((Throwable) e).I$();
+                    return false;
+                }
+
+                if (propsChanged || secretFilesChanged) {
                     reload0();
                     LOG.info().$("reloaded, [file=").$(confPath).I$();
+                    watchRegistry.notifyWatchers(changedKeys);
+                    LOG.info().$("notified config change listeners").$();
                     return true;
                 }
                 LOG.info().$("nothing to reload [file=").$(confPath).I$();
             }
         }
         return false;
+    }
+
+    @Override
+    public void unwatch(long watchId) {
+        watchRegistry.unwatch(watchId);
+    }
+
+    @Override
+    public long watch(Listener listener) {
+        return watchRegistry.watch(listener);
+    }
+
+    /**
+     * Checks if any secret file contents have changed since the last reload.
+     * For sensitive properties that use .file suffix, reads the current file content
+     * and compares it against the previously loaded value.
+     *
+     * @param currentProperties the current properties (to find .file paths)
+     * @param changedKeys       set to record which keys changed
+     * @return true if any secret file content has changed, false if no changes
+     * @throws CairoException if a secret file cannot be read
+     */
+    private boolean checkSecretFileChanges(Properties currentProperties, ObjHashSet<String> changedKeys) {
+        boolean changed = false;
+        PropServerConfiguration currentConfig = serverConfig.get();
+        var allPairs = currentConfig.getCairoConfiguration().getAllPairs();
+        if (allPairs == null) {
+            return false;
+        }
+
+        for (ConfigPropertyKey key : dynamicProps) {
+            if (!key.isSensitive()) {
+                continue;
+            }
+
+            // Check for secret file path (env var or property)
+            String secretFilePath = currentConfig.getSecretFilePath(currentProperties, env, key);
+            if (secretFilePath == null || secretFilePath.isEmpty()) {
+                continue;
+            }
+
+            // Read current file content - throws CairoException if file cannot be read
+            String currentFileContent = currentConfig.readSecretFromFile(secretFilePath);
+
+            // Get previously loaded value
+            ConfigPropertyValue previousValue = allPairs.get(key);
+            if (previousValue == null) {
+                continue;
+            }
+
+            String previousContent = previousValue.getValue();
+
+            // Compare content
+            if (!currentFileContent.equals(previousContent)) {
+                LOG.info().$("secret file content changed [key=").$(key.getPropertyPath()).I$();
+                changed = true;
+                changedKeys.add(key.getPropertyPath());
+            }
+        }
+
+        return changed;
     }
 
     private void reload0() {
@@ -434,7 +549,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         }
 
         final PropServerConfiguration oldConfig = serverConfig.get();
-        // Move factory provider to the new config instead of creating a new one.
+        // Move the factory provider to the new config instead of creating a new one.
         newConfig.reinit(oldConfig.getFactoryProvider());
         serverConfig.set(newConfig);
         reloadNestedConfigurations(newConfig);

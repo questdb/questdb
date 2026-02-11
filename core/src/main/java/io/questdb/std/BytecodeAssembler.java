@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -124,6 +124,7 @@ public class BytecodeAssembler {
         putShort(0x8F);
     }
 
+    @SuppressWarnings("unused")
     public void dcmpg() {
         putByte(0x98);
     }
@@ -150,8 +151,7 @@ public class BytecodeAssembler {
         startMethod(defaultConstructorNameIndex, defaultConstructorDescIndex, 1, 1);
         // code
         aload(0);
-        putByte(invokespecial);
-        putShort(superIndex);
+        invokespecial(superIndex);
         return_();
         endMethodCode();
         // exceptions
@@ -253,6 +253,15 @@ public class BytecodeAssembler {
 
     public int getDefaultConstructorSigIndex() {
         return defaultConstructorSigIndex;
+    }
+
+    /**
+     * Returns the size of the current method's bytecode in bytes.
+     * This is the value that matters for JVM's HugeMethodLimit (default 8000).
+     * Call this after endMethodCode() to get the final size.
+     */
+    public int getMethodCodeSize() {
+        return position() - codeStart;
     }
 
     public int getObjectInitMethodIndex() {
@@ -719,6 +728,33 @@ public class BytecodeAssembler {
     public void startMethod(int nameIndex, int descriptorIndex, int maxStack, int maxLocal) {
         // access flags
         putShort(ACC_PUBLIC);
+        // name index
+        putShort(nameIndex);
+        // descriptor index
+        putShort(descriptorIndex);
+        // attribute count
+        putShort(1);
+
+        // code
+        putShort(codeAttributeIndex);
+
+        // attribute len
+        putInt(0);
+        // come back to this later
+        this.codeAttributeStart = position();
+        // max stack
+        putShort(maxStack);
+        // max locals
+        putShort(maxLocal);
+
+        // code len
+        putInt(0);
+        this.codeStart = position();
+    }
+
+    public void startPrivateMethod(int nameIndex, int descriptorIndex, int maxStack, int maxLocal) {
+        // access flags
+        putShort(ACC_PRIVATE);
         // name index
         putShort(nameIndex);
         // descriptor index

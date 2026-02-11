@@ -6,7 +6,7 @@
   ~    \__\_\\__,_|\___||___/\__|____/|____/
   ~
   ~  Copyright (c) 2014-2019 Appsicle
-  ~  Copyright (c) 2019-2024 QuestDB
+  ~  Copyright (c) 2019-2026 QuestDB
   ~
   ~  Licensed under the Apache License, Version 2.0 (the "License");
   ~  you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@
 
     <groupId>io.questdb</groupId>
     <artifactId>examples</artifactId>
-    <version>9.2.2-SNAPSHOT</version>
+    <version>9.3.3-SNAPSHOT</version>
     <name>Examples for QuestDB</name>
 
     <dependencies>

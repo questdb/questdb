@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,9 +29,11 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
@@ -43,20 +45,25 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     public static final byte TYPE_GROUP_BY = 1;
     public static final byte TYPE_GROUP_BY_NOT_KEYED = 2;
     public static final byte TYPE_TOP_K = 3;
+    public static final byte TYPE_WINDOW_JOIN = 4;
     private static final String exceptionMessage = "unexpected filter error";
 
     private final DirectLongList auxAddresses;
     private final DirectLongList dataAddresses;
     private final StringSink errorMsg = new StringSink();
-    private final DirectLongList filteredRows; // Used for TYPE_FILTER.
+    private final DirectLongList filteredRows; // Used for TYPE_FILTER and TYPE_WINDOW_JOIN.
     private final PageFrameMemoryPool frameMemoryPool;
     private final long frameQueueCapacity;
     private int errorMessagePosition;
+    private long filteredRowCount;
     private int frameIndex = Integer.MAX_VALUE;
     private PageFrameMemory frameMemory;
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId = -1;
     private boolean isCancelled;
+    // Valid for TYPE_FILTER only. When set, only filteredRowCount field is initialized by the filter,
+    // i.e. filteredRows can't be used.
+    private boolean isCountOnly;
     private boolean isOutOfMemory;
     private byte taskType;
 
@@ -77,6 +84,8 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     @Override
     public void clear() {
+        filteredRowCount = 0;
+        isCountOnly = false;
         filteredRows.resetCapacity();
         dataAddresses.resetCapacity();
         auxAddresses.resetCapacity();
@@ -85,10 +94,12 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     @Override
     public void close() {
-        Misc.free(frameMemoryPool);
+        filteredRowCount = 0;
+        isCountOnly = false;
         Misc.free(filteredRows);
         Misc.free(dataAddresses);
         Misc.free(auxAddresses);
+        Misc.free(frameMemoryPool);
     }
 
     /**
@@ -111,6 +122,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     public CharSequence getErrorMsg() {
         return errorMsg;
+    }
+
+    public long getFilteredRowCount() {
+        return filteredRowCount;
     }
 
     public DirectLongList getFilteredRows() {
@@ -154,16 +169,25 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         return isCancelled;
     }
 
+    public boolean isCountOnly() {
+        return isCountOnly;
+    }
+
     public boolean isOutOfMemory() {
         return isOutOfMemory;
     }
 
-    public void of(PageFrameSequence<?> frameSequence, int frameIndex) {
+    public boolean isParquetFrame() {
+        return frameSequence.getPageFrameAddressCache().getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
+    }
+
+    public void of(PageFrameSequence<?> frameSequence, int frameIndex, boolean countOnly) {
         this.frameSequence = frameSequence;
         final boolean sameQueryExecution = frameSequenceId == frameSequence.getId();
         this.frameSequenceId = frameSequence.getId();
         this.taskType = frameSequence.getTaskType();
         this.frameIndex = frameIndex;
+        this.isCountOnly = countOnly;
         // Initialize the memory pool if the task wasn't previously initialized for the same query,
         // or it belongs to top K. Top K uses its own frame memory pool.
         if (!sameQueryExecution && taskType != TYPE_TOP_K) {
@@ -171,6 +195,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         }
         frameMemory = null;
         filteredRows.clear();
+        filteredRowCount = 0;
         errorMsg.clear();
         isCancelled = false;
         isOutOfMemory = false;
@@ -179,6 +204,12 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     public PageFrameMemory populateFrameMemory() {
         assert taskType != TYPE_TOP_K;
         frameMemory = frameMemoryPool.navigateTo(frameIndex);
+        return frameMemory;
+    }
+
+    public PageFrameMemory populateFrameMemory(IntHashSet columnIndexes) {
+        assert taskType != TYPE_TOP_K;
+        frameMemory = frameMemoryPool.navigateTo(frameIndex, columnIndexes);
         return frameMemory;
     }
 
@@ -208,10 +239,20 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
             );
         }
 
-        final long rowCount = getFrameRowCount();
-        if (filteredRows.getCapacity() < rowCount) {
-            filteredRows.setCapacity(rowCount);
+        if (!isCountOnly) {
+            final long rowCount = getFrameRowCount();
+            if (filteredRows.getCapacity() < rowCount) {
+                filteredRows.setCapacity(rowCount);
+            }
         }
+    }
+
+    public boolean populateRemainingColumns(IntHashSet filterColumnIndexes, DirectLongList filteredRows, boolean fillWithNulls) {
+        assert frameMemory != null;
+        if (frameMemory.getFrameFormat() == PartitionFormat.PARQUET) {
+            return frameMemory.populateRemainingColumns(filterColumnIndexes, filteredRows, fillWithNulls);
+        }
+        return false;
     }
 
     public void releaseFrameMemory() {
@@ -234,6 +275,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         }
     }
 
+    public void setFilteredRowCount(long filteredRowCount) {
+        this.filteredRowCount = filteredRowCount;
+    }
+
     public void setTaskType(byte taskType) {
         this.taskType = taskType;
     }
@@ -248,7 +293,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         // we assume that frame indexes are published in ascending order
         // and when we see the last index, we would free up the remaining resources
         if (frameIndex + 1 == frameCount) {
-            frameSequence.reset();
+            frameSequence.markAsDone();
         }
 
         frameSequence = null;

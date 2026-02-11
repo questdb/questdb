@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -71,7 +70,7 @@ public class ShardedMapCursor implements MapRecordCursor {
     }
 
     @Override
-    public boolean hasNext() throws DataUnavailableException {
+    public boolean hasNext() {
         if (currentCursor.hasNext()) {
             recordA.of(currentCursor.getRecord(), currentIndex);
             return true;
@@ -115,7 +114,7 @@ public class ShardedMapCursor implements MapRecordCursor {
     }
 
     @Override
-    public long size() throws DataUnavailableException {
+    public long size() {
         long size = 0;
         for (int i = 0, n = shardCursors.size(); i < n; i++) {
             size += shardCursors.getQuick(i).size();

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -46,6 +46,14 @@ public interface PoolTenant<T extends PoolTenant<T>> extends QuietCloseable, Sin
      * @return opaque index value
      */
     int getIndex();
+
+    /**
+     * Returns the root entry (first segment) of the entry chain this tenant belongs to.
+     * This is used to check if the table has been dropped from the pool.
+     *
+     * @return root entry instance (segment 0).
+     */
+    AbstractMultiTenantPool.Entry<T> getRootEntry();
 
     /**
      * Supervisor this reader is attached to.

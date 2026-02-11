@@ -52,7 +52,7 @@ jobs:
       clean: all
     displayName: "on linux-x86-graal"
     pool:
-      name: "hetzner-docker-graal"
+      name: "hetzner-docker"
     timeoutInMinutes: 60
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     variables:
@@ -65,8 +65,8 @@ jobs:
       javadoc_step: ""
       javadoc_profile: ""
       jdk: "1.17"
-      JAVA_HOME_17_X64: "/usr/lib/jvm/java-17-openjdk-amd64"
-      JAVA_HOME: "/usr/lib/jvm/java-17-openjdk-amd64"
+      JAVA_HOME_17_X64: "/opt/graalvm"
+      JAVA_HOME: "/opt/graalvm"
       os: Linux
     steps:
       - template: steps.yml

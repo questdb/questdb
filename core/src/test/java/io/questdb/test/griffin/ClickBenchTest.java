@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -48,7 +48,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                 Title varchar,
                 GoodEvent byte,
                 EventTime timestamp,
-                Eventdate date,
+                EventDate date,
                 CounterID int,
                 ClientIP ipv4,
                 RegionID int,
@@ -229,10 +229,10 @@ public class ClickBenchTest extends AbstractCairoTest {
                 ),
                 new TestCase(
                         "Q6",
-                        "SELECT MIN(EventDate), MAX(EventDate) FROM hits;",
+                        "SELECT MIN(EventTime), MAX(EventTime) FROM hits;",
                         """
                                 GroupBy vectorized: true workers: 1
-                                  values: [min(EventDate),max(EventDate)]
+                                  values: [min_designated(EventTime),max_designated(EventTime)]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: hits
@@ -392,7 +392,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                         "Q17",
                         "SELECT UserID, SearchPhrase, COUNT(*) FROM hits GROUP BY UserID, SearchPhrase LIMIT 10;",
                         """
-                                Limit lo: 10 skip-over-rows: 0 limit: 0
+                                Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                                     Async Group By workers: 1
                                       keys: [UserID,SearchPhrase]
                                       values: [count(*)]
@@ -525,14 +525,14 @@ public class ClickBenchTest extends AbstractCairoTest {
                 ),
                 new TestCase(
                         "Q27",
-                        "SELECT * FROM (SELECT CounterID, AVG(length(URL)) AS l, COUNT(*) AS c FROM hits WHERE URL IS NOT NULL GROUP BY CounterID) WHERE c > 100000 ORDER BY l DESC LIMIT 25;",
+                        "SELECT * FROM (SELECT CounterID, AVG(length_bytes(URL)) AS l, COUNT(*) AS c FROM hits WHERE URL IS NOT NULL GROUP BY CounterID) WHERE c > 100000 ORDER BY l DESC LIMIT 25;",
                         """
                                 Sort light lo: 25
                                   keys: [l desc]
                                     Filter filter: 100000<c
                                         Async JIT Group By workers: 1
                                           keys: [CounterID]
-                                          values: [avg(length(URL)),count(*)]
+                                          values: [avg(length_bytes(URL)),count(*)]
                                           filter: URL is not null
                                             PageFrame
                                                 Row forward scan
@@ -541,7 +541,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                 ),
                 new TestCase(
                         "Q28",
-                        "SELECT * FROM (SELECT REGEXP_REPLACE(Referer, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') AS k, AVG(length(Referer)) AS l, COUNT(*) AS c, MIN(Referer) FROM hits WHERE Referer IS NOT NULL GROUP BY k) WHERE c > 100000 ORDER BY l DESC LIMIT 25;",
+                        "SELECT * FROM (SELECT REGEXP_REPLACE(Referer, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') AS k, AVG(length_bytes(Referer)) AS l, COUNT(*) AS c, MIN(Referer) FROM hits WHERE Referer IS NOT NULL GROUP BY k) WHERE c > 100000 ORDER BY l DESC LIMIT 25;",
                         "Sort light lo: 25\n" +
                                 "  keys: [l desc]\n" +
                                 "    VirtualRecord\n" +
@@ -549,7 +549,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                                 "        Filter filter: 100000<c\n" +
                                 "            Async JIT Group By workers: 1\n" +
                                 "              keys: [k]\n" +
-                                "              values: [avg(length(Referer)),count(*),min(Referer)]\n" +
+                                "              values: [avg(length_bytes(Referer)),count(*),min(Referer)]\n" +
                                 "              filter: Referer is not null\n" +
                                 "                PageFrame\n" +
                                 "                    Row forward scan\n" +
@@ -732,12 +732,12 @@ public class ClickBenchTest extends AbstractCairoTest {
                 ),
                 new TestCase(
                         "Q40",
-                        "SELECT URLHash, EventDate, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND IsRefresh = 0 AND TraficSourceID IN (-1, 6) AND RefererHash = 3594120000172545465 GROUP BY URLHash, EventDate ORDER BY PageViews DESC LIMIT 100, 110;",
+                        "SELECT URLHash, EventTime, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND IsRefresh = 0 AND TraficSourceID IN (-1, 6) AND RefererHash = 3594120000172545465 GROUP BY URLHash, EventTime ORDER BY PageViews DESC LIMIT 100, 110;",
                         """
                                 Sort light lo: 100 hi: 110
                                   keys: [PageViews desc]
                                     Async JIT Group By workers: 1
-                                      keys: [URLHash,EventDate]
+                                      keys: [URLHash,EventTime]
                                       values: [count(*)]
                                       filter: (CounterID=62 and IsRefresh=0 and TraficSourceID in [-1,6] and RefererHash=3594120000172545465L)
                                         PageFrame
@@ -799,15 +799,6 @@ public class ClickBenchTest extends AbstractCairoTest {
         });
     }
 
-    private static class TestCase {
-        final String expectedPlan;
-        final String name;
-        final String query;
-
-        private TestCase(String name, String query, String expectedPlan) {
-            this.name = name;
-            this.query = query;
-            this.expectedPlan = expectedPlan;
-        }
+    private record TestCase(String name, String query, String expectedPlan) {
     }
 }

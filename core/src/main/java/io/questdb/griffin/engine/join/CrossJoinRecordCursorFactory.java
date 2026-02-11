@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -205,7 +204,7 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
         }
 
         @Override
-        public void skipRows(Counter rowCount) throws DataUnavailableException {
+        public void skipRows(Counter rowCount) {
             if (rowCount.get() == 0) {
                 return;
             }
@@ -223,15 +222,13 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
 
             long masterToSkip = rowCount.get() / slaveSize;
             tmpCounter.set(masterToSkip);
-            try {
-                masterCursor.skipRows(tmpCounter);
-                masterHasNext = masterCursor.hasNext();
-                isMasterHasNextPending = false;
-            } finally {
-                // in case of DataUnavailableException
-                long diff = (masterToSkip - tmpCounter.get()) * slaveSize;
-                rowCount.dec(diff);
-            }
+
+            masterCursor.skipRows(tmpCounter);
+            masterHasNext = masterCursor.hasNext();
+            isMasterHasNextPending = false;
+
+            long diff = (masterToSkip - tmpCounter.get()) * slaveSize;
+            rowCount.dec(diff);
 
             if (!masterHasNext) {
                 return;

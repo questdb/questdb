@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -65,6 +65,7 @@ public class FuzzTransactionGenerator {
             double probabilityOfSetTtl,
             double replaceInsertProb,
             double probabilityOfSymbolAccessValidation,
+            double probabilityOfQuery,
             int maxStrLenForStrColumns,
             String[] symbols,
             int metaVersion
@@ -82,7 +83,8 @@ public class FuzzTransactionGenerator {
                 + probabilityOfTruncate
                 + probabilityOfDropPartition
                 + probabilityOfDataInsert
-                + probabilityOfSymbolAccessValidation;
+                + probabilityOfSymbolAccessValidation
+                + probabilityOfQuery;
         probabilityOfAddingNewColumn = probabilityOfAddingNewColumn / sumOfProbabilities;
         probabilityOfRemovingColumn = probabilityOfRemovingColumn / sumOfProbabilities;
         probabilityOfRenamingColumn = probabilityOfRenamingColumn / sumOfProbabilities;
@@ -90,6 +92,7 @@ public class FuzzTransactionGenerator {
         probabilityOfTruncate = probabilityOfTruncate / sumOfProbabilities;
         probabilityOfDropPartition = probabilityOfDropPartition / sumOfProbabilities;
         probabilityOfSymbolAccessValidation = probabilityOfSymbolAccessValidation / sumOfProbabilities;
+        probabilityOfQuery = probabilityOfQuery / sumOfProbabilities;
         // effectively, probabilityOfDataInsert is as follows, but we don't need this value:
         // probabilityOfDataInsert = probabilityOfDataInsert / sumOfProbabilities;
 
@@ -154,6 +157,10 @@ public class FuzzTransactionGenerator {
             boolean wantToValidateSymbolAccess = !wantSomething && rndDouble < aggregateProbability;
             wantSomething |= wantToValidateSymbolAccess;
 
+            aggregateProbability += probabilityOfQuery;
+            boolean wantToQuery = !wantSomething && rndDouble < aggregateProbability;
+            wantSomething |= wantToQuery;
+
             aggregateProbability += probabilityOfDropPartition;
             boolean wantToDropPartition = !wantSomething && rndDouble < aggregateProbability;
 
@@ -197,6 +204,15 @@ public class FuzzTransactionGenerator {
             } else if (wantToValidateSymbolAccess) {
                 FuzzTransaction transaction = new FuzzTransaction();
                 transaction.operationList.add(new FuzzValidateSymbolFilterOperation(symbols));
+                transaction.structureVersion = metaVersion;
+                transaction.waitBarrierVersion = waitBarrierVersion;
+                // Indicate that this operation will not add a seqTxn
+                transaction.rollback = true;
+                transactionList.add(transaction);
+            } else if (wantToQuery) {
+                FuzzTransaction transaction = new FuzzTransaction();
+                final int limit = (rnd.nextBoolean() ? 1 : -1) * (1 + rnd.nextInt(1000));
+                transaction.operationList.add(new FuzzQueryOperation(limit));
                 transaction.structureVersion = metaVersion;
                 transaction.waitBarrierVersion = waitBarrierVersion;
                 transactionList.add(transaction);
@@ -318,20 +334,14 @@ public class FuzzTransactionGenerator {
 
     private static int generateNewColumnType(Rnd rnd) {
         int columnType = FuzzInsertOperation.SUPPORTED_COLUMN_TYPES[rnd.nextInt(FuzzInsertOperation.SUPPORTED_COLUMN_TYPES.length)];
-        switch (columnType) {
-            case ColumnType.GEOBYTE:
-                return ColumnType.getGeoHashTypeWithBits(5);
-            case ColumnType.GEOSHORT:
-                return ColumnType.getGeoHashTypeWithBits(10);
-            case ColumnType.GEOINT:
-                return ColumnType.getGeoHashTypeWithBits(25);
-            case ColumnType.GEOLONG:
-                return ColumnType.getGeoHashTypeWithBits(35);
-            case ColumnType.ARRAY:
-                return ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
-            default:
-                return columnType;
-        }
+        return switch (columnType) {
+            case ColumnType.GEOBYTE -> ColumnType.getGeoHashTypeWithBits(5);
+            case ColumnType.GEOSHORT -> ColumnType.getGeoHashTypeWithBits(10);
+            case ColumnType.GEOINT -> ColumnType.getGeoHashTypeWithBits(25);
+            case ColumnType.GEOLONG -> ColumnType.getGeoHashTypeWithBits(35);
+            case ColumnType.ARRAY -> ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
+            default -> columnType;
+        };
     }
 
     private static RecordMetadata generateRenameColumn(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, Rnd rnd, RecordMetadata tableMetadata) {

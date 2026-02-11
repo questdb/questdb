@@ -18,6 +18,44 @@ class TestRunner {
         return query.replace(/\$\[(\d+)\]/g, '$$$1');
     }
 
+    parseVarcharArray(input) {
+        const result = [];
+        let i = 0;
+
+        while (i < input.length) {
+            while (i < input.length && (input[i] === ' ' || input[i] === ',')) {
+                i++;
+            }
+
+            if (i >= input.length) break;
+
+            if (input[i] === '"') {
+                i++;
+                let value = '';
+                while (i < input.length && input[i] !== '"') {
+                    value += input[i];
+                    i++;
+                }
+                i++;
+                result.push(value);
+            } else {
+                let value = '';
+                while (i < input.length && input[i] !== ',') {
+                    value += input[i];
+                    i++;
+                }
+                const trimmed = value.trim();
+                if (trimmed.toLowerCase() === 'null') {
+                    result.push(null);
+                } else if (trimmed) {
+                    result.push(trimmed);
+                }
+            }
+        }
+
+        return result;
+    }
+
     async executeQuery(client, query, parameters = []) {
         try {
             const result = await client.query(query, parameters);
@@ -98,9 +136,18 @@ class TestRunner {
                             return parseFloat(item);
                         });
                         resolvedParameters.push(floatArray);
-                    }
-                    else {
+                    } else {
                         throw new Error(`Invalid array_float8 value: ${value}`);
+                    }
+                    break;
+                case 'array_varchar':
+                    if (typeof value === 'string') {
+                        resolvedParameters.push(value);
+                    } else if (Array.isArray(value)) {
+                        const pgArray = '{' + value.map(v => v === null ? 'NULL' : v).join(',') + '}';
+                        resolvedParameters.push(pgArray);
+                    } else {
+                        throw new Error(`Invalid array_varchar value: ${value}`);
                     }
                     break;
                 default:

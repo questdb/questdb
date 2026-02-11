@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -79,14 +79,29 @@ public interface FunctionFactory {
      */
     String getSignature();
 
+    /**
+     * Returns true if the function returns a boolean type.
+     *
+     * @return true if the function returns a boolean type
+     */
     default boolean isBoolean() {
         return false;
     }
 
+    /**
+     * Returns true if the function returns a cursor.
+     *
+     * @return true if the function returns a cursor
+     */
     default boolean isCursor() {
         return false;
     }
 
+    /**
+     * Returns true if the function is a group by function.
+     *
+     * @return true if the function is a group by function
+     */
     default boolean isGroupBy() {
         return false;
     }
@@ -103,6 +118,17 @@ public interface FunctionFactory {
         return false;
     }
 
+    /**
+     * Creates a new instance of the function.
+     *
+     * @param position            the position in the SQL statement
+     * @param args                the list of function arguments
+     * @param argPositions        the positions of the arguments in the SQL statement
+     * @param configuration       the Cairo configuration
+     * @param sqlExecutionContext the SQL execution context
+     * @return a new function instance
+     * @throws SqlException if the function cannot be created
+     */
     Function newInstance(
             int position,
             @Transient ObjList<Function> args,
@@ -136,12 +162,18 @@ public interface FunctionFactory {
      * <p>
      * When this returns true, a function signature with the opposite parameter order will
      * be automatically generated.
+     *
+     * @return true if arguments should be swapped, false otherwise
      */
     default boolean shouldSwapArgs() {
         return false;
     }
 
     default boolean supportImplicitCastCharToStr() {
+        return true;
+    }
+
+    default boolean variadicTypeSupportUndefinedBindVariables(ObjList<Function> args) {
         return true;
     }
 }

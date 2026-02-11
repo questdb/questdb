@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -56,10 +56,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public abstract class AbstractIODispatcher<C extends IOContext<C>> extends SynchronizedJob implements IODispatcher<C>, EagerThreadSetup {
     protected static final int DISCONNECT_SRC_IDLE = 1;
-    protected static final int DISCONNECT_SRC_PEER_DISCONNECT = 3;
     protected static final int DISCONNECT_SRC_QUEUE = 0;
     protected static final int DISCONNECT_SRC_SHUTDOWN = 2;
-    protected static final int DISCONNECT_SRC_TLS_ERROR = 4;
+    protected static final int DISCONNECT_SRC_TLS_ERROR = 3;
     protected static final int OPM_CREATE_TIMESTAMP = 0;
     protected static final int OPM_FD = 1;
     protected static final int OPM_HEARTBEAT_TIMESTAMP = 3;
@@ -95,7 +94,6 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     protected long heartbeatIntervalMs;
     protected long serverFd;
     private long closeListenFdEpochMs;
-    // the final ids are shifted by 1 bit which is reserved to distinguish socket operations (0) and suspend events (1);
     // id 0 is reserved for operations on the server fd
     private long idSeq = 1;
     private volatile boolean listening;
@@ -226,7 +224,6 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 LOG.error().$("could not initialize connection context [fd=").$(connectionContext.getFd())
                         .$(", e=").$safe(e.getFlyweightMessage())
                         .I$();
-                ioContextFactory.done(connectionContext);
                 disconnect(connectionContext, DISCONNECT_REASON_TLS_SESSION_INIT_FAILED);
             }
         }
@@ -476,19 +473,9 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         connectionCountGauge.dec();
     }
 
-    protected boolean isEventId(long id) {
-        return (id & 1) == 1;
-    }
-
-    // returns monotonically growing event identifier (odd number);
-    // may be used for suspend event identifiers
-    protected long nextEventId() {
-        return (idSeq++ << 1) + 1;
-    }
-
-    // returns monotonically growing operation identifier (even number)
+    // returns monotonically growing operation identifier
     protected long nextOpId() {
-        return idSeq++ << 1;
+        return idSeq++;
     }
 
     protected void pendingAdded(int index) {
@@ -526,13 +513,9 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     protected abstract void registerListenerFd();
 
-    protected boolean testConnection(long fd) {
-        return nf.testConnection(fd, testConnectionBuf, testConnectionBufSize);
-    }
-
     protected abstract void unregisterListenerFd();
 
     static {
-        DISCONNECT_SOURCES = new String[]{"queue", "idle", "shutdown", "peer", "tls_error"};
+        DISCONNECT_SOURCES = new String[]{"queue", "idle", "shutdown", "tls_error"};
     }
 }

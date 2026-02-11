@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,8 +25,9 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.std.LongLongHashMap;
+import io.questdb.std.DirectLongLongHashMap;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.bytes.Bytes;
@@ -44,7 +45,7 @@ import io.questdb.std.bytes.Bytes;
 public class FastGroupByAllocator implements GroupByAllocator {
     private final boolean aligned;
     // Holds <ptr, size> pairs.
-    private final LongLongHashMap chunks = new LongLongHashMap();
+    private final DirectLongLongHashMap chunks;
     private final long defaultChunkSize;
     private final long maxChunkSize;
     private long allocated;
@@ -59,6 +60,7 @@ public class FastGroupByAllocator implements GroupByAllocator {
         this.defaultChunkSize = defaultChunkSize;
         this.maxChunkSize = maxChunkSize;
         this.aligned = aligned;
+        this.chunks = new DirectLongLongHashMap(8, 0.5, 0, 0, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
     }
 
     // Allocated chunks total (bytes).
@@ -68,17 +70,15 @@ public class FastGroupByAllocator implements GroupByAllocator {
     }
 
     @Override
-    public void close() {
-        for (int i = 0, n = chunks.capacity(); i < n; i++) {
-            long ptr = chunks.keyAtRaw(i);
-            if (ptr != -1) {
-                long size = chunks.valueAtRaw(i);
-                Unsafe.free(ptr, size, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
-            }
-        }
+    public void clear() {
+        _close();
         chunks.restoreInitialCapacity();
-        allocated = 0;
-        ptr = lim = 0;
+    }
+
+    @Override
+    public void close() {
+        _close();
+        Misc.free(chunks);
     }
 
     @Override
@@ -87,7 +87,7 @@ public class FastGroupByAllocator implements GroupByAllocator {
             // We don't free small allocations.
             return;
         }
-        int index = chunks.keyIndex(ptr);
+        long index = chunks.keyIndex(ptr);
         if (index < 0) {
             long chunkSize = chunks.valueAt(index);
             if (size == chunkSize) {
@@ -145,7 +145,7 @@ public class FastGroupByAllocator implements GroupByAllocator {
         if (oldSize >= defaultChunkSize) {
             // Check another potential fast path:
             // maybe we can reallocate the whole chunk?
-            int index = chunks.keyIndex(ptr);
+            long index = chunks.keyIndex(ptr);
             if (index < 0) {
                 long chunkSize = chunks.valueAt(index);
                 if (chunkSize == oldSize) {
@@ -165,6 +165,23 @@ public class FastGroupByAllocator implements GroupByAllocator {
         long allocatedPtr = malloc(newSize);
         Vect.memcpy(allocatedPtr, ptr, oldSize);
         return allocatedPtr;
+    }
+
+    @Override
+    public void reopen() {
+        chunks.reopen();
+    }
+
+    private void _close() {
+        for (int i = 0, n = chunks.capacity(); i < n; i++) {
+            long ptr = chunks.keyAtRaw(i);
+            if (ptr != 0) {
+                long size = chunks.valueAtRaw(i);
+                Unsafe.free(ptr, size, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
+            }
+        }
+        allocated = 0;
+        ptr = lim = 0;
     }
 
     private long alignMaybe(long ptr) {

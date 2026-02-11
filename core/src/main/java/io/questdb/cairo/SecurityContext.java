@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,11 +24,12 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.std.Mutable;
-import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
+@SuppressWarnings("unused")
 public interface SecurityContext extends Mutable {
     // Implementations are free to define unique authentication types.
     // The user authenticated with credentials.
@@ -66,7 +67,11 @@ public interface SecurityContext extends Mutable {
 
     void authorizeAlterTableSetType(TableToken tableToken);
 
+    void authorizeAlterView(TableToken tableToken);
+
     void authorizeCopyCancel(SecurityContext cancellingSecurityContext);
+
+    void authorizeDatabaseBackup();
 
     void authorizeDatabaseSnapshot();
 
@@ -86,6 +91,8 @@ public interface SecurityContext extends Mutable {
 
     void authorizeResumeWal(TableToken tableToken);
 
+    void authorizeSelect(ViewDefinition viewDefinition);
+
     void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeSelectOnAnyColumn(TableToken tableToken);
@@ -95,8 +102,6 @@ public interface SecurityContext extends Mutable {
     void authorizeSqlEngineAdmin();
 
     void authorizeSystemAdmin();
-
-    void authorizeTableBackup(ObjHashSet<TableToken> tableTokens);
 
     void authorizeTableCreate();
 
@@ -126,6 +131,12 @@ public interface SecurityContext extends Mutable {
     void authorizeTableUpdate(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeTableVacuum(TableToken tableToken);
+
+    void authorizeViewCompile(TableToken tableToken);
+
+    void authorizeViewCreate();
+
+    void authorizeViewDrop(TableToken tableToken);
 
     /**
      * Should throw an exception if:

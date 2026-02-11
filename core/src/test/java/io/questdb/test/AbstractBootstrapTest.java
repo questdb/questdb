@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -163,6 +163,22 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             String root,
             String... extra
     ) throws Exception {
+        createDummyConfigurationWithTelemetryEnable(httpPort, httpMinPort, pgPort, ilpPort, root, false, extra);
+    }
+
+    protected static void createDummyConfigurationInRoot(String root, String... extra) throws Exception {
+        createDummyConfiguration(HTTP_PORT, HTTP_MIN_PORT, PG_PORT, ILP_PORT, root, extra);
+    }
+
+    protected static void createDummyConfigurationWithTelemetryEnable(
+            int httpPort,
+            int httpMinPort,
+            int pgPort,
+            int ilpPort,
+            String root,
+            boolean telemetryEnable,
+            String... extra
+    ) throws Exception {
         final String confPath = root + Files.SEPARATOR + "conf";
         TestUtils.createTestPath(confPath);
         String file = confPath + Files.SEPARATOR + "server.conf";
@@ -180,8 +196,8 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println(PG_UPDATE_CACHE_ENABLED + "=false");
             writer.println(CAIRO_WAL_ENABLED_DEFAULT + "=false");
             writer.println(METRICS_ENABLED + "=false");
-            writer.println(TELEMETRY_ENABLED + "=false");
-            writer.println(TELEMETRY_DISABLE_COMPLETELY + "=true");
+            writer.println(TELEMETRY_ENABLED + "=" + telemetryEnable);
+            writer.println(TELEMETRY_DISABLE_COMPLETELY + "=" + !telemetryEnable);
 
             // configure endpoints
             writer.println(HTTP_BIND_TO + "=0.0.0.0:" + httpPort);
@@ -221,10 +237,6 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println("w.stdout.class=io.questdb.log.LogConsoleWriter");
             writer.println("w.stdout.level=INFO");
         }
-    }
-
-    protected static void createDummyConfigurationInRoot(String root, String... extra) throws Exception {
-        createDummyConfiguration(HTTP_PORT, HTTP_MIN_PORT, PG_PORT, ILP_PORT, root, extra);
     }
 
     protected static long createDummyWebConsole() throws Exception {

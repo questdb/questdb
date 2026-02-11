@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ public class SqlValidationTest extends AbstractCairoTest {
         getSimpleTester()
                 .withForceRecvFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
                 .withForceSendFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
-                .run((HttpQueryTestBuilder.HttpClientCode) (engine, sqlExecutionContext) -> {
+                .run((engine, sqlExecutionContext) -> {
                     try (TestHttpClient testHttpClient = new TestHttpClient()) {
                         testHttpClient.assertGet(
                                 "/api/v1/sql/validate",
@@ -148,13 +148,7 @@ public class SqlValidationTest extends AbstractCairoTest {
 
                         testHttpClient.assertGet(
                                 "/api/v1/sql/validate",
-                                "{\"query\":\"backup table hello\",\"error\":\"backup is disabled, server.conf property 'cairo.sql.backup.root' is not set\",\"position\":0}",
-                                "backup table hello"
-                        );
-
-                        testHttpClient.assertGet(
-                                "/api/v1/sql/validate",
-                                "{\"query\":\"backup database\",\"error\":\"backup is disabled, server.conf property 'cairo.sql.backup.root' is not set\",\"position\":0}",
+                                "{\"query\":\"backup database\",\"error\":\"incremental backup is supported in QuestDB enterprise version only, please use SNAPSHOT backup\",\"position\":0}",
                                 "backup database"
                         );
 
@@ -184,6 +178,27 @@ public class SqlValidationTest extends AbstractCairoTest {
                                 14,
                                 sink
                         );
+
+                        testHttpClient.assertGet(
+                                "/api/v1/sql/validate",
+                                "{\"queryType\":\"CREATE VIEW\"}",
+                                "create view xyz_count as (select count() from xyz)"
+                        );
+
+                        testHttpClient.assertGet(
+                                "/api/v1/sql/validate",
+                                "{\"queryType\":\"ALTER VIEW\"}",
+                                "alter view xyz_count as (select 1)"
+                        );
+
+                        // check that no views exist
+                        TestUtils.assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                "views",
+                                sink,
+                                "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n"
+                        );
                     }
                 });
     }
@@ -196,7 +211,7 @@ public class SqlValidationTest extends AbstractCairoTest {
                 .withForceSendFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
                 // send buffer has to be large enough for the error message and the http header (maybe we should truncate the message if it doesn't fit?)
                 .withSendBufferSize(Math.max(1024, rnd.nextInt(4099)))
-                .run((HttpQueryTestBuilder.HttpClientCode) (engine, sqlExecutionContext) -> {
+                .run((engine, sqlExecutionContext) -> {
                             engine.execute("create table xyz as (select rnd_int() a, rnd_double() b, timestamp_sequence(0,1000) ts from long_sequence(1000)) timestamp(ts) partition by hour");
 
                             var requestResponse = new Object[][]{
@@ -272,7 +287,7 @@ public class SqlValidationTest extends AbstractCairoTest {
         getSimpleTester()
                 .withForceRecvFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
                 .withForceSendFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
-                .run((HttpQueryTestBuilder.HttpClientCode) (engine, sqlExecutionContext) -> {
+                .run((engine, sqlExecutionContext) -> {
                             try (TestHttpClient testHttpClient = new TestHttpClient()) {
                                 testHttpClient.assertGet(
                                         "/api/v1/sql/validate",
@@ -315,7 +330,7 @@ public class SqlValidationTest extends AbstractCairoTest {
         getSimpleTester()
                 .withForceRecvFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
                 .withForceSendFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
-                .run((HttpQueryTestBuilder.HttpClientCode) (engine, sqlExecutionContext) -> {
+                .run((engine, sqlExecutionContext) -> {
                     try (TestHttpClient testHttpClient = new TestHttpClient()) {
                         testHttpClient.assertGet(
                                 "/api/v1/sql/validate",
@@ -333,7 +348,7 @@ public class SqlValidationTest extends AbstractCairoTest {
         getSimpleTester()
                 .withForceRecvFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
                 .withForceSendFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
-                .run((HttpQueryTestBuilder.HttpClientCode) (engine, sqlExecutionContext) -> {
+                .run((engine, sqlExecutionContext) -> {
                             try (TestHttpClient testHttpClient = new TestHttpClient()) {
                                 testHttpClient.assertGet(
                                         "/api/v1/sql/validate",

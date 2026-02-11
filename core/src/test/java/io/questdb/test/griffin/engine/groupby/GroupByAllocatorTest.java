@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -80,6 +80,34 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCanBeUsedAfterClear() throws Exception {
+        final int N = 100;
+        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
+            @Override
+            public long getGroupByAllocatorDefaultChunkSize() {
+                return 64;
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = createAllocator(config)) {
+                long ptr = allocator.malloc(N);
+                for (int i = 0; i < N; i++) {
+                    // Touch the memory to make sure it's allocated.
+                    Unsafe.getUnsafe().putByte(ptr + i, (byte) i);
+                }
+
+                allocator.clear();
+
+                ptr = allocator.malloc(N);
+                for (int i = 0; i < N; i++) {
+                    // Touch the memory to make sure it's allocated.
+                    Unsafe.getUnsafe().putByte(ptr + i, (byte) i);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCanBeUsedAfterClose() throws Exception {
         final int N = 100;
         final CairoConfiguration config = new DefaultCairoConfiguration(root) {
@@ -97,6 +125,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
                 }
 
                 allocator.close();
+                allocator.reopen();
 
                 ptr = allocator.malloc(N);
                 for (int i = 0; i < N; i++) {
@@ -129,6 +158,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
                 Assert.assertEquals(minChunkSize, allocator.allocated());
 
                 allocator.close();
+                allocator.reopen();
 
                 ptr = allocator.malloc(2 * minChunkSize);
                 // Touch the first byte to make sure the memory is allocated.
@@ -140,6 +170,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
                 Assert.assertEquals(2 * minChunkSize, allocator.allocated());
 
                 allocator.close();
+                allocator.reopen();
 
                 for (int i = 0; i < N; i++) {
                     ptr = allocator.malloc(minChunkSize + i);
@@ -206,6 +237,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
                 Assert.assertEquals(2 * minChunkSize + size, allocator.allocated());
 
                 allocator.close();
+                allocator.reopen();
 
                 ptr = allocator.malloc(size);
                 for (int i = 0; i < size; i++) {

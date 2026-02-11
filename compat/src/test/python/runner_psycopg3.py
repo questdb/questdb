@@ -5,7 +5,7 @@
 #     \__\_\\__,_|\___||___/\__|____/|____/
 #
 #   Copyright (c) 2014-2019 Appsicle
-#   Copyright (c) 2019-2024 QuestDB
+#   Copyright (c) 2019-2026 QuestDB
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -20,12 +20,75 @@
 #   limitations under the License.
 #
 import os
-
 import psycopg
 import re
 import sys
 from psycopg import Connection, Cursor
+from psycopg.adapt import Dumper
+from psycopg.pq import Format
+
 from common import *
+
+
+class VarcharArray(list):
+    pass
+
+
+# Text format dumper for varchar[] (OID 1015)
+class VarcharArrayTextDumper(Dumper):
+    oid = 1015  # varchar[]
+    format = Format.TEXT
+
+    def dump(self, obj):
+        def escape_elem(e):
+            if e is None:
+                return 'NULL'
+            s = str(e)
+            s = s.replace('\\', '\\\\').replace('"', '\\"')
+            if ',' in s or '"' in s or '{' in s or '}' in s or ' ' in s or s == '':
+                return f'"{s}"'
+            return s
+
+        elements = ','.join(escape_elem(e) for e in obj)
+        return f'{{{elements}}}'.encode('utf-8')
+
+
+class VarcharArrayBinaryDumper(Dumper):
+    oid = 1015  # varchar[]
+    format = Format.BINARY
+
+    def dump(self, obj):
+        import struct
+        #  binary array format:
+        # - 4 bytes: number of dimensions (1 for 1D array)
+        # - 4 bytes: has null flag (1 if any element is null)
+        # - 4 bytes: element type OID (1043 for varchar)
+        # - 4 bytes: dimension size
+        # - 4 bytes: lower bound (1)
+        # For each element:
+        # - 4 bytes: element length (-1 for null, otherwise byte length)
+        # - N bytes: element data (if not null)
+
+        has_null = 1 if any(e is None for e in obj) else 0
+        elem_oid = 1043  # varchar OID
+        header = struct.pack('>iiiii', 1, has_null, elem_oid, len(obj), 1)
+
+        elements = []
+        for e in obj:
+            if e is None:
+                elements.append(struct.pack('>i', -1))
+            else:
+                data = str(e).encode('utf-8')
+                elements.append(struct.pack('>i', len(data)) + data)
+
+        return header + b''.join(elements)
+
+def register_varchar_array_type(connection, binary):
+    """Register varchar[] type dumper with the connection based on mode."""
+    if binary:
+        connection.adapters.register_dumper(VarcharArray, VarcharArrayBinaryDumper)
+    else:
+        connection.adapters.register_dumper(VarcharArray, VarcharArrayTextDumper)
 
 
 def adjust_placeholder_syntax(query):
@@ -75,6 +138,16 @@ def execute_loop(loop_def, variables, cursor: Cursor, connection: Connection):
         execute_steps(loop_def['steps'], loop_variables, cursor, connection)
 
 
+def wrap_varchar_arrays(parameters, param_types):
+    wrapped = []
+    for i, param in enumerate(parameters):
+        if i < len(param_types) and param_types[i].get('type', '').lower() == 'array_varchar':
+            wrapped.append(VarcharArray(param) if isinstance(param, list) else param)
+        else:
+            wrapped.append(param)
+    return wrapped
+
+
 def execute_step(step, variables, cursor: Cursor, connection: Connection):
     action = step['action']
     query_template = step.get('query')
@@ -88,6 +161,9 @@ def execute_step(step, variables, cursor: Cursor, connection: Connection):
     query = adjust_placeholder_syntax(query_with_vars)
 
     resolved_parameters = resolve_parameters(parameters, variables)
+
+    # Wrap varchar arrays for proper type encoding
+    resolved_parameters = wrap_varchar_arrays(resolved_parameters, parameters)
     result = execute_query(cursor, query, resolved_parameters)
     connection.commit()
 
@@ -157,6 +233,7 @@ def main(yaml_file):
                     dbname='qdb',
                     autocommit=True
                 )
+                register_varchar_array_type(connection, binary)
                 run_test(test, global_variables, connection, binary)
                 connection.close()
 

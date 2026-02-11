@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,8 +38,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Misc;
-import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -50,7 +48,6 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import java.io.File;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -261,40 +258,6 @@ public class SecurityTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBackupTableDeniedOnNoWriteAccess() throws Exception {
-        assertMemoryLeak(() -> {
-            // create infrastructure where backup is enabled (dir configured)
-            execute("create table balances(cust_id int, ccy symbol, balance double)");
-
-            final File backupDir = temp.newFolder();
-            final DateFormat backupSubDirFormat = new MicrosFormatCompiler().compile("ddMMMyyyy");
-            try (
-                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(root) {
-                        @Override
-                        public DateFormat getBackupDirTimestampFormat() {
-                            return backupSubDirFormat;
-                        }
-
-                        @Override
-                        public CharSequence getBackupRoot() {
-                            return backupDir.getAbsolutePath();
-                        }
-                    });
-                    SqlCompiler compiler2 = engine.getSqlCompiler();
-                    SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-            ) {
-                sqlExecutionContext.with(ReadOnlySecurityContext.INSTANCE);
-                try {
-                    compiler2.compile("backup table balances", sqlExecutionContext);
-                    Assert.fail();
-                } catch (Exception ex) {
-                    Assert.assertTrue(ex.toString().contains("permission denied"));
-                }
-            }
-        });
-    }
-
-    @Test
     public void testCircuitBreakerTimeout() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
@@ -325,16 +288,18 @@ public class SecurityTest extends AbstractCairoTest {
     public void testCircuitBreakerTimeoutForCrossJoin() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            execute(" CREATE TABLE 'bench' (\n" +
-                    "    symbol SYMBOL capacity 256 CACHE,\n" +
-                    "    timestamp TIMESTAMP,\n" +
-                    "    price DOUBLE,\n" +
-                    "    amount DOUBLE\n" +
-                    ") timestamp (timestamp) PARTITION BY DAY WAL;");
-            execute("insert into bench\n" +
-                    "select rnd_symbol('a', 'b', 'c') symbol, \n" +
-                    "rnd_timestamp('2022-03-08T00:00:00Z', '2022-03-08T23:59:59Z', 0) timestamp, \n" +
-                    "rnd_double() price, rnd_double() amount from long_sequence(100000)");
+            execute("""
+                     CREATE TABLE 'bench' (
+                        symbol SYMBOL capacity 256 CACHE,
+                        timestamp TIMESTAMP,
+                        price DOUBLE,
+                        amount DOUBLE
+                    ) timestamp (timestamp) PARTITION BY DAY WAL;""");
+            execute("""
+                    insert into bench
+                    select rnd_symbol('a', 'b', 'c') symbol,\s
+                    rnd_timestamp('2022-03-08T00:00:00Z', '2022-03-08T23:59:59Z', 0) timestamp,\s
+                    rnd_double() price, rnd_double() amount from long_sequence(100000)""");
             drainWalQueue();
             memoryRestrictedEngine.reloadTableNames();
 
@@ -344,11 +309,12 @@ public class SecurityTest extends AbstractCairoTest {
                 TestUtils.printSql(
                         engine,
                         readOnlyExecutionContext,
-                        "select t1.*, t2.* from (SELECT * FROM bench LIMIT 100000) t1 \n" +
-                                "join (SELECT * FROM bench LIMIT 100000) t2 \n" +
-                                "on t1.symbol=concat(t2.price, '') and t1.symbol = cast(t2.symbol as varchar)\n" +
-                                "where t1.timestamp between '2022-03-08T00:00:00Z' and '2022-03-08T23:59:59Z'\n" +
-                                "and t2.timestamp between '2022-03-08T00:00:00Z' and '2022-03-08T23:59:59Z'",
+                        """
+                                select t1.*, t2.* from (SELECT * FROM bench LIMIT 100000) t1\s
+                                join (SELECT * FROM bench LIMIT 100000) t2\s
+                                on t1.symbol=concat(t2.price, '') and t1.symbol = cast(t2.symbol as varchar)
+                                where t1.timestamp between '2022-03-08T00:00:00Z' and '2022-03-08T23:59:59Z'
+                                and t2.timestamp between '2022-03-08T00:00:00Z' and '2022-03-08T23:59:59Z'""",
                         sink
                 );
                 Assert.fail();
@@ -373,8 +339,10 @@ public class SecurityTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     memoryRestrictedCompiler,
-                    "sum\n" +
-                            "165.6121723103405\n",
+                    """
+                            sum
+                            165.6121723103405
+                            """,
                     "select sum(d1) from tb1 where d1 < 0.2",
                     null,
                     false,
@@ -560,17 +528,19 @@ public class SecurityTest extends AbstractCairoTest {
                     " from long_sequence(1000)) timestamp(ts)");
             assertQueryNoLeakCheck(
                     memoryRestrictedCompiler,
-                    "sym2\td\n" +
-                            "GZ\t0.0011075361080621349\n" +
-                            "GZ\t0.007985454958725269\n" +
-                            "GZ\t0.007868356216637062\n" +
-                            "GZ\t0.0014986299883373855\n" +
-                            "GZ\t0.006817672510656014\n" +
-                            "RX\t0.0016532800623808575\n" +
-                            "RX\t0.0072398675350549\n" +
-                            "RX\t6.503932953429992E-4\n" +
-                            "RX\t0.006651203432318287\n" +
-                            "RX\t4.016718301054212E-4\n",
+                    """
+                            sym2\td
+                            GZ\t0.0011075361080621349
+                            GZ\t0.007985454958725269
+                            GZ\t0.007868356216637062
+                            GZ\t0.0014986299883373855
+                            GZ\t0.006817672510656014
+                            RX\t0.0016532800623808575
+                            RX\t0.0072398675350549
+                            RX\t6.503932953429992E-4
+                            RX\t0.006651203432318287
+                            RX\t4.016718301054212E-4
+                            """,
                     "select sym2, d from tb1 where d < 0.01 order by sym2",
                     null,
                     true,
@@ -811,12 +781,14 @@ public class SecurityTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     memoryRestrictedCompiler,
-                    "sym\td\n" +
-                            "VTJW\t0.05384400312338511\n" +
-                            "PEHN\t0.16474369169931913\n" +
-                            "HYRX\t0.17370570324289436\n" +
-                            "VTJW\t0.18769708157331322\n" +
-                            "VTJW\t0.1985581797355932\n",
+                    """
+                            sym\td
+                            VTJW\t0.05384400312338511
+                            PEHN\t0.16474369169931913
+                            HYRX\t0.17370570324289436
+                            VTJW\t0.18769708157331322
+                            VTJW\t0.1985581797355932
+                            """,
                     "select sym, d from tb1 where d < 0.2 ORDER BY d",
                     null,
                     true,
@@ -1157,9 +1129,11 @@ public class SecurityTest extends AbstractCairoTest {
             memoryRestrictedEngine.reloadTableNames();
             assertQueryNoLeakCheck(
                     memoryRestrictedCompiler,
-                    "sym2\tcount\n" +
-                            "ED\t1968\n" +
-                            "RQ\t2032\n",
+                    """
+                            sym2\tcount
+                            ED\t1968
+                            RQ\t2032
+                            """,
                     "select sym2, count() from tb1 order by sym2",
                     null,
                     true,

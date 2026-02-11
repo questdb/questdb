@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,10 +44,25 @@ import org.jetbrains.annotations.NotNull;
  * @see <a href="https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Online">Welford's algorithm</a>
  */
 public abstract class AbstractCovarGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
+    /**
+     * The X (independent variable) function.
+     */
     protected final Function xFunc;
+    /**
+     * The Y (dependent variable) function.
+     */
     protected final Function yFunc;
+    /**
+     * The value index in the map.
+     */
     protected int valueIndex;
 
+    /**
+     * Constructs a new covariance group by function.
+     *
+     * @param arg0 the Y (dependent variable) function
+     * @param arg1 the X (independent variable) function
+     */
     protected AbstractCovarGroupByFunction(@NotNull Function arg0, @NotNull Function arg1) {
         this.yFunc = arg0;
         this.xFunc = arg1;
@@ -129,6 +144,13 @@ public abstract class AbstractCovarGroupByFunction extends DoubleFunction implem
         return false;
     }
 
+    /**
+     * Aggregates a data point into the covariance calculation.
+     *
+     * @param mapValue the map value to update
+     * @param y        the dependent variable value
+     * @param x        the independent variable value
+     */
     protected void aggregate(MapValue mapValue, double y, double x) {
         double meanY = mapValue.getDouble(valueIndex);
         double meanX = mapValue.getDouble(valueIndex + 1);

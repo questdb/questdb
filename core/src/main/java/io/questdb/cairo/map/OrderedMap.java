@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -237,7 +237,14 @@ public class OrderedMap implements Map, Reopenable {
             value2 = new OrderedMapValue(valueSize, valueOffsets);
             value3 = new OrderedMapValue(valueSize, valueOffsets);
 
-            assert keySize + valueSize <= heapLimit - heapAddr : "page size is too small to fit a single key";
+            if (keySize + valueSize >= heapLimit - heapAddr) {
+                throw CairoException.nonCritical()
+                        .put("page size is too small to fit a single key, consider increasing `cairo.sql.small.map.page.size` [expected=")
+                        .put(keySize + valueSize).put(", actual=")
+                        .put(heapLimit - heapAddr)
+                        .put(']');
+            }
+
             if (keySize == -1) {
                 final OrderedMapVarSizeRecord varSizeRecord = new OrderedMapVarSizeRecord(valueSize, valueOffsets, value, keyTypes, valueTypes);
                 record = varSizeRecord;

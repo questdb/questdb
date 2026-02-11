@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,6 +44,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final int N_NAME_COL = 0;
@@ -109,20 +110,22 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             return false;
         }
 
-        public ShowColumnsCursor of(CairoTable cairoTable, @Transient TableReader tableReader) {
+        public ShowColumnsCursor of(CairoTable cairoTable, @Transient @Nullable TableReader tableReader) {
             this.cairoTable = cairoTable;
             staticSymbolTableSizes.restoreInitialCapacity();
             staticSymbolTableSizes.setAll(cairoTable.getColumnCount(), 0);
-            for (int i = 0, n = cairoTable.getColumnCount(); i < n; i++) {
-                final CairoColumn column = this.cairoTable.getColumnQuiet(i);
-                if (column.isSymbolTableStatic()) {
-                    // there is a small chance that cairoTable and tableReader are out of sync with each other due to
-                    // a concurrent schema change, so we must double-check presence of the column in table metadata
-                    final int readerColumnIndex = tableReader.getMetadata().getColumnIndexQuiet(column.getName());
-                    if (readerColumnIndex != -1) {
-                        final StaticSymbolTable staticSymbolTable = tableReader.getSymbolTable(readerColumnIndex);
-                        if (staticSymbolTable != null) {
-                            staticSymbolTableSizes.setQuick(i, staticSymbolTable.getSymbolCount() + (staticSymbolTable.containsNullValue() ? 1 : 0));
+            if (tableReader != null) {
+                for (int i = 0, n = cairoTable.getColumnCount(); i < n; i++) {
+                    final CairoColumn column = this.cairoTable.getColumnQuiet(i);
+                    if (column.isSymbolTableStatic()) {
+                        // there is a small chance that cairoTable and tableReader are out of sync with each other due to
+                        // a concurrent schema change, so we must double-check presence of the column in table metadata
+                        final int readerColumnIndex = tableReader.getMetadata().getColumnIndexQuiet(column.getName());
+                        if (readerColumnIndex != -1) {
+                            final StaticSymbolTable staticSymbolTable = tableReader.getSymbolTable(readerColumnIndex);
+                            if (staticSymbolTable != null) {
+                                staticSymbolTableSizes.setQuick(i, staticSymbolTable.getSymbolCount() + (staticSymbolTable.containsNullValue() ? 1 : 0));
+                            }
                         }
                     }
                 }
@@ -136,6 +139,9 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
                 final CairoTable cairoTable = metadataRO.getTable(tableToken);
                 if (cairoTable != null) {
+                    if (tableToken.isView()) {
+                        return of(cairoTable, null);
+                    }
                     try (TableReader tableReader = engine.getReader(tableToken)) {
                         return of(cairoTable, tableReader);
                     }
