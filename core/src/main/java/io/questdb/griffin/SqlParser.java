@@ -2885,7 +2885,9 @@ public class SqlParser {
 
                 // Intern the window name immediately before any more lexer operations
                 // (the lexer reuses its buffer, so tok would be overwritten)
-                CharSequence windowName = Chars.toString(GenericLexer.unquote(tok));
+                CharacterStoreEntry cse = characterStore.newEntry();
+                cse.put(GenericLexer.unquote(tok));
+                CharSequence windowName = cse.toImmutable();
                 int windowNamePos = lexer.lastTokenPosition();
 
                 // Check for duplicate window name in the outer (master) model

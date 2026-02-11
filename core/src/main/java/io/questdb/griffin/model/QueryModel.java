@@ -634,8 +634,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void copyDeclsFrom(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, boolean overrideDeclares) throws SqlException {
         if (decls != null && decls.size() > 0) {
+            final ObjList<CharSequence> keys = decls.keys();
             if (overrideDeclares) {
-                final ObjList<CharSequence> keys = decls.keys();
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     final CharSequence key = keys.getQuick(i);
                     // Only allow override if the variable is marked as OVERRIDABLE
@@ -647,7 +647,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 }
                 this.decls.putAll(decls);
             } else {
-                final ObjList<CharSequence> keys = decls.keys();
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     final CharSequence key = keys.getQuick(i);
                     this.decls.putIfAbsent(key, decls.get(key));

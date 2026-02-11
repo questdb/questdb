@@ -6193,7 +6193,7 @@ public class SqlOptimiser implements Mutable {
         if (namedWindow == null) {
             throw SqlException.$(ac.getWindowNamePosition(), "window '").put(windowName).put("' is not defined");
         }
-        ac.copySpecFrom(namedWindow);
+        ac.copySpecFrom(namedWindow, expressionNodePool);
     }
 
     /**

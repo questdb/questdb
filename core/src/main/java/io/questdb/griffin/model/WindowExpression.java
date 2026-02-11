@@ -34,6 +34,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
+import io.questdb.std.ObjectPool;
 
 public final class WindowExpression extends QueryColumn {
     public static final int CURRENT = 3;
@@ -117,30 +118,36 @@ public final class WindowExpression extends QueryColumn {
      * Copies the window specification (partition by, order by, frame) from another WindowExpression.
      * Used when resolving named window references in the optimizer.
      * <p>
-     * ExpressionNode references in partition-by and order-by lists are shared, not deep-copied.
-     * This is safe because each list independently replaces its entries via replaceLiteralList,
-     * so shared references are not read after replacement.
+     * ExpressionNode references in partition-by, order-by, and frame bound lists are deep-cloned
+     * so that each referencing window function gets independent copies. This prevents mutation
+     * from one window function's literal rewriting pass (e.g., recursiveReplace) from corrupting
+     * another function that references the same named window.
      *
      * @param source the named window definition to copy from
+     * @param pool   the expression node pool used for deep-cloning
      */
-    public void copySpecFrom(WindowExpression source) {
+    public void copySpecFrom(WindowExpression source, ObjectPool<ExpressionNode> pool) {
         this.partitionBy.clear();
-        this.partitionBy.addAll(source.partitionBy);
+        for (int i = 0, n = source.partitionBy.size(); i < n; i++) {
+            this.partitionBy.add(ExpressionNode.deepClone(pool, source.partitionBy.getQuick(i)));
+        }
 
         this.orderBy.clear();
-        this.orderBy.addAll(source.orderBy);
+        for (int i = 0, n = source.orderBy.size(); i < n; i++) {
+            this.orderBy.add(ExpressionNode.deepClone(pool, source.orderBy.getQuick(i)));
+        }
         this.orderByDirection.clear();
         this.orderByDirection.addAll(source.orderByDirection);
 
         this.framingMode = source.framingMode;
         this.rowsLo = source.rowsLo;
-        this.rowsLoExpr = source.rowsLoExpr;
+        this.rowsLoExpr = ExpressionNode.deepClone(pool, source.rowsLoExpr);
         this.rowsLoExprPos = source.rowsLoExprPos;
         this.rowsLoExprTimeUnit = source.rowsLoExprTimeUnit;
         this.rowsLoKind = source.rowsLoKind;
         this.rowsLoKindPos = source.rowsLoKindPos;
         this.rowsHi = source.rowsHi;
-        this.rowsHiExpr = source.rowsHiExpr;
+        this.rowsHiExpr = ExpressionNode.deepClone(pool, source.rowsHiExpr);
         this.rowsHiExprPos = source.rowsHiExprPos;
         this.rowsHiExprTimeUnit = source.rowsHiExprTimeUnit;
         this.rowsHiKind = source.rowsHiKind;
