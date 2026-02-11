@@ -2548,6 +2548,7 @@ public class SqlKeywords {
         KEYWORDS.add("column");
         KEYWORDS.add("create");
         KEYWORDS.add("desc");
+        KEYWORDS.add("describe");
         KEYWORDS.add("detach");
         KEYWORDS.add("disable");
         KEYWORDS.add("distinct");

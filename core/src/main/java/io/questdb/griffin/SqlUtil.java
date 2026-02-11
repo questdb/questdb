@@ -1489,10 +1489,7 @@ public class SqlUtil {
     }
 
     public static class ColumnTypeSymbolTable implements StaticSymbolTable {
-        public static ColumnTypeSymbolTable INSTANCE = new ColumnTypeSymbolTable();
-
-        public ColumnTypeSymbolTable() {
-        }
+        public static final ColumnTypeSymbolTable INSTANCE = new ColumnTypeSymbolTable();
 
         @Override
         public boolean containsNullValue() {

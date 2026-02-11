@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,71 +30,142 @@ import org.junit.Test;
 public class DescribeStatementTest extends AbstractCairoTest {
 
     @Test
+    public void testDescribeAdditionalColumnTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE extra_types (
+                        col_char CHAR,
+                        col_varchar VARCHAR,
+                        col_long256 LONG256,
+                        col_ipv4 IPv4,
+                        col_binary BINARY
+                    )""");
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tcol_char\tCHAR
+                    1\tcol_varchar\tVARCHAR
+                    2\tcol_long256\tLONG256
+                    3\tcol_ipv4\tIPv4
+                    4\tcol_binary\tBINARY
+                    """, "DESCRIBE (SELECT * FROM extra_types)");
+        });
+    }
+
+    @Test
     public void testDescribeAllColumnTypes() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table all_types (" +
-                    "col_boolean boolean, " +
-                    "col_byte byte, " +
-                    "col_short short, " +
-                    "col_int int, " +
-                    "col_long long, " +
-                    "col_float float, " +
-                    "col_double double, " +
-                    "col_string string, " +
-                    "col_symbol symbol, " +
-                    "col_date date, " +
-                    "col_timestamp timestamp, " +
-                    "col_uuid uuid" +
-                    ")");
+            execute("""
+                    CREATE TABLE all_types (
+                        col_boolean BOOLEAN,
+                        col_byte BYTE,
+                        col_short SHORT,
+                        col_int INT,
+                        col_long LONG,
+                        col_float FLOAT,
+                        col_double DOUBLE,
+                        col_string STRING,
+                        col_symbol SYMBOL,
+                        col_date DATE,
+                        col_timestamp TIMESTAMP,
+                        col_uuid UUID
+                    )""");
 
-            assertSql(
-                    "ordinal_position\tcolumn_name\tdata_type\n" +
-                            "0\tcol_boolean\tBOOLEAN\n" +
-                            "1\tcol_byte\tBYTE\n" +
-                            "2\tcol_short\tSHORT\n" +
-                            "3\tcol_int\tINT\n" +
-                            "4\tcol_long\tLONG\n" +
-                            "5\tcol_float\tFLOAT\n" +
-                            "6\tcol_double\tDOUBLE\n" +
-                            "7\tcol_string\tSTRING\n" +
-                            "8\tcol_symbol\tSYMBOL\n" +
-                            "9\tcol_date\tDATE\n" +
-                            "10\tcol_timestamp\tTIMESTAMP\n" +
-                            "11\tcol_uuid\tUUID\n",
-                    "DESCRIBE (SELECT * FROM all_types)"
-            );
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tcol_boolean\tBOOLEAN
+                    1\tcol_byte\tBYTE
+                    2\tcol_short\tSHORT
+                    3\tcol_int\tINT
+                    4\tcol_long\tLONG
+                    5\tcol_float\tFLOAT
+                    6\tcol_double\tDOUBLE
+                    7\tcol_string\tSTRING
+                    8\tcol_symbol\tSYMBOL
+                    9\tcol_date\tDATE
+                    10\tcol_timestamp\tTIMESTAMP
+                    11\tcol_uuid\tUUID
+                    """, "DESCRIBE (SELECT * FROM all_types)");
+        });
+    }
+
+    @Test
+    public void testDescribeAfterExplain() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT, name STRING)");
+
+            assertSql("""
+                    QUERY PLAN
+                    describe()
+                    """, "EXPLAIN DESCRIBE (SELECT * FROM test_table)");
+        });
+    }
+
+    @Test
+    public void testDescribeCaseInsensitive() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT, name STRING)");
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tname\tSTRING
+                    """, "describe (SELECT * FROM test_table)");
         });
     }
 
     @Test
     public void testDescribeFunctionDirectly() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test_table (id int, name string)");
+            execute("CREATE TABLE test_table (id INT, name STRING)");
 
-            // Test the describe() function directly first
-            assertSql(
-                    "ordinal_position\tcolumn_name\tdata_type\n" +
-                            "0\tid\tINT\n" +
-                            "1\tname\tSTRING\n",
-                    "SELECT * FROM describe((SELECT * FROM test_table))"
-            );
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tname\tSTRING
+                    """, "SELECT * FROM describe((SELECT * FROM test_table))");
+        });
+    }
+
+    @Test
+    public void testDescribeImmediateParenthesis() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT, name STRING)");
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tname\tSTRING
+                    """, "DESCRIBE(SELECT * FROM test_table)");
         });
     }
 
     @Test
     public void testDescribeJoin() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table table1 (id int, name string)");
-            execute("create table table2 (id int, value double)");
+            execute("CREATE TABLE table1 (id INT, name STRING)");
+            execute("CREATE TABLE table2 (id INT, value DOUBLE)");
 
-            assertSql(
-                    "ordinal_position\tcolumn_name\tdata_type\n" +
-                            "0\tid\tINT\n" +
-                            "1\tname\tSTRING\n" +
-                            "2\tid1\tINT\n" +
-                            "3\tvalue\tDOUBLE\n",
-                    "DESCRIBE (SELECT * FROM table1 JOIN table2 ON table1.id = table2.id)"
-            );
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tname\tSTRING
+                    2\tid1\tINT
+                    3\tvalue\tDOUBLE
+                    """, "DESCRIBE (SELECT * FROM table1 JOIN table2 ON table1.id = table2.id)");
+        });
+    }
+
+    @Test
+    public void testDescribeNestedSubquery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT, value DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tvalue\tDOUBLE
+                    """, "DESCRIBE (SELECT * FROM (SELECT id, value FROM test_table))");
         });
     }
 
@@ -108,73 +179,120 @@ public class DescribeStatementTest extends AbstractCairoTest {
     @Test
     public void testDescribeSelect() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test_table (id int, name string, value double)");
+            execute("CREATE TABLE test_table (id INT, name STRING, value DOUBLE)");
 
-            assertSql(
-                    "ordinal_position\tcolumn_name\tdata_type\n" +
-                            "0\tid\tINT\n" +
-                            "1\tname\tSTRING\n" +
-                            "2\tvalue\tDOUBLE\n",
-                    "DESCRIBE (SELECT * FROM test_table)"
-            );
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tname\tSTRING
+                    2\tvalue\tDOUBLE
+                    """, "DESCRIBE (SELECT * FROM test_table)");
         });
     }
 
     @Test
     public void testDescribeSelectWithAggregation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test_table (id int, value double)");
+            execute("CREATE TABLE test_table (id INT, value DOUBLE)");
 
-            assertSql(
-                    "ordinal_position\tcolumn_name\tdata_type\n" +
-                            "0\tid\tINT\n" +
-                            "1\tsum\tDOUBLE\n",
-                    "DESCRIBE (SELECT id, sum(value) FROM test_table GROUP BY id)"
-            );
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tsum\tDOUBLE
+                    """, "DESCRIBE (SELECT id, sum(value) FROM test_table GROUP BY id)");
         });
     }
 
     @Test
     public void testDescribeSelectWithAlias() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test_table (id int, value double)");
+            execute("CREATE TABLE test_table (id INT, value DOUBLE)");
 
-            assertSql(
-                    "ordinal_position\tcolumn_name\tdata_type\n" +
-                            "0\tid\tINT\n" +
-                            "1\tdouble_value\tDOUBLE\n",
-                    "DESCRIBE (SELECT id, value as double_value FROM test_table)"
-            );
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tdouble_value\tDOUBLE
+                    """, "DESCRIBE (SELECT id, value AS double_value FROM test_table)");
         });
     }
 
     @Test
     public void testDescribeSelectWithSymbol() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test_table (id int, sym symbol, price double)");
+            execute("CREATE TABLE test_table (id INT, sym SYMBOL, price DOUBLE)");
 
-            assertSql(
-                    "ordinal_position\tcolumn_name\tdata_type\n" +
-                            "0\tid\tINT\n" +
-                            "1\tsym\tSYMBOL\n" +
-                            "2\tprice\tDOUBLE\n",
-                    "DESCRIBE (SELECT * FROM test_table)"
-            );
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tsym\tSYMBOL
+                    2\tprice\tDOUBLE
+                    """, "DESCRIBE (SELECT * FROM test_table)");
+        });
+    }
+
+    @Test
+    public void testDescribeSelectWithCast() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT, value DOUBLE)");
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tcast\tLONG
+                    1\tcast1\tDOUBLE
+                    """, "DESCRIBE (SELECT id::LONG, value::FLOAT FROM test_table)");
+        });
+    }
+
+    @Test
+    public void testDescribeSelectWithExpressions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (a INT, b INT)");
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tcolumn\tINT
+                    1\tresult\tINT
+                    """, "DESCRIBE (SELECT a + b, a * b AS result FROM test_table)");
+        });
+    }
+
+    @Test
+    public void testDescribeSelectWithSingleColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT, name STRING, value DOUBLE)");
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tname\tSTRING
+                    """, "DESCRIBE (SELECT name FROM test_table)");
         });
     }
 
     @Test
     public void testDescribeSimpleSelect() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test_table (id int, name string, ts timestamp) timestamp(ts)");
+            execute("CREATE TABLE test_table (id INT, name STRING, ts TIMESTAMP) TIMESTAMP(ts)");
 
-            assertSql(
-                    "ordinal_position\tcolumn_name\tdata_type\n" +
-                            "0\tid\tINT\n" +
-                            "1\tname\tSTRING\n" +
-                            "2\tts\tTIMESTAMP\n",
-                    "DESCRIBE (SELECT * FROM test_table)"
-            );
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tname\tSTRING
+                    2\tts\tTIMESTAMP
+                    """, "DESCRIBE (SELECT * FROM test_table)");
+        });
+    }
+
+    @Test
+    public void testDescribeUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE table1 (id INT, name STRING)");
+            execute("CREATE TABLE table2 (id INT, label STRING)");
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tname\tSTRING
+                    """, "DESCRIBE (SELECT * FROM table1 UNION ALL SELECT * FROM table2)");
         });
     }
 }

@@ -76,10 +76,10 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -2541,9 +2541,13 @@ public class SqlParser {
             return parseWith(lexer, sqlParserCallback, null);
         }
 
+        if (isDescribeKeyword(tok)) {
+            return parseDescribe(lexer, sqlParserCallback);
+        }
+
         if (isDropKeyword(tok) || isAlterKeyword(tok) || isRefreshKeyword(tok)) {
             throw SqlException.position(lexer.lastTokenPosition()).put(
-                    "'create', 'format', 'insert', 'update', 'select' or 'with'"
+                    "'create', 'describe', 'format', 'insert', 'update', 'select' or 'with'"
             ).put(" expected");
         }
 
@@ -2554,9 +2558,12 @@ public class SqlParser {
             GenericLexer lexer,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        // Collect all tokens after DESCRIBE into a string
+        // Collect all tokens after DESCRIBE into a string.
+        // We use lastTokenPosition() + 8 ("describe".length()) rather than
+        // getPosition() because the lexer may have already consumed the next
+        // character (e.g. '(' in "describe(...)") as a lookahead token.
         final CharSequence content = lexer.getContent();
-        final int startPos = lexer.getPosition();
+        final int startPos = lexer.lastTokenPosition() + 8;
 
         // Find the end of the statement (semicolon or end of input)
         int endPos = startPos;

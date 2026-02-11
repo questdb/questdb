@@ -27,11 +27,7 @@ package io.questdb.griffin.engine.functions.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
@@ -51,14 +47,6 @@ public class TableColumnsFunctionFactory implements FunctionFactory {
         final CharSequence tableName = args.getQuick(0).getStrA(null);
         final TableToken token = sqlExecutionContext.getCairoEngine().getTableTokenIfExists(tableName);
         if (token == null) {
-            // perhaps it is a pseudo-table
-            try (SqlCompiler compiler = sqlExecutionContext.getCairoEngine().getSqlCompiler()) {
-                CompiledQuery cq = compiler.compile(tableName, sqlExecutionContext);
-                try (RecordCursorFactory rcf = cq.getRecordCursorFactory()) {
-                    RecordMetadata tableMetadata = rcf.getMetadata();
-                }
-            }
-
             throw SqlException.$(argPositions.getQuick(0), "table does not exist [table=").put(tableName);
         }
         return new CursorFunction(new ShowColumnsRecordCursorFactory(token, argPositions.get(0)));
