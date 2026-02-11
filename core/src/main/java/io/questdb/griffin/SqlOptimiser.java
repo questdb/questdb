@@ -6295,7 +6295,7 @@ public class SqlOptimiser implements Mutable {
                 WindowExpression window = namedWindows.get(windowName);
                 if (window != null && window.hasBaseWindow()) {
                     IntHashSet visited = intHashSetPool.next();
-                    resolveWindowInheritanceChain(model, windowName, window, visited);
+                    resolveWindowInheritanceChain(model, window, visited);
                 }
             }
         }
@@ -6317,7 +6317,6 @@ public class SqlOptimiser implements Mutable {
 
     private void resolveWindowInheritanceChain(
             QueryModel model,
-            CharSequence windowName,
             WindowExpression window,
             IntHashSet visited
     ) throws SqlException {
@@ -6340,7 +6339,7 @@ public class SqlOptimiser implements Mutable {
 
         // Recursively resolve the base window first if it also inherits
         if (baseWindow.hasBaseWindow()) {
-            resolveWindowInheritanceChain(model, baseName, baseWindow, visited);
+            resolveWindowInheritanceChain(model, baseWindow, visited);
         }
 
         // Merge the base spec into the child
