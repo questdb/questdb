@@ -5465,12 +5465,10 @@ public class SqlOptimiser implements Mutable {
         // propagate explicit timestamp declaration
         if (model.getTimestamp() != null && nestedIsFlex && nestedAllowsColumnChange) {
             emitLiteralsTopDown(model.getTimestamp(), nested);
-
-            QueryModel unionModel = nested.getUnionModel();
-            while (unionModel != null) {
-                emitLiteralsTopDown(model.getTimestamp(), unionModel);
-                unionModel = unionModel.getUnionModel();
-            }
+            // Don't emit to nested union models by name here. In UNION, columns are matched
+            // by position, not name. Name-based resolution can map to a wrong column index
+            // in union branches. The indexed propagation below (emitColumnLiteralsTopDown loop)
+            // correctly propagates columns by position.
         }
 
         if (model.getWhereClause() != null) {
@@ -5479,12 +5477,10 @@ public class SqlOptimiser implements Mutable {
             }
             if (nestedAllowsColumnChange) {
                 emitLiteralsTopDown(model.getWhereClause(), nested);
-
-                QueryModel unionModel = nested.getUnionModel();
-                while (unionModel != null) {
-                    emitLiteralsTopDown(model.getWhereClause(), unionModel);
-                    unionModel = unionModel.getUnionModel();
-                }
+                // Don't emit to nested union models by name here. In UNION, columns are matched
+                // by position, not name. Name-based resolution can map to a wrong column index
+                // in union branches. The indexed propagation below (emitColumnLiteralsTopDown loop)
+                // correctly propagates columns by position.
             }
         }
 
@@ -5495,6 +5491,29 @@ public class SqlOptimiser implements Mutable {
 
         if (nestedIsFlex && nestedAllowsColumnChange) {
             emitColumnLiteralsTopDown(model.getColumns(), nested);
+
+            // If any UNION branch is GROUP BY, pre-add its key column positions
+            // to nested's topDownColumns. GROUP BY branches need all key columns
+            // for correct grouping, even if the outer query doesn't select them.
+            // By adding them here (before the indexed propagation below), the
+            // indexed loop will propagate them to ALL branches uniformly,
+            // regardless of where the GROUP BY branch sits in the UNION chain.
+            if (nested.getUnionModel() != null && nested.getTopDownColumns().size() > 0) {
+                final ObjList<QueryColumn> nestedBu = nested.getBottomUpColumns();
+                QueryModel groupByScan = nested;
+                while (groupByScan != null) {
+                    if (groupByScan.getSelectModelType() == SELECT_MODEL_GROUP_BY) {
+                        final ObjList<QueryColumn> groupByBu = groupByScan.getBottomUpColumns();
+                        for (int i = 0, n = groupByBu.size(); i < n; i++) {
+                            QueryColumn qc = groupByBu.getQuick(i);
+                            if (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
+                                nested.addTopDownColumn(nestedBu.getQuick(i), nestedBu.getQuick(i).getAlias());
+                            }
+                        }
+                    }
+                    groupByScan = groupByScan.getUnionModel();
+                }
+            }
 
             final IntList unionColumnIndexes = tempIntList;
             unionColumnIndexes.clear();
