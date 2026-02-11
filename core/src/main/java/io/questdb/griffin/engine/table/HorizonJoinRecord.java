@@ -24,8 +24,12 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
@@ -50,6 +54,12 @@ public class HorizonJoinRecord implements Record {
     private Record masterRecord;
     private long offsetValue;
     private Record slaveRecord;
+
+    @Override
+    public @Nullable ArrayView getArray(int col, int columnType) {
+        Record src = getSourceRecord(col);
+        return src != null ? src.getArray(columnIndices[col], columnType) : null;
+    }
 
     @Override
     public @Nullable BinarySequence getBin(int col) {
@@ -85,6 +95,46 @@ public class HorizonJoinRecord implements Record {
     public long getDate(int col) {
         Record src = getSourceRecord(col);
         return src != null ? src.getDate(columnIndices[col]) : Numbers.LONG_NULL;
+    }
+
+    @Override
+    public void getDecimal128(int col, Decimal128 sink) {
+        Record src = getSourceRecord(col);
+        if (src != null) {
+            src.getDecimal128(columnIndices[col], sink);
+        }
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        Record src = getSourceRecord(col);
+        return src != null ? src.getDecimal16(columnIndices[col]) : 0;
+    }
+
+    @Override
+    public void getDecimal256(int col, Decimal256 sink) {
+        Record src = getSourceRecord(col);
+        if (src != null) {
+            src.getDecimal256(columnIndices[col], sink);
+        }
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        Record src = getSourceRecord(col);
+        return src != null ? src.getDecimal32(columnIndices[col]) : Numbers.INT_NULL;
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        Record src = getSourceRecord(col);
+        return src != null ? src.getDecimal64(columnIndices[col]) : Numbers.LONG_NULL;
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        Record src = getSourceRecord(col);
+        return src != null ? src.getDecimal8(columnIndices[col]) : 0;
     }
 
     @Override
@@ -136,6 +186,12 @@ public class HorizonJoinRecord implements Record {
     }
 
     @Override
+    public @Nullable Interval getInterval(int col) {
+        Record src = getSourceRecord(col);
+        return src != null ? src.getInterval(columnIndices[col]) : null;
+    }
+
+    @Override
     public long getLong(int col) {
         // Special handling for sequence offset - it's a direct value, not from a record
         if (columnSources[col] == SOURCE_SEQUENCE) {
@@ -143,6 +199,18 @@ public class HorizonJoinRecord implements Record {
         }
         Record src = getSourceRecord(col);
         return src != null ? src.getLong(columnIndices[col]) : Numbers.LONG_NULL;
+    }
+
+    @Override
+    public long getLong128Hi(int col) {
+        Record src = getSourceRecord(col);
+        return src != null ? src.getLong128Hi(columnIndices[col]) : Numbers.LONG_NULL;
+    }
+
+    @Override
+    public long getLong128Lo(int col) {
+        Record src = getSourceRecord(col);
+        return src != null ? src.getLong128Lo(columnIndices[col]) : Numbers.LONG_NULL;
     }
 
     @Override
@@ -163,6 +231,12 @@ public class HorizonJoinRecord implements Record {
     public @Nullable Long256 getLong256B(int col) {
         Record src = getSourceRecord(col);
         return src != null ? src.getLong256B(columnIndices[col]) : null;
+    }
+
+    @Override
+    public @Nullable Record getRecord(int col) {
+        Record src = getSourceRecord(col);
+        return src != null ? src.getRecord(columnIndices[col]) : null;
     }
 
     @Override
