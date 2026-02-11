@@ -810,7 +810,10 @@ public class SqlParser {
             } else {
                 CharSequence tokenAlias = qc.getAst().token;
                 if (qc.isWindowExpression() && ((WindowExpression) qc).isIgnoreNulls()) {
-                    tokenAlias += "_ignore_nulls";
+                    CharacterStoreEntry cse = characterStore.newEntry();
+                    cse.put(tokenAlias);
+                    cse.put("_ignore_nulls");
+                    tokenAlias = cse.toImmutable();
                 }
                 alias = createColumnAlias(tokenAlias, qc.getAst().type, aliasMap);
             }
