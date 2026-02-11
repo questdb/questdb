@@ -197,7 +197,8 @@ public class BoundedMetaReader extends AbstractBoundedReader {
             }
 
             boolean indexed = (flags & META_FLAG_BIT_INDEXED) != 0;
-            String typeName = ColumnType.nameOf(type);
+            // dropped columns have negative type; resolve name from the absolute value
+            String typeName = ColumnType.nameOf(Math.abs(type));
 
             // store with placeholder name; will be replaced in readColumnNames
             metaState.getColumns().add(new MetaColumnState("", type, typeName, indexed, indexBlockCapacity));

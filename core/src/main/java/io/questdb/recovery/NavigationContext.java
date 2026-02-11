@@ -504,10 +504,11 @@ public class NavigationContext {
             // not a number, try by name
         }
 
-        // try by column name
+        // try by column name, skipping dropped columns (negative type)
         if (colIndex < 0) {
             for (int i = 0, n = columns.size(); i < n; i++) {
-                if (target.equalsIgnoreCase(columns.getQuick(i).name())) {
+                MetaColumnState candidate = columns.getQuick(i);
+                if (candidate.type() >= 0 && target.equalsIgnoreCase(candidate.name())) {
                     colIndex = i;
                     break;
                 }
@@ -521,6 +522,7 @@ public class NavigationContext {
 
         MetaColumnState col = columns.getQuick(colIndex);
         if (col.type() < 0) {
+            // numeric index explicitly targeting a dropped column
             err.println("cannot enter dropped column: " + col.name());
             return false;
         }

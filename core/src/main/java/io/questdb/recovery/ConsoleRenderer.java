@@ -252,7 +252,7 @@ public class ConsoleRenderer {
                         i,
                         col.name(),
                         col.typeName(),
-                        col.indexed() ? "yes" : "no",
+                        col.type() < 0 ? "-" : col.indexed() ? "yes" : "no",
                         note
                 );
             }

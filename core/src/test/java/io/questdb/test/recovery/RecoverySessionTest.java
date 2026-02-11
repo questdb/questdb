@@ -2842,8 +2842,33 @@ public void testLsShowsTransientRowCountForLastPartition() throws Exception {
             execute("alter table nav_col_drop drop column val");
             drainWalQueue(engine);
 
-            String[] result = runSession("cd nav_col_drop\ncd 0\ncd val\nquit\n");
-            Assert.assertTrue(result[1].contains("cannot enter dropped column"));
+            // by name: skips dropped columns, reports not found
+            String[] resultByName = runSession("cd nav_col_drop\ncd 0\ncd val\nquit\n");
+            Assert.assertTrue(resultByName[1].contains("column not found"));
+
+            // by numeric index: reaches the dropped slot, reports cannot enter
+            String[] resultByIndex = runSession("cd nav_col_drop\ncd 0\ncd 0\nquit\n");
+            Assert.assertTrue(resultByIndex[1].contains("cannot enter dropped column"));
+        });
+    }
+
+    @Test
+    public void testCdIntoDroppedColumnNameReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table nav_col_reuse (sym symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into nav_col_reuse values ('A', '1970-01-01T00:00:00.000000Z')");
+            waitForAppliedRows("nav_col_reuse", 1);
+
+            // drop sym and re-add it — _meta now has two "sym" entries (dropped + active)
+            execute("alter table nav_col_reuse drop column sym");
+            execute("alter table nav_col_reuse add column sym symbol");
+            drainWalQueue(engine);
+
+            // cd by name should reach the active column, not the dropped one
+            String[] result = runSession("cd nav_col_reuse\ncd 0\ncd sym\npwd\nquit\n");
+            Assert.assertTrue("should navigate into active sym column",
+                    result[0].contains("/nav_col_reuse/1970-01-01/sym\n"));
+            Assert.assertEquals("", result[1]);
         });
     }
 

@@ -609,12 +609,16 @@ public class BoundedMetaReaderTest extends AbstractCairoTest {
 
             MetaState state = readMetaState("meta_dropped", new BoundedMetaReader(FF));
             Assert.assertEquals(0, countIssuesWithCode(state, RecoveryIssueCode.INVALID_COUNT));
-            // dropped column should have a negative type
+            // dropped column should have a negative type and resolve its original typeName
             boolean foundDropped = false;
             for (int i = 0, n = state.getColumns().size(); i < n; i++) {
                 MetaColumnState col = state.getColumns().getQuick(i);
                 if (col.type() < 0) {
                     foundDropped = true;
+                    Assert.assertEquals("dropped column should resolve original type name",
+                            "INT", col.typeName());
+                    Assert.assertEquals("dropped column type should be negated INT",
+                            -ColumnType.INT, col.type());
                     break;
                 }
             }
