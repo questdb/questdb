@@ -675,6 +675,11 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprRangeWithSpaceBeforeDots() throws SqlException {
+        assertCompiledTickExpr("$today + 1d .. $today + 5d ;1h");
+    }
+
+    @Test
     public void testCompiledTickExprCacheReuseProducesDifferentResults() throws SqlException {
         // Same CompiledTickExpression evaluated with different "now" must produce different results
         final TimestampDriver timestampDriver = timestampType.getDriver();
@@ -809,7 +814,7 @@ public class TickExprTest {
 
     @Test
     public void testCompiledTickExprLeadingWhitespaceList() throws SqlException {
-        assertCompiledTickExpr("  [$today, $tomorrow]");
+        assertCompiledTickExpr("  [ $today, $tomorrow]");
     }
 
     @Test
@@ -959,8 +964,23 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprTimeListInvalidTimezone() {
+        assertCompileTickExprError("[$today]T[09:00@Bogus,14:00]", "invalid timezone in time list");
+    }
+
+    @Test
     public void testCompiledTickExprTimeListEmptyEntry() {
         assertCompileTickExprError("[$today]T[ ,14:00]", "Empty element in time list");
+    }
+
+    @Test
+    public void testCompiledTickExprSingleTimeWithManyDurationParts() throws SqlException {
+        assertCompiledTickExpr("$todayT09:30;" + "1s".repeat(62));
+    }
+
+    @Test
+    public void testCompiledTickExprInvalidSingleTimeOverride() {
+        assertCompileTickExprError("[$today]Tabc", "Invalid time override");
     }
 
     @Test

@@ -206,14 +206,15 @@ public final class IntervalUtils {
         int elemListHi;
         int suffixLo;
 
-        boolean isDateList = false;
         boolean isBareVar = false;
 
         if (effectiveSeq.charAt(effectiveSeqLo) == '[') {
-            isDateList = true;
             int listEnd = -1;
+            int bracketDepth = 1;
             for (int i = effectiveSeqLo + 1; i < effectiveSeqLim; i++) {
-                if (effectiveSeq.charAt(i) == ']') {
+                char c = effectiveSeq.charAt(i);
+                if (c == '[') bracketDepth++;
+                else if (c == ']' && --bracketDepth == 0) {
                     listEnd = i;
                     break;
                 }
@@ -491,7 +492,7 @@ public final class IntervalUtils {
                         | DateVariableExpr.parseEncoded(effectiveSeq, elemListLo, elemListHi, position);
                 elemCount++;
             }
-        } else if (isDateList) {
+        } else {
             int depth = 0;
             int elementStart = elemListLo;
 
