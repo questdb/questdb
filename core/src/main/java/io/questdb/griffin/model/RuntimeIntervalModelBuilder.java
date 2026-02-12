@@ -137,10 +137,12 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         // Date variable expressions ($now, $today, etc.) must be evaluated dynamically
-        // so that cached queries always use the current time
+        // so that cached queries always use the current time.
+        // compileTickExpr() validates the expression at compile time and returns
+        // a CompiledTickExpression that re-evaluates on each query execution.
         if (containsDateVariable(seq, lo, lim)) {
-            CompiledTickExpression compiled = new CompiledTickExpression(
-                    timestampDriver, configuration, seq.subSequence(lo, lim));
+            CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                    timestampDriver, configuration, seq, lo, lim, position);
             intersectCompiledTickExpr(compiled);
             return;
         }
@@ -356,10 +358,10 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         // Date variable expressions ($now, $today, etc.) must be evaluated dynamically
-        // so that cached queries always use the current time
+        // so that cached queries always use the current time.
         if (containsDateVariable(seq, lo, lim)) {
-            CompiledTickExpression compiled = new CompiledTickExpression(
-                    timestampDriver, configuration, seq.subSequence(lo, lim));
+            CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                    timestampDriver, configuration, seq, lo, lim, position);
             subtractCompiledTickExpr(compiled);
             return;
         }
@@ -415,10 +417,10 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         // Date variable expressions ($now, $today, etc.) must be evaluated dynamically
-        // so that cached queries always use the current time
+        // so that cached queries always use the current time.
         if (containsDateVariable(seq, lo, lim)) {
-            CompiledTickExpression compiled = new CompiledTickExpression(
-                    timestampDriver, configuration, seq.subSequence(lo, lim));
+            CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                    timestampDriver, configuration, seq, lo, lim, position);
             unionCompiledTickExpr(compiled);
             return;
         }

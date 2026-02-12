@@ -30,6 +30,7 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.CompiledTickExpression;
+import io.questdb.griffin.model.DateVariableExpr;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.RuntimeIntervalModelBuilder;
@@ -662,8 +663,8 @@ public class TickExprTest {
     public void testCompiledTickExprCacheReuseProducesDifferentResults() throws SqlException {
         // Same CompiledTickExpression evaluated with different "now" must produce different results
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        try (CompiledTickExpression compiled = new CompiledTickExpression(
-                timestampDriver, configuration, "$today")) {
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampDriver, configuration, "$today", 0, 6, 0)) {
             long now1 = timestampDriver.parseFloorLiteral("2026-01-15T10:00:00.000000Z");
             LongList result1 = new LongList();
             compiled.evaluate(result1, now1);
@@ -754,6 +755,125 @@ public class TickExprTest {
         try (RuntimeIntrinsicIntervalModel m = builder.build()) {
             Assert.assertTrue("Non-variable expression should produce static model", m.isStatic());
         }
+    }
+
+    // ==================== DateVariableExpr unit tests ====================
+
+    @Test
+    public void testDateVariableExprEvaluateNow() throws SqlException {
+        final TimestampDriver driver = timestampType.getDriver();
+        long now = driver.parseFloorLiteral("2026-03-15T14:30:00.000000Z");
+        DateVariableExpr expr = DateVariableExpr.parse("$now", 0, 4, 0);
+        Assert.assertEquals(now, expr.evaluate(driver, now));
+    }
+
+    @Test
+    public void testDateVariableExprEvaluateToday() throws SqlException {
+        final TimestampDriver driver = timestampType.getDriver();
+        long now = driver.parseFloorLiteral("2026-03-15T14:30:00.000000Z");
+        DateVariableExpr expr = DateVariableExpr.parse("$today", 0, 6, 0);
+        long expected = driver.startOfDay(now, 0);
+        Assert.assertEquals(expected, expr.evaluate(driver, now));
+    }
+
+    @Test
+    public void testDateVariableExprEvaluateTomorrow() throws SqlException {
+        final TimestampDriver driver = timestampType.getDriver();
+        long now = driver.parseFloorLiteral("2026-03-15T14:30:00.000000Z");
+        DateVariableExpr expr = DateVariableExpr.parse("$tomorrow", 0, 9, 0);
+        long expected = driver.startOfDay(now, 1);
+        Assert.assertEquals(expected, expr.evaluate(driver, now));
+    }
+
+    @Test
+    public void testDateVariableExprEvaluateYesterday() throws SqlException {
+        final TimestampDriver driver = timestampType.getDriver();
+        long now = driver.parseFloorLiteral("2026-03-15T14:30:00.000000Z");
+        DateVariableExpr expr = DateVariableExpr.parse("$yesterday", 0, 10, 0);
+        long expected = driver.startOfDay(now, -1);
+        Assert.assertEquals(expected, expr.evaluate(driver, now));
+    }
+
+    @Test
+    public void testDateVariableExprEvaluateWithOffset() throws SqlException {
+        final TimestampDriver driver = timestampType.getDriver();
+        long now = driver.parseFloorLiteral("2026-03-15T14:30:00.000000Z");
+        DateVariableExpr expr = DateVariableExpr.parse("$now - 2h", 0, 9, 0);
+        long expected = driver.add(now, 'h', -2);
+        Assert.assertEquals(expected, expr.evaluate(driver, now));
+    }
+
+    @Test
+    public void testDateVariableExprEvaluateBusinessDays() throws SqlException {
+        // 2026-03-16 is a Monday
+        final TimestampDriver driver = timestampType.getDriver();
+        long now = driver.parseFloorLiteral("2026-03-16T10:00:00.000000Z");
+        DateVariableExpr expr = DateVariableExpr.parse("$today + 3bd", 0, 12, 0);
+        long todayStart = driver.startOfDay(now, 0);
+        // Mon + 3bd = Thu (skip no weekends)
+        long expected = driver.addDays(todayStart, 3);
+        Assert.assertEquals(expected, expr.evaluate(driver, now));
+    }
+
+    @Test
+    public void testDateVariableExprEvaluateBusinessDaysAcrossWeekend() throws SqlException {
+        // 2026-03-20 is a Friday
+        final TimestampDriver driver = timestampType.getDriver();
+        long now = driver.parseFloorLiteral("2026-03-20T10:00:00.000000Z");
+        DateVariableExpr expr = DateVariableExpr.parse("$today + 3bd", 0, 12, 0);
+        long todayStart = driver.startOfDay(now, 0);
+        // Fri + 3bd = Wed (skip Sat, Sun)
+        long expected = driver.addDays(todayStart, 5); // Fri + 5 calendar days = Wed
+        Assert.assertEquals(expected, expr.evaluate(driver, now));
+    }
+
+    @Test
+    public void testDateVariableExprParseCaseInsensitive() throws SqlException {
+        DateVariableExpr expr1 = DateVariableExpr.parse("$TODAY", 0, 6, 0);
+        Assert.assertEquals(DateVariableExpr.VAR_TODAY, expr1.getVarType());
+
+        DateVariableExpr expr2 = DateVariableExpr.parse("$Now", 0, 4, 0);
+        Assert.assertEquals(DateVariableExpr.VAR_NOW, expr2.getVarType());
+
+        DateVariableExpr expr3 = DateVariableExpr.parse("$YESTERDAY", 0, 10, 0);
+        Assert.assertEquals(DateVariableExpr.VAR_YESTERDAY, expr3.getVarType());
+
+        DateVariableExpr expr4 = DateVariableExpr.parse("$TOMORROW", 0, 9, 0);
+        Assert.assertEquals(DateVariableExpr.VAR_TOMORROW, expr4.getVarType());
+    }
+
+    @Test
+    public void testDateVariableExprParseCompact() throws SqlException {
+        // Compact form without spaces: $today+3d
+        final TimestampDriver driver = timestampType.getDriver();
+        long now = driver.parseFloorLiteral("2026-03-15T10:00:00.000000Z");
+        DateVariableExpr expr = DateVariableExpr.parse("$today+3d", 0, 9, 0);
+        long expected = driver.add(driver.startOfDay(now, 0), 'd', 3);
+        Assert.assertEquals(expected, expr.evaluate(driver, now));
+    }
+
+    @Test
+    public void testDateVariableExprParseInvalidVariable() {
+        try {
+            DateVariableExpr.parse("$garbage", 0, 8, 0);
+            Assert.fail("Should throw SqlException");
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "Unknown date variable");
+        }
+    }
+
+    @Test
+    public void testDateVariableExprProducesDifferentResultsForDifferentNow() throws SqlException {
+        final TimestampDriver driver = timestampType.getDriver();
+        DateVariableExpr expr = DateVariableExpr.parse("$today", 0, 6, 0);
+
+        long now1 = driver.parseFloorLiteral("2026-01-15T10:00:00.000000Z");
+        long now2 = driver.parseFloorLiteral("2026-06-20T10:00:00.000000Z");
+
+        long result1 = expr.evaluate(driver, now1);
+        long result2 = expr.evaluate(driver, now2);
+
+        Assert.assertNotEquals("Same expr should produce different results for different now", result1, result2);
     }
 
     @Test
@@ -4547,8 +4667,8 @@ public class TickExprTest {
         randomNow += timestampDriver.fromHours(rnd.nextInt(24));
         randomNow += timestampDriver.fromMinutes(rnd.nextInt(60));
 
-        try (CompiledTickExpression compiled = new CompiledTickExpression(
-                timestampDriver, configuration, expression)) {
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampDriver, configuration, expression, 0, expression.length(), 0)) {
             LongList dynamicResult = new LongList();
             compiled.evaluate(dynamicResult, randomNow);
 
