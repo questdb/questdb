@@ -120,6 +120,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private final MetadataService metaWriterSvc = new MetadataWriterService();
     private final WalWriterMetadata metadata;
     private final Metrics metrics;
+    private final boolean noWalTelemetry;
     private final ObjList<Runnable> nullSetters;
     private final RecentWriteTracker recentWriteTracker;
     private final RowImpl row = new RowImpl();
@@ -171,6 +172,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         this.ddlListener = ddlListener;
         this.recentWriteTracker = recentWriteTracker;
         this.metrics = configuration.getMetrics();
+        this.noWalTelemetry = configuration.getTelemetryConfiguration().getDisableCompletely();
 
         try {
             lockWal();
@@ -883,7 +885,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 syncIfRequired();
                 final long seqTxn = getSequencerTxn();
                 final boolean hasReplaceRange = replaceRangeHiTs > replaceRangeLowTs;
-                LogRecord logLine = hasReplaceRange ? LOG.info() : LOG.debug();
+                // Reduce the logging if telementry is enabled all the information is saved in sys.telemetry_wal
+                LogRecord logLine = hasReplaceRange || noWalTelemetry ? LOG.info() : LOG.debug();
                 try {
                     logLine.$("commit [wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
                             .$(", segTxn=").$(lastSegmentTxn)
