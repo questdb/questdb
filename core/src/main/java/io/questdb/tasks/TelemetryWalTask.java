@@ -82,11 +82,17 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
             }
 
             // Hardcoded configuration for telemetry_wal table:
+            // - Always enabled regardless of the main telemetry setting
             // - Throttling disabled (0L) to record every WAL event without rate limiting
             // - TTL fixed at 1 week
             @Override
             public TelemetryConfiguration getTelemetryConfiguration(@NotNull CairoConfiguration configuration) {
                 return new TelemetryConfigurationWrapper(configuration.getTelemetryConfiguration()) {
+                    @Override
+                    public boolean getEnabled() {
+                        return true;
+                    }
+
                     @Override
                     public long getThrottleIntervalMicros() {
                         return 0L;
