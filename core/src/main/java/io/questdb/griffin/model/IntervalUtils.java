@@ -485,13 +485,12 @@ public final class IntervalUtils {
                 ir[irPos++] = CompiledTickExpression.TAG_RANGE
                         | (isBusinessDay ? CompiledTickExpression.RANGE_BD_BIT : 0L)
                         | DateVariableExpr.parseEncoded(effectiveSeq, elemListLo, startExprHi, position);
-                ir[irPos++] = DateVariableExpr.parseEncoded(effectiveSeq, endExprLo, endExprHi, position);
-                elemCount++;
+                ir[irPos] = DateVariableExpr.parseEncoded(effectiveSeq, endExprLo, endExprHi, position);
             } else {
-                ir[irPos++] = CompiledTickExpression.TAG_SINGLE_VAR
+                ir[irPos] = CompiledTickExpression.TAG_SINGLE_VAR
                         | DateVariableExpr.parseEncoded(effectiveSeq, elemListLo, elemListHi, position);
-                elemCount++;
             }
+            elemCount++;
         } else {
             int depth = 0;
             int elementStart = elemListLo;
@@ -531,15 +530,14 @@ public final class IntervalUtils {
                                     | (isBd ? CompiledTickExpression.RANGE_BD_BIT : 0L)
                                     | DateVariableExpr.parseEncoded(effectiveSeq, es, startHi, position);
                             ir[irPos++] = DateVariableExpr.parseEncoded(effectiveSeq, endLo, ee, position);
-                            elemCount++;
                         } else {
                             if (irPos >= ir.length) {
                                 ir = java.util.Arrays.copyOf(ir, ir.length * 2);
                             }
                             ir[irPos++] = CompiledTickExpression.TAG_SINGLE_VAR
                                     | DateVariableExpr.parseEncoded(effectiveSeq, es, ee, position);
-                            elemCount++;
                         }
+                        elemCount++;
                     } else {
                         // Static element — pre-compute [lo, hi] with suffix applied
                         parseSink.clear();
@@ -610,12 +608,9 @@ public final class IntervalUtils {
             }
         }
 
-        // Phase 5: Finalize header and trim to exact size
+        // Phase 5: Finalize header
         ir[0] = CompiledTickExpression.encodeHeader(elemCount, timeOverrideCount, durationPartCount,
                 hasDurationWithExchange, dayFilterMask);
-        if (irPos < ir.length) {
-            ir = java.util.Arrays.copyOf(ir, irPos);
-        }
 
         return new CompiledTickExpression(
                 timestampDriver,

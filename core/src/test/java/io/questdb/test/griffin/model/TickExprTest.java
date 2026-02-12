@@ -753,6 +753,47 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprDstFallBack() throws SqlException {
+        // Nov 3, 2024 in America/New_York: clocks fall back at 2:00 AM EDT
+        // T01:30 occurs twice (overlap) — code uses daylight time offset
+        assertCompiledTickExprWithNow("$todayT01:30@America/New_York", "2024-11-03T12:00:00.000000Z");
+    }
+
+    @Test
+    public void testCompiledTickExprDstGapHiOnly() throws SqlException {
+        // March 10, 2024: spring forward at 2:00 AM in America/New_York
+        // T01:59 + 2m duration → hi lands at 02:01 (in the DST gap), lo is before the gap
+        assertCompiledTickExprWithNow("$todayT01:59@America/New_York;2m", "2024-03-10T12:00:00.000000Z");
+    }
+
+    @Test
+    public void testCompiledTickExprDstPerElementSummer() throws SqlException {
+        // Per-element named tz during summer (BST, UTC+1)
+        assertCompiledTickExprWithNow("[$today]T[09:00@Europe/London,14:00]", "2024-07-15T12:00:00.000000Z");
+    }
+
+    @Test
+    public void testCompiledTickExprDstRangeSpanningTransition() throws SqlException {
+        // Range spanning the spring forward DST transition in America/New_York
+        assertCompiledTickExprWithNow("$today..$today+7dT09:00@America/New_York", "2024-03-07T12:00:00.000000Z");
+    }
+
+    @Test
+    public void testCompiledTickExprDstSpringForward() throws SqlException {
+        // March 10, 2024 2:00 AM in America/New_York: clocks spring forward to 3:00 AM
+        // T02:30 falls in the DST gap
+        assertCompiledTickExprWithNow("$todayT02:30@America/New_York", "2024-03-10T12:00:00.000000Z");
+    }
+
+    @Test
+    public void testCompiledTickExprDstSummerVsWinter() throws SqlException {
+        // Europe/London: winter (UTC+0) vs summer (BST, UTC+1)
+        // Same expression, different UTC offsets depending on time of year
+        assertCompiledTickExprWithNow("$todayT08:00@Europe/London", "2024-01-15T12:00:00.000000Z");
+        assertCompiledTickExprWithNow("$todayT08:00@Europe/London", "2024-07-15T12:00:00.000000Z");
+    }
+
+    @Test
     public void testCompiledTickExprDynamicBracketList() throws SqlException {
         assertCompiledTickExpr("[$today, $tomorrow]");
     }
@@ -768,13 +809,28 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprDynamicNowDuration() throws SqlException {
+        assertCompiledTickExpr("$now;1h");
+    }
+
+    @Test
     public void testCompiledTickExprDynamicNowMinusHours() throws SqlException {
         assertCompiledTickExpr("$now - 2h");
     }
 
     @Test
+    public void testCompiledTickExprDynamicOffsetUppercaseD() throws SqlException {
+        assertCompiledTickExpr("$today + 3D");
+    }
+
+    @Test
     public void testCompiledTickExprDynamicRange() throws SqlException {
         assertCompiledTickExpr("$today..$today + 2d");
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicRangeTimeLevelWithDuration() throws SqlException {
+        assertCompiledTickExpr("$now - 2h..$now;1h");
     }
 
     @Test
@@ -785,6 +841,16 @@ public class TickExprTest {
     @Test
     public void testCompiledTickExprDynamicTodayPlusBusinessDays() throws SqlException {
         assertCompiledTickExpr("$today + 3bd");
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicTodayMinusBusinessDays() throws SqlException {
+        assertCompiledTickExpr("$today - 3bd");
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicTodayPlusZeroBusinessDays() throws SqlException {
+        assertCompiledTickExpr("$today + 0bd");
     }
 
     @Test
@@ -1004,6 +1070,11 @@ public class TickExprTest {
     @Test
     public void testCompiledTickExprTimeListWithElemAndGlobalTimezone() throws SqlException {
         assertCompiledTickExpr("[$today]T[09:00@Europe/London,14:00]@+03:00");
+    }
+
+    @Test
+    public void testCompiledTickExprTimeListWithElemAndGlobalNamedTimezone() throws SqlException {
+        assertCompiledTickExpr("[$today]T[09:00@Europe/London,14:00]@America/New_York");
     }
 
     @Test
@@ -5042,6 +5113,26 @@ public class TickExprTest {
                         intervalToString(timestampDriver, dynamicResult)
                 );
             }
+        }
+    }
+
+    private void assertCompiledTickExprWithNow(String expression, String nowStr) throws SqlException {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        long now = timestampDriver.parseFloorLiteral(nowStr);
+
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampDriver, configuration, expression, 0, expression.length(), 0)) {
+            LongList dynamicResult = new LongList();
+            LongList staticResult = new LongList();
+
+            compiled.evaluate(dynamicResult, now);
+            parseTickExprWithNow(timestampDriver, expression, 0, expression.length(), 0,
+                    staticResult, IntervalOperation.INTERSECT, now);
+
+            TestUtils.assertEquals(
+                    intervalToString(timestampDriver, staticResult).toString(),
+                    intervalToString(timestampDriver, dynamicResult)
+            );
         }
     }
 

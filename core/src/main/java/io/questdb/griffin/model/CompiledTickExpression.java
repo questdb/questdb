@@ -81,12 +81,12 @@ public class CompiledTickExpression extends UntypedFunction {
     private static final long TAG_MASK = 0xC000_0000_0000_0000L;
     private static final int SUNDAY = 7;
 
+    private final DateLocale dateLocale;
     private final int dayFilterMask;
     private final int durationOff;
     private final int durationPartCount;
     private final int elemCount;
     private final int elemOff;
-    private final TimeZoneRules[] elemTzRules;
     private final LongList exchangeSchedule;
     private final String expression;
     private final boolean hasDurationWithExchange;
@@ -109,6 +109,7 @@ public class CompiledTickExpression extends UntypedFunction {
         this.ir = ir;
         this.expression = expression.toString();
         this.tzRules = tzRules;
+        this.dateLocale = dateLocale;
         this.exchangeSchedule = exchangeSchedule;
 
         // Pre-decode header and section offsets
@@ -121,24 +122,6 @@ public class CompiledTickExpression extends UntypedFunction {
         this.durationOff = 2;
         this.toOff = 2 + durationPartCount;
         this.elemOff = toOff + timeOverrideCount * 3;
-
-        // Resolve per-element timezone rules from zone match values in IR
-        TimeZoneRules[] resolved = null;
-        if (dateLocale != null) {
-            for (int j = 0; j < timeOverrideCount; j++) {
-                long zoneMatch = ir[toOff + j * 3 + 2];
-                if (zoneMatch != Long.MIN_VALUE && zoneMatch != Long.MAX_VALUE) {
-                    if (resolved == null) {
-                        resolved = new TimeZoneRules[timeOverrideCount];
-                    }
-                    resolved[j] = dateLocale.getZoneRules(
-                            Numbers.decodeLowInt(zoneMatch),
-                            timestampDriver.getTZRuleResolution()
-                    );
-                }
-            }
-        }
-        this.elemTzRules = resolved;
     }
 
     static long encodeDuration(char unit, int value) {
@@ -344,9 +327,13 @@ public class CompiledTickExpression extends UntypedFunction {
                 }
                 if (zoneMatch != Long.MIN_VALUE) {
                     // Per-element tz: convert to UTC first
-                    if (elemTzRules != null && elemTzRules[j] != null) {
-                        lo = timestampDriver.toUTC(lo, elemTzRules[j]);
-                        hi = timestampDriver.toUTC(hi, elemTzRules[j]);
+                    if (zoneMatch != Long.MAX_VALUE && dateLocale != null) {
+                        TimeZoneRules elemRules = dateLocale.getZoneRules(
+                                Numbers.decodeLowInt(zoneMatch),
+                                timestampDriver.getTZRuleResolution()
+                        );
+                        lo = timestampDriver.toUTC(lo, elemRules);
+                        hi = timestampDriver.toUTC(hi, elemRules);
                     }
                     // lo/hi are now UTC; convert to global-local so Phase 3
                     // (applyTimezone) produces the correct UTC result
