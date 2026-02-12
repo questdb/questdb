@@ -482,34 +482,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     private static boolean containsDateVariable(CharSequence seq, int lo, int lim) {
         for (int i = lo; i < lim - 1; i++) {
-            if (seq.charAt(i) == '$' && isDateVariableName(seq, i + 1, lim)) {
+            if (seq.charAt(i) == '$' && DateExpressionEvaluator.isDateVariable(seq, i, lim)) {
                 return true;
             }
         }
         return false;
-    }
-
-    private static boolean isDateVariableName(CharSequence seq, int lo, int lim) {
-        // Must match one of: now, today, yesterday, tomorrow (case-insensitive)
-        // followed by a non-letter character or end of string
-        return matchesVariable(seq, lo, lim, "now")
-                || matchesVariable(seq, lo, lim, "today")
-                || matchesVariable(seq, lo, lim, "yesterday")
-                || matchesVariable(seq, lo, lim, "tomorrow");
-    }
-
-    private static boolean matchesVariable(CharSequence seq, int lo, int lim, String name) {
-        int len = name.length();
-        if (lo + len > lim) {
-            return false;
-        }
-        for (int i = 0; i < len; i++) {
-            if (Character.toLowerCase(seq.charAt(lo + i)) != name.charAt(i)) {
-                return false;
-            }
-        }
-        // After the variable name, next char must not be a letter (to avoid matching "$nowadays")
-        return lo + len >= lim || !Character.isLetter(seq.charAt(lo + len));
     }
 
     private void intersectBetweenDynamic(Function funcValue1, Function funcValue2) {

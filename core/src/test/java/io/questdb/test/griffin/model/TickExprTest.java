@@ -2813,8 +2813,6 @@ public class TickExprTest {
         // deferred to runtime. containsDateVariable() only matches known variable
         // names ($now, $today, $yesterday, $tomorrow), so $garbage falls through
         // to parseTickExpr which rejects it immediately.
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-
         RuntimeIntervalModelBuilder builder = new RuntimeIntervalModelBuilder();
         builder.of(timestampType.getTimestampType(), 0, configuration);
         try {
