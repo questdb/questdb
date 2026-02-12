@@ -90,17 +90,17 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
             });
 
-            engine.execute("create table tab(ts timestamp, x long, y byte) timestamp(ts) partition by day wal");
+            engine.execute("CREATE TABLE tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            engine.execute("alter table tab add column z varchar");
+            engine.execute("ALTER TABLE tab ADD COLUMN z VARCHAR");
             drainWalQueue();
-            engine.execute("alter table tab rename column z to v");
+            engine.execute("ALTER TABLE tab RENAME COLUMN z TO v");
             drainWalQueue();
-            engine.execute("alter table tab drop column v");
+            engine.execute("ALTER TABLE tab DROP COLUMN v");
             drainWalQueue();
-            engine.execute("rename table tab to tab2");
+            engine.execute("RENAME TABLE tab TO tab2");
             drainWalQueue();
-            engine.execute("drop table tab2");
+            engine.execute("DROP TABLE tab2");
             drainWalQueue();
 
             for (int callbackCounter : callbackCounters) {

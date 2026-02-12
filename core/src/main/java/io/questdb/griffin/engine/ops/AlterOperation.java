@@ -112,7 +112,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     //     "structural changes" doesn't cover is as "add column" is supported
     @Override
     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-        final QueryRegistry queryRegistry = sqlExecutionContext != null ? sqlExecutionContext.getCairoEngine().getQueryRegistry() : null;
+        final QueryRegistry queryRegistry = sqlExecutionContext != null ? getCairoEngine().getQueryRegistry() : null;
         keepMatViewsValid = false;
         long queryId = -1;
         try {
