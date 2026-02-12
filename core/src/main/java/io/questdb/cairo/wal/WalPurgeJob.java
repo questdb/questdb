@@ -424,6 +424,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     int txnPartSize = transactionLogCursor.getPartitionSize();
                     long currentSeqPart = getCurrentSeqPart(safeToPurgeTxn, txnPartSize);
                     logic.trackCurrentSeqPart(currentSeqPart);
+                    long backupLockedSeqTxn = engine.getBackupSeqPartLock().getLockedSeqTxn(tableToken);
+                    long backupLockedPart = (backupLockedSeqTxn > 0 && txnPartSize > 0)
+                            ? (backupLockedSeqTxn - 1) / txnPartSize
+                            : -1;
+                    logic.trackBackupLockedPart(backupLockedPart);
                     while (onDiskWalIDSet.size() > 0 && transactionLogCursor.hasNext()) {
                         int walId = transactionLogCursor.getWalId();
                         if (onDiskWalIDSet.remove(walId) != -1) {
@@ -575,6 +580,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         private final IntList discovered = new IntList();
         private final IntIntHashMap nextToApply = new IntIntHashMap();
         private final int waitBeforeDelete;
+        private long backupLockedPart;
         private long currentSeqPart;
         private boolean logged;
         private TableToken tableToken;
@@ -612,6 +618,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             this.tableToken = tableToken;
             nextToApply.clear();
             discovered.clear();
+            backupLockedPart = -1;
             currentSeqPart = -1;
             logged = false;
         }
@@ -629,7 +636,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
                     final int seqPart = getSeqPart(walId, maxSegmentLocked); // -1 if not a seq part
                     if (seqPart > -1) {
-                        if (seqPart < currentSeqPart) {
+                        if (seqPart < currentSeqPart && seqPart != backupLockedPart) {
                             logDebugInfo();
                             deleter.deleteSequencerPart(seqPart);
                         }
@@ -676,6 +683,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     }
                 }
             }
+        }
+
+        public void trackBackupLockedPart(long partNo) {
+            backupLockedPart = partNo;
         }
 
         public void trackCurrentSeqPart(long partNo) {

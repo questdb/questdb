@@ -162,7 +162,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         if (txnMem.isOpen()) {
             long maxTxnInFile = txnMem.getLong(MAX_TXN_OFFSET_64);
             if (maxTxnInFile != maxTxn.get()) {
-                LOG.error().$("Max txn in the file ").$(maxTxnInFile).$(" but in memory is ").$(maxTxn.get()).$();
+                LOG.info().$("Max txn in the file ").$(maxTxnInFile).$(" but in memory is ").$(maxTxn.get()).$();
             }
         }
         txnMem.close(false);

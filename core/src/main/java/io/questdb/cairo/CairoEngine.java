@@ -162,6 +162,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private static final ThreadLocal<MatViewRefreshTask> tlMatViewRefreshTask = new ThreadLocal<>(MatViewRefreshTask::new);
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
+    private final BackupSeqPartLock backupSeqPartLock = new BackupSeqPartLock();
     private final DatabaseCheckpointAgent checkpointAgent;
     private final CopyExportContext copyExportContext;
     private final CopyImportContext copyImportContext;
@@ -771,6 +772,10 @@ public class CairoEngine implements Closeable, WriterSource {
                 // Retry on this exception, all interfaces like HTTP, Pg wire are supposed to retry too.
             }
         }
+    }
+
+    public BackupSeqPartLock getBackupSeqPartLock() {
+        return backupSeqPartLock;
     }
 
     @TestOnly

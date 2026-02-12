@@ -76,6 +76,8 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietCloseable {
 
     private final static Log LOG = LogFactory.getLog(DatabaseCheckpointAgent.class);
+    private final ObjList<String> backupLockedDirNames = new ObjList<>();
+    private final LongList backupLockedSeqTxns = new LongList();
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final FilesFacade ff;
@@ -469,6 +471,11 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         // Record the seqTxn for this table (may be a base table for mat views)
                                         baseTableSeqTxns.put(tableToken.getTableName(), seqTxn);
 
+                                        if (isIncrementalBackup) {
+                                            BackupSeqPartLock seqPartLock = engine.getBackupSeqPartLock();
+                                            seqPartLock.lock(tableToken, seqTxn);
+                                        }
+
                                         // Fetch sequencer metadata and the last committed sequencer txn.
                                         // The metadata will be dumped to the checkpoint, and lastTxn is stored
                                         // separately to know which sequencer txn the metadata corresponds to.
@@ -541,6 +548,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         walPurgeJobRunLock.unlock();
                         ownsWalPurgeJobRunLock = false;
                     }
+                    engine.getBackupSeqPartLock().clear();
                     var log = LOG.error().$("cannot create checkpoint [e=").$(e);
                     if (tableToken != null) {
                         log.$(", table=").$(tableToken);
@@ -750,6 +758,11 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     // checkpointRelease() can be called several time in a row.
                 }
             }
+
+            // Clear backup seq part locks
+            engine.getBackupSeqPartLock().clear();
+            backupLockedDirNames.clear();
+            backupLockedSeqTxns.clear();
 
             // reset checkpoint-in-flight flag.
             startedAtTimestamp.set(Numbers.LONG_NULL);
