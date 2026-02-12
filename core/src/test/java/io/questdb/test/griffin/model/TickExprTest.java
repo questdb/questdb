@@ -757,30 +757,6 @@ public class TickExprTest {
     }
 
     @Test
-    public void testCompiledTickExprVariableProducesDynamicModel() throws SqlException {
-        RuntimeIntervalModelBuilder builder = new RuntimeIntervalModelBuilder();
-        builder.of(timestampType.getTimestampType(), 0, configuration);
-        builder.intersectIntervals("$today", 0, 6, 0);
-        try (RuntimeIntrinsicIntervalModel m = builder.build()) {
-            Assert.assertFalse("Variable expression should produce dynamic model", m.isStatic());
-        }
-    }
-
-    @Test
-    public void testCompiledTickExprVariableWithTimeSuffixProducesDynamicModel() throws SqlException {
-        // $todayT09:30;1h must go through the dynamic path, not static.
-        // The 'T' time-override suffix immediately after the variable name
-        // must not prevent isDateVariable() from recognizing $today.
-        String expr = "$todayT09:30;1h";
-        RuntimeIntervalModelBuilder builder = new RuntimeIntervalModelBuilder();
-        builder.of(timestampType.getTimestampType(), 0, configuration);
-        builder.intersectIntervals(expr, 0, expr.length(), 0);
-        try (RuntimeIntrinsicIntervalModel m = builder.build()) {
-            Assert.assertFalse("$todayT09:30;1h should produce dynamic model", m.isStatic());
-        }
-    }
-
-    @Test
     public void testDateCeilMicroWithDiffFraction() throws NumericException {
         assertDateFloor("2015-02-28T08:22:44.556012Z", "2015-02-28T08:22:44.556012");
         assertDateFloor("2015-02-28T08:22:44.556010Z", "2015-02-28T08:22:44.55601");
@@ -4545,31 +4521,37 @@ public class TickExprTest {
     }
 
     /**
-     * Asserts that CompiledTickExpression (dynamic path) produces the same intervals
-     * as the static parseTickExpr path for a given expression with a randomized "now".
+     * Asserts that an expression containing date variables:
+     * 1. Produces a dynamic model when going through RuntimeIntervalModelBuilder
+     * 2. Produces the same intervals via CompiledTickExpression as the static parseTickExpr path
      */
     private void assertCompiledTickExpr(String expression) throws SqlException {
+        // Verify the builder produces a dynamic model
+        RuntimeIntervalModelBuilder builder = new RuntimeIntervalModelBuilder();
+        builder.of(timestampType.getTimestampType(), 0, configuration);
+        builder.intersectIntervals(expression, 0, expression.length(), 0);
+        try (RuntimeIntrinsicIntervalModel m = builder.build()) {
+            Assert.assertFalse("Expression should produce dynamic model: " + expression, m.isStatic());
+        }
+
+        // Verify dynamic path produces same results as static path
         final TimestampDriver timestampDriver = timestampType.getDriver();
         final Rnd rnd = TestUtils.generateRandom(LOG);
 
-        // Generate random "now" between 2020-01-01 and 2030-12-31
         long minTimestamp = timestampDriver.parseFloorLiteral("2020-01-01T00:00:00.000000Z");
         long maxTimestamp = timestampDriver.parseFloorLiteral("2030-12-31T23:59:59.999999Z");
         long range = maxTimestamp - minTimestamp;
         long randomNow = minTimestamp + Math.abs(rnd.nextLong() % range);
 
-        // Add random time component (0-23 hours, 0-59 minutes)
         randomNow = timestampDriver.startOfDay(randomNow, 0);
         randomNow += timestampDriver.fromHours(rnd.nextInt(24));
         randomNow += timestampDriver.fromMinutes(rnd.nextInt(60));
 
-        // Dynamic path: CompiledTickExpression
         try (CompiledTickExpression compiled = new CompiledTickExpression(
                 timestampDriver, configuration, expression)) {
             LongList dynamicResult = new LongList();
             compiled.evaluate(dynamicResult, randomNow);
 
-            // Static path: parseTickExprWithNow
             LongList staticResult = new LongList();
             parseTickExprWithNow(timestampDriver, expression, 0, expression.length(), 0,
                     staticResult, IntervalOperation.INTERSECT, randomNow);

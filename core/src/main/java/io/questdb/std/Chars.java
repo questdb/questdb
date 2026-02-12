@@ -210,7 +210,7 @@ public final class Chars {
     }
 
     public static boolean empty(@Nullable CharSequence value) {
-        return value == null || value.length() < 1;
+        return value == null || value.isEmpty();
     }
 
     public static boolean endsWith(CharSequence cs, CharSequence ends) {
@@ -1040,14 +1040,10 @@ public final class Chars {
     }
 
     public static boolean isQuote(char c) {
-        switch (c) {
-            case '\'':
-            case '"':
-            case '`':
-                return true;
-            default:
-                return false;
-        }
+        return switch (c) {
+            case '\'', '"', '`' -> true;
+            default -> false;
+        };
     }
 
     public static boolean isQuoted(CharSequence s) {
@@ -1277,7 +1273,7 @@ public final class Chars {
     }
 
     public static boolean startsWith(CharSequence _this, char c) {
-        return _this.length() > 0 && _this.charAt(0) == c;
+        return !_this.isEmpty() && _this.charAt(0) == c;
     }
 
     public static boolean startsWithIgnoreCase(CharSequence cs, CharSequence startsWith) {
