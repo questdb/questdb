@@ -481,21 +481,35 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     private static boolean containsDateVariable(CharSequence seq, int lo, int lim) {
-        for (int i = lo; i < lim; i++) {
-            if (seq.charAt(i) == '$') {
+        for (int i = lo; i < lim - 1; i++) {
+            if (seq.charAt(i) == '$' && isDateVariableName(seq, i + 1, lim)) {
                 return true;
             }
         }
         return false;
     }
 
-    private void intersectCompiledTickExpr(CompiledTickExpression expr) {
-        if (isEmptySet()) {
-            return;
+    private static boolean isDateVariableName(CharSequence seq, int lo, int lim) {
+        // Must match one of: now, today, yesterday, tomorrow (case-insensitive)
+        // followed by a non-letter character or end of string
+        return matchesVariable(seq, lo, lim, "now")
+                || matchesVariable(seq, lo, lim, "today")
+                || matchesVariable(seq, lo, lim, "yesterday")
+                || matchesVariable(seq, lo, lim, "tomorrow");
+    }
+
+    private static boolean matchesVariable(CharSequence seq, int lo, int lim, String name) {
+        int len = name.length();
+        if (lo + len > lim) {
+            return false;
         }
-        IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
-        dynamicRangeList.add(expr);
-        intervalApplied = true;
+        for (int i = 0; i < len; i++) {
+            if (Character.toLowerCase(seq.charAt(lo + i)) != name.charAt(i)) {
+                return false;
+            }
+        }
+        // After the variable name, next char must not be a letter (to avoid matching "$nowadays")
+        return lo + len >= lim || !Character.isLetter(seq.charAt(lo + len));
     }
 
     private void intersectBetweenDynamic(Function funcValue1, Function funcValue2) {
@@ -531,6 +545,15 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
         IntervalUtils.encodeInterval(constValue, 0, (short) 0, IntervalDynamicIndicator.IS_HI_DYNAMIC, operation, staticIntervals);
         dynamicRangeList.add(funcValue);
+        intervalApplied = true;
+    }
+
+    private void intersectCompiledTickExpr(CompiledTickExpression expr) {
+        if (isEmptySet()) {
+            return;
+        }
+        IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
+        dynamicRangeList.add(expr);
         intervalApplied = true;
     }
 

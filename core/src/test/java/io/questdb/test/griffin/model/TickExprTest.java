@@ -2808,6 +2808,25 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprInvalidVariableFailsAtCompileTime() {
+        // Invalid $-expressions like $garbage must fail at compile time, not be
+        // deferred to runtime. containsDateVariable() only matches known variable
+        // names ($now, $today, $yesterday, $tomorrow), so $garbage falls through
+        // to parseTickExpr which rejects it immediately.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+
+        RuntimeIntervalModelBuilder builder = new RuntimeIntervalModelBuilder();
+        builder.of(timestampType.getTimestampType(), 0, configuration);
+        try {
+            builder.intersectIntervals("$garbage", 0, 8, 42);
+            Assert.fail("Should throw SqlException at compile time");
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "Unknown date variable");
+            Assert.assertEquals(42, e.getPosition());
+        }
+    }
+
+    @Test
     public void testDayFilterAllDaysOfWeek() throws SqlException {
         // Test each day abbreviation
         // 2024-01-01=Mon, 02=Tue, 03=Wed, 04=Thu, 05=Fri, 06=Sat, 07=Sun
