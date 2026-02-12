@@ -32,6 +32,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UntypedFunction;
 import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
+import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
 
 /**
@@ -45,8 +47,8 @@ import io.questdb.std.datetime.TimeZoneRules;
  *   ir[0]:                         header (counts + flags, see HDR_* constants)
  *   ir[1]:                         numericTzOffset (Long.MIN_VALUE if not numeric)
  *   ir[2 .. 2+D):                  duration parts (encoded unit+value)
- *   ir[2+D .. 2+D+2T):             time override pairs (offset, width)
- *   ir[2+D+2T .. end):             elements
+ *   ir[2+D .. 2+D+3T):             time override triples (offset, width, zoneMatch)
+ *   ir[2+D+3T .. end):             elements
  * </pre>
  * Element encodings (tag in bits 63-62, expr in bits 59-0):
  * <ul>
@@ -84,6 +86,7 @@ public class CompiledTickExpression extends UntypedFunction {
     private final int durationPartCount;
     private final int elemCount;
     private final int elemOff;
+    private final TimeZoneRules[] elemTzRules;
     private final LongList exchangeSchedule;
     private final String expression;
     private final boolean hasDurationWithExchange;
@@ -99,6 +102,7 @@ public class CompiledTickExpression extends UntypedFunction {
             long[] ir,
             CharSequence expression,
             TimeZoneRules tzRules,
+            DateLocale dateLocale,
             LongList exchangeSchedule
     ) {
         this.timestampDriver = timestampDriver;
@@ -116,7 +120,25 @@ public class CompiledTickExpression extends UntypedFunction {
         this.dayFilterMask = (int) (header & HDR_DAY_MASK);
         this.durationOff = 2;
         this.toOff = 2 + durationPartCount;
-        this.elemOff = toOff + timeOverrideCount * 2;
+        this.elemOff = toOff + timeOverrideCount * 3;
+
+        // Resolve per-element timezone rules from zone match values in IR
+        TimeZoneRules[] resolved = null;
+        if (dateLocale != null) {
+            for (int j = 0; j < timeOverrideCount; j++) {
+                long zoneMatch = ir[toOff + j * 3 + 2];
+                if (zoneMatch != Long.MIN_VALUE && zoneMatch != Long.MAX_VALUE) {
+                    if (resolved == null) {
+                        resolved = new TimeZoneRules[timeOverrideCount];
+                    }
+                    resolved[j] = dateLocale.getZoneRules(
+                            Numbers.decodeLowInt(zoneMatch),
+                            timestampDriver.getTZRuleResolution()
+                    );
+                }
+            }
+        }
+        this.elemTzRules = resolved;
     }
 
     static long encodeDuration(char unit, int value) {
@@ -310,14 +332,28 @@ public class CompiledTickExpression extends UntypedFunction {
     private void emitDayInterval(long dayStart, LongList out) {
         if (timeOverrideCount > 0) {
             for (int j = 0; j < timeOverrideCount; j++) {
-                long offset = ir[toOff + j * 2];
-                long width = ir[toOff + j * 2 + 1];
+                long offset = ir[toOff + j * 3];
+                long width = ir[toOff + j * 3 + 1];
+                long zoneMatch = ir[toOff + j * 3 + 2];
                 long lo = dayStart + offset;
+                long hi;
                 if (durationPartCount > 0 && !hasDurationWithExchange) {
-                    out.add(lo, applyDuration(lo) - 1);
+                    hi = applyDuration(lo) - 1;
                 } else {
-                    out.add(lo, lo + width);
+                    hi = lo + width;
                 }
+                if (zoneMatch != Long.MIN_VALUE) {
+                    // Per-element tz: convert to UTC first
+                    if (elemTzRules != null && elemTzRules[j] != null) {
+                        lo = timestampDriver.toUTC(lo, elemTzRules[j]);
+                        hi = timestampDriver.toUTC(hi, elemTzRules[j]);
+                    }
+                    // lo/hi are now UTC; convert to global-local so Phase 3
+                    // (applyTimezone) produces the correct UTC result
+                    lo = utcToGlobalLocal(lo);
+                    hi = utcToGlobalLocal(hi);
+                }
+                out.add(lo, hi);
             }
         } else if (durationPartCount > 0 && !hasDurationWithExchange) {
             out.add(dayStart, applyDuration(dayStart) - 1);
@@ -368,6 +404,21 @@ public class CompiledTickExpression extends UntypedFunction {
         } else {
             out.add(timestamp, timestamp);
         }
+    }
+
+    /**
+     * Converts a UTC timestamp to the global timezone's local time,
+     * so that Phase 3 (applyTimezone) can convert it back to UTC correctly.
+     * Used for per-element timezone entries that are already in UTC.
+     */
+    private long utcToGlobalLocal(long utc) {
+        long numericTzOffset = ir[1];
+        if (numericTzOffset != Long.MIN_VALUE) {
+            return utc + numericTzOffset;
+        } else if (tzRules != null) {
+            return utc + tzRules.getOffset(utc);
+        }
+        return utc;
     }
 
     private long evaluateExpr(long encoded) {

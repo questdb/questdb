@@ -261,11 +261,11 @@ public final class IntervalUtils {
             tzContentHi = tzEnd;
 
             try {
-                DateLocale dateLocale = configuration.getDefaultDateLocale();
                 long l = Dates.parseOffset(effectiveSeq, tzContentLo, tzContentHi);
                 if (l != Long.MIN_VALUE) {
                     numericTzOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
                 } else {
+                    DateLocale dateLocale = configuration.getDefaultDateLocale();
                     tzRules = dateLocale.getZoneRules(
                             Numbers.decodeLowInt(dateLocale.matchZone(effectiveSeq, tzContentLo, tzContentHi)),
                             timestampDriver.getTZRuleResolution()
@@ -361,13 +361,13 @@ public final class IntervalUtils {
                     throw SqlException.$(position, "Unclosed '[' in time list");
                 }
 
-                // Ensure capacity for worst case
+                // Ensure capacity for worst case (3 longs per time override entry)
                 int capacity = 1;
                 for (int i = tContentLo + 1; i < bracketEnd; i++) {
                     if (effectiveSeq.charAt(i) == ',') capacity++;
                 }
-                if (irPos + capacity * 2 > ir.length) {
-                    ir = java.util.Arrays.copyOf(ir, Math.max(ir.length * 2, irPos + capacity * 2));
+                if (irPos + capacity * 3 > ir.length) {
+                    ir = java.util.Arrays.copyOf(ir, Math.max(ir.length * 2, irPos + capacity * 3));
                 }
 
                 int elemStart = tContentLo + 1;
@@ -403,17 +403,22 @@ public final class IntervalUtils {
                         long tLo = decodeIntervalLo(tmp, 0);
                         long tHi = decodeIntervalHi(tmp, 0);
 
-                        // Apply per-element timezone offset
+                        // Apply per-element timezone
+                        long zoneMatch = Long.MIN_VALUE;
                         if (elemTzMarker >= 0) {
                             int etzLo = elemTzMarker + 1;
                             try {
                                 long l = Dates.parseOffset(effectiveSeq, etzLo, etzHi);
                                 if (l != Long.MIN_VALUE) {
+                                    // Numeric offset: pre-apply at compile time
                                     long elemTzOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
                                     tLo -= elemTzOffset;
                                     tHi -= elemTzOffset;
+                                    zoneMatch = Long.MAX_VALUE;
                                 } else {
-                                    throw SqlException.$(position, "named timezone not supported in time list element, use numeric offset (e.g. @+01:00)");
+                                    // Named timezone: store zone match for runtime resolution
+                                    DateLocale dateLocale = configuration.getDefaultDateLocale();
+                                    zoneMatch = dateLocale.matchZone(effectiveSeq, etzLo, etzHi);
                                 }
                             } catch (NumericException e) {
                                 throw SqlException.$(position, "invalid timezone in time list: ").put(effectiveSeq, etzLo, etzHi);
@@ -422,13 +427,14 @@ public final class IntervalUtils {
 
                         ir[irPos++] = tLo;
                         ir[irPos++] = tHi - tLo;
+                        ir[irPos++] = zoneMatch;
                         timeOverrideCount++;
                         elemStart = i + 1;
                     }
                 }
             } else {
                 // Single time value: T09:30
-                if (irPos + 2 > ir.length) {
+                if (irPos + 3 > ir.length) {
                     ir = java.util.Arrays.copyOf(ir, ir.length * 2);
                 }
                 parseSink.clear();
@@ -444,6 +450,7 @@ public final class IntervalUtils {
                 long tHi = decodeIntervalHi(tmp, 0);
                 ir[irPos++] = tLo;
                 ir[irPos++] = tHi - tLo;
+                ir[irPos++] = Long.MIN_VALUE;
                 timeOverrideCount = 1;
             }
         }
@@ -596,6 +603,7 @@ public final class IntervalUtils {
                 ir,
                 seq.subSequence(lo, lim),
                 tzRules,
+                configuration.getDefaultDateLocale(),
                 exchangeSchedule
         );
     }
