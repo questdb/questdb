@@ -135,6 +135,41 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAliasedColumnVisibleByBothNamesInCaseThen() throws Exception {
+        // Verify that both the alias (p) and the original column name (price)
+        // can be used in CASE branches alongside a window function.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2024-01-01', 100.0),
+                        ('2024-01-02', 110.0),
+                        ('2024-01-03', 90.0)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tp\tcase
+                            2024-01-01T00:00:00.000000Z\t100.0\tnull
+                            2024-01-02T00:00:00.000000Z\t110.0\t110.0
+                            2024-01-03T00:00:00.000000Z\t90.0\t-90.0
+                            """,
+                    """
+                            SELECT ts, price AS p,
+                                CASE
+                                    WHEN price > lag(price) OVER (ORDER BY ts) THEN p
+                                    WHEN price < lag(price) OVER (ORDER BY ts) THEN -price
+                                END
+                            FROM trades
+                            """,
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testAliasedColumnVisibleByRealNameInCaseThen() throws Exception {
         // Regression test for https://github.com/questdb/questdb/issues/6769
         // When a CASE/WHEN contains a window function and the SELECT aliases a column,
@@ -160,41 +195,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             SELECT ts, price AS p,
                                 CASE
                                     WHEN price > lag(price) OVER (ORDER BY ts) THEN price
-                                    WHEN price < lag(price) OVER (ORDER BY ts) THEN -price
-                                END
-                            FROM trades
-                            """,
-                    "ts",
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testAliasedColumnVisibleByBothNamesInCaseThen() throws Exception {
-        // Verify that both the alias (p) and the original column name (price)
-        // can be used in CASE branches alongside a window function.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)");
-            execute("""
-                    INSERT INTO trades VALUES
-                        ('2024-01-01', 100.0),
-                        ('2024-01-02', 110.0),
-                        ('2024-01-03', 90.0)
-                    """);
-
-            assertQueryNoLeakCheck(
-                    """
-                            ts\tp\tcase
-                            2024-01-01T00:00:00.000000Z\t100.0\tnull
-                            2024-01-02T00:00:00.000000Z\t110.0\t110.0
-                            2024-01-03T00:00:00.000000Z\t90.0\t-90.0
-                            """,
-                    """
-                            SELECT ts, price AS p,
-                                CASE
-                                    WHEN price > lag(price) OVER (ORDER BY ts) THEN p
                                     WHEN price < lag(price) OVER (ORDER BY ts) THEN -price
                                 END
                             FROM trades
@@ -293,6 +293,43 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "FROM tab " +
                             "ORDER BY ts DESC",
                     "ts###desc",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCaseWindowFnUsesNonSelectedColumn() throws Exception {
+        // Regression for issue https://github.com/questdb/questdb/issues/6769
+        // Price is only used inside the CASE expression, not as a
+        // standalone SELECT column. It must still be propagated through the
+        // window model so that the outer virtual model can reference it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2024-01-01', 100.0),
+                        ('2024-01-02', 110.0),
+                        ('2024-01-03', 90.0)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tcase
+                            2024-01-01T00:00:00.000000Z\tnull
+                            2024-01-02T00:00:00.000000Z\t110.0
+                            2024-01-03T00:00:00.000000Z\t-90.0
+                            """,
+                    """
+                            SELECT ts,
+                                CASE
+                                    WHEN price > lag(price) OVER (ORDER BY ts) THEN price
+                                    WHEN price < lag(price) OVER (ORDER BY ts) THEN -price
+                                END
+                            FROM trades
+                            """,
+                    "ts",
                     false,
                     true
             );

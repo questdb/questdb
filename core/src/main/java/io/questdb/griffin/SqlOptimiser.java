@@ -6217,7 +6217,17 @@ public class SqlOptimiser implements Mutable {
         if (n != node) {
             return n;
         }
-        return replaceLiteral(node, translatingModel, innerVirtualModel, true, baseModel, false);
+        n = replaceLiteral(node, translatingModel, innerVirtualModel, true, baseModel, false);
+        if (n != node) {
+            // The node was a column literal. replaceLiteral added it to
+            // translatingModel and innerVirtualModel, but windowModel also
+            // needs a passthrough so the outer virtual model can see it.
+            CharSequence alias = n.token;
+            if (windowModel.getAliasToColumnMap().excludes(alias)) {
+                windowModel.addBottomUpColumnIfNotExists(nextColumn(alias));
+            }
+        }
+        return n;
     }
 
     private void resolveJoinColumns(QueryModel model) throws SqlException {
