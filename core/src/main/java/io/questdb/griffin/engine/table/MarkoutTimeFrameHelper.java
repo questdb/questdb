@@ -174,17 +174,20 @@ public class MarkoutTimeFrameHelper {
             // Move backward
             rowIndex--;
             if (rowIndex < timeFrame.getRowLo()) {
-                // Move to previous frame
-                if (frameIndex == 0) {
+                // Move to previous frame, skipping empty frames
+                boolean found = false;
+                while (frameIndex > 0) {
+                    frameIndex--;
+                    timeFrameCursor.jumpTo(frameIndex);
+                    if (timeFrameCursor.open() > 0) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
                     // No more frames, update watermark to indicate we've scanned everything
                     backwardWatermark = 0;
                     break;
-                }
-                frameIndex--;
-                timeFrameCursor.jumpTo(frameIndex);
-                if (timeFrameCursor.open() == 0) {
-                    // Empty frame, try previous
-                    continue;
                 }
                 rowIndex = timeFrame.getRowHi() - 1;
                 timeFrameCursor.recordAt(record, frameIndex, rowIndex);
@@ -437,13 +440,16 @@ public class MarkoutTimeFrameHelper {
             // Move forward
             rowIndex++;
             if (rowIndex >= timeFrame.getRowHi()) {
-                // Move to next frame
-                if (!timeFrameCursor.next()) {
-                    break;
+                // Move to next frame, skipping empty frames
+                boolean found = false;
+                while (timeFrameCursor.next()) {
+                    if (timeFrameCursor.open() > 0) {
+                        found = true;
+                        break;
+                    }
                 }
-                if (timeFrameCursor.open() == 0) {
-                    // Empty frame, try next
-                    continue;
+                if (!found) {
+                    break;
                 }
                 frameIndex = timeFrame.getFrameIndex();
                 rowIndex = timeFrame.getRowLo();
