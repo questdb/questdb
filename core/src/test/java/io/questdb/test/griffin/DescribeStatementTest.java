@@ -53,6 +53,18 @@ public class DescribeStatementTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDescribeAfterExplain() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT, name STRING)");
+
+            assertSql("""
+                    QUERY PLAN
+                    describe()
+                    """, "EXPLAIN DESCRIBE (SELECT * FROM test_table)");
+        });
+    }
+
+    @Test
     public void testDescribeAllColumnTypes() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -86,18 +98,6 @@ public class DescribeStatementTest extends AbstractCairoTest {
                     10\tcol_timestamp\tTIMESTAMP
                     11\tcol_uuid\tUUID
                     """, "DESCRIBE (SELECT * FROM all_types)");
-        });
-    }
-
-    @Test
-    public void testDescribeAfterExplain() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE test_table (id INT, name STRING)");
-
-            assertSql("""
-                    QUERY PLAN
-                    describe()
-                    """, "EXPLAIN DESCRIBE (SELECT * FROM test_table)");
         });
     }
 
@@ -217,20 +217,6 @@ public class DescribeStatementTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDescribeSelectWithSymbol() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE test_table (id INT, sym SYMBOL, price DOUBLE)");
-
-            assertSql("""
-                    ordinal_position\tcolumn_name\tdata_type
-                    0\tid\tINT
-                    1\tsym\tSYMBOL
-                    2\tprice\tDOUBLE
-                    """, "DESCRIBE (SELECT * FROM test_table)");
-        });
-    }
-
-    @Test
     public void testDescribeSelectWithCast() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test_table (id INT, value DOUBLE)");
@@ -266,6 +252,41 @@ public class DescribeStatementTest extends AbstractCairoTest {
                     0\tname\tSTRING
                     """, "DESCRIBE (SELECT name FROM test_table)");
         });
+    }
+
+    @Test
+    public void testDescribeSelectWithSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT, sym SYMBOL, price DOUBLE)");
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tsym\tSYMBOL
+                    2\tprice\tDOUBLE
+                    """, "DESCRIBE (SELECT * FROM test_table)");
+        });
+    }
+
+    @Test
+    public void testDescribeSemicolonInBlockComment() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT, name STRING)");
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tname\tSTRING
+                    """, "DESCRIBE (SELECT * /* note;here */ FROM test_table)");
+        });
+    }
+
+    @Test
+    public void testDescribeSemicolonInString() throws Exception {
+        assertMemoryLeak(() -> assertSql("""
+                ordinal_position\tcolumn_name\tdata_type
+                0\tx\tSTRING
+                """, "DESCRIBE (SELECT 'a;b' AS x)"));
     }
 
     @Test

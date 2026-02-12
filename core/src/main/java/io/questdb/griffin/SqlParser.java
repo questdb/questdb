@@ -70,7 +70,6 @@ import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
-import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -119,6 +118,7 @@ public class SqlParser {
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = createMatViewOperationBuilder.getCreateTableOperationBuilder();
     private final CreateViewOperationBuilderImpl createViewOperationBuilder = new CreateViewOperationBuilderImpl();
+    private final StringSink describeSqlSink = new StringSink();
     private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionParser expressionParser;
@@ -2513,6 +2513,54 @@ public class SqlParser {
         return updateQueryModel;
     }
 
+    private ExecutionModel parseDescribe(
+            GenericLexer lexer,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        // Collect all tokens after DESCRIBE into a string.
+        // We use lastTokenPosition() + 8 ("describe".length()) rather than
+        // getPosition() because the lexer may have already consumed the next
+        // character (e.g. '(' in "describe(...)") as a lookahead token.
+        final CharSequence content = lexer.getContent();
+        final int startPos = lexer.lastTokenPosition() + 8;
+
+        // Walk tokens using the lexer to properly handle strings and comments
+        int endPos = content.length();
+        int parenDepth = 0;
+        CharSequence tok;
+        while ((tok = SqlUtil.fetchNext(lexer)) != null) {
+            if (Chars.equals(tok, '(')) {
+                parenDepth++;
+            } else if (Chars.equals(tok, ')')) {
+                parenDepth--;
+            } else if (isSemicolon(tok) && parenDepth == 0) {
+                endPos = lexer.lastTokenPosition();
+                break;
+            }
+        }
+
+        // Extract the expression after DESCRIBE
+        CharSequence expr = content.subSequence(startPos, endPos).toString().trim();
+
+        // Build new SQL: SELECT * FROM describe(<expr>)
+        // Use a dedicated sink rather than the thread-local one. The lexer produces
+        // FloatingSequence tokens that reference its content, so the sink must not be
+        // reused until compilation is complete.
+        describeSqlSink.clear();
+        describeSqlSink.put("SELECT * FROM describe(");
+        describeSqlSink.put(expr);
+        describeSqlSink.put(')');
+
+        // Re-lex and parse as SELECT
+        lexer.of(describeSqlSink);
+        // Consume the SELECT token before calling parseSelect
+        tok = tok(lexer, "'select'");
+        if (!isSelectKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'select' expected");
+        }
+        return parseSelect(lexer, sqlParserCallback, null);
+    }
+
     // doesn't allow copy, rename
     private ExecutionModel parseExplain(
             GenericLexer lexer,
@@ -2551,51 +2599,6 @@ public class SqlParser {
             ).put(" expected");
         }
 
-        return parseSelect(lexer, sqlParserCallback, null);
-    }
-
-    private ExecutionModel parseDescribe(
-            GenericLexer lexer,
-            SqlParserCallback sqlParserCallback
-    ) throws SqlException {
-        // Collect all tokens after DESCRIBE into a string.
-        // We use lastTokenPosition() + 8 ("describe".length()) rather than
-        // getPosition() because the lexer may have already consumed the next
-        // character (e.g. '(' in "describe(...)") as a lookahead token.
-        final CharSequence content = lexer.getContent();
-        final int startPos = lexer.lastTokenPosition() + 8;
-
-        // Find the end of the statement (semicolon or end of input)
-        int endPos = startPos;
-        int parenDepth = 0;
-        while (endPos < content.length()) {
-            char c = content.charAt(endPos);
-            if (c == '(') {
-                parenDepth++;
-            } else if (c == ')') {
-                parenDepth--;
-            } else if (c == ';' && parenDepth == 0) {
-                break;
-            }
-            endPos++;
-        }
-
-        // Extract the expression after DESCRIBE
-        CharSequence expr = content.subSequence(startPos, endPos).toString().trim();
-
-        // Build new SQL: SELECT * FROM describe(<expr>)
-        final StringSink rewrittenSql = Misc.getThreadLocalSink();
-        rewrittenSql.put("SELECT * FROM describe(");
-        rewrittenSql.put(expr);
-        rewrittenSql.put(')');
-
-        // Re-lex and parse as SELECT
-        lexer.of(rewrittenSql);
-        // Consume the SELECT token before calling parseSelect
-        CharSequence tok = tok(lexer, "'select'");
-        if (!isSelectKeyword(tok)) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("'select' expected");
-        }
         return parseSelect(lexer, sqlParserCallback, null);
     }
 

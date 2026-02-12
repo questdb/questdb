@@ -1444,6 +1444,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 assertReadOnlyOperationAllowed("EXPLAIN SELECT * FROM reference_prices", executionContext);
                 assertReadOnlyOperationAllowed("EXPLAIN reference_prices", executionContext);
                 assertReadOnlyOperationAllowed("EXPLAIN WITH v AS (select venue from reference_prices) SELECT * FROM v", executionContext);
+
+                assertReadOnlyOperationAllowed("EXPLAIN DESCRIBE (SELECT * FROM reference_prices)", executionContext);
+                assertReadOnlyOperationAllowed("DESCRIBE (SELECT * FROM reference_prices)", executionContext);
             }
         });
     }
@@ -10654,7 +10657,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             fail("Expected exception missing");
         } catch (SqlException e) {
             assertEquals(8, e.getPosition());
-            assertContains(e.getFlyweightMessage(), "'create', 'format', 'insert', 'update', 'select' or 'with' expected");
+            assertContains(e.getFlyweightMessage(), "'create', 'describe', 'format', 'insert', 'update', 'select' or 'with' expected");
         }
     }
 
