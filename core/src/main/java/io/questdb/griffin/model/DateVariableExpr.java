@@ -61,17 +61,6 @@ public class DateVariableExpr {
     }
 
     /**
-     * Encodes this expression as a single long for the compiled IR.
-     * Layout: varType[59:58] | isBusinessDays[57] | offsetUnit[55:40] | offsetValue[31:0]
-     */
-    long toEncodedLong() {
-        return ((long) (varType & 0x3) << 58)
-                | (isBusinessDays ? (1L << 57) : 0L)
-                | ((long) (offsetUnit & 0xFFFF) << 40)
-                | (offsetValue & 0xFFFFFFFFL);
-    }
-
-    /**
      * Evaluates this expression with the given "now" timestamp, producing
      * a resolved timestamp using only long arithmetic.
      *
@@ -103,17 +92,32 @@ public class DateVariableExpr {
 
     /**
      * Parses a date variable expression string into a {@code DateVariableExpr}.
+     * Allocates an object — use {@link #parseEncoded} in allocation-sensitive paths.
+     */
+    public static DateVariableExpr parse(CharSequence seq, int lo, int hi, int errorPos) throws SqlException {
+        long encoded = parseEncoded(seq, lo, hi, errorPos);
+        return new DateVariableExpr(
+                (byte) ((encoded >>> 58) & 0x3),
+                (char) ((encoded >>> 40) & 0xFFFF),
+                (int) encoded,
+                (encoded & (1L << 57)) != 0
+        );
+    }
+
+    /**
+     * Parses a date variable expression directly into the compiled IR encoding.
+     * No object allocation.
      * <p>
-     * Examples: {@code $today}, {@code $now - 2h}, {@code $today + 3bd}
+     * Layout: varType[59:58] | isBusinessDays[57] | offsetUnit[55:40] | offsetValue[31:0]
      *
      * @param seq      the expression string
      * @param lo       start index (must point to '$')
      * @param hi       end index (exclusive)
      * @param errorPos position for error reporting
-     * @return the parsed expression
+     * @return the encoded expression as a long
      * @throws SqlException if the expression is invalid
      */
-    public static DateVariableExpr parse(CharSequence seq, int lo, int hi, int errorPos) throws SqlException {
+    static long parseEncoded(CharSequence seq, int lo, int hi, int errorPos) throws SqlException {
         // Find end of variable name (until space, '+', '-', or end)
         int varEnd = lo + 1;
         for (; varEnd < hi; varEnd++) {
@@ -132,7 +136,7 @@ public class DateVariableExpr {
         }
 
         if (opPos >= hi) {
-            return new DateVariableExpr(varType, (char) 0, 0, false);
+            return encode(varType, (char) 0, 0, false);
         }
 
         char op = seq.charAt(opPos);
@@ -192,7 +196,7 @@ public class DateVariableExpr {
             if (unitStart + 2 != hi) {
                 throw SqlException.$(errorPos + unitStart + 2 - lo, "Unexpected characters after unit");
             }
-            return new DateVariableExpr(varType, (char) 0, offsetValue, true);
+            return encode(varType, (char) 0, offsetValue, true);
         }
 
         // Single-character units
@@ -200,7 +204,14 @@ public class DateVariableExpr {
             throw SqlException.$(errorPos + unitStart + 1 - lo, "Unexpected characters after unit");
         }
 
-        return new DateVariableExpr(varType, unitChar, offsetValue, false);
+        return encode(varType, unitChar, offsetValue, false);
+    }
+
+    private static long encode(byte varType, char offsetUnit, int offsetValue, boolean isBusinessDays) {
+        return ((long) (varType & 0x3) << 58)
+                | (isBusinessDays ? (1L << 57) : 0L)
+                | ((long) (offsetUnit & 0xFFFF) << 40)
+                | (offsetValue & 0xFFFFFFFFL);
     }
 
     private static long addBusinessDays(TimestampDriver driver, long timestamp, int businessDays) {

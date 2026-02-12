@@ -458,17 +458,14 @@ public final class IntervalUtils {
                 while (endExprHi > endExprLo && Chars.isAsciiWhitespace(effectiveSeq.charAt(endExprHi - 1))) endExprHi--;
 
                 boolean isBusinessDay = isBusinessDayExpression(effectiveSeq, endExprHi);
-                DateVariableExpr startExpr = DateVariableExpr.parse(effectiveSeq, elemListLo, startExprHi, position);
-                DateVariableExpr endExpr = DateVariableExpr.parse(effectiveSeq, endExprLo, endExprHi, position);
-
                 ir[irPos++] = CompiledTickExpression.TAG_RANGE
                         | (isBusinessDay ? CompiledTickExpression.RANGE_BD_BIT : 0L)
-                        | startExpr.toEncodedLong();
-                ir[irPos++] = endExpr.toEncodedLong();
+                        | DateVariableExpr.parseEncoded(effectiveSeq, elemListLo, startExprHi, position);
+                ir[irPos++] = DateVariableExpr.parseEncoded(effectiveSeq, endExprLo, endExprHi, position);
                 elemCount++;
             } else {
-                DateVariableExpr expr = DateVariableExpr.parse(effectiveSeq, elemListLo, elemListHi, position);
-                ir[irPos++] = CompiledTickExpression.TAG_SINGLE_VAR | expr.toEncodedLong();
+                ir[irPos++] = CompiledTickExpression.TAG_SINGLE_VAR
+                        | DateVariableExpr.parseEncoded(effectiveSeq, elemListLo, elemListHi, position);
                 elemCount++;
             }
         } else if (isDateList) {
@@ -506,23 +503,20 @@ public final class IntervalUtils {
                             while (endHi > endLo && Chars.isAsciiWhitespace(effectiveSeq.charAt(endHi - 1))) endHi--;
 
                             boolean isBd = isBusinessDayExpression(effectiveSeq, endHi);
-                            DateVariableExpr startExpr = DateVariableExpr.parse(effectiveSeq, es, startHi, position);
-                            DateVariableExpr endExpr = DateVariableExpr.parse(effectiveSeq, endLo, endHi, position);
-
                             if (irPos + 2 > ir.length) {
                                 ir = java.util.Arrays.copyOf(ir, ir.length * 2);
                             }
                             ir[irPos++] = CompiledTickExpression.TAG_RANGE
                                     | (isBd ? CompiledTickExpression.RANGE_BD_BIT : 0L)
-                                    | startExpr.toEncodedLong();
-                            ir[irPos++] = endExpr.toEncodedLong();
+                                    | DateVariableExpr.parseEncoded(effectiveSeq, es, startHi, position);
+                            ir[irPos++] = DateVariableExpr.parseEncoded(effectiveSeq, endLo, endHi, position);
                             elemCount++;
                         } else {
-                            DateVariableExpr expr = DateVariableExpr.parse(effectiveSeq, es, ee, position);
                             if (irPos >= ir.length) {
                                 ir = java.util.Arrays.copyOf(ir, ir.length * 2);
                             }
-                            ir[irPos++] = CompiledTickExpression.TAG_SINGLE_VAR | expr.toEncodedLong();
+                            ir[irPos++] = CompiledTickExpression.TAG_SINGLE_VAR
+                                    | DateVariableExpr.parseEncoded(effectiveSeq, es, ee, position);
                             elemCount++;
                         }
                     } else {
