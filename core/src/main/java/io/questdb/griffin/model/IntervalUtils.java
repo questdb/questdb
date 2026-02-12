@@ -375,21 +375,21 @@ public final class IntervalUtils {
                     char c = i < bracketEnd ? effectiveSeq.charAt(i) : ',';
                     if (c == ',') {
                         int es = elemStart;
-                        int ee = i;
-                        while (es < ee && Chars.isAsciiWhitespace(effectiveSeq.charAt(es))) es++;
-                        while (ee > es && Chars.isAsciiWhitespace(effectiveSeq.charAt(ee - 1))) ee--;
+                        int etzHi = i;
+                        while (es < etzHi && Chars.isAsciiWhitespace(effectiveSeq.charAt(es))) es++;
+                        while (etzHi > es && Chars.isAsciiWhitespace(effectiveSeq.charAt(etzHi - 1))) etzHi--;
 
-                        if (es >= ee) {
+                        if (es >= etzHi) {
                             throw SqlException.$(position, "Empty element in time list");
                         }
                         int elemTzMarker = -1;
-                        for (int j = es; j < ee; j++) {
+                        for (int j = es; j < etzHi; j++) {
                             if (effectiveSeq.charAt(j) == '@') {
                                 elemTzMarker = j;
                                 break;
                             }
                         }
-                        int timeEnd = elemTzMarker >= 0 ? elemTzMarker : ee;
+                        int timeEnd = elemTzMarker >= 0 ? elemTzMarker : etzHi;
 
                         parseSink.clear();
                         parseSink.put("1970-01-01T");
@@ -402,6 +402,24 @@ public final class IntervalUtils {
                         }
                         long tLo = decodeIntervalLo(tmp, 0);
                         long tHi = decodeIntervalHi(tmp, 0);
+
+                        // Apply per-element timezone offset
+                        if (elemTzMarker >= 0) {
+                            int etzLo = elemTzMarker + 1;
+                            try {
+                                long l = Dates.parseOffset(effectiveSeq, etzLo, etzHi);
+                                if (l != Long.MIN_VALUE) {
+                                    long elemTzOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
+                                    tLo -= elemTzOffset;
+                                    tHi -= elemTzOffset;
+                                } else {
+                                    throw SqlException.$(position, "named timezone not supported in time list element, use numeric offset (e.g. @+01:00)");
+                                }
+                            } catch (NumericException e) {
+                                throw SqlException.$(position, "invalid timezone in time list: ").put(effectiveSeq, etzLo, etzHi);
+                            }
+                        }
+
                         ir[irPos++] = tLo;
                         ir[irPos++] = tHi - tLo;
                         timeOverrideCount++;

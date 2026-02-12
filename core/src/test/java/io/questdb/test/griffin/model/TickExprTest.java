@@ -944,6 +944,16 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprTimeListWithNamedTimezone() {
+        assertCompileTickExprError("[$today]T[09:00@Europe/London,14:00]", "named timezone not supported in time list element");
+    }
+
+    @Test
+    public void testCompiledTickExprTimeListInvalidTime() {
+        assertCompileTickExprError("[$today]T[abc,14:00]", "Invalid time in time list");
+    }
+
+    @Test
     public void testCompiledTickExprTimeListEmptyEntry() {
         assertCompileTickExprError("[$today]T[ ,14:00]", "Empty element in time list");
     }
