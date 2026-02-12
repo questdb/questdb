@@ -135,6 +135,43 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAliasedColumnVisibleByRealNameInCaseThen() throws Exception {
+        // Regression test for https://github.com/questdb/questdb/issues/6769
+        // When a CASE/WHEN contains a window function and the SELECT aliases a column,
+        // the original column name should still be usable in THEN/ELSE branches.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2024-01-01', 100.0),
+                        ('2024-01-02', 110.0),
+                        ('2024-01-03', 90.0)
+                    """);
+
+            // Both price and p should be usable in the CASE branches
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tp\tcase
+                            2024-01-01T00:00:00.000000Z\t100.0\tnull
+                            2024-01-02T00:00:00.000000Z\t110.0\t110.0
+                            2024-01-03T00:00:00.000000Z\t90.0\t-90.0
+                            """,
+                    """
+                            SELECT ts, price AS p,
+                                CASE
+                                    WHEN price > lag(price) OVER (ORDER BY ts) THEN price
+                                    WHEN price < lag(price) OVER (ORDER BY ts) THEN -price
+                                END
+                            FROM trades
+                            """,
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testCachedWindowFactoryMaintainsOrderOfRecordsWithSameTimestamp1() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table nodts_tab (ts #TIMESTAMP, val int)", timestampType.getTypeName());

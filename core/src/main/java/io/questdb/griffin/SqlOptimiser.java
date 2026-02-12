@@ -3098,7 +3098,7 @@ public class SqlOptimiser implements Mutable {
             if (node != null) {
                 if (node.paramCount < 3) {
                     if (node.rhs != null) {
-                        ExpressionNode n = replaceIfWindowFunction(
+                        ExpressionNode n = replaceWindowFunctionOrLiteral(
                                 node.rhs,
                                 windowModel,
                                 translatingModel,
@@ -3112,7 +3112,7 @@ public class SqlOptimiser implements Mutable {
                         }
                     }
 
-                    ExpressionNode n = replaceIfWindowFunction(
+                    ExpressionNode n = replaceWindowFunctionOrLiteral(
                             node.lhs,
                             windowModel,
                             translatingModel,
@@ -3128,7 +3128,7 @@ public class SqlOptimiser implements Mutable {
                 } else {
                     for (int i = 0, k = node.paramCount; i < k; i++) {
                         ExpressionNode e = node.args.getQuick(i);
-                        ExpressionNode n = replaceIfWindowFunction(
+                        ExpressionNode n = replaceWindowFunctionOrLiteral(
                                 e,
                                 windowModel,
                                 translatingModel,
@@ -3147,6 +3147,25 @@ public class SqlOptimiser implements Mutable {
                 node = windowNodeStack.poll();
             }
         }
+    }
+
+    /**
+     * Try to replace the node as a window function first; if it isn't one,
+     * try to emit it as a column literal so that non-window column references
+     * (e.g. in THEN/ELSE branches of a CASE) are propagated through the model chain.
+     */
+    private ExpressionNode replaceWindowFunctionOrLiteral(
+            @Transient ExpressionNode node,
+            QueryModel windowModel,
+            QueryModel translatingModel,
+            QueryModel innerVirtualModel,
+            QueryModel baseModel
+    ) throws SqlException {
+        ExpressionNode n = replaceIfWindowFunction(node, windowModel, translatingModel, innerVirtualModel, baseModel);
+        if (n != node) {
+            return n;
+        }
+        return replaceLiteral(node, translatingModel, innerVirtualModel, true, baseModel, false);
     }
 
     private QueryColumn ensureAliasUniqueness(QueryModel model, QueryColumn qc) {
