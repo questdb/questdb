@@ -871,6 +871,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private void storeTelemetryNoOp(short event, short origin) {
     }
 
+    @SuppressWarnings("unused")
     private void storeWalTelemetryNoop(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs, long minTimestamp, long maxTimestamp) {
     }
 
