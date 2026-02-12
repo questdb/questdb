@@ -106,6 +106,60 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinFilterOnOffsetColumnNotAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "SELECT avg(p.price) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                            "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                            "WHERE h.offset > 0",
+                    129,
+                    "HORIZON JOIN WHERE clause can only reference master table columns"
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinFilterOnSlaveAndMasterColumnsNotAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "SELECT avg(p.price) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                            "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                            "WHERE t.qty + p.price > 10",
+                    136,
+                    "HORIZON JOIN WHERE clause can only reference master table columns"
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinFilterOnSlaveColumnNotAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "SELECT avg(p.price) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                            "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                            "WHERE p.price > 10",
+                    128,
+                    "HORIZON JOIN WHERE clause can only reference master table columns"
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinMissingRangeOrList() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());

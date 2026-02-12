@@ -1047,12 +1047,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private static int validateAndGetSlaveTimestampIndex(RecordMetadata slaveMetadata, RecordCursorFactory slaveBase) {
         int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
-
         // slave.supportsFilterStealing() means slave is nothing but a filter.
         // if slave is just a filter, then it must have the same metadata as its base,
         // that includes the timestamp index.
         assert slaveBase.getMetadata().getTimestampIndex() == slaveTimestampIndex;
         return slaveTimestampIndex;
+    }
+
+    private static void validateHorizonJoinFilter(QueryModel model, int horizonJoinIndex, QueryModel slaveModel) throws SqlException {
+        // HORIZON JOIN WHERE clause can only reference master table columns.
+        // Predicates on slave columns end up as postJoinWhereClause on the slave model.
+        if (slaveModel.getPostJoinWhereClause() != null) {
+            throw SqlException.position(slaveModel.getPostJoinWhereClause().position)
+                    .put("HORIZON JOIN WHERE clause can only reference master table columns");
+        }
+
+        // Predicates on offset pseudo-table columns end up as whereClause or
+        // postJoinWhereClause on the synthetic offset model.
+        final ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int j = 1; j < horizonJoinIndex; j++) {
+            final QueryModel jm = joinModels.getQuick(j);
+            if (isHorizonOffsetModel(jm)) {
+                final ExpressionNode where = jm.getWhereClause() != null ? jm.getWhereClause() : jm.getPostJoinWhereClause();
+                if (where != null) {
+                    throw SqlException.position(where.position)
+                            .put("HORIZON JOIN WHERE clause can only reference master table columns");
+                }
+            }
+        }
     }
 
     private static RecordMetadata widenSetMetadata(RecordMetadata typesA, RecordMetadata typesB) throws SqlException {
@@ -4782,6 +4804,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     throw SqlException.position(slaveModel.getJoinKeywordPosition())
                                             .put("HORIZON JOIN requires offset configuration (RANGE or LIST)");
                                 }
+
+                                // Validate: WHERE clause can only reference master table columns
+                                validateHorizonJoinFilter(model, index, slaveModel);
 
                                 // Get parent model for GROUP BY context (may be null for implicit aggregation)
                                 // If parentModel is null, we'll use the join model itself which contains the SELECT columns
