@@ -29,8 +29,11 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.model.CompiledTickExpression;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.RuntimeIntervalModelBuilder;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
@@ -2557,6 +2560,251 @@ public class TickExprTest {
                 "[$yesterday]",
                 "2026-01-22T10:30:00.000000Z"
         );
+    }
+
+    // ==================== CompiledTickExpression (dynamic date variable) tests ====================
+
+    @Test
+    public void testCompiledTickExprDynamicNow() throws SqlException {
+        // Verify that CompiledTickExpression produces different intervals
+        // when evaluated with different "now" timestamps (simulating cache reuse)
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        CompiledTickExpression compiled = new CompiledTickExpression(
+                timestampDriver, configuration, "$now");
+
+        long now1 = timestampDriver.parseFloorLiteral("2026-01-15T10:30:00.000000Z");
+        long now2 = timestampDriver.parseFloorLiteral("2026-06-20T14:45:00.000000Z");
+
+        // First evaluation
+        LongList out1 = new LongList();
+        compiled.evaluate(out1, now1);
+        Assert.assertEquals(2, out1.size());
+        Assert.assertEquals(now1, out1.getQuick(0));
+        Assert.assertEquals(now1, out1.getQuick(1));
+
+        // Second evaluation with different now - should produce different result
+        LongList out2 = new LongList();
+        compiled.evaluate(out2, now2);
+        Assert.assertEquals(2, out2.size());
+        Assert.assertEquals(now2, out2.getQuick(0));
+        Assert.assertEquals(now2, out2.getQuick(1));
+
+        // Results must differ
+        Assert.assertNotEquals(out1.getQuick(0), out2.getQuick(0));
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicToday() throws SqlException {
+        // Verify $today produces correct day intervals
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        CompiledTickExpression compiled = new CompiledTickExpression(
+                timestampDriver, configuration, "$today");
+
+        long now = timestampDriver.parseFloorLiteral("2026-03-15T14:30:00.000000Z");
+        LongList result = new LongList();
+        compiled.evaluate(result, now);
+
+        Assert.assertEquals(2, result.size());
+        long expectedLo = timestampDriver.startOfDay(now, 0);
+        long expectedHi = timestampDriver.endOfDay(expectedLo);
+        Assert.assertEquals(expectedLo, result.getQuick(0));
+        Assert.assertEquals(expectedHi, result.getQuick(1));
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicYesterday() throws SqlException {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        CompiledTickExpression compiled = new CompiledTickExpression(
+                timestampDriver, configuration, "$yesterday");
+
+        long now = timestampDriver.parseFloorLiteral("2026-03-15T14:30:00.000000Z");
+        LongList result = new LongList();
+        compiled.evaluate(result, now);
+
+        Assert.assertEquals(2, result.size());
+        long expectedLo = timestampDriver.startOfDay(now, -1);
+        long expectedHi = timestampDriver.endOfDay(expectedLo);
+        Assert.assertEquals(expectedLo, result.getQuick(0));
+        Assert.assertEquals(expectedHi, result.getQuick(1));
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicTomorrow() throws SqlException {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        CompiledTickExpression compiled = new CompiledTickExpression(
+                timestampDriver, configuration, "$tomorrow");
+
+        long now = timestampDriver.parseFloorLiteral("2026-03-15T14:30:00.000000Z");
+        LongList result = new LongList();
+        compiled.evaluate(result, now);
+
+        Assert.assertEquals(2, result.size());
+        long expectedLo = timestampDriver.startOfDay(now, 1);
+        long expectedHi = timestampDriver.endOfDay(expectedLo);
+        Assert.assertEquals(expectedLo, result.getQuick(0));
+        Assert.assertEquals(expectedHi, result.getQuick(1));
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicNowMinusHours() throws SqlException {
+        // $now - 2h should produce a point interval 2 hours before now
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        CompiledTickExpression compiled = new CompiledTickExpression(
+                timestampDriver, configuration, "$now - 2h");
+
+        long now = timestampDriver.parseFloorLiteral("2026-03-15T14:30:00.000000Z");
+        LongList result = new LongList();
+        compiled.evaluate(result, now);
+
+        Assert.assertEquals(2, result.size());
+        long expected = timestampDriver.parseFloorLiteral("2026-03-15T12:30:00.000000Z");
+        Assert.assertEquals(expected, result.getQuick(0));
+        Assert.assertEquals(expected, result.getQuick(1));
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicTodayPlusBusinessDays() throws SqlException {
+        // $today + 3bd starting from Monday 2026-03-16 should produce Thursday 2026-03-19
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        CompiledTickExpression compiled = new CompiledTickExpression(
+                timestampDriver, configuration, "$today + 3bd");
+
+        // 2026-03-16 is Monday
+        long now = timestampDriver.parseFloorLiteral("2026-03-16T10:00:00.000000Z");
+        LongList result = new LongList();
+        compiled.evaluate(result, now);
+
+        Assert.assertEquals(2, result.size());
+        long expectedLo = timestampDriver.parseFloorLiteral("2026-03-19T00:00:00.000000Z");
+        long expectedHi = timestampDriver.endOfDay(expectedLo);
+        Assert.assertEquals(expectedLo, result.getQuick(0));
+        Assert.assertEquals(expectedHi, result.getQuick(1));
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicBracketList() throws SqlException {
+        // [$today, $tomorrow] - adjacent days get merged into a single interval
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        CompiledTickExpression compiled = new CompiledTickExpression(
+                timestampDriver, configuration, "[$today, $tomorrow]");
+
+        long now = timestampDriver.parseFloorLiteral("2026-03-15T14:30:00.000000Z");
+        LongList result = new LongList();
+        compiled.evaluate(result, now);
+
+        // Adjacent day intervals are merged: 2026-03-15 .. 2026-03-16 -> single interval
+        Assert.assertEquals(2, result.size());
+        long expectedLo = timestampDriver.startOfDay(now, 0);
+        long expectedHi = timestampDriver.endOfDay(timestampDriver.startOfDay(now, 1));
+        Assert.assertEquals(expectedLo, result.getQuick(0));
+        Assert.assertEquals(expectedHi, result.getQuick(1));
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicRange() throws SqlException {
+        // $today..$today+2d produces 3 consecutive day intervals that get merged into one
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        CompiledTickExpression compiled = new CompiledTickExpression(
+                timestampDriver, configuration, "$today..$today + 2d");
+
+        long now = timestampDriver.parseFloorLiteral("2026-03-15T14:30:00.000000Z");
+        LongList result = new LongList();
+        compiled.evaluate(result, now);
+
+        // Adjacent day intervals are merged: 2026-03-15..2026-03-17 -> single interval
+        Assert.assertEquals(2, result.size());
+        long expectedLo = timestampDriver.startOfDay(now, 0);
+        long expectedHi = timestampDriver.endOfDay(timestampDriver.startOfDay(now, 2));
+        Assert.assertEquals(expectedLo, result.getQuick(0));
+        Assert.assertEquals(expectedHi, result.getQuick(1));
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicWithTimeSuffix() throws SqlException {
+        // $todayT09:30;1h should produce 09:30-10:30 on today
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        CompiledTickExpression compiled = new CompiledTickExpression(
+                timestampDriver, configuration, "$todayT09:30;1h");
+
+        long now = timestampDriver.parseFloorLiteral("2026-03-15T14:30:00.000000Z");
+        LongList result = new LongList();
+        compiled.evaluate(result, now);
+
+        Assert.assertEquals(2, result.size());
+        long expectedLo = timestampDriver.parseFloorLiteral("2026-03-15T09:30:00.000000Z");
+        // duration ;1h means hi = lo + 1h - 1 tick
+        long expectedHi = timestampDriver.add(expectedLo, 'h', 1) - 1;
+        Assert.assertEquals(expectedLo, result.getQuick(0));
+        Assert.assertEquals(expectedHi, result.getQuick(1));
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicMixedList() throws SqlException {
+        // [2025-01-01, $today, 2025-06-15] should produce three intervals
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        CompiledTickExpression compiled = new CompiledTickExpression(
+                timestampDriver, configuration, "[2025-01-01, $today, 2025-06-15]");
+
+        long now = timestampDriver.parseFloorLiteral("2026-03-15T14:30:00.000000Z");
+        LongList result = new LongList();
+        compiled.evaluate(result, now);
+
+        // Should have 3 intervals (6 longs)
+        Assert.assertEquals(6, result.size());
+        // First interval: 2025-01-01
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2025-01-01T00:00:00.000000Z"), result.getQuick(0));
+        // Second interval: 2025-06-15
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2025-06-15T00:00:00.000000Z"), result.getQuick(2));
+        // Third interval: 2026-03-15 (today)
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2026-03-15T00:00:00.000000Z"), result.getQuick(4));
+    }
+
+    @Test
+    public void testCompiledTickExprNonVariableStaysStatic() throws SqlException {
+        // Non-variable expressions should NOT create a CompiledTickExpression
+        // They should use the static path in the builder
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        RuntimeIntervalModelBuilder builder = new RuntimeIntervalModelBuilder();
+        builder.of(timestampType.getTimestampType(), 0, configuration);
+        builder.intersectIntervals("2024-01", 0, 7, 0);
+        RuntimeIntrinsicIntervalModel model = builder.build();
+        Assert.assertTrue("Non-variable expression should produce static model", model.isStatic());
+    }
+
+    @Test
+    public void testCompiledTickExprVariableProducesDynamicModel() throws SqlException {
+        // Variable expressions should create a CompiledTickExpression (dynamic model)
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        RuntimeIntervalModelBuilder builder = new RuntimeIntervalModelBuilder();
+        builder.of(timestampType.getTimestampType(), 0, configuration);
+        builder.intersectIntervals("$today", 0, 6, 0);
+        RuntimeIntrinsicIntervalModel model = builder.build();
+        Assert.assertFalse("Variable expression should produce dynamic model", model.isStatic());
+    }
+
+    @Test
+    public void testCompiledTickExprCacheReuseProducesDifferentResults() throws SqlException {
+        // Simulate cache reuse: same CompiledTickExpression evaluated at different times
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        CompiledTickExpression compiled = new CompiledTickExpression(
+                timestampDriver, configuration, "$today");
+
+        // First evaluation: "now" is 2026-01-15
+        long now1 = timestampDriver.parseFloorLiteral("2026-01-15T10:00:00.000000Z");
+        LongList result1 = new LongList();
+        compiled.evaluate(result1, now1);
+        long lo1 = result1.getQuick(0);
+
+        // Second evaluation: "now" is 2026-06-20 (different day)
+        long now2 = timestampDriver.parseFloorLiteral("2026-06-20T10:00:00.000000Z");
+        LongList result2 = new LongList();
+        compiled.evaluate(result2, now2);
+        long lo2 = result2.getQuick(0);
+
+        // The intervals must be different since "today" changed
+        Assert.assertNotEquals("Cached query should produce different results for different days", lo1, lo2);
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2026-01-15T00:00:00.000000Z"), lo1);
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2026-06-20T00:00:00.000000Z"), lo2);
     }
 
     @Test
