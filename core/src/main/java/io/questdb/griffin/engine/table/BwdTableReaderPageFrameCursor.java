@@ -53,6 +53,8 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final TableReaderPageFrame frame = new TableReaderPageFrame();
     private final LongList pageSizes = new LongList();
     private final int sharedQueryWorkerCount;
+    // Track the highest partition index that has not been released yet
+    private int highestOpenPartitionIndex = -1;
     private int pageFrameMaxRows;
     private int pageFrameMinRows;
     private PartitionFrameCursor partitionFrameCursor;
@@ -116,13 +118,18 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         if (reenterPartitionFrame) {
             if (reenterParquetDecoder != null) {
                 return computeParquetFrame(reenterPartitionLo, reenterPartitionHi);
+            } else {
+                return computeNativeFrame(reenterPartitionLo, reenterPartitionHi);
             }
-            return computeNativeFrame(reenterPartitionLo, reenterPartitionHi);
         }
 
         final PartitionFrame partitionFrame = partitionFrameCursor.next(skipTarget);
         if (partitionFrame != null) {
             reenterPartitionIndex = partitionFrame.getPartitionIndex();
+            // Track highest partition index seen (for backward cursor, first partition seen has highest index)
+            if (highestOpenPartitionIndex < 0) {
+                highestOpenPartitionIndex = reenterPartitionIndex;
+            }
             final long lo = partitionFrame.getRowLo();
             final long hi = partitionFrame.getRowHi();
 
@@ -148,6 +155,21 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
+    public void releaseOpenPartitions() {
+        // Guard against being called before next() or after toTop() when no partitions are open.
+        // highestOpenPartitionIndex is -1 until the first partition is opened by next().
+        if (highestOpenPartitionIndex < 0 || highestOpenPartitionIndex <= reenterPartitionIndex) {
+            return;
+        }
+        // Close all partitions from highestOpenPartitionIndex down to (but not including) current partition
+        // Backward cursor scans from high to low partition indices
+        for (int i = highestOpenPartitionIndex; i > reenterPartitionIndex; i--) {
+            reader.closePartitionByIndex(i);
+        }
+        highestOpenPartitionIndex = reenterPartitionIndex;
+    }
+
+    @Override
     public long size() {
         return partitionFrameCursor.size();
     }
@@ -162,6 +184,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         partitionFrameCursor.toTop();
         reenterPartitionFrame = false;
         reenterParquetDecoder = null;
+        highestOpenPartitionIndex = -1;
         clearAddresses();
     }
 

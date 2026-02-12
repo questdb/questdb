@@ -1066,6 +1066,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         }
         state.timeout = defaultTimeout;
 
+        // URL param takes precedence over header
         DirectUtf8Sequence timeoutSeq = request.getUrlParam(URL_PARAM_TIMEOUT);
         if (timeoutSeq != null) {
             try {
@@ -1073,6 +1074,12 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 state.timeout = parsedTimeout > 0 ? parsedTimeout : defaultTimeout;
             } catch (NumericException ex) {
                 state.timeout = defaultTimeout;
+            }
+        } else {
+            // Check Statement-Timeout header (value is in milliseconds)
+            long statementTimeout = request.getStatementTimeout();
+            if (statementTimeout > 0) {
+                state.timeout = statementTimeout;
             }
         }
 
