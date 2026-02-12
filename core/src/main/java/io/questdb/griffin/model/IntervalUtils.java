@@ -233,7 +233,8 @@ public final class IntervalUtils {
                 if (c == '@' || c == ';') {
                     break;
                 }
-                if (c == 'T' && exprEnd + 1 < effectiveSeqLim && Chars.isAsciiDigit(effectiveSeq.charAt(exprEnd + 1))) break;
+                if (c == 'T' && exprEnd + 1 < effectiveSeqLim && Chars.isAsciiDigit(effectiveSeq.charAt(exprEnd + 1)))
+                    break;
                 exprEnd++;
             }
             elemListLo = effectiveSeqLo;
@@ -477,9 +478,11 @@ public final class IntervalUtils {
                 int startExprHi = rangeOpPos;
                 int endExprLo = rangeOpPos + 2;
                 int endExprHi = elemListHi;
-                while (startExprHi > elemListLo && Chars.isAsciiWhitespace(effectiveSeq.charAt(startExprHi - 1))) startExprHi--;
+                while (startExprHi > elemListLo && Chars.isAsciiWhitespace(effectiveSeq.charAt(startExprHi - 1)))
+                    startExprHi--;
                 while (endExprLo < endExprHi && Chars.isAsciiWhitespace(effectiveSeq.charAt(endExprLo))) endExprLo++;
-                while (endExprHi > endExprLo && Chars.isAsciiWhitespace(effectiveSeq.charAt(endExprHi - 1))) endExprHi--;
+                while (endExprHi > endExprLo && Chars.isAsciiWhitespace(effectiveSeq.charAt(endExprHi - 1)))
+                    endExprHi--;
 
                 boolean isBusinessDay = isBusinessDayExpression(effectiveSeq, endExprHi);
                 ir[irPos++] = CompiledTickExpression.TAG_RANGE
@@ -1909,123 +1912,6 @@ public final class IntervalUtils {
     }
 
     /**
-     * Applies tick calendar filter by intersecting query intervals with trading schedule.
-     * The trading schedule is obtained from {@link TickCalendarService} and contains
-     * [lo, hi] pairs representing trading sessions in microseconds.
-     *
-     * @param timestampDriver the timestamp driver for unit conversion
-     * @param schedule        the trading schedule as [lo, hi] pairs (in microseconds)
-     * @param out             the interval list to filter
-     * @param startIndex      index to start filtering from
-     */
-    static void applyTickCalendarFilter(
-            TimestampDriver timestampDriver,
-            LongList schedule,
-            LongList out,
-            int startIndex
-    ) {
-        int queryIntervalCount = (out.size() - startIndex) / 2;
-        if (queryIntervalCount == 0 || schedule.size() == 0) {
-            return;
-        }
-        assert schedule.size() % 2 == 0 : "odd element count in schedule";
-
-        // Sort query intervals by lo value before intersection (intersectInPlace requires sorted input)
-        LongGroupSort.quickSort(2, out, startIndex / 2, startIndex / 2 + queryIntervalCount);
-
-        // Determine the query time range to narrow the schedule scan.
-        // Query intervals are sorted by lo at this point.
-        long queryLo = out.getQuick(startIndex);
-        long queryHi = out.getQuick(out.size() - 1);
-
-        // Find the sub-range of the schedule that overlaps with [queryLo, queryHi].
-        // Schedule is sorted chronologically as [lo0, hi0, lo1, hi1, ...] in microseconds.
-        // We need the first interval whose hi >= queryLo (after conversion) and
-        // the last interval whose lo <= queryHi (after conversion).
-        boolean isNanos = timestampDriver == NanosTimestampDriver.INSTANCE;
-        // Convert query bounds to microseconds for comparison with the schedule.
-        // queryLo: round down (floor) so we don't miss an overlapping schedule interval.
-        // queryHi: round up (ceil) so we don't miss a schedule interval that starts
-        //          within the last sub-microsecond of the query range.
-        long queryLoMicros = isNanos ? (queryLo / 1000L) : queryLo;
-        long queryHiMicros = isNanos ? (queryHi / 1000L + (queryHi % 1000L > 0 ? 1 : 0)) : queryHi;
-
-        int scheduleIntervalCount = schedule.size() / 2;
-
-        // Binary search for first schedule interval with hi >= queryLoMicros
-        int lo = 0;
-        int hi = scheduleIntervalCount;
-        while (lo < hi) {
-            int mid = (lo + hi) >>> 1;
-            if (schedule.getQuick(mid * 2 + 1) < queryLoMicros) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-        int schedStart = lo * 2;
-
-        // Binary search for last schedule interval with lo <= queryHiMicros
-        lo = schedStart / 2;
-        hi = scheduleIntervalCount;
-        while (lo < hi) {
-            int mid = (lo + hi) >>> 1;
-            if (schedule.getQuick(mid * 2) <= queryHiMicros) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-        int schedEnd = lo * 2; // exclusive
-
-        if (schedStart >= schedEnd) {
-            // No overlap - remove all query intervals
-            out.setPos(startIndex);
-            return;
-        }
-
-        // Append the overlapping portion of the trading schedule.
-        // Schedule intervals are [lo, hi] inclusive, matching the IntervalUtils convention.
-        // Convert microseconds to nanoseconds if needed: hi bounds get +999 to cover
-        // the full sub-microsecond range of the last inclusive microsecond.
-        int dividerIndex = out.size();
-        for (int i = schedStart; i < schedEnd; i++) {
-            long ts = schedule.getQuick(i);
-            if (isNanos) {
-                ts = ts * 1000L;
-                if ((i & 1) == 1) {
-                    ts += 999L;
-                }
-            }
-            out.add(ts);
-        }
-
-        // Intersect in place: query intervals [startIndex, dividerIndex) with schedule [dividerIndex, end)
-        // But intersectInPlace expects intervals from index 0, so we need to handle the offset
-        if (startIndex == 0) {
-            intersectInPlace(out, dividerIndex);
-        } else {
-            // Use thread-local temporary list for the intersection to avoid heap allocation
-            LongList temp = tlExchangeFilterTemp.get();
-            temp.clear();
-            for (int i = startIndex; i < dividerIndex; i++) {
-                temp.add(out.getQuick(i));
-            }
-            int tempDivider = temp.size();
-            for (int i = dividerIndex, n = out.size(); i < n; i++) {
-                temp.add(out.getQuick(i));
-            }
-            intersectInPlace(temp, tempDivider);
-
-            // Copy result back
-            out.setPos(startIndex);
-            for (int i = 0; i < temp.size(); i++) {
-                out.add(temp.getQuick(i));
-            }
-        }
-    }
-
-    /**
      * Applies timezone conversion to all intervals in the output list from outSizeBeforeConversion to end.
      * This converts local timestamps to UTC. Handles both numeric offsets (+03:00) and named
      * timezones (Europe/London).
@@ -3346,7 +3232,6 @@ public final class IntervalUtils {
         }
     }
 
-
     /**
      * Finds the position of '#' day filter marker in the string, respecting brackets.
      * The '#' must be outside brackets and before ';' (duration suffix).
@@ -3960,6 +3845,141 @@ public final class IntervalUtils {
         throw SqlException.$(position, "Invalid day name: ").put(seq, lo, hi);
     }
 
+    static int append(LongList list, int writePoint, long lo, long hi) {
+        if (writePoint > 0) {
+            long prevHi = list.getQuick(2 * writePoint - 1) + 1;
+            if (prevHi >= lo) {
+                list.setQuick(2 * writePoint - 1, hi);
+                return writePoint;
+            }
+        }
+
+        list.extendAndSet(2 * writePoint + 1, hi);
+        list.setQuick(2 * writePoint, lo);
+        return writePoint + 1;
+    }
+
+    /**
+     * Applies tick calendar filter by intersecting query intervals with trading schedule.
+     * The trading schedule is obtained from {@link TickCalendarService} and contains
+     * [lo, hi] pairs representing trading sessions in microseconds.
+     *
+     * @param timestampDriver the timestamp driver for unit conversion
+     * @param schedule        the trading schedule as [lo, hi] pairs (in microseconds)
+     * @param out             the interval list to filter
+     * @param startIndex      index to start filtering from
+     */
+    static void applyTickCalendarFilter(
+            TimestampDriver timestampDriver,
+            LongList schedule,
+            LongList out,
+            int startIndex
+    ) {
+        int queryIntervalCount = (out.size() - startIndex) / 2;
+        if (queryIntervalCount == 0 || schedule.size() == 0) {
+            return;
+        }
+        assert schedule.size() % 2 == 0 : "odd element count in schedule";
+
+        // Sort query intervals by lo value before intersection (intersectInPlace requires sorted input)
+        LongGroupSort.quickSort(2, out, startIndex / 2, startIndex / 2 + queryIntervalCount);
+
+        // Determine the query time range to narrow the schedule scan.
+        // Query intervals are sorted by lo at this point.
+        long queryLo = out.getQuick(startIndex);
+        long queryHi = out.getQuick(out.size() - 1);
+
+        // Find the sub-range of the schedule that overlaps with [queryLo, queryHi].
+        // Schedule is sorted chronologically as [lo0, hi0, lo1, hi1, ...] in microseconds.
+        // We need the first interval whose hi >= queryLo (after conversion) and
+        // the last interval whose lo <= queryHi (after conversion).
+        boolean isNanos = timestampDriver == NanosTimestampDriver.INSTANCE;
+        // Convert query bounds to microseconds for comparison with the schedule.
+        // queryLo: round down (floor) so we don't miss an overlapping schedule interval.
+        // queryHi: round up (ceil) so we don't miss a schedule interval that starts
+        //          within the last sub-microsecond of the query range.
+        long queryLoMicros = isNanos ? (queryLo / 1000L) : queryLo;
+        long queryHiMicros = isNanos ? (queryHi / 1000L + (queryHi % 1000L > 0 ? 1 : 0)) : queryHi;
+
+        int scheduleIntervalCount = schedule.size() / 2;
+
+        // Binary search for first schedule interval with hi >= queryLoMicros
+        int lo = 0;
+        int hi = scheduleIntervalCount;
+        while (lo < hi) {
+            int mid = (lo + hi) >>> 1;
+            if (schedule.getQuick(mid * 2 + 1) < queryLoMicros) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        int schedStart = lo * 2;
+
+        // Binary search for last schedule interval with lo <= queryHiMicros
+        lo = schedStart / 2;
+        hi = scheduleIntervalCount;
+        while (lo < hi) {
+            int mid = (lo + hi) >>> 1;
+            if (schedule.getQuick(mid * 2) <= queryHiMicros) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        int schedEnd = lo * 2; // exclusive
+
+        if (schedStart >= schedEnd) {
+            // No overlap - remove all query intervals
+            out.setPos(startIndex);
+            return;
+        }
+
+        // Append the overlapping portion of the trading schedule.
+        // Schedule intervals are [lo, hi] inclusive, matching the IntervalUtils convention.
+        // Convert microseconds to nanoseconds if needed: hi bounds get +999 to cover
+        // the full sub-microsecond range of the last inclusive microsecond.
+        int dividerIndex = out.size();
+        for (int i = schedStart; i < schedEnd; i++) {
+            long ts = schedule.getQuick(i);
+            if (isNanos) {
+                ts = ts * 1000L;
+                if ((i & 1) == 1) {
+                    ts += 999L;
+                }
+            }
+            out.add(ts);
+        }
+
+        // Intersect in place: query intervals [startIndex, dividerIndex) with schedule [dividerIndex, end)
+        // But intersectInPlace expects intervals from index 0, so we need to handle the offset
+        if (startIndex == 0) {
+            intersectInPlace(out, dividerIndex);
+        } else {
+            // Use thread-local temporary list for the intersection to avoid heap allocation
+            LongList temp = tlExchangeFilterTemp.get();
+            temp.clear();
+            for (int i = startIndex; i < dividerIndex; i++) {
+                temp.add(out.getQuick(i));
+            }
+            int tempDivider = temp.size();
+            for (int i = dividerIndex, n = out.size(); i < n; i++) {
+                temp.add(out.getQuick(i));
+            }
+            intersectInPlace(temp, tempDivider);
+
+            // Copy result back
+            out.setPos(startIndex);
+            for (int i = 0; i < temp.size(); i++) {
+                out.add(temp.getQuick(i));
+            }
+        }
+    }
+
+    static void replaceHiLoInterval(long lo, long hi, short operation, LongList out) {
+        replaceHiLoInterval(lo, hi, 0, (char) 0, 1, operation, out);
+    }
+
     /**
      * Unions intervals in the range [startIndex, end) with each other.
      * Pre-existing intervals at [0, startIndex) are preserved unchanged.
@@ -3992,23 +4012,5 @@ public final class IntervalUtils {
         }
 
         out.setPos(writeIdx);
-    }
-
-    static int append(LongList list, int writePoint, long lo, long hi) {
-        if (writePoint > 0) {
-            long prevHi = list.getQuick(2 * writePoint - 1) + 1;
-            if (prevHi >= lo) {
-                list.setQuick(2 * writePoint - 1, hi);
-                return writePoint;
-            }
-        }
-
-        list.extendAndSet(2 * writePoint + 1, hi);
-        list.setQuick(2 * writePoint, lo);
-        return writePoint + 1;
-    }
-
-    static void replaceHiLoInterval(long lo, long hi, short operation, LongList out) {
-        replaceHiLoInterval(lo, hi, 0, (char) 0, 1, operation, out);
     }
 }
