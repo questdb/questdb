@@ -177,6 +177,91 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinNotKeyedAllColumnTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE prices (
+                                ts #TIMESTAMP,
+                                sym SYMBOL,
+                                col_bool BOOLEAN,
+                                col_byte BYTE,
+                                col_short SHORT,
+                                col_char CHAR,
+                                col_int INT,
+                                col_long LONG,
+                                col_float FLOAT,
+                                col_double DOUBLE,
+                                col_date DATE,
+                                col_str STRING,
+                                col_varchar VARCHAR,
+                                col_ipv4 IPv4,
+                                col_uuid UUID,
+                                col_geo GEOHASH(4c),
+                                col_arr DOUBLE[],
+                                col_dec DECIMAL(10, 2)
+                            ) TIMESTAMP(ts)
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX')
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO prices
+                                SELECT '1970-01-01T00:00:01.000000Z'::timestamp, 'AX', true, 1::byte, 2::short, 'X', 42, 100000L, 1.5::float, 3.14,
+                                 '2000-01-01T00:00:00.000Z'::date, 'hello', 'world'::varchar, '1.2.3.4'::ipv4,
+                                 '11111111-1111-1111-1111-111111111111'::uuid, #sp05, ARRAY[1.0, 2.0], 42.50::decimal(10,2)
+                            """
+            );
+
+            String sql = """
+                    SELECT
+                        first(p.col_bool) as fb,
+                        first(p.col_byte) as fby,
+                        first(p.col_short) as fsh,
+                        first(p.col_char) as fch,
+                        first(p.col_int) as fi,
+                        first(p.col_long) as fl,
+                        first(p.col_float) as ff,
+                        first(p.col_double) as fd,
+                        first(p.col_date) as fdt,
+                        first(p.col_str) as fs,
+                        first(p.col_varchar) as fvc,
+                        first(p.col_ipv4) as fip,
+                        first(p.col_uuid) as fu,
+                        first(p.col_geo) as fg,
+                        first(p.col_arr) as fa,
+                        first(p.col_dec) as fdc
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    """;
+
+            assertQueryNoLeakCheck(
+                    """
+                            fb\tfby\tfsh\tfch\tfi\tfl\tff\tfd\tfdt\tfs\tfvc\tfip\tfu\tfg\tfa\tfdc
+                            true\t1\t2\tX\t42\t100000\t1.5\t3.14\t2000-01-01T00:00:00.000Z\thello\tworld\t1.2.3.4\t11111111-1111-1111-1111-111111111111\tsp05\t[1.0,2.0]\t42.50
+                            """,
+                    sql,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinNotKeyedBasic() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
@@ -776,6 +861,46 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinTypeMismatchIntVsDouble() throws Exception {
+        assertHorizonJoinTypeMismatch("INT", "DOUBLE");
+    }
+
+    @Test
+    public void testHorizonJoinTypeMismatchLongVsSymbol() throws Exception {
+        assertHorizonJoinTypeMismatch("LONG", "SYMBOL");
+    }
+
+    @Test
+    public void testHorizonJoinWithByteKey() throws Exception {
+        assertHorizonJoinWithTypedKey("BYTE", "BYTE", "1", "2");
+    }
+
+    @Test
+    public void testHorizonJoinWithDateKey() throws Exception {
+        assertHorizonJoinWithTypedKey("DATE", "DATE",
+                "'2000-01-01T00:00:00.000Z'", "'2000-01-02T00:00:00.000Z'");
+    }
+
+    @Test
+    public void testHorizonJoinWithDecimal128Key() throws Exception {
+        // DECIMAL(20, 5) has precision 20, which maps to DECIMAL128 internally
+        assertHorizonJoinWithTypedKey("DECIMAL(20, 5)", "DECIMAL(20, 5)",
+                "1.00000::DECIMAL(20,5)", "2.00000::DECIMAL(20,5)");
+    }
+
+    @Test
+    public void testHorizonJoinWithDecimal256Key() throws Exception {
+        // DECIMAL(40, 5) has precision 40, which maps to DECIMAL256 internally
+        assertHorizonJoinWithTypedKey("DECIMAL(40, 5)", "DECIMAL(40, 5)",
+                "1.00000::DECIMAL(40,5)", "2.00000::DECIMAL(40,5)");
+    }
+
+    @Test
+    public void testHorizonJoinWithDoubleKey() throws Exception {
+        assertHorizonJoinWithTypedKey("DOUBLE", "DOUBLE", "1.0", "2.0");
+    }
+
+    @Test
     public void testHorizonJoinWithExplicitGroupBy() throws Exception {
         // Explicit GROUP BY is allowed with HORIZON JOIN as validation-only (no-op)
         // since HORIZON JOIN always assumes aggregation
@@ -1166,6 +1291,16 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinWithIntKey() throws Exception {
+        assertHorizonJoinWithTypedKey("INT", "INT", "1", "2");
+    }
+
+    @Test
+    public void testHorizonJoinWithIpv4Key() throws Exception {
+        assertHorizonJoinWithTypedKey("IPv4", "IPv4", "'1.0.0.1'", "'1.0.0.2'");
+    }
+
+    @Test
     public void testHorizonJoinWithListBasic() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -1353,6 +1488,60 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             WHERE t.order_sym = 'AAPL'
                             ORDER BY t.order_sym
                             """,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithMixedTimestampKey() throws Exception {
+        // Test HORIZON JOIN with TIMESTAMP_NS key on master and TIMESTAMP key on slave.
+        // The coercion logic should convert both to TIMESTAMP_NANO for comparison.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE orders (ts #TIMESTAMP, k TIMESTAMP_NS, qty LONG) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, k TIMESTAMP, price DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.500000Z', '2000-01-01T00:00:00.000000Z', 100.0),
+                                ('1970-01-01T00:00:00.500000Z', '2000-01-02T00:00:00.000000Z', 200.0),
+                                ('1970-01-01T00:00:01.500000Z', '2000-01-01T00:00:00.000000Z', 110.0),
+                                ('1970-01-01T00:00:01.500000Z', '2000-01-02T00:00:00.000000Z', 210.0)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('1970-01-01T00:00:01.000000Z', '2000-01-01T00:00:00.000000000Z', 100),
+                                ('1970-01-01T00:00:01.000000Z', '2000-01-02T00:00:00.000000000Z', 200)
+                            """
+            );
+
+            // At offset 0: key1->100.0, key2->200.0, avg=150.0, sum(qty)=300
+            // At offset 1s: key1->110.0, key2->210.0, avg=160.0, sum(qty)=300
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
+                    "FROM orders AS t " +
+                    "HORIZON JOIN prices AS p ON (t.k = p.k) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tsum
+                            0\t150.0\t300
+                            1\t160.0\t300
+                            """,
+                    sql,
                     null,
                     true,
                     true
@@ -1704,6 +1893,11 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinWithShortKey() throws Exception {
+        assertHorizonJoinWithTypedKey("SHORT", "SHORT", "1", "2");
+    }
+
+    @Test
     public void testHorizonJoinWithSingleListNonZeroOffset() throws Exception {
         // Test single non-zero offset via LIST syntax
         assertMemoryLeak(() -> {
@@ -2003,6 +2197,11 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinWithStringKey() throws Exception {
+        assertHorizonJoinWithTypedKey("STRING", "STRING", "'AAPL'", "'GOOG'");
+    }
+
+    @Test
     public void testHorizonJoinWithStringMasterSymbolSlaveKey() throws Exception {
         // Test HORIZON JOIN where master key column is STRING and slave key column is SYMBOL.
         // This should fall back to string-based comparison (no integer optimization).
@@ -2048,6 +2247,11 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     true
             );
         });
+    }
+
+    @Test
+    public void testHorizonJoinWithStringMasterVarcharSlaveKey() throws Exception {
+        assertHorizonJoinWithTypedKey("STRING", "VARCHAR", "'AAPL'", "'GOOG'");
     }
 
     @Test
@@ -2371,6 +2575,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinWithUuidKey() throws Exception {
+        assertHorizonJoinWithTypedKey("UUID", "UUID",
+                "'11111111-1111-1111-1111-111111111111'", "'22222222-2222-2222-2222-222222222222'");
+    }
+
+    @Test
     public void testHorizonJoinWithVarcharKey() throws Exception {
         // Test HORIZON JOIN with VARCHAR column as ASOF JOIN key
         assertMemoryLeak(() -> {
@@ -2415,6 +2625,11 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     true
             );
         });
+    }
+
+    @Test
+    public void testHorizonJoinWithVarcharMasterStringSlaveKey() throws Exception {
+        assertHorizonJoinWithTypedKey("VARCHAR", "STRING", "'AAPL'", "'GOOG'");
     }
 
     @Test
@@ -2616,219 +2831,6 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     sql,
                     null,
                     true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testHorizonJoinTypeMismatchIntVsDouble() throws Exception {
-        assertHorizonJoinTypeMismatch("INT", "DOUBLE");
-    }
-
-    @Test
-    public void testHorizonJoinTypeMismatchLongVsSymbol() throws Exception {
-        assertHorizonJoinTypeMismatch("LONG", "SYMBOL");
-    }
-
-    @Test
-    public void testHorizonJoinWithByteKey() throws Exception {
-        assertHorizonJoinWithTypedKey("BYTE", "BYTE", "1", "2");
-    }
-
-    @Test
-    public void testHorizonJoinWithDateKey() throws Exception {
-        assertHorizonJoinWithTypedKey("DATE", "DATE",
-                "'2000-01-01T00:00:00.000Z'", "'2000-01-02T00:00:00.000Z'");
-    }
-
-    @Test
-    public void testHorizonJoinWithDecimal128Key() throws Exception {
-        // DECIMAL(20, 5) has precision 20, which maps to DECIMAL128 internally
-        assertHorizonJoinWithTypedKey("DECIMAL(20, 5)", "DECIMAL(20, 5)",
-                "1.00000::DECIMAL(20,5)", "2.00000::DECIMAL(20,5)");
-    }
-
-    @Test
-    public void testHorizonJoinWithDecimal256Key() throws Exception {
-        // DECIMAL(40, 5) has precision 40, which maps to DECIMAL256 internally
-        assertHorizonJoinWithTypedKey("DECIMAL(40, 5)", "DECIMAL(40, 5)",
-                "1.00000::DECIMAL(40,5)", "2.00000::DECIMAL(40,5)");
-    }
-
-    @Test
-    public void testHorizonJoinWithDoubleKey() throws Exception {
-        assertHorizonJoinWithTypedKey("DOUBLE", "DOUBLE", "1.0", "2.0");
-    }
-
-    @Test
-    public void testHorizonJoinWithIntKey() throws Exception {
-        assertHorizonJoinWithTypedKey("INT", "INT", "1", "2");
-    }
-
-    @Test
-    public void testHorizonJoinWithIpv4Key() throws Exception {
-        assertHorizonJoinWithTypedKey("IPv4", "IPv4", "'1.0.0.1'", "'1.0.0.2'");
-    }
-
-    @Test
-    public void testHorizonJoinWithMixedTimestampKey() throws Exception {
-        // Test HORIZON JOIN with TIMESTAMP_NS key on master and TIMESTAMP key on slave.
-        // The coercion logic should convert both to TIMESTAMP_NANO for comparison.
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE orders (ts #TIMESTAMP, k TIMESTAMP_NS, qty LONG) TIMESTAMP(ts)",
-                    leftTableTimestampType.getTypeName()
-            );
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE prices (ts #TIMESTAMP, k TIMESTAMP, price DOUBLE) TIMESTAMP(ts)",
-                    rightTableTimestampType.getTypeName()
-            );
-
-            execute(
-                    """
-                            INSERT INTO prices VALUES
-                                ('1970-01-01T00:00:00.500000Z', '2000-01-01T00:00:00.000000Z', 100.0),
-                                ('1970-01-01T00:00:00.500000Z', '2000-01-02T00:00:00.000000Z', 200.0),
-                                ('1970-01-01T00:00:01.500000Z', '2000-01-01T00:00:00.000000Z', 110.0),
-                                ('1970-01-01T00:00:01.500000Z', '2000-01-02T00:00:00.000000Z', 210.0)
-                            """
-            );
-
-            execute(
-                    """
-                            INSERT INTO orders VALUES
-                                ('1970-01-01T00:00:01.000000Z', '2000-01-01T00:00:00.000000000Z', 100),
-                                ('1970-01-01T00:00:01.000000Z', '2000-01-02T00:00:00.000000000Z', 200)
-                            """
-            );
-
-            // At offset 0: key1->100.0, key2->200.0, avg=150.0, sum(qty)=300
-            // At offset 1s: key1->110.0, key2->210.0, avg=160.0, sum(qty)=300
-            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
-                    "FROM orders AS t " +
-                    "HORIZON JOIN prices AS p ON (t.k = p.k) " +
-                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
-                    "ORDER BY sec_offs";
-
-            assertQueryNoLeakCheck(
-                    """
-                            sec_offs\tavg\tsum
-                            0\t150.0\t300
-                            1\t160.0\t300
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testHorizonJoinWithShortKey() throws Exception {
-        assertHorizonJoinWithTypedKey("SHORT", "SHORT", "1", "2");
-    }
-
-    @Test
-    public void testHorizonJoinWithStringKey() throws Exception {
-        assertHorizonJoinWithTypedKey("STRING", "STRING", "'AAPL'", "'GOOG'");
-    }
-
-    @Test
-    public void testHorizonJoinWithStringMasterVarcharSlaveKey() throws Exception {
-        assertHorizonJoinWithTypedKey("STRING", "VARCHAR", "'AAPL'", "'GOOG'");
-    }
-
-    @Test
-    public void testHorizonJoinWithUuidKey() throws Exception {
-        assertHorizonJoinWithTypedKey("UUID", "UUID",
-                "'11111111-1111-1111-1111-111111111111'", "'22222222-2222-2222-2222-222222222222'");
-    }
-
-    @Test
-    public void testHorizonJoinWithVarcharMasterStringSlaveKey() throws Exception {
-        assertHorizonJoinWithTypedKey("VARCHAR", "STRING", "'AAPL'", "'GOOG'");
-    }
-
-    @Test
-    public void testHorizonJoinNotKeyedAllColumnTypes() throws Exception {
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)",
-                    leftTableTimestampType.getTypeName()
-            );
-            executeWithRewriteTimestamp(
-                    """
-                            CREATE TABLE prices (
-                                ts #TIMESTAMP,
-                                sym SYMBOL,
-                                col_bool BOOLEAN,
-                                col_byte BYTE,
-                                col_short SHORT,
-                                col_char CHAR,
-                                col_int INT,
-                                col_long LONG,
-                                col_float FLOAT,
-                                col_double DOUBLE,
-                                col_date DATE,
-                                col_str STRING,
-                                col_varchar VARCHAR,
-                                col_ipv4 IPv4,
-                                col_uuid UUID,
-                                col_geo GEOHASH(4c),
-                                col_arr DOUBLE[],
-                                col_dec DECIMAL(10, 2)
-                            ) TIMESTAMP(ts)
-                            """,
-                    rightTableTimestampType.getTypeName()
-            );
-
-            execute(
-                    """
-                            INSERT INTO trades VALUES
-                                ('1970-01-01T00:00:01.000000Z', 'AX')
-                            """
-            );
-
-            execute(
-                    """
-                            INSERT INTO prices
-                                SELECT '1970-01-01T00:00:01.000000Z'::timestamp, 'AX', true, 1::byte, 2::short, 'X', 42, 100000L, 1.5::float, 3.14,
-                                 '2000-01-01T00:00:00.000Z'::date, 'hello', 'world'::varchar, '1.2.3.4'::ipv4,
-                                 '11111111-1111-1111-1111-111111111111'::uuid, #sp05, ARRAY[1.0, 2.0], 42.50::decimal(10,2)
-                            """
-            );
-
-            String sql = """
-                    SELECT
-                        first(p.col_bool) as fb,
-                        first(p.col_byte) as fby,
-                        first(p.col_short) as fsh,
-                        first(p.col_char) as fch,
-                        first(p.col_int) as fi,
-                        first(p.col_long) as fl,
-                        first(p.col_float) as ff,
-                        first(p.col_double) as fd,
-                        first(p.col_date) as fdt,
-                        first(p.col_str) as fs,
-                        first(p.col_varchar) as fvc,
-                        first(p.col_ipv4) as fip,
-                        first(p.col_uuid) as fu,
-                        first(p.col_geo) as fg,
-                        first(p.col_arr) as fa,
-                        first(p.col_dec) as fdc
-                    FROM trades AS t
-                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
-                    RANGE FROM 0s TO 0s STEP 1s AS h
-                    """;
-
-            assertQueryNoLeakCheck(
-                    "fb\tfby\tfsh\tfch\tfi\tfl\tff\tfd\tfdt\tfs\tfvc\tfip\tfu\tfg\tfa\tfdc\n" +
-                            "true\t1\t2\tX\t42\t100000\t1.5\t3.14\t2000-01-01T00:00:00.000Z\thello\tworld\t1.2.3.4\t11111111-1111-1111-1111-111111111111\tsp05\t[1.0,2.0]\t42.50\n",
-                    sql,
-                    null,
-                    false,
                     true
             );
         });

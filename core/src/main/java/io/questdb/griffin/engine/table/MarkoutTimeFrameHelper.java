@@ -488,20 +488,19 @@ public class MarkoutTimeFrameHelper {
     }
 
     /**
-     * Reset state for processing a new frame.
+     * Reset state for processing a new master page frame.
      * <p>
-     * Resets the forward/backward watermarks (used for key caching within a frame),
-     * but preserves the bookmark position (used by findAsOfRow) to speed up
-     * ASOF lookups when timestamps increase across frames.
+     * Resets all state including the bookmark position. The bookmark cannot be
+     * preserved across master page frames because horizon timestamps (master_ts + offset)
+     * can decrease between consecutive page frames when different offsets dominate,
+     * causing the bookmark to point ahead of valid ASOF matches.
      */
     public void toTop() {
         if (timeFrameCursor != null) {
             timeFrameCursor.toTop();
         }
-        // Note: bookmarkedFrameIndex/bookmarkedRowIndex are intentionally NOT reset.
-        // They help findAsOfRow() start closer to the target when processing subsequent frames.
-
-        // Reset watermarks for new frame processing (caching is per-frame)
+        bookmarkedFrameIndex = -1;
+        bookmarkedRowIndex = Long.MIN_VALUE;
         forwardWatermark = Long.MIN_VALUE;
         backwardWatermark = Long.MAX_VALUE;
     }

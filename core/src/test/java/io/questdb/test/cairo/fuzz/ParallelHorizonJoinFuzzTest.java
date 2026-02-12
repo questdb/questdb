@@ -66,7 +66,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
     public void testParallelHorizonJoinFiltered() throws Exception {
         testParallelHorizonJoin(
                 "RANGE FROM -2s TO 2s STEP 1s AS h",
-                rangeOffsets(-2, 2, 1),
+                rangeOffsets(-2, 2),
                 true,
                 "t.side = 'sell'"
         );
@@ -76,7 +76,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
     public void testParallelHorizonJoinFilteredThreadUnsafe() throws Exception {
         testParallelHorizonJoin(
                 "RANGE FROM -2s TO 2s STEP 1s AS h",
-                rangeOffsets(-2, 2, 1),
+                rangeOffsets(-2, 2),
                 true,
                 "concat(t.side, '_00') = 'sell_00'"
         );
@@ -91,7 +91,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                     bindVariableService.setStr("side", "sell");
                 },
                 "RANGE FROM -2s TO 2s STEP 1s AS h",
-                rangeOffsets(-2, 2, 1),
+                rangeOffsets(-2, 2),
                 true,
                 "t.side = :side"
         );
@@ -121,7 +121,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
     public void testParallelHorizonJoinNotKeyed() throws Exception {
         testParallelHorizonJoin(
                 "RANGE FROM -2s TO 2s STEP 1s AS h",
-                rangeOffsets(-2, 2, 1),
+                rangeOffsets(-2, 2),
                 false,
                 null
         );
@@ -131,7 +131,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
     public void testParallelHorizonJoinNotKeyedManyOffsets() throws Exception {
         testParallelHorizonJoin(
                 "RANGE FROM -5s TO 5s STEP 1s AS h",
-                rangeOffsets(-5, 5, 1),
+                rangeOffsets(-5, 5),
                 false,
                 null
         );
@@ -141,7 +141,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
     public void testParallelHorizonJoinRange() throws Exception {
         testParallelHorizonJoin(
                 "RANGE FROM -2s TO 2s STEP 1s AS h",
-                rangeOffsets(-2, 2, 1),
+                rangeOffsets(-2, 2),
                 true,
                 null
         );
@@ -151,7 +151,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
     public void testParallelHorizonJoinRangeManyOffsets() throws Exception {
         testParallelHorizonJoin(
                 "RANGE FROM -10s TO 10s STEP 1s AS h",
-                rangeOffsets(-10, 10, 1),
+                rangeOffsets(-10, 10),
                 true,
                 null
         );
@@ -161,17 +161,17 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
     public void testParallelHorizonJoinWithoutOnClause() throws Exception {
         testParallelHorizonJoin(
                 "RANGE FROM -1s TO 1s STEP 1s AS h",
-                rangeOffsets(-1, 1, 1),
+                rangeOffsets(-1, 1),
                 false,
                 null
         );
     }
 
-    private static long[] rangeOffsets(int fromSec, int toSec, int stepSec) {
-        int count = (toSec - fromSec) / stepSec + 1;
+    private static long[] rangeOffsets(int fromSec, int toSec) {
+        int count = (toSec - fromSec) + 1;
         long[] offsets = new long[count];
         for (int i = 0; i < count; i++) {
-            offsets[i] = (fromSec + (long) stepSec * i) * 1_000_000L;
+            offsets[i] = (fromSec + (long) i) * 1_000_000L;
         }
         return offsets;
     }
