@@ -132,6 +132,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public @NotNull CheckpointListener getCheckpointListener() {
+        return getDelegate().getCheckpointListener();
+    }
+
+    @Override
     public boolean getCheckpointRecoveryRebuildColumnIndexes() {
         return getDelegate().getCheckpointRecoveryRebuildColumnIndexes();
     }
@@ -1042,13 +1047,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlParallelWorkStealingThreshold() {
-        return getDelegate().getSqlParallelWorkStealingThreshold();
+    public long getSqlParallelWorkStealingSpinTimeout() {
+        return getDelegate().getSqlParallelWorkStealingSpinTimeout();
     }
 
     @Override
-    public long getSqlParallelWorkStealingSpinTimeout() {
-        return getDelegate().getSqlParallelWorkStealingSpinTimeout();
+    public int getSqlParallelWorkStealingThreshold() {
+        return getDelegate().getSqlParallelWorkStealingThreshold();
     }
 
     @Override

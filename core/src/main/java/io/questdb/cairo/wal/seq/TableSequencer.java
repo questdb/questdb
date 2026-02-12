@@ -32,6 +32,14 @@ public interface TableSequencer extends QuietCloseable {
 
     void dropTable();
 
+    /**
+     * Returns the current (last allocated) WAL ID without incrementing.
+     * Unlike {@link #getNextWalId()}, this does not allocate a new ID.
+     *
+     * @return the current WAL ID, or 0 if no WALs have been allocated
+     */
+    int getCurrentWalId();
+
     // This method can return empty cursor if the structureVersionLo
     // equals to the sequencer metadata structure version.
     TableMetadataChangeLog getMetadataChangeLog(long structureVersionLo);

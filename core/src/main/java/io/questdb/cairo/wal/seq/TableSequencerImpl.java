@@ -195,6 +195,11 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
+    public int getCurrentWalId() {
+        return (int) walIdGenerator.getCurrentId();
+    }
+
+    @Override
     public TableMetadataChangeLog getMetadataChangeLog(long structureVersionLo) {
         checkDropped();
         if (metadata.getMetadataVersion() == structureVersionLo) {

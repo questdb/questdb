@@ -22,23 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo;
 
-import io.questdb.cairo.TableToken;
+import io.questdb.std.CharSequenceLongHashMap;
 
-public interface WalListener {
+/**
+ * Default no-op implementation of {@link CheckpointListener}.
+ */
+public class DefaultCheckpointListener implements CheckpointListener {
+    public static final DefaultCheckpointListener INSTANCE = new DefaultCheckpointListener();
 
-    void dataTxnCommitted(TableToken tableToken, long txn, long timestamp, int walId, int segmentId, int segmentTxn);
+    @Override
+    public void onCheckpointReleased(long timestampMicros, CharSequenceLongHashMap tableDirNamesToSeqTxn) {
+    }
 
-    void nonDataTxnCommitted(TableToken tableToken, long txn, long timestamp);
-
-    void segmentClosed(final TableToken tableToken, long txn, int walId, int segmentId);
-
-    void tableCreated(TableToken tableToken, long timestamp);
-
-    void tableDropped(TableToken tableToken, long txn, long timestamp);
-
-    void tableRenamed(TableToken tableToken, long txn, long timestamp, TableToken oldTableToken);
-
-    void walClosed(TableToken tableToken, long txn, int walId);
+    @Override
+    public void onCheckpointRestoreComplete() {
+    }
 }

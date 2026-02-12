@@ -715,6 +715,38 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testPutQuotedJsonStr() {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(64)) {
+            sink.putQuotedJsonStr("hello");
+            Assert.assertEquals("\"hello\"", sink.toString());
+
+            sink.clear();
+            sink.putQuotedJsonStr("say \"hi\"");
+            Assert.assertEquals("\"say \\\"hi\\\"\"", sink.toString());
+
+            sink.clear();
+            sink.putQuotedJsonStr("back\\slash");
+            Assert.assertEquals("\"back\\\\slash\"", sink.toString());
+
+            sink.clear();
+            sink.putQuotedJsonStr("tab\there");
+            Assert.assertEquals("\"tab\\there\"", sink.toString());
+
+            sink.clear();
+            sink.putQuotedJsonStr("new\nline");
+            Assert.assertEquals("\"new\\nline\"", sink.toString());
+
+            sink.clear();
+            sink.putQuotedJsonStr("");
+            Assert.assertEquals("\"\"", sink.toString());
+
+            sink.clear();
+            sink.putQuotedJsonStr("table~1");
+            Assert.assertEquals("\"table~1\"", sink.toString());
+        }
+    }
+
+    @Test
     public void testPutSafeInvalid() {
         final Utf8StringSink source = new Utf8StringSink();
         final Utf8StringSink sink = new Utf8StringSink();
@@ -957,7 +989,7 @@ public class Utf8sTest {
                     Assert.fail("iteration " + i + ", expected non-equals: " + sink);
                 }
 
-                if (sink.length() > 0) {
+                if (!sink.isEmpty()) {
                     // compare to empty
                     if (Utf8s.equalsUtf16(sink, 0, 0, utf8Sink, 0, utf8Sink.size() - 1)) {
                         Assert.fail("iteration " + i + ", expected non-equals: " + sink);

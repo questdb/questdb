@@ -146,6 +146,11 @@ public interface CairoConfiguration {
 
     boolean getCairoSqlLegacyOperatorPrecedence();
 
+    @NotNull
+    default CheckpointListener getCheckpointListener() {
+        return DefaultCheckpointListener.INSTANCE;
+    }
+
     /**
      * Enable/disable full rebuild of bitmap indexes for symbol columns in partitions
      */
@@ -618,9 +623,9 @@ public interface CairoConfiguration {
 
     double getSqlParallelFilterPreTouchThreshold();
 
-    int getSqlParallelWorkStealingThreshold();
-
     long getSqlParallelWorkStealingSpinTimeout();
+
+    int getSqlParallelWorkStealingThreshold();
 
     int getSqlParquetFrameCacheCapacity();
 
