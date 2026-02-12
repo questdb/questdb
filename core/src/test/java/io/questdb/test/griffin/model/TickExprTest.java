@@ -675,6 +675,18 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprBracketExpansionInList() throws SqlException {
+        assertCompiledTickExpr("[2025-01-[13..15], $today]");
+    }
+
+    @Test
+    public void testCompiledTickExprStaticElementIrGrowth() throws SqlException {
+        // 22 bracket-expanded dates start at irPos=2, ir.length=64.
+        // 21st date has irPos=62 → 62+3=65>64 → triggers IR growth at L600.
+        assertCompiledTickExpr("[2025-01-[01..22], $today]");
+    }
+
+    @Test
     public void testCompiledTickExprRangeWithSpaceBeforeDots() throws SqlException {
         assertCompiledTickExpr("$today + 1d .. $today + 5d ;1h");
     }
@@ -814,12 +826,48 @@ public class TickExprTest {
 
     @Test
     public void testCompiledTickExprLeadingWhitespaceList() throws SqlException {
-        assertCompiledTickExpr("  [ $today, $tomorrow]");
+        assertCompiledTickExpr("  [ $today , $tomorrow]");
     }
 
     @Test
     public void testCompiledTickExprMixedListWithRange() throws SqlException {
-        assertCompiledTickExpr("[2025-03-01, $today..$today + 2d, $yesterday]");
+        assertCompiledTickExpr("[2025-03-01, $today .. $today + 2d , $yesterday]");
+    }
+
+    @Test
+    public void testCompiledTickExprMixedListWithTimeOverride() throws SqlException {
+        assertCompiledTickExpr("[2025-06-15, $today]T09:30");
+    }
+
+    @Test
+    public void testCompiledTickExprMixedListWithTimeOverrideAndDuration() throws SqlException {
+        assertCompiledTickExpr("[2025-06-15, $today]T09:30;1h");
+    }
+
+    @Test
+    public void testCompiledTickExprMixedListWithTimeOverrideAndTz() throws SqlException {
+        assertCompiledTickExpr("[2025-06-15, $today]T09:30@+05:00");
+    }
+
+    @Test
+    public void testCompiledTickExprMixedListWithTimeOverrideTzAndDuration() throws SqlException {
+        assertCompiledTickExpr("[2025-06-15, $today]T09:30@+05:00;1h");
+    }
+
+    @Test
+    public void testCompiledTickExprRangeInListIrGrowth() throws SqlException {
+        // 2 duration parts → irPos=4 after shift, ir.length=64.
+        // 20 bracket-expanded static dates → 60 longs → irPos=64.
+        // Range needs 2 more → triggers IR growth at L529.
+        assertCompiledTickExpr("[2025-01-[01..20], $today..$tomorrow];1s1s");
+    }
+
+    @Test
+    public void testCompiledTickExprSingleVarInListIrGrowth() throws SqlException {
+        // 2 duration parts → irPos=4 after shift, ir.length=64.
+        // 20 bracket-expanded static dates → 60 longs → irPos=64.
+        // Single var needs 1 more → triggers IR growth at L537.
+        assertCompiledTickExpr("[2025-01-[01..20], $today];1s1s");
     }
 
     @Test
@@ -981,6 +1029,11 @@ public class TickExprTest {
     @Test
     public void testCompiledTickExprInvalidSingleTimeOverride() {
         assertCompileTickExprError("[$today]Tabc", "Invalid time override");
+    }
+
+    @Test
+    public void testCompiledTickExprEmptyElementInDateList() {
+        assertCompileTickExprError("[$today,, $tomorrow]", "Empty element in date list");
     }
 
     @Test

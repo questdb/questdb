@@ -520,19 +520,17 @@ public final class IntervalUtils {
                         if (rangeOpPos >= 0) {
                             int startHi = rangeOpPos;
                             int endLo = rangeOpPos + 2;
-                            int endHi = ee;
                             while (startHi > es && Chars.isAsciiWhitespace(effectiveSeq.charAt(startHi - 1))) startHi--;
-                            while (endLo < endHi && Chars.isAsciiWhitespace(effectiveSeq.charAt(endLo))) endLo++;
-                            while (endHi > endLo && Chars.isAsciiWhitespace(effectiveSeq.charAt(endHi - 1))) endHi--;
+                            while (endLo < ee && Chars.isAsciiWhitespace(effectiveSeq.charAt(endLo))) endLo++;
 
-                            boolean isBd = isBusinessDayExpression(effectiveSeq, endHi);
+                            boolean isBd = isBusinessDayExpression(effectiveSeq, ee);
                             if (irPos + 2 > ir.length) {
                                 ir = java.util.Arrays.copyOf(ir, ir.length * 2);
                             }
                             ir[irPos++] = CompiledTickExpression.TAG_RANGE
                                     | (isBd ? CompiledTickExpression.RANGE_BD_BIT : 0L)
                                     | DateVariableExpr.parseEncoded(effectiveSeq, es, startHi, position);
-                            ir[irPos++] = DateVariableExpr.parseEncoded(effectiveSeq, endLo, endHi, position);
+                            ir[irPos++] = DateVariableExpr.parseEncoded(effectiveSeq, endLo, ee, position);
                             elemCount++;
                         } else {
                             if (irPos >= ir.length) {
@@ -546,6 +544,7 @@ public final class IntervalUtils {
                         // Static element — pre-compute [lo, hi] with suffix applied
                         parseSink.clear();
                         parseSink.put(effectiveSeq, es, ee);
+                        int dateLimInSink = parseSink.length();
                         if (timeLo < timeHi) {
                             if (tzMarkerPos >= 0) {
                                 parseSink.put(effectiveSeq, timeLo, tzMarkerPos);
@@ -555,17 +554,36 @@ public final class IntervalUtils {
                                 parseSink.put(effectiveSeq, timeLo, timeHi);
                             }
                         }
-                        if (durationSemicolon >= 0 && tzMarkerPos >= 0 && tzContentHi < durationHi) {
+                        if (durationSemicolon >= 0 && tzMarkerPos >= 0) {
                             parseSink.put(effectiveSeq, tzContentHi, durationHi);
-                        } else if (durationSemicolon >= 0 && tzMarkerPos < 0 && timeLo < timeHi) {
-                            // already appended above via the time override path
                         } else if (durationSemicolon >= 0 && timeLo >= timeHi) {
                             parseSink.put(effectiveSeq, durationSemicolon, durationHi);
                         }
 
                         tmp.clear();
-                        parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, tmp, IntervalOperation.INTERSECT);
-                        applyLastEncodedInterval(timestampDriver, tmp);
+
+                        // Check if element contains brackets (e.g. 2025-01-[13..15])
+                        boolean elemHasBrackets = false;
+                        for (int j = es; j < ee; j++) {
+                            if (effectiveSeq.charAt(j) == '[') {
+                                elemHasBrackets = true;
+                                break;
+                            }
+                        }
+
+                        if (elemHasBrackets) {
+                            StringSink expansionSink = new StringSink();
+                            expandBracketsRecursive(
+                                    timestampDriver, configuration, parseSink,
+                                    0, dateLimInSink, parseSink.length(),
+                                    position, tmp, IntervalOperation.INTERSECT,
+                                    expansionSink, 0, true, 0,
+                                    null, -1, -1
+                            );
+                        } else {
+                            parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, tmp, IntervalOperation.INTERSECT);
+                            applyLastEncodedInterval(timestampDriver, tmp);
+                        }
 
                         // Day filter is applied here in local time (before tz conversion).
                         // Runtime Phase 2 also applies it, but double-application is idempotent.
