@@ -172,6 +172,41 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAliasedColumnVisibleByBothNamesInCaseThen() throws Exception {
+        // Verify that both the alias (p) and the original column name (price)
+        // can be used in CASE branches alongside a window function.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2024-01-01', 100.0),
+                        ('2024-01-02', 110.0),
+                        ('2024-01-03', 90.0)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tp\tcase
+                            2024-01-01T00:00:00.000000Z\t100.0\tnull
+                            2024-01-02T00:00:00.000000Z\t110.0\t110.0
+                            2024-01-03T00:00:00.000000Z\t90.0\t-90.0
+                            """,
+                    """
+                            SELECT ts, price AS p,
+                                CASE
+                                    WHEN price > lag(price) OVER (ORDER BY ts) THEN p
+                                    WHEN price < lag(price) OVER (ORDER BY ts) THEN -price
+                                END
+                            FROM trades
+                            """,
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testCachedWindowFactoryMaintainsOrderOfRecordsWithSameTimestamp1() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table nodts_tab (ts #TIMESTAMP, val int)", timestampType.getTypeName());
