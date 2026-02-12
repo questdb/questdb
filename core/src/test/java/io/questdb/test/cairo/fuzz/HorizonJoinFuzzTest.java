@@ -58,7 +58,6 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, String.valueOf(enableParallelHorizonJoin));
         // async horizon join uses small page frames
         setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 100);
-        setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_LOOKAHEAD, 5);
         super.setUp();
     }
 
