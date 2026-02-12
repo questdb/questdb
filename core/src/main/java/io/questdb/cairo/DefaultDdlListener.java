@@ -40,11 +40,11 @@ public class DefaultDdlListener implements DdlListener {
     }
 
     @Override
-    public void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
+    public void onTableDropped(String tableName, boolean cascadePermissions) {
     }
 
     @Override
-    public void onTableDropped(String tableName, boolean cascadePermissions) {
+    public void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
     }
 
     @Override

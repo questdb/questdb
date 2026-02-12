@@ -256,8 +256,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
         AlterOperation alterOperation = newInstance(extraInfo, charSequenceObjList);
         alterOperation.command = this.command;
-        alterOperation.tableToken = this.tableToken;
-        alterOperation.tableNamePosition = this.tableNamePosition;
 
         if (this.activeExtraStrInfo == this.extraStrInfo) {
             alterOperation.activeExtraStrInfo = alterOperation.extraStrInfo;

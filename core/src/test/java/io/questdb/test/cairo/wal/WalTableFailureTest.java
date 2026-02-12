@@ -1117,12 +1117,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             drainWalQueue();
 
             try (WalWriter writer = engine.getWalWriter(tableName)) {
-                UpdateOperation updateOperation = new UpdateOperation(tableName, 1, 22, 1) {
-                    @Override
-                    public SqlExecutionContext getSqlExecutionContext() {
-                        return sqlExecutionContext;
-                    }
-                };
+                UpdateOperation updateOperation = new UpdateOperation(tableName, 1, 22, 1);
                 updateOperation.withContext(sqlExecutionContext);
                 writer.apply(updateOperation);
                 Assert.fail();
