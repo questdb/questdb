@@ -164,10 +164,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private static final Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
     private static final boolean[][] columnConversionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
     protected final AlterOperationBuilder alterOperationBuilder;
-    protected final GenericDropOperationBuilder dropOperationBuilder;
     protected final SqlCodeGenerator codeGenerator;
     protected final CompiledQueryImpl compiledQuery;
     protected final CairoConfiguration configuration;
+    protected final GenericDropOperationBuilder dropOperationBuilder;
     protected final CairoEngine engine;
     protected final LowerCaseAsciiCharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new LowerCaseAsciiCharSequenceObjHashMap<>();
     protected final GenericLexer lexer;

@@ -325,11 +325,11 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
-    protected AlterOperation createAlterOperation(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
-        return new AlterOperation(extraInfo, extraStrInfo);
-    }
-
     public void setDedupKeyFlag(int writerColumnIndex) {
         extraInfo.add(writerColumnIndex);
+    }
+
+    protected AlterOperation createAlterOperation(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
+        return new AlterOperation(extraInfo, extraStrInfo);
     }
 }
