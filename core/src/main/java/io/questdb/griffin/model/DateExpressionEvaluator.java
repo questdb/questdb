@@ -26,6 +26,7 @@ package io.questdb.griffin.model;
 
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 
@@ -125,7 +126,7 @@ public class DateExpressionEvaluator {
         int numEnd = offsetStart;
         for (; numEnd < hi; numEnd++) {
             char c = expression.charAt(numEnd);
-            if (c != '_' && !Character.isDigit(c)) {
+            if (c != '_' && !Chars.isAsciiDigit(c)) {
                 break;
             }
         }
@@ -225,30 +226,39 @@ public class DateExpressionEvaluator {
         char c1 = (char) (seq.charAt(varStart + 1) | 32);
         char c2 = (char) (seq.charAt(varStart + 2) | 32);
         if (c0 == 'n' && c1 == 'o' && c2 == 'w') {
-            return remaining == 3 || !Character.isLetter(seq.charAt(varStart + 3));
+            return remaining == 3 || isVarBoundary(seq, varStart + 3, lim);
         }
         if (remaining >= 5) {
             char c3 = (char) (seq.charAt(varStart + 3) | 32);
             char c4 = (char) (seq.charAt(varStart + 4) | 32);
             if (c0 == 't' && c1 == 'o' && c2 == 'd' && c3 == 'a' && c4 == 'y') {
-                return remaining == 5 || !Character.isLetter(seq.charAt(varStart + 5));
+                return remaining == 5 || isVarBoundary(seq, varStart + 5, lim);
             }
             if (remaining >= 8) {
                 char c5 = (char) (seq.charAt(varStart + 5) | 32);
                 char c6 = (char) (seq.charAt(varStart + 6) | 32);
                 char c7 = (char) (seq.charAt(varStart + 7) | 32);
                 if (c0 == 't' && c1 == 'o' && c2 == 'm' && c3 == 'o' && c4 == 'r' && c5 == 'r' && c6 == 'o' && c7 == 'w') {
-                    return remaining == 8 || !Character.isLetter(seq.charAt(varStart + 8));
+                    return remaining == 8 || isVarBoundary(seq, varStart + 8, lim);
                 }
                 if (remaining >= 9) {
                     char c8 = (char) (seq.charAt(varStart + 8) | 32);
                     if (c0 == 'y' && c1 == 'e' && c2 == 's' && c3 == 't' && c4 == 'e' && c5 == 'r' && c6 == 'd' && c7 == 'a' && c8 == 'y') {
-                        return remaining == 9 || !Character.isLetter(seq.charAt(varStart + 9));
+                        return remaining == 9 || isVarBoundary(seq, varStart + 9, lim);
                     }
                 }
             }
         }
         return false;
+    }
+
+    private static boolean isVarBoundary(CharSequence seq, int pos, int lim) {
+        char c = seq.charAt(pos);
+        if (Chars.isAsciiLetter(c)) {
+            // 'T'/'t' followed by a digit is the ISO time-override suffix, not a name continuation
+            return (c == 'T' || c == 't') && pos + 1 < lim && Chars.isAsciiDigit(seq.charAt(pos + 1));
+        }
+        return true;
     }
 
     private static long resolveVariable(

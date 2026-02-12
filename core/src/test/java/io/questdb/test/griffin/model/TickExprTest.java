@@ -767,6 +767,20 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprVariableWithTimeSuffixProducesDynamicModel() throws SqlException {
+        // $todayT09:30;1h must go through the dynamic path, not static.
+        // The 'T' time-override suffix immediately after the variable name
+        // must not prevent isDateVariable() from recognizing $today.
+        String expr = "$todayT09:30;1h";
+        RuntimeIntervalModelBuilder builder = new RuntimeIntervalModelBuilder();
+        builder.of(timestampType.getTimestampType(), 0, configuration);
+        builder.intersectIntervals(expr, 0, expr.length(), 0);
+        try (RuntimeIntrinsicIntervalModel m = builder.build()) {
+            Assert.assertFalse("$todayT09:30;1h should produce dynamic model", m.isStatic());
+        }
+    }
+
+    @Test
     public void testDateCeilMicroWithDiffFraction() throws NumericException {
         assertDateFloor("2015-02-28T08:22:44.556012Z", "2015-02-28T08:22:44.556012");
         assertDateFloor("2015-02-28T08:22:44.556010Z", "2015-02-28T08:22:44.55601");

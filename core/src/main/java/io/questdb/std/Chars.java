@@ -989,6 +989,18 @@ public final class Chars {
         return true;
     }
 
+    public static boolean isAsciiDigit(char c) {
+        return c >= '0' && c <= '9';
+    }
+
+    public static boolean isAsciiLetter(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    }
+
+    public static boolean isAsciiWhitespace(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f';
+    }
+
     public static boolean isBlank(CharSequence s) {
         if (s == null) {
             return true;

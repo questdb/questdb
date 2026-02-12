@@ -31,6 +31,7 @@ import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TickCalendarService;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Chars;
 import io.questdb.std.Interval;
 import io.questdb.std.LongGroupSort;
 import io.questdb.std.LongList;
@@ -603,7 +604,7 @@ public final class IntervalUtils {
                 : "sqlIntervalMaxIntervalsAfterMerge must be greater than sqlIntervalIncrementalMergeThreshold";
         // Skip leading whitespace
         int firstNonSpace = lo;
-        while (firstNonSpace < lim && Character.isWhitespace(seq.charAt(firstNonSpace))) {
+        while (firstNonSpace < lim && Chars.isAsciiWhitespace(seq.charAt(firstNonSpace))) {
             firstNonSpace++;
         }
 
@@ -722,7 +723,7 @@ public final class IntervalUtils {
                     break;
                 }
                 // 'T' is only a time suffix if followed by a digit
-                if (c == 'T' && exprEnd + 1 < effectiveSeqLim && Character.isDigit(effectiveSeq.charAt(exprEnd + 1))) {
+                if (c == 'T' && exprEnd + 1 < effectiveSeqLim && Chars.isAsciiDigit(effectiveSeq.charAt(exprEnd + 1))) {
                     break;
                 }
                 exprEnd++;
@@ -1835,7 +1836,7 @@ public final class IntervalUtils {
 
         while (i < bracketEnd) {
             // Skip whitespace
-            while (i < bracketEnd && Character.isWhitespace(seq.charAt(i))) {
+            while (i < bracketEnd && Chars.isAsciiWhitespace(seq.charAt(i))) {
                 i++;
             }
             if (i >= bracketEnd) {
@@ -1844,7 +1845,7 @@ public final class IntervalUtils {
 
             // Parse number
             int numStart = i;
-            while (i < bracketEnd && Character.isDigit(seq.charAt(i))) {
+            while (i < bracketEnd && Chars.isAsciiDigit(seq.charAt(i))) {
                 i++;
             }
             if (numStart == i) {
@@ -1865,7 +1866,7 @@ public final class IntervalUtils {
             }
 
             // Skip whitespace
-            while (i < bracketEnd && Character.isWhitespace(seq.charAt(i))) {
+            while (i < bracketEnd && Chars.isAsciiWhitespace(seq.charAt(i))) {
                 i++;
             }
 
@@ -1874,12 +1875,12 @@ public final class IntervalUtils {
             if (i + 1 < bracketEnd && seq.charAt(i) == '.' && seq.charAt(i + 1) == '.') {
                 i += 2;
                 // Skip whitespace
-                while (i < bracketEnd && Character.isWhitespace(seq.charAt(i))) {
+                while (i < bracketEnd && Chars.isAsciiWhitespace(seq.charAt(i))) {
                     i++;
                 }
                 // Parse range end
                 int endStart = i;
-                while (i < bracketEnd && Character.isDigit(seq.charAt(i))) {
+                while (i < bracketEnd && Chars.isAsciiDigit(seq.charAt(i))) {
                     i++;
                 }
                 if (endStart == i) {
@@ -1927,7 +1928,7 @@ public final class IntervalUtils {
             valueCount++;
 
             // Skip whitespace
-            while (i < bracketEnd && Character.isWhitespace(seq.charAt(i))) {
+            while (i < bracketEnd && Chars.isAsciiWhitespace(seq.charAt(i))) {
                 i++;
             }
 
@@ -2008,7 +2009,7 @@ public final class IntervalUtils {
         int contentEnd = listEnd;
 
         // Skip leading whitespace in content
-        while (contentStart < contentEnd && Character.isWhitespace(seq.charAt(contentStart))) {
+        while (contentStart < contentEnd && Chars.isAsciiWhitespace(seq.charAt(contentStart))) {
             contentStart++;
         }
 
@@ -2055,10 +2056,10 @@ public final class IntervalUtils {
                 int elementEnd = i;
 
                 // Trim whitespace from element
-                while (elementStart < elementEnd && Character.isWhitespace(seq.charAt(elementStart))) {
+                while (elementStart < elementEnd && Chars.isAsciiWhitespace(seq.charAt(elementStart))) {
                     elementStart++;
                 }
-                while (elementEnd > elementStart && Character.isWhitespace(seq.charAt(elementEnd - 1))) {
+                while (elementEnd > elementStart && Chars.isAsciiWhitespace(seq.charAt(elementEnd - 1))) {
                     elementEnd--;
                 }
 
@@ -2206,7 +2207,7 @@ public final class IntervalUtils {
                 boolean elementHasTime = false;
                 for (int j = resolvedElementStart; j < effectiveElementEnd - 1; j++) {
                     char ec = elementSeq.charAt(j);
-                    if (ec == 'T' && Character.isDigit(elementSeq.charAt(j + 1))) {
+                    if (ec == 'T' && Chars.isAsciiDigit(elementSeq.charAt(j + 1))) {
                         elementHasTime = true;
                         break;
                     }
@@ -2396,14 +2397,14 @@ public final class IntervalUtils {
         int endExprHi = rangeEnd;
 
         // Trim whitespace from start expression (trailing)
-        while (startExprHi > elementStart && Character.isWhitespace(seq.charAt(startExprHi - 1))) {
+        while (startExprHi > elementStart && Chars.isAsciiWhitespace(seq.charAt(startExprHi - 1))) {
             startExprHi--;
         }
         // Trim whitespace from end expression (leading and trailing)
-        while (endExprLo < endExprHi && Character.isWhitespace(seq.charAt(endExprLo))) {
+        while (endExprLo < endExprHi && Chars.isAsciiWhitespace(seq.charAt(endExprLo))) {
             endExprLo++;
         }
-        while (endExprHi > endExprLo && Character.isWhitespace(seq.charAt(endExprHi - 1))) {
+        while (endExprHi > endExprLo && Chars.isAsciiWhitespace(seq.charAt(endExprHi - 1))) {
             endExprHi--;
         }
 
@@ -2744,7 +2745,7 @@ public final class IntervalUtils {
 
         while (i < bracketEnd) {
             // Skip whitespace
-            while (i < bracketEnd && Character.isWhitespace(seq.charAt(i))) {
+            while (i < bracketEnd && Chars.isAsciiWhitespace(seq.charAt(i))) {
                 i++;
             }
             if (i >= bracketEnd) {
@@ -2759,7 +2760,7 @@ public final class IntervalUtils {
             int elemEnd = i;
 
             // Trim trailing whitespace from element
-            while (elemEnd > elemStart && Character.isWhitespace(seq.charAt(elemEnd - 1))) {
+            while (elemEnd > elemStart && Chars.isAsciiWhitespace(seq.charAt(elemEnd - 1))) {
                 elemEnd--;
             }
 
@@ -3074,7 +3075,7 @@ public final class IntervalUtils {
                     char next = seq.charAt(i + 1);
                     // Date list: followed by T, ;, @ (timezone marker), or whitespace
                     // Field expansion: followed by -, :, ., or digit (part of date format)
-                    return next == 'T' || next == ';' || next == '@' || Character.isWhitespace(next);
+                    return next == 'T' || next == ';' || next == '@' || Chars.isAsciiWhitespace(next);
                 }
             }
         }
