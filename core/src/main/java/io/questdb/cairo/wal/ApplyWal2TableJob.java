@@ -422,7 +422,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                                 if (hasNext) {
                                     final long start = microClock.getTicks();
-                                    walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, -1L, start - commitTimestamp);
+                                    walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, -1L, start - commitTimestamp, Long.MIN_VALUE, Long.MIN_VALUE);
                                     writer.setSeqTxn(seqTxn);
                                     try {
                                         final TableMetadataChange metadataChangeOp = structuralChangeCursor.next();
@@ -440,7 +440,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         writer.setSeqTxn(seqTxn - 1);
                                         throw th;
                                     }
-                                    walTelemetryFacade.store(WAL_TXN_STRUCTURE_CHANGE_APPLIED, tableToken, walId, seqTxn, -1L, -1L, microClock.getTicks() - start);
+                                    walTelemetryFacade.store(WAL_TXN_STRUCTURE_CHANGE_APPLIED, tableToken, walId, seqTxn, -1L, -1L, microClock.getTicks() - start, Long.MIN_VALUE, Long.MIN_VALUE);
                                 } else {
                                     // Something messed up in sequencer.
                                     // There is a transaction in WAL but no structure change record.
@@ -562,8 +562,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         TelemetryTask.store(telemetry, origin, event);
     }
 
-    private void doStoreWalTelemetry(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs) {
-        TelemetryWalTask.store(walTelemetry, event, tableToken.getTableId(), walId, seqTxn, rowCount, physicalRowCount, latencyUs);
+    private void doStoreWalTelemetry(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs, long minTimestamp, long maxTimestamp) {
+        TelemetryWalTask.store(walTelemetry, event, tableToken.getTableId(), walId, seqTxn, rowCount, physicalRowCount, latencyUs, minTimestamp, maxTimestamp);
     }
 
     private void handleWalApplyFailure(TableToken tableToken, Throwable throwable, SeqTxnTracker txnTracker) {
@@ -635,7 +635,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         switch (walTxnType) {
             case DATA:
             case MAT_VIEW_DATA:
-                walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
+                walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp, txnDetails.getMinTimestamp(seqTxn), txnDetails.getMaxTimestamp(seqTxn));
                 long skipTxnCount = calculateSkipTransactionCount(seqTxn, txnDetails);
                 // Ask TableWriter to skip applying transactions entirely when possible
                 boolean skipped = false;
@@ -660,7 +660,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     long walRowCount = txnDetails.getSegmentRowHi(s) - txnDetails.getSegmentRowLo(s);
                     long commitPhRowCount = s == lastCommittedSeqTxn ? totalPhysicalRowCount : 0;
                     metrics.addApplyRowsWritten(walRowCount, commitPhRowCount, latency);
-                    walTelemetryFacade.store(WAL_TXN_DATA_APPLIED, writer.getTableToken(), walId, s, walRowCount, commitPhRowCount, latency);
+                    walTelemetryFacade.store(WAL_TXN_DATA_APPLIED, writer.getTableToken(), walId, s, walRowCount, commitPhRowCount, latency, txnDetails.getMinTimestamp(s), txnDetails.getMaxTimestamp(s));
                     lastCommittedRows += walRowCount;
                 }
 
@@ -702,9 +702,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 try (WalEventReader eventReader = walEventReader) {
                     final WalEventCursor walEventCursor = eventReader.of(walPath, segmentTxn);
                     final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
-                    walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
+                    walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp, Long.MIN_VALUE, Long.MIN_VALUE);
                     processWalSql(writer, sqlInfo, operationExecutor, seqTxn);
-                    walTelemetryFacade.store(WAL_TXN_SQL_APPLIED, writer.getTableToken(), walId, seqTxn, -1L, -1L, microClock.getTicks() - start);
+                    walTelemetryFacade.store(WAL_TXN_SQL_APPLIED, writer.getTableToken(), walId, seqTxn, -1L, -1L, microClock.getTicks() - start, Long.MIN_VALUE, Long.MIN_VALUE);
                     lastCommittedRows = 0;
                     return 1;
                 }
@@ -871,7 +871,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private void storeTelemetryNoOp(short event, short origin) {
     }
 
-    private void storeWalTelemetryNoop(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs) {
+    private void storeWalTelemetryNoop(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs, long minTimestamp, long maxTimestamp) {
     }
 
     private void updateMatViewRefreshState(
@@ -996,7 +996,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
     @FunctionalInterface
     private interface WalTelemetryFacade {
-        void store(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs);
+        void store(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs, long minTimestamp, long maxTimestamp);
     }
 
     private static class EjectApplyWalException extends RuntimeException {

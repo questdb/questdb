@@ -54,9 +54,16 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
                                 "seqTxn LONG, " +
                                 "rowCount LONG, " +
                                 "physicalRowCount LONG, " +
-                                "latency FLOAT " +
+                                "latency FLOAT, " +
+                                "minTimestamp TIMESTAMP, " +
+                                "maxTimestamp TIMESTAMP" +
                                 ") TIMESTAMP(created) PARTITION BY DAY TTL ").$(ttlWeeks > 0 ? ttlWeeks : 1).$(" WEEKS BYPASS WAL"
                         );
+            }
+
+            @Override
+            public int getExpectedColumnCount() {
+                return 10;
             }
 
             @Override
@@ -96,6 +103,8 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
     private static final Log LOG = LogFactory.getLog(TelemetryWalTask.class);
     private short event;
     private float latency; // millis
+    private long maxTimestamp;
+    private long minTimestamp;
     private long physicalRowCount;
     private long queueCursor;
     private long rowCount;
@@ -114,7 +123,9 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
             long seqTxn,
             long rowCount,
             long physicalRowCount,
-            long latencyUs
+            long latencyUs,
+            long minTimestamp,
+            long maxTimestamp
     ) {
         final TelemetryWalTask task = telemetry.nextTask();
         if (task != null) {
@@ -125,6 +136,8 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
             task.rowCount = rowCount;
             task.physicalRowCount = physicalRowCount;
             task.latency = latencyUs / 1000.0f; // millis
+            task.minTimestamp = minTimestamp;
+            task.maxTimestamp = maxTimestamp;
             telemetry.store(task);
         }
     }
@@ -154,6 +167,8 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
             row.putLong(5, rowCount);
             row.putLong(6, physicalRowCount);
             row.putFloat(7, latency);
+            row.putTimestamp(8, minTimestamp);
+            row.putTimestamp(9, maxTimestamp);
             row.append();
         } catch (CairoException e) {
             LOG.error().$("Could not insert a new ").$(TABLE_NAME).$(" row [errno=").$(e.getErrno())

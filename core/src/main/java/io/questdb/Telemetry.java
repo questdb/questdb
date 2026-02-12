@@ -155,6 +155,10 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
                 } else if (ttlWeeks > 0 && ttl > 0 && ttl != ttlWeeks * 24 * 7) {
                     shouldAlterTtl = true;
                 }
+                int expectedColumnCount = telemetryType.getExpectedColumnCount();
+                if (expectedColumnCount > 0 && meta.getColumnCount() != expectedColumnCount) {
+                    shouldDropTable = true;
+                }
             }
         } catch (CairoException e) {
             if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")) {
@@ -372,6 +376,10 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
 
     public interface TelemetryType<T extends AbstractTelemetryTask> {
         QueryBuilder getCreateSql(QueryBuilder builder, int ttlWeeks);
+
+        default int getExpectedColumnCount() {
+            return -1;
+        }
 
         String getName();
 
