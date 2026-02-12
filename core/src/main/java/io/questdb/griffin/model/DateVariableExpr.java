@@ -61,6 +61,17 @@ public class DateVariableExpr {
     }
 
     /**
+     * Encodes this expression as a single long for the compiled IR.
+     * Layout: varType[59:58] | isBusinessDays[57] | offsetUnit[55:40] | offsetValue[31:0]
+     */
+    long toEncodedLong() {
+        return ((long) (varType & 0x3) << 58)
+                | (isBusinessDays ? (1L << 57) : 0L)
+                | ((long) (offsetUnit & 0xFFFF) << 40)
+                | (offsetValue & 0xFFFFFFFFL);
+    }
+
+    /**
      * Evaluates this expression with the given "now" timestamp, producing
      * a resolved timestamp using only long arithmetic.
      *

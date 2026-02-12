@@ -301,9 +301,8 @@ public final class IntervalUtils {
             }
         }
 
-        // Parse duration (unit, value) pairs
-        char[] durationUnits = null;
-        int[] durationValues = null;
+        // Parse duration (unit, value) pairs — encoded as longs for the IR
+        long[] durationParts = null;
         int durationPartCount = 0;
         boolean hasDurationWithExchange = false;
 
@@ -319,8 +318,7 @@ public final class IntervalUtils {
                 }
             }
             if (partCapacity > 0) {
-                durationUnits = new char[partCapacity];
-                durationValues = new int[partCapacity];
+                durationParts = new long[partCapacity];
                 int numStart = durationLo;
                 for (int i = durationLo; i < durationHi; i++) {
                     char c = effectiveSeq.charAt(i);
@@ -328,13 +326,13 @@ public final class IntervalUtils {
                     if (i == numStart) {
                         throw SqlException.$(position, "Expected number before unit '").put(c).put('\'');
                     }
+                    int value;
                     try {
-                        durationValues[durationPartCount] = Numbers.parseInt(effectiveSeq, numStart, i);
+                        value = Numbers.parseInt(effectiveSeq, numStart, i);
                     } catch (NumericException e) {
                         throw SqlException.$(position, "Duration not a number: ").put(effectiveSeq, numStart, i);
                     }
-                    durationUnits[durationPartCount] = c;
-                    durationPartCount++;
+                    durationParts[durationPartCount++] = CompiledTickExpression.encodeDuration(c, value);
                     numStart = i + 1;
                 }
                 if (numStart < durationHi) {
@@ -442,19 +440,10 @@ public final class IntervalUtils {
             }
         }
 
-        // Phase 4: Parse elements
-        // Element storage (using over-allocated arrays, trimmed at end)
-        int maxElems = 16;
-        byte[] elemTypes = new byte[maxElems];
-        DateVariableExpr[] singleVarExprs = new DateVariableExpr[maxElems];
-        long[] staticElements = new long[maxElems * 2];
-        DateVariableExpr[] rangeStartExprs = new DateVariableExpr[maxElems];
-        DateVariableExpr[] rangeEndExprs = new DateVariableExpr[maxElems];
-        boolean[] rangeBusinessDay = new boolean[maxElems];
+        // Phase 4: Parse elements into IR longs
+        long[] elemIr = new long[48];
+        int elemIrPos = 0;
         int elemCount = 0;
-        int singleVarCount = 0;
-        int staticCount = 0;
-        int rangeCount = 0;
 
         if (isBareVar) {
             // Single bare variable expression - check for range (..)
@@ -473,16 +462,16 @@ public final class IntervalUtils {
                 DateVariableExpr startExpr = DateVariableExpr.parse(effectiveSeq, elemListLo, startExprHi, position);
                 DateVariableExpr endExpr = DateVariableExpr.parse(effectiveSeq, endExprLo, endExprHi, position);
 
-                elemTypes[elemCount++] = CompiledTickExpression.ELEM_RANGE;
-                rangeStartExprs[rangeCount] = startExpr;
-                rangeEndExprs[rangeCount] = endExpr;
-                rangeBusinessDay[rangeCount] = isBusinessDay;
-                rangeCount++;
+                elemIr[elemIrPos++] = CompiledTickExpression.TAG_RANGE
+                        | (isBusinessDay ? CompiledTickExpression.RANGE_BD_BIT : 0L)
+                        | startExpr.toEncodedLong();
+                elemIr[elemIrPos++] = endExpr.toEncodedLong();
+                elemCount++;
             } else {
                 // Single variable
                 DateVariableExpr expr = DateVariableExpr.parse(effectiveSeq, elemListLo, elemListHi, position);
-                elemTypes[elemCount++] = CompiledTickExpression.ELEM_SINGLE_VAR;
-                singleVarExprs[singleVarCount++] = expr;
+                elemIr[elemIrPos++] = CompiledTickExpression.TAG_SINGLE_VAR | expr.toEncodedLong();
+                elemCount++;
             }
         } else if (isDateList) {
             // Parse comma-separated elements in date list
@@ -511,17 +500,6 @@ public final class IntervalUtils {
                         throw SqlException.$(position, "Empty element in date list");
                     }
 
-                    // Grow arrays if needed
-                    if (elemCount >= maxElems) {
-                        maxElems *= 2;
-                        elemTypes = java.util.Arrays.copyOf(elemTypes, maxElems);
-                        singleVarExprs = java.util.Arrays.copyOf(singleVarExprs, maxElems);
-                        staticElements = java.util.Arrays.copyOf(staticElements, maxElems * 2);
-                        rangeStartExprs = java.util.Arrays.copyOf(rangeStartExprs, maxElems);
-                        rangeEndExprs = java.util.Arrays.copyOf(rangeEndExprs, maxElems);
-                        rangeBusinessDay = java.util.Arrays.copyOf(rangeBusinessDay, maxElems);
-                    }
-
                     if (effectiveSeq.charAt(es) == '$') {
                         // Date variable element - check for range
                         int rangeOpPos = findRangeOperator(effectiveSeq, es, ee);
@@ -537,15 +515,21 @@ public final class IntervalUtils {
                             DateVariableExpr startExpr = DateVariableExpr.parse(effectiveSeq, es, startHi, position);
                             DateVariableExpr endExpr = DateVariableExpr.parse(effectiveSeq, endLo, endHi, position);
 
-                            elemTypes[elemCount++] = CompiledTickExpression.ELEM_RANGE;
-                            rangeStartExprs[rangeCount] = startExpr;
-                            rangeEndExprs[rangeCount] = endExpr;
-                            rangeBusinessDay[rangeCount] = isBd;
-                            rangeCount++;
+                            if (elemIrPos + 2 > elemIr.length) {
+                                elemIr = java.util.Arrays.copyOf(elemIr, elemIr.length * 2);
+                            }
+                            elemIr[elemIrPos++] = CompiledTickExpression.TAG_RANGE
+                                    | (isBd ? CompiledTickExpression.RANGE_BD_BIT : 0L)
+                                    | startExpr.toEncodedLong();
+                            elemIr[elemIrPos++] = endExpr.toEncodedLong();
+                            elemCount++;
                         } else {
                             DateVariableExpr expr = DateVariableExpr.parse(effectiveSeq, es, ee, position);
-                            elemTypes[elemCount++] = CompiledTickExpression.ELEM_SINGLE_VAR;
-                            singleVarExprs[singleVarCount++] = expr;
+                            if (elemIrPos >= elemIr.length) {
+                                elemIr = java.util.Arrays.copyOf(elemIr, elemIr.length * 2);
+                            }
+                            elemIr[elemIrPos++] = CompiledTickExpression.TAG_SINGLE_VAR | expr.toEncodedLong();
+                            elemCount++;
                         }
                     } else {
                         // Static element - pre-compute [lo, hi] with suffix applied
@@ -601,19 +585,13 @@ public final class IntervalUtils {
 
                         // Store each resulting interval as a separate STATIC element
                         for (int k = 0; k < tmp.size(); k += 2) {
-                            if (elemCount >= maxElems) {
-                                maxElems *= 2;
-                                elemTypes = java.util.Arrays.copyOf(elemTypes, maxElems);
-                                singleVarExprs = java.util.Arrays.copyOf(singleVarExprs, maxElems);
-                                staticElements = java.util.Arrays.copyOf(staticElements, maxElems * 2);
-                                rangeStartExprs = java.util.Arrays.copyOf(rangeStartExprs, maxElems);
-                                rangeEndExprs = java.util.Arrays.copyOf(rangeEndExprs, maxElems);
-                                rangeBusinessDay = java.util.Arrays.copyOf(rangeBusinessDay, maxElems);
+                            if (elemIrPos + 3 > elemIr.length) {
+                                elemIr = java.util.Arrays.copyOf(elemIr, elemIr.length * 2);
                             }
-                            elemTypes[elemCount++] = CompiledTickExpression.ELEM_STATIC;
-                            staticElements[staticCount * 2] = tmp.getQuick(k);
-                            staticElements[staticCount * 2 + 1] = tmp.getQuick(k + 1);
-                            staticCount++;
+                            elemIr[elemIrPos++] = CompiledTickExpression.TAG_STATIC;
+                            elemIr[elemIrPos++] = tmp.getQuick(k);
+                            elemIr[elemIrPos++] = tmp.getQuick(k + 1);
+                            elemCount++;
                         }
                     }
                     elementStart = i + 1;
@@ -621,36 +599,29 @@ public final class IntervalUtils {
             }
         }
 
-        // Phase 5: Build the compiled expression
-        // Trim arrays to actual size
-        elemTypes = java.util.Arrays.copyOf(elemTypes, elemCount);
-        singleVarExprs = java.util.Arrays.copyOf(singleVarExprs, singleVarCount);
-        staticElements = java.util.Arrays.copyOf(staticElements, staticCount * 2);
-        rangeStartExprs = java.util.Arrays.copyOf(rangeStartExprs, rangeCount);
-        rangeEndExprs = java.util.Arrays.copyOf(rangeEndExprs, rangeCount);
-        rangeBusinessDay = java.util.Arrays.copyOf(rangeBusinessDay, rangeCount);
+        // Phase 5: Assemble the single long[] IR
+        int irSize = 2 + durationPartCount + timeOverrideCount * 2 + elemIrPos;
+        long[] ir = new long[irSize];
+        ir[0] = CompiledTickExpression.encodeHeader(elemCount, timeOverrideCount, durationPartCount,
+                hasDurationWithExchange, dayFilterMask);
+        ir[1] = numericTzOffset;
+        int pos = 2;
+        if (durationPartCount > 0) {
+            System.arraycopy(durationParts, 0, ir, pos, durationPartCount);
+            pos += durationPartCount;
+        }
+        if (timeOverrideCount > 0) {
+            System.arraycopy(timeOverrides, 0, ir, pos, timeOverrideCount * 2);
+            pos += timeOverrideCount * 2;
+        }
+        System.arraycopy(elemIr, 0, ir, pos, elemIrPos);
 
         return new CompiledTickExpression(
                 timestampDriver,
-                configuration,
+                ir,
                 seq.subSequence(lo, lim),
-                elemCount,
-                elemTypes,
-                singleVarExprs,
-                staticElements,
-                rangeStartExprs,
-                rangeEndExprs,
-                rangeBusinessDay,
-                timeOverrides,
-                timeOverrideCount,
-                durationUnits,
-                durationValues,
-                durationPartCount,
-                numericTzOffset,
                 tzRules,
-                dayFilterMask,
-                exchangeSchedule,
-                hasDurationWithExchange
+                exchangeSchedule
         );
     }
 

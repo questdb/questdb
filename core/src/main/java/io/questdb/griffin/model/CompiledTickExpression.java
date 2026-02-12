@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.model;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -37,91 +36,100 @@ import io.questdb.std.datetime.TimeZoneRules;
 
 /**
  * A Function that represents a pre-parsed tick expression containing date variables
- * ($now, $today, $yesterday, $tomorrow). All string parsing happens at compile time;
+ * ($now, $today, $yesterday, $tomorrow). The entire expression is pre-parsed into
+ * a single {@code long[]} IR (intermediate representation) at compile time;
  * {@link #evaluate} performs only long arithmetic to produce [lo, hi] interval pairs.
  * <p>
- * Elements are pre-parsed into one of three types:
+ * IR layout:
+ * <pre>
+ *   ir[0]:                         header (counts + flags, see HDR_* constants)
+ *   ir[1]:                         numericTzOffset (Long.MIN_VALUE if not numeric)
+ *   ir[2 .. 2+D):                  duration parts (encoded unit+value)
+ *   ir[2+D .. 2+D+2T):             time override pairs (offset, width)
+ *   ir[2+D+2T .. end):             elements
+ * </pre>
+ * Element encodings (tag in bits 63-62, expr in bits 59-0):
  * <ul>
- *   <li>SINGLE_VAR — a single {@link DateVariableExpr}</li>
- *   <li>STATIC — a pre-computed [lo, hi] pair</li>
- *   <li>RANGE — a (start, end, isBusinessDay) triple of {@link DateVariableExpr}</li>
+ *   <li>SINGLE_VAR (tag 00): 1 long — encoded DateVariableExpr</li>
+ *   <li>STATIC (tag 01): 3 longs — tag, lo, hi</li>
+ *   <li>RANGE (tag 10): 2 longs — tag+isBusinessDay+startExpr, endExpr</li>
  * </ul>
- * <p>
- * The shared suffix (time override, duration, timezone, day filter, exchange schedule)
- * is also pre-parsed so that runtime evaluation uses only long arithmetic.
  */
 public class CompiledTickExpression extends UntypedFunction {
-    static final byte ELEM_RANGE = 2;
-    static final byte ELEM_SINGLE_VAR = 0;
-    static final byte ELEM_STATIC = 1;
+    // ---- Element tag (bits 63-62) ----
+    static final long RANGE_BD_BIT = 1L << 61;
+    static final long TAG_RANGE = 0x8000_0000_0000_0000L;
+    static final long TAG_SINGLE_VAR = 0x0000_0000_0000_0000L;
+    static final long TAG_STATIC = 0x4000_0000_0000_0000L;
+
+    // ---- Header (ir[0]) bit layout ----
+    private static final long HDR_DAY_MASK = 0x7FL;
+    private static final int HDR_DUR_SHIFT = 40;
+    private static final long HDR_DWE_BIT = 1L << 23;
+    private static final int HDR_ELEM_SHIFT = 56;
+    private static final int HDR_TO_SHIFT = 48;
+
+    // ---- Expr encoding (bits 59-0) ----
+    private static final long IR_BD_BIT = 1L << 57;
+    private static final long IR_OFFSET_MASK = 0xFFFFFFFFL;
+    private static final int IR_UNIT_SHIFT = 40;
+    private static final int IR_VAR_SHIFT = 58;
 
     private static final int SATURDAY = 6;
+    private static final long TAG_MASK = 0xC000_0000_0000_0000L;
     private static final int SUNDAY = 7;
 
-    private final CairoConfiguration configuration;
     private final int dayFilterMask;
+    private final int durationOff;
     private final int durationPartCount;
-    private final char[] durationUnits;
-    private final int[] durationValues;
     private final int elemCount;
-    private final byte[] elemTypes;
+    private final int elemOff;
     private final LongList exchangeSchedule;
     private final String expression;
     private final boolean hasDurationWithExchange;
-    private final long numericTzOffset;
-    private final boolean[] rangeBusinessDay;
-    private final DateVariableExpr[] rangeEndExprs;
-    private final DateVariableExpr[] rangeStartExprs;
-    private final DateVariableExpr[] singleVarExprs;
-    private final long[] staticElements;
+    private final long[] ir;
     private final int timeOverrideCount;
-    private final long[] timeOverrides;
     private final TimestampDriver timestampDriver;
+    private final int toOff;
     private final TimeZoneRules tzRules;
     private long now;
 
     CompiledTickExpression(
             TimestampDriver timestampDriver,
-            CairoConfiguration configuration,
+            long[] ir,
             CharSequence expression,
-            int elemCount,
-            byte[] elemTypes,
-            DateVariableExpr[] singleVarExprs,
-            long[] staticElements,
-            DateVariableExpr[] rangeStartExprs,
-            DateVariableExpr[] rangeEndExprs,
-            boolean[] rangeBusinessDay,
-            long[] timeOverrides,
-            int timeOverrideCount,
-            char[] durationUnits,
-            int[] durationValues,
-            int durationPartCount,
-            long numericTzOffset,
             TimeZoneRules tzRules,
-            int dayFilterMask,
-            LongList exchangeSchedule,
-            boolean hasDurationWithExchange
+            LongList exchangeSchedule
     ) {
         this.timestampDriver = timestampDriver;
-        this.configuration = configuration;
+        this.ir = ir;
         this.expression = expression.toString();
-        this.elemCount = elemCount;
-        this.elemTypes = elemTypes;
-        this.singleVarExprs = singleVarExprs;
-        this.staticElements = staticElements;
-        this.rangeStartExprs = rangeStartExprs;
-        this.rangeEndExprs = rangeEndExprs;
-        this.rangeBusinessDay = rangeBusinessDay;
-        this.timeOverrides = timeOverrides;
-        this.timeOverrideCount = timeOverrideCount;
-        this.durationUnits = durationUnits;
-        this.durationValues = durationValues;
-        this.durationPartCount = durationPartCount;
-        this.numericTzOffset = numericTzOffset;
         this.tzRules = tzRules;
-        this.dayFilterMask = dayFilterMask;
         this.exchangeSchedule = exchangeSchedule;
-        this.hasDurationWithExchange = hasDurationWithExchange;
+
+        // Pre-decode header and section offsets
+        long header = ir[0];
+        this.elemCount = (int) ((header >>> HDR_ELEM_SHIFT) & 0xFF);
+        this.timeOverrideCount = (int) ((header >>> HDR_TO_SHIFT) & 0xFF);
+        this.durationPartCount = (int) ((header >>> HDR_DUR_SHIFT) & 0xFF);
+        this.hasDurationWithExchange = (header & HDR_DWE_BIT) != 0;
+        this.dayFilterMask = (int) (header & HDR_DAY_MASK);
+        this.durationOff = 2;
+        this.toOff = 2 + durationPartCount;
+        this.elemOff = toOff + timeOverrideCount * 2;
+    }
+
+    static long encodeDuration(char unit, int value) {
+        return ((long) (unit & 0xFFFF) << 32) | (value & 0xFFFFFFFFL);
+    }
+
+    static long encodeHeader(int elemCount, int timeOverrideCount, int durationPartCount,
+                             boolean hasDurationWithExchange, int dayFilterMask) {
+        return ((long) (elemCount & 0xFF) << HDR_ELEM_SHIFT)
+                | ((long) (timeOverrideCount & 0xFF) << HDR_TO_SHIFT)
+                | ((long) (durationPartCount & 0xFF) << HDR_DUR_SHIFT)
+                | (hasDurationWithExchange ? HDR_DWE_BIT : 0L)
+                | (dayFilterMask & HDR_DAY_MASK);
     }
 
     /**
@@ -143,19 +151,19 @@ public class CompiledTickExpression extends UntypedFunction {
         int outStart = outIntervals.size();
 
         // Phase 1: Emit intervals for each element
-        int singleVarIdx = 0, staticIdx = 0, rangeIdx = 0;
+        int pos = elemOff;
         for (int i = 0; i < elemCount; i++) {
-            switch (elemTypes[i]) {
-                case ELEM_SINGLE_VAR -> emitSingleVar(singleVarExprs[singleVarIdx++], outIntervals);
-                case ELEM_STATIC -> {
-                    outIntervals.add(staticElements[staticIdx * 2], staticElements[staticIdx * 2 + 1]);
-                    staticIdx++;
-                }
-                case ELEM_RANGE -> {
-                    emitRange(rangeStartExprs[rangeIdx], rangeEndExprs[rangeIdx],
-                            rangeBusinessDay[rangeIdx], outIntervals);
-                    rangeIdx++;
-                }
+            long word = ir[pos];
+            long tag = word & TAG_MASK;
+            if (tag == TAG_SINGLE_VAR) {
+                emitSingleVar(word, outIntervals);
+                pos++;
+            } else if (tag == TAG_STATIC) {
+                outIntervals.add(ir[pos + 1], ir[pos + 2]);
+                pos += 3;
+            } else {
+                emitRange(word, ir[pos + 1], outIntervals);
+                pos += 2;
             }
         }
 
@@ -206,28 +214,44 @@ public class CompiledTickExpression extends UntypedFunction {
         sink.val("tick('").val(expression).val("')");
     }
 
+    private long addBusinessDays(long timestamp, int businessDays) {
+        if (businessDays == 0) {
+            return timestamp;
+        }
+        int direction = businessDays > 0 ? 1 : -1;
+        int remaining = Math.abs(businessDays);
+        long result = timestamp;
+        while (remaining > 0) {
+            result = timestampDriver.addDays(result, direction);
+            int dow = timestampDriver.getDayOfWeek(result);
+            if (dow != SATURDAY && dow != SUNDAY) {
+                remaining--;
+            }
+        }
+        return result;
+    }
+
     private long applyDuration(long timestamp) {
         long result = timestamp;
         for (int i = 0; i < durationPartCount; i++) {
-            result = timestampDriver.add(result, durationUnits[i], durationValues[i]);
+            long encoded = ir[durationOff + i];
+            char unit = (char) ((encoded >>> 32) & 0xFFFF);
+            int value = (int) encoded;
+            result = timestampDriver.add(result, unit, value);
         }
         return result;
     }
 
     private void applyDayFilter(LongList out, int startIndex) {
         int originalSize = out.size();
-
-        // Count matching intervals (single-day check on lo)
         int totalIntervals = 0;
         for (int readIdx = startIndex; readIdx < originalSize; readIdx += 2) {
             long lo = out.getQuick(readIdx);
-            int dayOfWeek = timestampDriver.getDayOfWeek(lo) - 1; // 0-6
+            int dayOfWeek = timestampDriver.getDayOfWeek(lo) - 1;
             if ((dayFilterMask & (1 << dayOfWeek)) != 0) {
                 totalIntervals++;
             }
         }
-
-        // Write matching intervals at end, then copy back
         out.setPos(originalSize + totalIntervals * 2);
         int writeIdx = originalSize;
         for (int readIdx = startIndex; readIdx < originalSize; readIdx += 2) {
@@ -239,7 +263,6 @@ public class CompiledTickExpression extends UntypedFunction {
                 out.setQuick(writeIdx++, hi);
             }
         }
-
         for (int i = 0; i < totalIntervals * 2; i++) {
             out.setQuick(startIndex + i, out.getQuick(originalSize + i));
         }
@@ -254,6 +277,7 @@ public class CompiledTickExpression extends UntypedFunction {
     }
 
     private void applyTimezone(LongList out, int startIndex) {
+        long numericTzOffset = ir[1];
         int size = out.size();
         if (numericTzOffset != Long.MIN_VALUE) {
             for (int i = startIndex; i < size; i++) {
@@ -286,11 +310,13 @@ public class CompiledTickExpression extends UntypedFunction {
     private void emitDayInterval(long dayStart, LongList out) {
         if (timeOverrideCount > 0) {
             for (int j = 0; j < timeOverrideCount; j++) {
-                long lo = dayStart + timeOverrides[j * 2];
+                long offset = ir[toOff + j * 2];
+                long width = ir[toOff + j * 2 + 1];
+                long lo = dayStart + offset;
                 if (durationPartCount > 0 && !hasDurationWithExchange) {
                     out.add(lo, applyDuration(lo) - 1);
                 } else {
-                    out.add(lo, lo + timeOverrides[j * 2 + 1]);
+                    out.add(lo, lo + width);
                 }
             }
         } else if (durationPartCount > 0 && !hasDurationWithExchange) {
@@ -300,24 +326,22 @@ public class CompiledTickExpression extends UntypedFunction {
         }
     }
 
-    private void emitRange(DateVariableExpr startExpr, DateVariableExpr endExpr,
-                           boolean isBusinessDay, LongList out) {
-        long start = startExpr.evaluate(timestampDriver, now);
-        long end = endExpr.evaluate(timestampDriver, now);
+    private void emitRange(long startEncoded, long endEncoded, LongList out) {
+        boolean isBusinessDay = (startEncoded & RANGE_BD_BIT) != 0;
+        long start = evaluateExpr(startEncoded);
+        long end = evaluateExpr(endEncoded);
 
         long startDay = timestampDriver.startOfDay(start, 0);
         long endDay = timestampDriver.startOfDay(end, 0);
         boolean hasBothTimeComponents = (start != startDay) && (end != endDay);
 
         if (hasBothTimeComponents) {
-            // Time-based range: single interval
             if (durationPartCount > 0 && timeOverrideCount == 0 && !hasDurationWithExchange) {
                 out.add(start, applyDuration(start) - 1);
             } else {
                 out.add(start, end);
             }
         } else {
-            // Day-based range: iterate day by day
             long currentDay = startDay;
             while (currentDay <= endDay) {
                 if (isBusinessDay) {
@@ -333,8 +357,8 @@ public class CompiledTickExpression extends UntypedFunction {
         }
     }
 
-    private void emitSingleVar(DateVariableExpr expr, LongList out) {
-        long timestamp = expr.evaluate(timestampDriver, now);
+    private void emitSingleVar(long encoded, LongList out) {
+        long timestamp = evaluateExpr(encoded);
         boolean isDayLevel = (timestamp == timestampDriver.startOfDay(timestamp, 0));
 
         if (isDayLevel) {
@@ -344,5 +368,27 @@ public class CompiledTickExpression extends UntypedFunction {
         } else {
             out.add(timestamp, timestamp);
         }
+    }
+
+    private long evaluateExpr(long encoded) {
+        int varType = (int) ((encoded >>> IR_VAR_SHIFT) & 0x3);
+        long base = switch (varType) {
+            case DateVariableExpr.VAR_NOW -> now;
+            case DateVariableExpr.VAR_TODAY -> timestampDriver.startOfDay(now, 0);
+            case DateVariableExpr.VAR_TOMORROW -> timestampDriver.startOfDay(now, 1);
+            case DateVariableExpr.VAR_YESTERDAY -> timestampDriver.startOfDay(now, -1);
+            default -> throw new IllegalStateException("Unknown variable type: " + varType);
+        };
+        char offsetUnit = (char) ((encoded >>> IR_UNIT_SHIFT) & 0xFFFF);
+        boolean isBusinessDays = (encoded & IR_BD_BIT) != 0;
+        if (offsetUnit == 0 && !isBusinessDays) {
+            return base;
+        }
+        int offsetValue = (int) (encoded & IR_OFFSET_MASK);
+        if (isBusinessDays) {
+            return addBusinessDays(base, offsetValue);
+        }
+        char normalizedUnit = (offsetUnit == 'D') ? 'd' : offsetUnit;
+        return timestampDriver.add(base, normalizedUnit, offsetValue);
     }
 }
