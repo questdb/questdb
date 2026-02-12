@@ -397,7 +397,7 @@ public class WriterPool extends AbstractPool {
                     true,
                     e,
                     root,
-                    engine.getDdlListener(tableToken),
+                    engine.getDdlListener(tableToken.getTableName()),
                     engine
             );
             e.ownershipReason = lockReason;

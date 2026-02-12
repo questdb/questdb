@@ -2253,7 +2253,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         // as part of rolling to a new segment
 
                         if (securityContext != null) {
-                            ddlListener.onColumnRenamed(securityContext, metadata.getTableToken(), columnName, newColumnName);
+                            ddlListener.onColumnRenamed(metadata.getTableToken(), columnName, newColumnName);
                         }
 
                         path.trimTo(pathSize);

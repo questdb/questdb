@@ -811,8 +811,8 @@ public class CairoEngine implements Closeable, WriterSource {
         return dataID;
     }
 
-    public @NotNull DdlListener getDdlListener(TableToken tableToken) {
-        return tableFlagResolver.isSystem(tableToken.getTableName()) ? DefaultDdlListener.INSTANCE : ddlListener;
+    public @NotNull DdlListener getDdlListener(String tableName) {
+        return tableFlagResolver.isSystem(tableName) ? DefaultDdlListener.INSTANCE : ddlListener;
     }
 
     public FrameFactory getFrameFactory() {
@@ -1686,7 +1686,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
             enqueueCompileView(fromTableToken);
             enqueueCompileView(toTableToken);
-            getDdlListener(fromTableToken).onTableRenamed(securityContext, fromTableToken, toTableToken);
+            getDdlListener(fromTableToken.getTableName()).onTableRenamed(fromTableToken, toTableToken);
 
             return toTableToken;
         } else {
@@ -1730,7 +1730,6 @@ public class CairoEngine implements Closeable, WriterSource {
         this.configReloader = configReloader;
     }
 
-    @SuppressWarnings("unused")
     public void setDdlListener(@NotNull DdlListener ddlListener) {
         this.ddlListener = ddlListener;
     }
@@ -2050,7 +2049,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             locked = false;
                             LOG.info().$("unlocked [table=").$(tableToken).$("]").$();
                         }
-                        getDdlListener(tableToken).onTableOrViewOrMatViewCreated(securityContext, tableToken, tableKind);
+                        getDdlListener(tableToken.getTableName()).onTableOrViewOrMatViewCreated(securityContext, tableToken, tableKind);
                         tableNameRegistry.registerName(tableToken);
                     } catch (Throwable e) {
                         keepLock = false;

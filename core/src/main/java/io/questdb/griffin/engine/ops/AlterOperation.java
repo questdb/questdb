@@ -81,7 +81,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     // to exception message using TableUtils.setSinkForPartition.
     private final LongList extraInfo;
     private final ObjCharSequenceList extraStrInfo;
-    private CharSequenceList activeExtraStrInfo;
+    protected CharSequenceList activeExtraStrInfo;
     private short command;
     private MemoryFCRImpl deserializeMem;
     private boolean keepMatViewsValid;
@@ -96,26 +96,26 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         this.command = DO_NOTHING;
     }
 
-    public static AlterOperation deepCloneOf(AlterOperation other) {
-        LongList extraInfo = new LongList(other.extraInfo);
-        ObjList<CharSequence> charSequenceObjList = new ObjList<>(other.extraStrInfo.size());
-        for (int i = 0, n = other.extraStrInfo.size(); i < n; i++) {
-            charSequenceObjList.add(Chars.toString(other.extraStrInfo.getStrA(i)));
+    public AlterOperation deepClone() {
+        LongList extraInfo = new LongList(this.extraInfo);
+        ObjList<CharSequence> charSequenceObjList = new ObjList<>(this.extraStrInfo.size());
+        for (int i = 0, n = this.extraStrInfo.size(); i < n; i++) {
+            charSequenceObjList.add(Chars.toString(this.extraStrInfo.getStrA(i)));
         }
 
-        AlterOperation alterOperation = new AlterOperation(extraInfo, charSequenceObjList);
-        alterOperation.command = other.command;
-        alterOperation.tableToken = other.tableToken;
-        alterOperation.tableNamePosition = other.tableNamePosition;
+        AlterOperation alterOperation = newInstance(extraInfo, charSequenceObjList);
+        alterOperation.command = this.command;
+        alterOperation.tableToken = this.tableToken;
+        alterOperation.tableNamePosition = this.tableNamePosition;
 
-        if (other.activeExtraStrInfo == other.extraStrInfo) {
+        if (this.activeExtraStrInfo == this.extraStrInfo) {
             alterOperation.activeExtraStrInfo = alterOperation.extraStrInfo;
-        } else if (other.activeExtraStrInfo == other.directExtraStrInfo) {
+        } else if (this.activeExtraStrInfo == this.directExtraStrInfo) {
             alterOperation.activeExtraStrInfo = alterOperation.directExtraStrInfo;
         } else {
             assert false;
         }
-        alterOperation.init(other.getCmdType(), other.getCommandName(), other.tableToken, other.getTableId(), other.getTableVersion(), other.tableNamePosition);
+        alterOperation.init(this.getCmdType(), this.getCommandName(), this.tableToken, this.getTableId(), this.getTableVersion(), this.tableNamePosition);
 
         return alterOperation;
     }
@@ -444,6 +444,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public void startAsync() {
     }
 
+    protected AlterOperation newInstance(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
+        return new AlterOperation(extraInfo, extraStrInfo);
+    }
+
     private void applyAddColumn(MetadataService svc) {
         int lParam = 0;
         for (int i = 0, n = activeExtraStrInfo.size(); i < n; i++) {
@@ -547,8 +551,12 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     private void applyDropColumn(MetadataService svc) {
         for (int i = 0, n = activeExtraStrInfo.size(); i < n; i++) {
-            svc.removeColumn(activeExtraStrInfo.getStrA(i));
+            removeColumn(svc, tableToken, activeExtraStrInfo.getStrA(i));
         }
+    }
+
+    protected void removeColumn(MetadataService svc, TableToken tableToken, CharSequence columnName) {
+        svc.removeColumn(columnName);
     }
 
     private void applyDropIndex(MetadataService svc) {
@@ -737,7 +745,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         svc.squashPartitions();
     }
 
-    interface CharSequenceList extends Mutable {
+    protected interface CharSequenceList extends Mutable {
         CharSequence getStrA(int i);
 
         CharSequence getStrB(int i);
