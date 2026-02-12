@@ -68,9 +68,9 @@ public class DescribeRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     private static class DescribeRecordCursor implements NoRandomAccessRecordCursor {
+        final DescribeRecord record = new DescribeRecord();
         RecordMetadata childMetadata;
         int pos;
-        DescribeRecord record = new DescribeRecord();
 
         @Override
         public void close() {
