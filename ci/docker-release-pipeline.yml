@@ -49,6 +49,13 @@ jobs:
         condition: and(startsWith(variables['Build.SourceBranch'], 'refs/tags/'), ne(variables['SKIP_VALIDATION'], 'true'))
 
       - task: CmdLine@2
+        displayName: Install Trivy vulnerability scanner
+        inputs:
+          script: |
+            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh -o /tmp/install-trivy.sh
+            sh /tmp/install-trivy.sh -b /usr/local/bin
+
+      - task: CmdLine@2
         displayName: Download latest openshift-preflight tool
         inputs:
           script: |
@@ -80,6 +87,17 @@ jobs:
         condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
 
       - task: CmdLine@2
+        displayName: Scan nightly docker image for vulnerabilities
+        inputs:
+          script: |
+            echo "Scanning image: questdb/questdb:nightly"
+            trivy image --exit-code 1 --severity HIGH,CRITICAL questdb/questdb:nightly
+
+            echo "Scanning image: questdb/questdb:nightly-rhel"
+            trivy image --exit-code 1 --severity HIGH,CRITICAL questdb/questdb:nightly-rhel
+        condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
+
+      - task: CmdLine@2
         displayName: Release Tag
         inputs:
           script: |
@@ -101,6 +119,19 @@ jobs:
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
 
       - task: CmdLine@2
+        displayName: Scan tagged docker image for vulnerabilities
+        inputs:
+          script: |
+            tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
+
+            echo "Scanning image: questdb/questdb:${tag_name}"
+            trivy image --exit-code 1 --severity HIGH,CRITICAL "questdb/questdb:${tag_name}"
+
+            echo "Scanning image: questdb/questdb:${tag_name}-rhel"
+            trivy image --exit-code 1 --severity HIGH,CRITICAL "questdb/questdb:${tag_name}-rhel"
+        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
+
+      - task: CmdLine@2
         displayName: Release Commit from Branch
         inputs:
           script: |
@@ -109,12 +140,25 @@ jobs:
             tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
             echo $tag_name
             # Docker tags are prefixed with "patch-" and use the short commit hash
-            docker_tag_name=patch-$(echo $(Build.SourceVersion) | cut -c 1-7) 
+            docker_tag_name=patch-$(echo $(Build.SourceVersion) | cut -c 1-7)
             echo $docker_tag_name
             docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:${docker_tag_name} .
             docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:${docker_tag_name}-rhel --target rhel .
             preflight check container questdb/questdb:${docker_tag_name}-rhel
           workingDirectory: core
+        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
+
+      - task: CmdLine@2
+        displayName: Scan branch docker image for vulnerabilities
+        inputs:
+          script: |
+            docker_tag_name=patch-$(echo $(Build.SourceVersion) | cut -c 1-7)
+
+            echo "Scanning image: questdb/questdb:${docker_tag_name}"
+            trivy image --exit-code 1 --severity HIGH,CRITICAL "questdb/questdb:${docker_tag_name}"
+
+            echo "Scanning image: questdb/questdb:${docker_tag_name}-rhel"
+            trivy image --exit-code 1 --severity HIGH,CRITICAL "questdb/questdb:${docker_tag_name}-rhel"
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
 
       - task: CmdLine@2
