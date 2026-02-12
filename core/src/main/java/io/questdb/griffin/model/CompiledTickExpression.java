@@ -359,11 +359,7 @@ public class CompiledTickExpression extends UntypedFunction {
         boolean hasBothTimeComponents = (start != startDay) && (end != endDay);
 
         if (hasBothTimeComponents) {
-            if (durationPartCount > 0 && timeOverrideCount == 0 && !hasDurationWithExchange) {
-                out.add(start, applyDuration(start) - 1);
-            } else {
-                out.add(start, end);
-            }
+            out.add(start, end);
         } else {
             long currentDay = startDay;
             while (currentDay <= endDay) {
