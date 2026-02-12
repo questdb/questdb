@@ -2517,7 +2517,7 @@ public class SqlParser {
             GenericLexer lexer,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        // Rewrite as SELECT * FROM describe(...) and re-parse.
+        // Rewrite as: SELECT * FROM describe(...) and feed to parseSelect.
         // Uses a dedicated sink — the lexer's FloatingSequence tokens reference
         // its content, so it must outlive compilation (no thread-local sink).
         final CharSequence content = lexer.getContent();
@@ -2527,26 +2527,13 @@ public class SqlParser {
 
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && Chars.equals(tok, '(')) {
-            // DESCRIBE(expr) — already a function call, just prepend SELECT * FROM
+            // DESCRIBE(expr) — already a function call form
             describeSqlSink.put(content, describePos, content.length());
         } else {
-            // DESCRIBE expr — wrap in describe() function call
+            // DESCRIBE expr — wrap in describe()
             lexer.unparseLast();
-            int startPos = lexer.getPosition();
-            int endPos = content.length();
-            int parenDepth = 0;
-            while ((tok = SqlUtil.fetchNext(lexer)) != null) {
-                if (Chars.equals(tok, '(')) {
-                    parenDepth++;
-                } else if (Chars.equals(tok, ')')) {
-                    parenDepth--;
-                } else if (isSemicolon(tok) && parenDepth == 0) {
-                    endPos = lexer.lastTokenPosition();
-                    break;
-                }
-            }
             describeSqlSink.put("describe(");
-            describeSqlSink.put(content, startPos, endPos);
+            describeSqlSink.put(content, lexer.getPosition(), content.length());
             describeSqlSink.put(')');
         }
 
