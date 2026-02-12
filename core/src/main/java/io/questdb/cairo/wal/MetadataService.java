@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public interface MetadataService {
 
@@ -158,7 +159,12 @@ public interface MetadataService {
 
     UpdateOperator getUpdateOperator();
 
-    void removeColumn(@NotNull CharSequence columnName);
+    @TestOnly
+    default void removeColumn(@NotNull CharSequence columnName) {
+        removeColumn(columnName, null, false);
+    }
+
+    void removeColumn(@NotNull CharSequence columnName, SecurityContext securityContext, boolean cascadePermissions);
 
     boolean removePartition(long partitionTimestamp);
 

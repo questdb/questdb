@@ -118,7 +118,7 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
-    public void removeColumn(@NotNull CharSequence columnName) {
+    public void removeColumn(@NotNull CharSequence columnName, SecurityContext securityContext, boolean cascadePermissions) {
         metadata.removeColumn(columnName);
     }
 

@@ -3796,7 +3796,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         false,
                         DefaultLifecycleManager.INSTANCE,
                         engine.getConfiguration().getDbRoot(),
-                        engine.getDdlListener(tableToken.getTableName()),
+                        engine.getDdlListener(tableToken),
                         engine
                 );
             } else {

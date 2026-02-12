@@ -711,7 +711,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                     false,
                     DefaultLifecycleManager.INSTANCE,
                     engine.getConfiguration().getDbRoot(),
-                    engine.getDdlListener(x),
+                    engine.getDdlListener(tableToken),
                     engine
             );
             for (int i = 0; i < 100; i++) {

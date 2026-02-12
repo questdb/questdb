@@ -65,7 +65,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 index,
                 tableToken,
                 engine.getTableSequencerAPI(),
-                engine.getDdlListener(tableToken.getTableName()),
+                engine.getDdlListener(tableToken),
                 engine.getWalDirectoryPolicy(),
                 engine.getWalLocker(),
                 engine.getRecentWriteTracker()

@@ -2680,7 +2680,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void removeColumn(@NotNull CharSequence name) {
+    public void removeColumn(@NotNull CharSequence name, SecurityContext securityContext, boolean cascadePermissions) {
         assert txWriter.getLagRowCount() == 0;
 
         checkDistressed();
@@ -2728,6 +2728,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             clearTodoAndCommitMetaStructureVersion();
 
             finishColumnPurge();
+
+            if (securityContext != null) {
+                ddlListener.onColumnDropped(tableToken, columnName, cascadePermissions);
+            }
 
             try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.hydrateTable(metadata);

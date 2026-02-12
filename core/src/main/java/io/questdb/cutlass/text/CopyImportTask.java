@@ -546,7 +546,7 @@ public class CopyImportTask {
                             true,
                             DefaultLifecycleManager.INSTANCE,
                             root,
-                            cairoEngine.getDdlListener(tableToken.getTableName()),
+                            cairoEngine.getDdlListener(tableToken),
                             cairoEngine,
                             EMPTY_SCOREBOARD_POOL
                     )
@@ -987,7 +987,7 @@ public class CopyImportTask {
                             true,
                             DefaultLifecycleManager.INSTANCE,
                             importRoot,
-                            engine.getDdlListener(tableToken.getTableName()),
+                            engine.getDdlListener(tableToken),
                             engine,
                             EMPTY_SCOREBOARD_POOL
                     )

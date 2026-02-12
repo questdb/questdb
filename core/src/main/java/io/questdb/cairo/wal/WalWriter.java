@@ -1928,7 +1928,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
-        public void removeColumn(@NotNull CharSequence columnName) {
+        public void removeColumn(@NotNull CharSequence columnName, SecurityContext securityContext, boolean cascadePermissions) {
             validateExistingColumnName(columnName, "cannot remove");
             structureVersion++;
         }
@@ -2173,7 +2173,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
-        public void removeColumn(@NotNull CharSequence columnNameSeq) {
+        public void removeColumn(@NotNull CharSequence columnNameSeq, SecurityContext securityContext, boolean cascadePermissions) {
             final int columnIndex = metadata.getColumnIndexQuiet(columnNameSeq);
             if (columnIndex > -1) {
                 String columnName = metadata.getColumnName(columnIndex);
@@ -2201,6 +2201,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         // as part of rolling to a new segment
 
                         markColumnRemoved(index, type);
+
+                        if (securityContext != null) {
+                            ddlListener.onColumnDropped(metadata.getTableToken(), columnName, cascadePermissions);
+                        }
+
                         path.trimTo(pathSize);
                         LOG.info().$("removed column from WAL [path=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
                                 .$(", columnName=").$safe(columnName).I$();

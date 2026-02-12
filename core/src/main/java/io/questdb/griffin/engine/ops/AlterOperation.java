@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.AlterTableContextException;
 import io.questdb.cairo.AttachDetachStatus;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.PartitionBy;
@@ -94,30 +95,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         this.extraInfo = extraInfo;
         this.extraStrInfo = new ObjCharSequenceList(extraStrInfo);
         this.command = DO_NOTHING;
-    }
-
-    public AlterOperation deepClone() {
-        LongList extraInfo = new LongList(this.extraInfo);
-        ObjList<CharSequence> charSequenceObjList = new ObjList<>(this.extraStrInfo.size());
-        for (int i = 0, n = this.extraStrInfo.size(); i < n; i++) {
-            charSequenceObjList.add(Chars.toString(this.extraStrInfo.getStrA(i)));
-        }
-
-        AlterOperation alterOperation = newInstance(extraInfo, charSequenceObjList);
-        alterOperation.command = this.command;
-        alterOperation.tableToken = this.tableToken;
-        alterOperation.tableNamePosition = this.tableNamePosition;
-
-        if (this.activeExtraStrInfo == this.extraStrInfo) {
-            alterOperation.activeExtraStrInfo = alterOperation.extraStrInfo;
-        } else if (this.activeExtraStrInfo == this.directExtraStrInfo) {
-            alterOperation.activeExtraStrInfo = alterOperation.directExtraStrInfo;
-        } else {
-            assert false;
-        }
-        alterOperation.init(this.getCmdType(), this.getCommandName(), this.tableToken, this.getTableId(), this.getTableVersion(), this.tableNamePosition);
-
-        return alterOperation;
     }
 
     public static long getFlags(boolean indexed, boolean dedupKey) {
@@ -268,6 +245,30 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         extraInfo.clear();
         keepMatViewsValid = false;
         clearCommandCorrelationId();
+    }
+
+    public AlterOperation deepClone() {
+        LongList extraInfo = new LongList(this.extraInfo);
+        ObjList<CharSequence> charSequenceObjList = new ObjList<>(this.extraStrInfo.size());
+        for (int i = 0, n = this.extraStrInfo.size(); i < n; i++) {
+            charSequenceObjList.add(Chars.toString(this.extraStrInfo.getStrA(i)));
+        }
+
+        AlterOperation alterOperation = newInstance(extraInfo, charSequenceObjList);
+        alterOperation.command = this.command;
+        alterOperation.tableToken = this.tableToken;
+        alterOperation.tableNamePosition = this.tableNamePosition;
+
+        if (this.activeExtraStrInfo == this.extraStrInfo) {
+            alterOperation.activeExtraStrInfo = alterOperation.extraStrInfo;
+        } else if (this.activeExtraStrInfo == this.directExtraStrInfo) {
+            alterOperation.activeExtraStrInfo = alterOperation.directExtraStrInfo;
+        } else {
+            assert false;
+        }
+        alterOperation.init(this.getCmdType(), this.getCommandName(), this.tableToken, this.getTableId(), this.getTableVersion(), this.tableNamePosition);
+
+        return alterOperation;
     }
 
     @Override
@@ -444,10 +445,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public void startAsync() {
     }
 
-    protected AlterOperation newInstance(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
-        return new AlterOperation(extraInfo, extraStrInfo);
-    }
-
     private void applyAddColumn(MetadataService svc) {
         int lParam = 0;
         for (int i = 0, n = activeExtraStrInfo.size(); i < n; i++) {
@@ -551,12 +548,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     private void applyDropColumn(MetadataService svc) {
         for (int i = 0, n = activeExtraStrInfo.size(); i < n; i++) {
-            removeColumn(svc, tableToken, activeExtraStrInfo.getStrA(i));
+            removeColumn(svc, activeExtraStrInfo.getStrA(i));
         }
-    }
-
-    protected void removeColumn(MetadataService svc, TableToken tableToken, CharSequence columnName) {
-        svc.removeColumn(columnName);
     }
 
     private void applyDropIndex(MetadataService svc) {
@@ -743,6 +736,19 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     private void squashPartitions(MetadataService svc) {
         svc.squashPartitions();
+    }
+
+    protected CairoEngine getCairoEngine() {
+        assert sqlExecutionContext != null;
+        return sqlExecutionContext.getCairoEngine();
+    }
+
+    protected AlterOperation newInstance(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
+        return new AlterOperation(extraInfo, extraStrInfo);
+    }
+
+    protected void removeColumn(MetadataService svc, CharSequence columnName) {
+        svc.removeColumn(columnName, securityContext, false);
     }
 
     protected interface CharSequenceList extends Mutable {
