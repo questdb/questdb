@@ -3149,25 +3149,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    /**
-     * Try to replace the node as a window function first; if it isn't one,
-     * try to emit it as a column literal so that non-window column references
-     * (e.g. in THEN/ELSE branches of a CASE) are propagated through the model chain.
-     */
-    private ExpressionNode replaceWindowFunctionOrLiteral(
-            @Transient ExpressionNode node,
-            QueryModel windowModel,
-            QueryModel translatingModel,
-            QueryModel innerVirtualModel,
-            QueryModel baseModel
-    ) throws SqlException {
-        ExpressionNode n = replaceIfWindowFunction(node, windowModel, translatingModel, innerVirtualModel, baseModel);
-        if (n != node) {
-            return n;
-        }
-        return replaceLiteral(node, translatingModel, innerVirtualModel, true, baseModel, false);
-    }
-
     private QueryColumn ensureAliasUniqueness(QueryModel model, QueryColumn qc) {
         CharSequence alias = createColumnAlias(qc.getAlias(), model);
         if (alias != qc.getAlias()) {
@@ -6218,6 +6199,25 @@ public class SqlOptimiser implements Mutable {
             emitLiterals(node, translatingModel, innerVirtualModel, true, baseModel, true);
             list.setQuick(j, replaceLiteral(node, translatingModel, innerVirtualModel, true, baseModel, true));
         }
+    }
+
+    /**
+     * Try to replace the node as a window function first; if it isn't one,
+     * try to emit it as a column literal so that non-window column references
+     * (e.g. in THEN/ELSE branches of a CASE) are propagated through the model chain.
+     */
+    private ExpressionNode replaceWindowFunctionOrLiteral(
+            @Transient ExpressionNode node,
+            QueryModel windowModel,
+            QueryModel translatingModel,
+            QueryModel innerVirtualModel,
+            QueryModel baseModel
+    ) throws SqlException {
+        ExpressionNode n = replaceIfWindowFunction(node, windowModel, translatingModel, innerVirtualModel, baseModel);
+        if (n != node) {
+            return n;
+        }
+        return replaceLiteral(node, translatingModel, innerVirtualModel, true, baseModel, false);
     }
 
     private void resolveJoinColumns(QueryModel model) throws SqlException {
