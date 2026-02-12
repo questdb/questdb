@@ -53,7 +53,7 @@ public class DateVariableExpr {
     private final int offsetValue;
     private final byte varType;
 
-    DateVariableExpr(byte varType, char offsetUnit, int offsetValue, boolean isBusinessDays) {
+    public DateVariableExpr(byte varType, char offsetUnit, int offsetValue, boolean isBusinessDays) {
         this.varType = varType;
         this.offsetUnit = offsetUnit;
         this.offsetValue = offsetValue;
@@ -91,20 +91,6 @@ public class DateVariableExpr {
     }
 
     /**
-     * Parses a date variable expression string into a {@code DateVariableExpr}.
-     * Allocates an object — use {@link #parseEncoded} in allocation-sensitive paths.
-     */
-    public static DateVariableExpr parse(CharSequence seq, int lo, int hi, int errorPos) throws SqlException {
-        long encoded = parseEncoded(seq, lo, hi, errorPos);
-        return new DateVariableExpr(
-                (byte) ((encoded >>> 58) & 0x3),
-                (char) ((encoded >>> 40) & 0xFFFF),
-                (int) encoded,
-                (encoded & (1L << 57)) != 0
-        );
-    }
-
-    /**
      * Parses a date variable expression directly into the compiled IR encoding.
      * No object allocation.
      * <p>
@@ -117,7 +103,7 @@ public class DateVariableExpr {
      * @return the encoded expression as a long
      * @throws SqlException if the expression is invalid
      */
-    static long parseEncoded(CharSequence seq, int lo, int hi, int errorPos) throws SqlException {
+    public static long parseEncoded(CharSequence seq, int lo, int hi, int errorPos) throws SqlException {
         // Find end of variable name (until space, '+', '-', or end)
         int varEnd = lo + 1;
         for (; varEnd < hi; varEnd++) {

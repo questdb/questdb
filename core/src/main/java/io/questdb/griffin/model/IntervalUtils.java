@@ -153,13 +153,8 @@ public final class IntervalUtils {
             int lim,
             int position
     ) throws SqlException {
-        // Shared temporaries — allocated once, reused throughout
         StringSink sink = new StringSink();
         LongList tmp = new LongList();
-
-        // Phase 0: Validate the expression at compile time by running a full parse.
-        parseTickExpr(timestampDriver, configuration, seq, lo, lim, position,
-                tmp, IntervalOperation.INTERSECT, sink, true);
 
         // Phase 1: Strip whitespace and day filter
         int firstNonSpace = lo;
@@ -186,8 +181,6 @@ public final class IntervalUtils {
             }
         }
 
-        // Reuse sink as effectiveSink (clear previous validation content)
-        sink.clear();
         int effectiveSeqLo;
         int effectiveSeqLim;
         CharSequence effectiveSeq;
@@ -205,6 +198,10 @@ public final class IntervalUtils {
         }
 
         // Phase 2: Detect expression structure and find suffix
+        if (effectiveSeqLo >= effectiveSeqLim) {
+            throw SqlException.$(position, "Empty tick expression");
+        }
+
         int elemListLo;
         int elemListHi;
         int suffixLo;
@@ -212,56 +209,50 @@ public final class IntervalUtils {
         boolean isDateList = false;
         boolean isBareVar = false;
 
-        if (effectiveSeqLo < effectiveSeqLim && effectiveSeq.charAt(effectiveSeqLo) == '['
-                && isDateList(effectiveSeq, effectiveSeqLo, effectiveSeqLim)) {
+        if (effectiveSeq.charAt(effectiveSeqLo) == '[') {
             isDateList = true;
-            int depth = 1;
             int listEnd = -1;
             for (int i = effectiveSeqLo + 1; i < effectiveSeqLim; i++) {
-                char c = effectiveSeq.charAt(i);
-                if (c == '[') depth++;
-                else if (c == ']') {
-                    depth--;
-                    if (depth == 0) {
-                        listEnd = i;
-                        break;
-                    }
+                if (effectiveSeq.charAt(i) == ']') {
+                    listEnd = i;
+                    break;
                 }
+            }
+            if (listEnd < 0) {
+                throw SqlException.$(position, "Unclosed '[' in date list");
             }
             elemListLo = effectiveSeqLo + 1;
             elemListHi = listEnd;
             suffixLo = listEnd + 1;
-        } else if (effectiveSeqLo < effectiveSeqLim && effectiveSeq.charAt(effectiveSeqLo) == '$') {
+        } else {
             isBareVar = true;
             int exprEnd = effectiveSeqLo;
             while (exprEnd < effectiveSeqLim) {
                 char c = effectiveSeq.charAt(exprEnd);
-                if (c == '@' || c == ';' || c == ',') break;
+                if (c == '@' || c == ';') {
+                    break;
+                }
                 if (c == 'T' && exprEnd + 1 < effectiveSeqLim && Chars.isAsciiDigit(effectiveSeq.charAt(exprEnd + 1))) break;
                 exprEnd++;
             }
             elemListLo = effectiveSeqLo;
             elemListHi = exprEnd;
             suffixLo = exprEnd;
-        } else {
-            elemListLo = effectiveSeqLo;
-            elemListHi = effectiveSeqLim;
-            suffixLo = effectiveSeqLim;
         }
 
         // Phase 3: Parse suffix (timezone, time override, duration)
-        int suffixHi = effectiveSeqLim;
+        int durationHi = effectiveSeqLim;
 
-        int tzMarkerPos = findTimezoneMarker(effectiveSeq, suffixLo, suffixHi);
+        int tzMarkerPos = findTimezoneMarker(effectiveSeq, suffixLo, durationHi);
         long numericTzOffset = Long.MIN_VALUE;
         TimeZoneRules tzRules = null;
 
-        int tzContentLo = -1;
+        int tzContentLo;
         int tzContentHi = -1;
         if (tzMarkerPos >= 0) {
             tzContentLo = tzMarkerPos + 1;
-            int tzEnd = suffixHi;
-            for (int j = tzContentLo; j < suffixHi; j++) {
+            int tzEnd = durationHi;
+            for (int j = tzContentLo; j < durationHi; j++) {
                 if (effectiveSeq.charAt(j) == ';') {
                     tzEnd = j;
                     break;
@@ -286,7 +277,7 @@ public final class IntervalUtils {
         }
 
         int durationSemicolon = -1;
-        for (int i = suffixLo; i < suffixHi; i++) {
+        for (int i = suffixLo; i < durationHi; i++) {
             if (effectiveSeq.charAt(i) == ';') {
                 durationSemicolon = i;
                 break;
@@ -305,11 +296,12 @@ public final class IntervalUtils {
 
         if (durationSemicolon >= 0) {
             int durationLo = durationSemicolon + 1;
-            int durationHi = suffixHi;
             int numStart = durationLo;
             for (int i = durationLo; i < durationHi; i++) {
                 char c = effectiveSeq.charAt(i);
-                if ((c >= '0' && c <= '9') || c == '_') continue;
+                if (Chars.isAsciiDigit(c) || c == '_') {
+                    continue;
+                }
                 if (i == numStart) {
                     throw SqlException.$(position, "Expected number before unit '").put(c).put('\'');
                 }
@@ -326,7 +318,7 @@ public final class IntervalUtils {
                 durationPartCount++;
                 numStart = i + 1;
             }
-            if (numStart < durationHi && durationPartCount > 0) {
+            if (numStart < durationHi) {
                 throw SqlException.$(position, "Missing unit at end of duration");
             }
             hasDurationWithExchange = exchangeSchedule != null && durationPartCount > 0;
@@ -340,21 +332,26 @@ public final class IntervalUtils {
         } else if (durationSemicolon >= 0) {
             timeHi = durationSemicolon;
         } else {
-            timeHi = suffixHi;
+            timeHi = durationHi;
         }
 
         int timeOverrideCount = 0;
         // Second sink for time/static parsing (sink may be effectiveSeq)
         StringSink parseSink = (effectiveSeq == sink) ? new StringSink() : sink;
 
-        if (timeLo < timeHi && effectiveSeq.charAt(timeLo) == 'T') {
+        if (timeLo < timeHi && effectiveSeq.charAt(timeLo) != 'T') {
+            throw SqlException.$(position, "Expected 'T' time override, got: ").put(effectiveSeq.charAt(timeLo));
+        }
+        if (timeLo < timeHi) {
             int tContentLo = timeLo + 1;
-            int tContentHi = timeHi;
+            if (tContentLo >= timeHi) {
+                throw SqlException.$(position, "Invalid time override: T with no value");
+            }
 
-            if (tContentLo < tContentHi && effectiveSeq.charAt(tContentLo) == '[') {
+            if (effectiveSeq.charAt(tContentLo) == '[') {
                 // Time list bracket: T[09:00,14:00]
                 int bracketEnd = -1;
-                for (int i = tContentLo + 1; i < tContentHi; i++) {
+                for (int i = tContentLo + 1; i < timeHi; i++) {
                     if (effectiveSeq.charAt(i) == ']') {
                         bracketEnd = i;
                         break;
@@ -376,37 +373,38 @@ public final class IntervalUtils {
                 int elemStart = tContentLo + 1;
                 for (int i = tContentLo + 1; i <= bracketEnd; i++) {
                     char c = i < bracketEnd ? effectiveSeq.charAt(i) : ',';
-                    if (c == ',' || i == bracketEnd) {
+                    if (c == ',') {
                         int es = elemStart;
                         int ee = i;
                         while (es < ee && Chars.isAsciiWhitespace(effectiveSeq.charAt(es))) es++;
                         while (ee > es && Chars.isAsciiWhitespace(effectiveSeq.charAt(ee - 1))) ee--;
 
-                        if (es < ee) {
-                            int elemTzMarker = -1;
-                            for (int j = es; j < ee; j++) {
-                                if (effectiveSeq.charAt(j) == '@') {
-                                    elemTzMarker = j;
-                                    break;
-                                }
-                            }
-                            int timeEnd = elemTzMarker >= 0 ? elemTzMarker : ee;
-
-                            parseSink.clear();
-                            parseSink.put("1970-01-01T");
-                            parseSink.put(effectiveSeq, es, timeEnd);
-                            tmp.clear();
-                            try {
-                                timestampDriver.parseInterval(parseSink, 0, parseSink.length(), IntervalOperation.INTERSECT, tmp);
-                            } catch (NumericException e) {
-                                throw SqlException.$(position, "Invalid time in time list: ").put(effectiveSeq, es, timeEnd);
-                            }
-                            long tLo = decodeIntervalLo(tmp, 0);
-                            long tHi = decodeIntervalHi(tmp, 0);
-                            ir[irPos++] = tLo;
-                            ir[irPos++] = tHi - tLo;
-                            timeOverrideCount++;
+                        if (es >= ee) {
+                            throw SqlException.$(position, "Empty element in time list");
                         }
+                        int elemTzMarker = -1;
+                        for (int j = es; j < ee; j++) {
+                            if (effectiveSeq.charAt(j) == '@') {
+                                elemTzMarker = j;
+                                break;
+                            }
+                        }
+                        int timeEnd = elemTzMarker >= 0 ? elemTzMarker : ee;
+
+                        parseSink.clear();
+                        parseSink.put("1970-01-01T");
+                        parseSink.put(effectiveSeq, es, timeEnd);
+                        tmp.clear();
+                        try {
+                            timestampDriver.parseInterval(parseSink, 0, parseSink.length(), IntervalOperation.INTERSECT, tmp);
+                        } catch (NumericException e) {
+                            throw SqlException.$(position, "Invalid time in time list: ").put(effectiveSeq, es, timeEnd);
+                        }
+                        long tLo = decodeIntervalLo(tmp, 0);
+                        long tHi = decodeIntervalHi(tmp, 0);
+                        ir[irPos++] = tLo;
+                        ir[irPos++] = tHi - tLo;
+                        timeOverrideCount++;
                         elemStart = i + 1;
                     }
                 }
@@ -417,12 +415,12 @@ public final class IntervalUtils {
                 }
                 parseSink.clear();
                 parseSink.put("1970-01-01T");
-                parseSink.put(effectiveSeq, tContentLo, tContentHi);
+                parseSink.put(effectiveSeq, tContentLo, timeHi);
                 tmp.clear();
                 try {
                     timestampDriver.parseInterval(parseSink, 0, parseSink.length(), IntervalOperation.INTERSECT, tmp);
                 } catch (NumericException e) {
-                    throw SqlException.$(position, "Invalid time override: ").put(effectiveSeq, tContentLo, tContentHi);
+                    throw SqlException.$(position, "Invalid time override: ").put(effectiveSeq, tContentLo, timeHi);
                 }
                 long tLo = decodeIntervalLo(tmp, 0);
                 long tHi = decodeIntervalHi(tmp, 0);
@@ -476,13 +474,12 @@ public final class IntervalUtils {
                 elementStart++;
             }
 
-            for (int i = elementStart; i <= elemListHi; i++) {
-                char c = i < elemListHi ? effectiveSeq.charAt(i) : ',';
+            for (int elementEnd = elementStart; elementEnd <= elemListHi; elementEnd++) {
+                char c = elementEnd < elemListHi ? effectiveSeq.charAt(elementEnd) : ',';
 
                 if (c == '[') depth++;
                 else if (c == ']') depth--;
                 else if (c == ',' && depth == 0) {
-                    int elementEnd = i;
                     int es = elementStart;
                     int ee = elementEnd;
                     while (es < ee && Chars.isAsciiWhitespace(effectiveSeq.charAt(es))) es++;
@@ -527,43 +524,32 @@ public final class IntervalUtils {
                             if (tzMarkerPos >= 0) {
                                 parseSink.put(effectiveSeq, timeLo, tzMarkerPos);
                             } else if (durationSemicolon >= 0) {
-                                parseSink.put(effectiveSeq, timeLo, suffixHi);
+                                parseSink.put(effectiveSeq, timeLo, durationHi);
                             } else {
                                 parseSink.put(effectiveSeq, timeLo, timeHi);
                             }
                         }
-                        if (durationSemicolon >= 0 && tzMarkerPos >= 0 && tzContentHi < suffixHi) {
-                            parseSink.put(effectiveSeq, tzContentHi, suffixHi);
-                        } else if (durationSemicolon >= 0 && tzMarkerPos < 0) {
-                            // already appended above
+                        if (durationSemicolon >= 0 && tzMarkerPos >= 0 && tzContentHi < durationHi) {
+                            parseSink.put(effectiveSeq, tzContentHi, durationHi);
+                        } else if (durationSemicolon >= 0 && tzMarkerPos < 0 && timeLo < timeHi) {
+                            // already appended above via the time override path
                         } else if (durationSemicolon >= 0 && timeLo >= timeHi) {
-                            parseSink.put(effectiveSeq, durationSemicolon, suffixHi);
+                            parseSink.put(effectiveSeq, durationSemicolon, durationHi);
                         }
 
                         tmp.clear();
                         parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, tmp, IntervalOperation.INTERSECT);
                         applyLastEncodedInterval(timestampDriver, tmp);
 
+                        // Day filter is applied here in local time (before tz conversion).
+                        // Runtime Phase 2 also applies it, but double-application is idempotent.
                         if (dayFilterMask != 0 && exchangeSchedule == null && tmp.size() >= 2) {
                             applyDayFilter(timestampDriver, tmp, 0, dayFilterMask, hasDatePrecision(effectiveSeq, es, ee));
                         }
 
-                        if (tzMarkerPos >= 0 && tmp.size() >= 2) {
-                            applyTimezoneToIntervals(timestampDriver, configuration, tmp, 0,
-                                    effectiveSeq, tzContentLo, tzContentHi, position, true);
-                        }
-
-                        if (exchangeSchedule != null && tmp.size() >= 2) {
-                            applyTickCalendarFilter(timestampDriver, exchangeSchedule, tmp, 0);
-                            if (hasDurationWithExchange) {
-                                for (int k = 1; k < tmp.size(); k += 2) {
-                                    long hi = tmp.getQuick(k);
-                                    hi = addDuration(timestampDriver, hi, effectiveSeq,
-                                            durationSemicolon + 1, suffixHi, position);
-                                    tmp.setQuick(k, hi);
-                                }
-                            }
-                        }
+                        // Timezone and exchange schedule are NOT applied here — they are
+                        // applied uniformly to all intervals (static + dynamic) at runtime
+                        // in CompiledTickExpression.evaluate() Phases 3 and 4.
 
                         for (int k = 0; k < tmp.size(); k += 2) {
                             if (irPos + 3 > ir.length) {
@@ -575,7 +561,7 @@ public final class IntervalUtils {
                             elemCount++;
                         }
                     }
-                    elementStart = i + 1;
+                    elementStart = elementEnd + 1;
                 }
             }
         }
