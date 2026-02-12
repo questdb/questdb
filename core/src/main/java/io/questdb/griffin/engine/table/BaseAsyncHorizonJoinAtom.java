@@ -303,10 +303,10 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         }
 
         // Per-worker horizon timestamp iterators for sorted processing
-        this.ownerHorizonIterator = createHorizonIterator(offsets);
+        this.ownerHorizonIterator = new AsyncHorizonTimestampIterator(offsets);
         this.perWorkerHorizonIterators = new ObjList<>(slotCount);
         for (int i = 0; i < slotCount; i++) {
-            perWorkerHorizonIterators.add(createHorizonIterator(offsets));
+            perWorkerHorizonIterators.add(new AsyncHorizonTimestampIterator(offsets));
         }
     }
 
@@ -620,12 +620,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         }
     }
 
-    private static AsyncHorizonTimestampIterator createHorizonIterator(LongList offsets) {
-        if (offsets.size() == 1) {
-            return new AsyncSingleOffsetHorizonTimestampIterator(offsets.getQuick(0));
-        }
-        return new AsyncMultiOffsetHorizonTimestampIterator(offsets);
-    }
 
     /**
      * Clear aggregation-specific state. Called by {@link #clear()}.

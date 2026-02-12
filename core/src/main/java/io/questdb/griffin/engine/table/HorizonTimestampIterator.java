@@ -32,7 +32,7 @@ import io.questdb.std.QuietCloseable;
 /**
  * Horizon timestamp iterator for {@link RecordCursor} with random access.
  * <p>
- * Mirrors {@link AsyncMultiOffsetHorizonTimestampIterator}'s K-way merge design but uses
+ * Mirrors {@link AsyncHorizonTimestampIterator}'s K-way merge design but uses
  * {@link RecordCursor#recordAt(Record, long)} instead of
  * {@link io.questdb.cairo.sql.PageFrameMemoryRecord#setRowIndex(long)}.
  * <p>

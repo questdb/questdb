@@ -26,38 +26,114 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.LongList;
 import io.questdb.std.QuietCloseable;
 
 /**
- * Iterator that produces horizon timestamps (master_timestamp + offset) in sorted order.
+ * Iterator that produces horizon timestamps (master_timestamp + offset) in sorted order
+ * using K-way merge.
+ * <p>
+ * Each offset defines a sorted stream of horizon timestamps over the master rows.
+ * A min-heap of size K (number of offsets) merges these streams into globally
+ * sorted order without materializing or sorting all tuples.
  * <p>
  * For each master row in a page frame and each offset in the offset list, this generates
  * tuples of (horizonTimestamp, masterRowIndex, offsetIndex). The tuples are produced in
  * horizonTimestamp order, enabling efficient sequential ASOF lookups.
+ * <p>
+ * Returns horizon timestamps in master's resolution (master_ts + offset).
+ * Callers must scale externally for ASOF lookup when master/slave timestamp types differ.
  */
-public interface AsyncHorizonTimestampIterator extends QuietCloseable {
+public class AsyncHorizonTimestampIterator implements QuietCloseable {
+    private final int[] heapOffsetIdx;
+    private final long[] heapPos;
+    private final long[] heapTs;
+    private final LongList offsets;
+    private long currentHorizonTs;
+    private long currentIndex;
+    private long currentMasterRowIdx;
+    private int currentOffsetIdx;
+    private DirectLongList filteredRows;
+    private long frameRowLo;
+    private int heapSize;
+    private boolean isFiltered;
+    private long masterRowCount;
+    private PageFrameMemoryRecord record;
+    private int timestampColumnIndex;
+    private long tupleCount;
+
+    public AsyncHorizonTimestampIterator(LongList offsets) {
+        this.offsets = offsets;
+        int k = offsets.size();
+        this.heapTs = new long[k];
+        this.heapPos = new long[k];
+        this.heapOffsetIdx = new int[k];
+    }
+
+    @Override
+    public void close() {
+    }
 
     /**
      * Returns the horizon timestamp of the current tuple.
      */
-    long getHorizonTimestamp();
+    public long getHorizonTimestamp() {
+        return currentHorizonTs;
+    }
 
     /**
      * Returns the master row index of the current tuple (relative to frame start).
      */
-    long getMasterRowIndex();
+    public long getMasterRowIndex() {
+        return currentMasterRowIdx;
+    }
 
     /**
      * Returns the offset index of the current tuple.
      */
-    int getOffsetIndex();
+    public int getOffsetIndex() {
+        return currentOffsetIdx;
+    }
 
     /**
      * Advances to the next tuple and returns true, or returns false if there are no more tuples.
-     * After a true return, use getHorizonTimestamp(), getMasterRowIndex(), and getOffsetIndex()
-     * to access the current tuple's values.
+     * After a true return, use {@link #getHorizonTimestamp()}, {@link #getMasterRowIndex()},
+     * and {@link #getOffsetIndex()} to access the current tuple's values.
      */
-    boolean next();
+    public boolean next() {
+        if (currentIndex >= tupleCount) {
+            return false;
+        }
+        // Read min from heap root
+        currentHorizonTs = heapTs[0];
+        long pos = heapPos[0];
+        int offsetIdx = heapOffsetIdx[0];
+        currentOffsetIdx = offsetIdx;
+        currentMasterRowIdx = isFiltered ? filteredRows.get(pos) : pos;
+
+        // Advance this stream to the next position
+        long nextPos = pos + 1;
+        if (nextPos < masterRowCount) {
+            long nextRowIdx = isFiltered ? filteredRows.get(nextPos) : (frameRowLo + nextPos);
+            record.setRowIndex(nextRowIdx);
+            long nextHorizonTs = record.getTimestamp(timestampColumnIndex) + offsets.getQuick(offsetIdx);
+            // Replace root and restore heap property
+            heapTs[0] = nextHorizonTs;
+            heapPos[0] = nextPos;
+            siftDown();
+        } else {
+            // Stream exhausted: remove root by replacing with last element
+            heapSize--;
+            if (heapSize > 0) {
+                heapTs[0] = heapTs[heapSize];
+                heapPos[0] = heapPos[heapSize];
+                heapOffsetIdx[0] = heapOffsetIdx[heapSize];
+                siftDown();
+            }
+        }
+        currentIndex++;
+        return true;
+    }
 
     /**
      * Initializes the iterator for a new page frame.
@@ -67,14 +143,107 @@ public interface AsyncHorizonTimestampIterator extends QuietCloseable {
      * @param frameRowCount        number of rows in the frame
      * @param timestampColumnIndex index of the timestamp column in the record
      */
-    void of(PageFrameMemoryRecord record, long frameRowLo, long frameRowCount, int timestampColumnIndex);
+    public void of(PageFrameMemoryRecord record, long frameRowLo, long frameRowCount, int timestampColumnIndex) {
+        this.record = record;
+        this.timestampColumnIndex = timestampColumnIndex;
+        this.frameRowLo = frameRowLo;
+        this.masterRowCount = frameRowCount;
+        this.isFiltered = false;
+        this.filteredRows = null;
+        this.tupleCount = frameRowCount * offsets.size();
+        this.currentIndex = 0;
+        initHeap(frameRowCount > 0 ? frameRowLo : -1, frameRowCount > 0);
+    }
 
     /**
      * Initializes the iterator for filtered rows in a page frame.
      *
      * @param record               record positioned at the frame (used to read timestamps)
-     * @param filteredRows         list of filtered row indices (relative to frame start)
+     * @param filteredRows         list of filtered row indices
      * @param timestampColumnIndex index of the timestamp column in the record
      */
-    void ofFiltered(PageFrameMemoryRecord record, DirectLongList filteredRows, int timestampColumnIndex);
+    public void ofFiltered(PageFrameMemoryRecord record, DirectLongList filteredRows, int timestampColumnIndex) {
+        this.record = record;
+        this.timestampColumnIndex = timestampColumnIndex;
+        this.masterRowCount = filteredRows.size();
+        this.filteredRows = filteredRows;
+        this.isFiltered = true;
+        this.tupleCount = filteredRows.size() * offsets.size();
+        this.currentIndex = 0;
+        initHeap(filteredRows.size() > 0 ? filteredRows.get(0) : -1, filteredRows.size() > 0);
+    }
+
+    private void heapInsert(long ts, int offsetIdx) {
+        int i = heapSize++;
+        heapTs[i] = ts;
+        heapPos[i] = 0;
+        heapOffsetIdx[i] = offsetIdx;
+        siftUp(i);
+    }
+
+    private void initHeap(long firstRowIdx, boolean hasRows) {
+        heapSize = 0;
+        if (hasRows) {
+            record.setRowIndex(firstRowIdx);
+            long firstMasterTs = record.getTimestamp(timestampColumnIndex);
+            for (int k = 0, n = offsets.size(); k < n; k++) {
+                long horizonTs = firstMasterTs + offsets.getQuick(k);
+                heapInsert(horizonTs, k);
+            }
+        }
+    }
+
+    private void siftDown() {
+        // "Hole" sift-down: save root, move smaller children up, place saved element at final position.
+        // This halves array writes compared to swapping at each level.
+        long savedTs = heapTs[0];
+        long savedPos = heapPos[0];
+        int savedOffsetIdx = heapOffsetIdx[0];
+        int i = 0;
+        while (true) {
+            int left = 2 * i + 1;
+            if (left >= heapSize) {
+                break;
+            }
+            int smallest = left;
+            int right = left + 1;
+            if (right < heapSize && heapTs[right] < heapTs[left]) {
+                smallest = right;
+            }
+            if (savedTs <= heapTs[smallest]) {
+                break;
+            }
+            heapTs[i] = heapTs[smallest];
+            heapPos[i] = heapPos[smallest];
+            heapOffsetIdx[i] = heapOffsetIdx[smallest];
+            i = smallest;
+        }
+        heapTs[i] = savedTs;
+        heapPos[i] = savedPos;
+        heapOffsetIdx[i] = savedOffsetIdx;
+    }
+
+    private void siftUp(int i) {
+        while (i > 0) {
+            int parent = (i - 1) / 2;
+            if (heapTs[i] >= heapTs[parent]) {
+                break;
+            }
+            swap(i, parent);
+            i = parent;
+        }
+    }
+
+    private void swap(int a, int b) {
+        long t;
+        t = heapTs[a];
+        heapTs[a] = heapTs[b];
+        heapTs[b] = t;
+        t = heapPos[a];
+        heapPos[a] = heapPos[b];
+        heapPos[b] = t;
+        int ti = heapOffsetIdx[a];
+        heapOffsetIdx[a] = heapOffsetIdx[b];
+        heapOffsetIdx[b] = ti;
+    }
 }
