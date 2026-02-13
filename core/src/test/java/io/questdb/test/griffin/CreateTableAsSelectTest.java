@@ -24,9 +24,19 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoError;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.LongHashSet;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
+import org.junit.Assert;
 import org.junit.Test;
+
+import java.io.File;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class CreateTableAsSelectTest extends AbstractCairoTest {
 
@@ -40,6 +50,48 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
                     41,
                     "unexpected token [like]"
             );
+        });
+    }
+
+    @Test
+    public void testCreateAsSelectNonCairoExceptionCleansUpTable() throws Exception {
+        final LongHashSet destTableColumnFds = new LongHashSet();
+        final AtomicBoolean failed = new AtomicBoolean(false);
+
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                destTableColumnFds.remove(fd);
+                return super.close(fd);
+            }
+
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (destTableColumnFds.contains(fd) && failed.compareAndSet(false, true)) {
+                    throw new CairoError("simulated mmap error");
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (Utf8s.containsAscii(name, File.separator + "dest") && Utf8s.endsWithAscii(name, ".d")) {
+                    destTableColumnFds.add(fd);
+                }
+                return fd;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            createSrcTable();
+            try {
+                execute("create table dest as (select * from src)");
+            } catch (CairoError e) {
+                Assert.assertTrue(e.getMessage().contains("simulated mmap error"));
+            }
+
+            Assert.assertNull("dest table should have been cleaned up", engine.getTableTokenIfExists("dest"));
         });
     }
 
