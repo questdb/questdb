@@ -65,13 +65,13 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MILLIS;
  * Since Date type does not support being used as a designated timestamp,
  * some related methods are not implemented and will throw UnsupportedOperationException.
  */
-public class MillsTimestampDriver implements TimestampDriver {
-    public static final TimestampDriver INSTANCE = new MillsTimestampDriver();
+public class MillisTimestampDriver implements TimestampDriver {
+    public static final TimestampDriver INSTANCE = new MillisTimestampDriver();
     private final ColumnTypeConverter.Fixed2VarConverter converterDate2Str = this::append;
     private final ColumnTypeConverter.Var2FixedConverter<CharSequence> converterStr2Date = this::appendToMem;
     private Clock clock = MillisecondClockImpl.INSTANCE;
 
-    private MillsTimestampDriver() {
+    private MillisTimestampDriver() {
     }
 
     public static long floor(CharSequence value) throws NumericException {
@@ -474,11 +474,11 @@ public class MillsTimestampDriver implements TimestampDriver {
     @Override
     public TimestampCeilMethod getPartitionCeilMethod(int partitionBy) {
         return switch (partitionBy) {
-            case DAY -> MillsTimestampDriver::partitionCeilDD;
-            case MONTH -> MillsTimestampDriver::partitionCeilMM;
-            case YEAR -> MillsTimestampDriver::partitionCeilYYYY;
-            case HOUR -> MillsTimestampDriver::partitionCeilHH;
-            case WEEK -> MillsTimestampDriver::partitionCeilWW;
+            case DAY -> MillisTimestampDriver::partitionCeilDD;
+            case MONTH -> MillisTimestampDriver::partitionCeilMM;
+            case YEAR -> MillisTimestampDriver::partitionCeilYYYY;
+            case HOUR -> MillisTimestampDriver::partitionCeilHH;
+            case WEEK -> MillisTimestampDriver::partitionCeilWW;
             default -> null;
         };
     }

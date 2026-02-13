@@ -2081,16 +2081,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         char unit = token.charAt(unitIndex);
         long value = TimestampSamplerFactory.parseInterval(token, unitIndex, expr.position);
-        return switch (unit) {
-            case 'n' -> timestampDriver.fromNanos(value);
-            case 'U' -> timestampDriver.fromMicros(value);
-            case 'T' -> timestampDriver.fromMillis(value);
-            case 's' -> timestampDriver.fromSeconds(value);
-            case 'm' -> timestampDriver.fromMinutes((int) value);
-            case 'h' -> timestampDriver.fromHours((int) value);
-            case 'd' -> timestampDriver.fromDays((int) value);
-            default -> throw SqlException.$(expr.position, "unsupported HORIZON time unit [unit=").put(unit).put(']');
-        };
+        try {
+            return switch (unit) {
+                case 'n' -> timestampDriver.fromNanos(value);
+                case 'U' -> timestampDriver.fromMicros(value);
+                case 'T' -> timestampDriver.fromMillis(value);
+                case 's' -> timestampDriver.fromSeconds(value);
+                case 'm' -> timestampDriver.fromMinutes(Math.toIntExact(value));
+                case 'h' -> timestampDriver.fromHours(Math.toIntExact(value));
+                case 'd' -> timestampDriver.fromDays(Math.toIntExact(value));
+                default ->
+                        throw SqlException.$(expr.position, "unsupported HORIZON time unit [unit=").put(unit).put(']');
+            };
+        } catch (ArithmeticException e) {
+            throw SqlException.$(expr.position, "HORIZON time value overflow");
+        }
     }
 
     private @NotNull ObjList<Function> extractVirtualFunctionsFromProjection(ObjList<Function> projectionFunctions, IntList projectionFunctionFlags) {

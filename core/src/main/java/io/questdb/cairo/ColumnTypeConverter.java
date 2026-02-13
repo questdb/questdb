@@ -138,7 +138,7 @@ public class ColumnTypeConverter {
             case ColumnType.LONG -> converterStr2Long;
             case ColumnType.DOUBLE -> converterStr2Double;
             case ColumnType.FLOAT -> converterStr2Float;
-            case ColumnType.DATE -> MillsTimestampDriver.INSTANCE.getConverterStr2Timestamp();
+            case ColumnType.DATE -> MillisTimestampDriver.INSTANCE.getConverterStr2Timestamp();
             case ColumnType.TIMESTAMP -> ColumnType.getTimestampDriver(dstColumnType).getConverterStr2Timestamp();
             case ColumnType.BOOLEAN -> converterStr2Boolean;
             default -> throw unsupportedConversion(srcType, dstColumnType);
@@ -892,7 +892,7 @@ public class ColumnTypeConverter {
             case ColumnType.LONG -> converterFromLong2String;
             case ColumnType.DOUBLE -> converterFromDouble2String;
             case ColumnType.FLOAT -> converterFromFloat2String;
-            case ColumnType.DATE -> MillsTimestampDriver.INSTANCE.getConverterTimestamp2Str();
+            case ColumnType.DATE -> MillisTimestampDriver.INSTANCE.getConverterTimestamp2Str();
             case ColumnType.TIMESTAMP -> ColumnType.getTimestampDriver(srcColumnType).getConverterTimestamp2Str();
             case ColumnType.BOOLEAN -> converterFromBoolean2String;
             default -> throw unsupportedConversion(srcColumnType, dstColumnType);

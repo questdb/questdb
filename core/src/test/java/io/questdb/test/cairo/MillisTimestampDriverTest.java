@@ -26,7 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.MillsTimestampDriver;
+import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
@@ -49,8 +49,8 @@ import java.time.temporal.ChronoUnit;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MILLIS;
 
-public class MillsTimestampDriverTest extends AbstractCairoTest {
-    TimestampDriver driver = MillsTimestampDriver.INSTANCE;
+public class MillisTimestampDriverTest extends AbstractCairoTest {
+    TimestampDriver driver = MillisTimestampDriver.INSTANCE;
 
     @Test
     public void testAdd() {
@@ -479,8 +479,8 @@ public class MillsTimestampDriverTest extends AbstractCairoTest {
     @Test
     public void testStaticFloorMethod() {
         long expected2020_01_01 = 1577836800000L;
-        Assert.assertEquals(expected2020_01_01, MillsTimestampDriver.floor("2020-01-01"));
-        Assert.assertEquals(expected2020_01_01, MillsTimestampDriver.floor("2020-01-01T00:00:00Z"));
+        Assert.assertEquals(expected2020_01_01, MillisTimestampDriver.floor("2020-01-01"));
+        Assert.assertEquals(expected2020_01_01, MillisTimestampDriver.floor("2020-01-01T00:00:00Z"));
     }
 
     @Test
