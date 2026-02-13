@@ -73,6 +73,7 @@ jobs:
         displayName: Release Nightly MASTER
         inputs:
           script: |
+            set -eo pipefail
             docker buildx build --platform linux/amd64,linux/arm64 --push -t questdb/questdb:nightly .
             docker buildx build --platform linux/amd64,linux/arm64 --push -t questdb/questdb:nightly-rhel --target rhel  .
             preflight check container questdb/questdb:nightly-rhel
@@ -83,6 +84,7 @@ jobs:
         displayName: Release Tag
         inputs:
           script: |
+            set -eo pipefail
             # Cannot use Build.SourceBranchName if a tag name contains a "/", since the var only returns the final path component
             # We use cut instead to trim the first 2 components off the Build.SourceBranch ("refs/tags")
             tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
@@ -104,12 +106,13 @@ jobs:
         displayName: Release Commit from Branch
         inputs:
           script: |
+            set -eo pipefail
             # Cannot use Build.SourceBranchName if a branch name contains a "/", since the var only returns the final path component
             # We use cut instead to trim the first 2 components off the Build.SourceBranch ("refs/heads")
             tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
             echo $tag_name
             # Docker tags are prefixed with "patch-" and use the short commit hash
-            docker_tag_name=patch-$(echo $(Build.SourceVersion) | cut -c 1-7) 
+            docker_tag_name=patch-$(echo $(Build.SourceVersion) | cut -c 1-7)
             echo $docker_tag_name
             docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:${docker_tag_name} .
             docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:${docker_tag_name}-rhel --target rhel .

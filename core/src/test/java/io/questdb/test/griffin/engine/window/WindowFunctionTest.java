@@ -3458,6 +3458,88 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInlineOverWithTableAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades (symbol symbol, price double, side symbol, ts timestamp) timestamp(ts)");
+            execute("insert into trades values ('BTC', 100, 'buy', 0)");
+            execute("insert into trades values ('BTC', 101, 'buy', 1000000)");
+            execute("insert into trades values ('ETH', 200, 'sell', 2000000)");
+
+            // Inline OVER with table-qualified column references
+            assertSql(
+                    """
+                            symbol\tts\tlag
+                            BTC\t1970-01-01T00:00:00.000000Z\t
+                            BTC\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000Z
+                            ETH\t1970-01-01T00:00:02.000000Z\t
+                            """,
+                    "SELECT t.symbol, t.ts, lag(t.ts) OVER (PARTITION BY t.symbol ORDER BY t.ts) as lag FROM trades t"
+            );
+        });
+    }
+
+    @Test
+    public void testInlineOverWithTableAliasAndKeywordColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            // Use 'timestamp' designated column name matching real fx_trades schema
+            execute("create table fx_trades (symbol symbol, price double, side symbol, timestamp timestamp) timestamp(timestamp)");
+            execute("insert into fx_trades values ('BTC', 100, 'buy', 0)");
+            execute("insert into fx_trades values ('BTC', 101, 'buy', 1000000)");
+            execute("insert into fx_trades values ('ETH', 200, 'sell', 2000000)");
+
+            // Unprefixed columns inside OVER
+            assertSql(
+                    """
+                            symbol\ttimestamp\tlag
+                            BTC\t1970-01-01T00:00:00.000000Z\t
+                            BTC\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000Z
+                            ETH\t1970-01-01T00:00:02.000000Z\t
+                            """,
+                    "SELECT t.symbol, t.timestamp, lag(t.timestamp) OVER (PARTITION BY symbol ORDER BY timestamp) as lag FROM fx_trades t"
+            );
+
+            // Table-prefixed columns inside OVER
+            assertSql(
+                    """
+                            symbol\ttimestamp\tlag
+                            BTC\t1970-01-01T00:00:00.000000Z\t
+                            BTC\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000Z
+                            ETH\t1970-01-01T00:00:02.000000Z\t
+                            """,
+                    "SELECT t.symbol, t.timestamp, lag(t.timestamp) OVER (PARTITION BY t.symbol ORDER BY t.timestamp) as lag FROM fx_trades t"
+            );
+        });
+    }
+
+    @Test
+    public void testInlineWindowOrderByNotInSelect() throws Exception {
+        // Test that ORDER BY columns in INLINE windows don't need to be in SELECT list
+        // This is the baseline - if this works, then named windows should also work
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, y int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (10, 1, 0)");
+            execute("insert into t values (20, 2, 1000000)");
+            execute("insert into t values (30, 3, 2000000)");
+            execute("insert into t values (40, 4, 3000000)");
+
+            // Inline window: ORDER BY y, but y is not in SELECT
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum_x
+                            10\t10.0
+                            20\t30.0
+                            30\t60.0
+                            40\t100.0
+                            """,
+                    "SELECT x, sum(x) OVER (ORDER BY y) as sum_x FROM t",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testKSumCurrentRow() throws Exception {
         // Test ksum() over (rows current row) - KSumOverCurrentRowFunction
         assertMemoryLeak(() -> {
@@ -7059,6 +7141,1392 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultipleNamedWindows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 'A', 0)");
+            execute("insert into t values (2, 'B', 1000000)");
+            execute("insert into t values (3, 'A', 2000000)");
+            execute("insert into t values (4, 'B', 3000000)");
+
+            // Two different named windows - use ORDER BY x (in SELECT)
+            assertQueryNoLeakCheck(
+                    """
+                            x\tcategory\tsum1\tsum2
+                            1\tA\t1.0\t1.0
+                            2\tB\t3.0\t2.0
+                            3\tA\t6.0\t4.0
+                            4\tB\t10.0\t6.0
+                            """,
+                    "SELECT x, category, " +
+                            "sum(x) OVER w1 as sum1, " +
+                            "sum(x) OVER w2 as sum2 " +
+                            "FROM t " +
+                            "WINDOW w1 AS (ORDER BY x), w2 AS (PARTITION BY category ORDER BY x)",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMultipleNamedWindowsPartitionedFirst() throws Exception {
+        // This test reproduces a bug where defining the partitioned window FIRST
+        // caused both windows to use the same partition specification
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, side symbol, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 'sell', 0)");
+            execute("insert into t values (2, 'buy', 1000000)");
+            execute("insert into t values (3, 'buy', 2000000)");
+            execute("insert into t values (4, 'sell', 3000000)");
+
+            // ws has partition by side, wt has no partition
+            // If bug exists: both would show partitioned results
+            // Correct: sum_ws partitions by side, sum_wt is global cumulative
+            assertQueryNoLeakCheck(
+                    """
+                            x\tside\tsum_ws\tsum_wt
+                            1\tsell\t1.0\t1.0
+                            2\tbuy\t2.0\t3.0
+                            3\tbuy\t5.0\t6.0
+                            4\tsell\t5.0\t10.0
+                            """,
+                    "SELECT x, side, " +
+                            "sum(x) OVER ws as sum_ws, " +
+                            "sum(x) OVER wt as sum_wt " +
+                            "FROM t " +
+                            "WINDOW ws AS (PARTITION BY side ORDER BY x), " +
+                            "wt AS (ORDER BY x)",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowBasic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, y int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 10, 0)");
+            execute("insert into t values (2, 20, 1000000)");
+            execute("insert into t values (3, 30, 2000000)");
+
+            // Basic named window - empty window (whole table as partition)
+            assertQueryNoLeakCheck(
+                    """
+                            x\ty\trow_num
+                            1\t10\t1
+                            2\t20\t2
+                            3\t30\t3
+                            """,
+                    "SELECT x, y, row_number() OVER w as row_num " +
+                            "FROM t " +
+                            "WINDOW w AS ()",
+                    null,
+                    false,  // window functions don't support random access
+                    true
+            );
+
+            // Verify inline window works correctly (baseline)
+            assertQueryNoLeakCheck(
+                    """
+                            x\ty\tsum
+                            1\t10\t10.0
+                            2\t20\t30.0
+                            3\t30\t60.0
+                            """,
+                    "SELECT x, y, sum(y) OVER (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as sum " +
+                            "FROM t",
+                    null,
+                    true,
+                    true
+            );
+
+            // Named window with ORDER BY using SELECT column
+            assertQueryNoLeakCheck(
+                    """
+                            x\ty\tsum
+                            1\t10\t10.0
+                            2\t20\t30.0
+                            3\t30\t60.0
+                            """,
+                    "SELECT x, y, sum(y) OVER w as sum " +
+                            "FROM t " +
+                            "WINDOW w AS (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+                    null,
+                    true,  // ORDER BY window functions support random access
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowCaseInsensitive() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+
+            // Window name is case-insensitive - use ORDER BY x
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum
+                            1\t1.0
+                            2\t3.0
+                            """,
+                    "SELECT x, sum(x) OVER MyWindow as sum " +
+                            "FROM t " +
+                            "WINDOW mywindow AS (ORDER BY x)",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowCumulativeSum() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+            execute("insert into t values (3, 2000000)");
+
+            // Use named window for cumulative sum
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum_cumulative
+                            1\t1.0
+                            2\t3.0
+                            3\t6.0
+                            """,
+                    "SELECT x, sum(x) OVER w as sum_cumulative " +
+                            "FROM t " +
+                            "WINDOW w AS (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowDeduplicatesWithInlineWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+            execute("insert into t values (3, 2000000)");
+
+            // sum(x) OVER w and sum(x) OVER (ORDER BY ts) should deduplicate
+            // when w AS (ORDER BY ts), producing only one window computation
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum1\tsum2
+                            1\t1.0\t1.0
+                            2\t3.0\t3.0
+                            3\t6.0\t6.0
+                            """,
+                    "SELECT x, sum(x) OVER w as sum1, sum(x) OVER (ORDER BY ts) as sum2 " +
+                            "FROM t WINDOW w AS (ORDER BY ts)",
+                    null,
+                    false,
+                    true
+            );
+
+            // Verify via plan that dedup happened: only one window function in the plan
+            assertPlanNoLeakCheck(
+                    "SELECT x, sum(x) OVER w as sum1, sum(x) OVER (ORDER BY ts) as sum2 " +
+                            "FROM t WINDOW w AS (ORDER BY ts)",
+                    """
+                            SelectedRecord
+                                Window
+                                  functions: [sum(x) over (rows between unbounded preceding and current row)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowDoesNotDeduplicateDifferentSpecs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 'A', 0)");
+            execute("insert into t values (2, 'A', 1000000)");
+            execute("insert into t values (3, 'B', 2000000)");
+
+            // Two named windows with different specs should NOT deduplicate
+            assertPlanNoLeakCheck(
+                    "SELECT x, sum(x) OVER w1 as sum1, sum(x) OVER w2 as sum2 " +
+                            "FROM t WINDOW w1 AS (ORDER BY ts), w2 AS (PARTITION BY category ORDER BY ts)",
+                    """
+                            Window
+                              functions: [sum(x) over (rows between unbounded preceding and current row),\
+                            sum(x) over (partition by [category] rows between unbounded preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
+            );
+
+            // Also verify results are different
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum1\tsum2
+                            1\t1.0\t1.0
+                            2\t3.0\t3.0
+                            3\t6.0\t3.0
+                            """,
+                    "SELECT x, sum(x) OVER w1 as sum1, sum(x) OVER w2 as sum2 " +
+                            "FROM t WINDOW w1 AS (ORDER BY ts), w2 AS (PARTITION BY category ORDER BY ts)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowDuplicateNameError() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+
+            // Duplicate window name
+            assertExceptionNoLeakCheck(
+                    "SELECT x, sum(x) OVER w FROM t WINDOW w AS (ORDER BY ts), w AS (ORDER BY ts DESC)",
+                    58,
+                    "duplicate window name"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowEmptySpec() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+            execute("insert into t values (3, 2000000)");
+
+            // Empty window specification (whole table as one partition)
+            assertQueryNoLeakCheck(
+                    """
+                            x\trow_num
+                            1\t1
+                            2\t2
+                            3\t3
+                            """,
+                    "SELECT x, row_number() OVER w as row_num " +
+                            "FROM t " +
+                            "WINDOW w AS ()",
+                    null,
+                    false,  // row_number() without ORDER BY doesn't support random access
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowExplainPlanMatchesInline() throws Exception {
+        // Verify that named windows produce identical execution plans to inline windows
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+
+            // Expected plan for window function with ORDER BY ts
+            // Note: Default frame is ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            String expectedPlan = """
+                    Window
+                      functions: [sum(x) over (rows between unbounded preceding and current row)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: t
+                    """;
+
+            // Inline window
+            assertPlanNoLeakCheck(
+                    "SELECT sum(x) OVER (ORDER BY ts) FROM t",
+                    expectedPlan
+            );
+
+            // Named window - should produce identical plan
+            assertPlanNoLeakCheck(
+                    "SELECT sum(x) OVER w FROM t WINDOW w AS (ORDER BY ts)",
+                    expectedPlan
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowKeywordAsName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+
+            // SQL keyword as window name should fail
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) OVER select FROM t",
+                    19,
+                    "SQL keywords have to be enclosed in double quotes"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowLongName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+
+            String longName = "a".repeat(200);
+            assertSql(
+                    """
+                            sum
+                            1.0
+                            3.0
+                            """,
+                    "SELECT sum(x) OVER " + longName + " FROM t WINDOW " + longName + " AS (ORDER BY ts)"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowMissingNameInOverClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+
+            // End of input after OVER - no name or '('
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) OVER",
+                    14,
+                    "'(' or window name expected after OVER"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowMissingNameInWindowClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+
+            // WINDOW AS (...) - missing window name
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) OVER w FROM t WINDOW AS (ORDER BY ts)",
+                    35,
+                    "window name expected after 'window'"
+            );
+
+            // WINDOW w (...) without AS - lookahead sees w then (, not AS,
+            // so it falls through to WINDOW JOIN path
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) OVER w FROM t WINDOW w (ORDER BY ts)",
+                    28,
+                    "'join' expected"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowMultipleDistinctWindows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 'A', 0)");
+            execute("insert into t values (2, 'A', 1000000)");
+            execute("insert into t values (3, 'B', 2000000)");
+
+            // Two different named windows in the same query
+            assertQueryNoLeakCheck(
+                    """
+                            x\tcategory\tsum\tsum1
+                            1\tA\t1.0\t1.0
+                            2\tA\t3.0\t3.0
+                            3\tB\t6.0\t3.0
+                            """,
+                    "SELECT x, category, " +
+                            "sum(x) OVER w_global, " +
+                            "sum(x) OVER w_part " +
+                            "FROM t " +
+                            "WINDOW w_global AS (ORDER BY ts), " +
+                            "w_part AS (PARTITION BY category ORDER BY ts)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowNameCollisionWithColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+
+            // Window name that matches a column name - should work (different namespaces)
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum
+                            1\t1.0
+                            2\t3.0
+                            """,
+                    "SELECT x, sum(x) OVER x FROM t WINDOW x AS (ORDER BY ts)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowNestedWindowFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+            execute("insert into t values (3, 2000000)");
+
+            // Named window referenced inside a nested window function
+            assertSql(
+                    """
+                            outer_sum
+                            6.0
+                            6.0
+                            6.0
+                            """,
+                    "SELECT sum(row_number() OVER w) OVER () as outer_sum " +
+                            "FROM t " +
+                            "WINDOW w AS (ORDER BY ts)"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowNumberAsName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+
+            // Number as window name should fail in OVER clause
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) OVER 42 FROM t",
+                    19,
+                    "identifier should start with a letter or '_'"
+            );
+
+            // Number as window name should fail in WINDOW clause
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) OVER w FROM t WINDOW 42 AS (ORDER BY ts)",
+                    35,
+                    "identifier should start with a letter or '_'"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowOrderByNotInSelect() throws Exception {
+        // Test that ORDER BY columns in named windows don't need to be in SELECT list
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, y int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (10, 1, 0)");
+            execute("insert into t values (20, 2, 1000000)");
+            execute("insert into t values (30, 3, 2000000)");
+            execute("insert into t values (40, 4, 3000000)");
+
+            // ORDER BY y, but y is not in SELECT - this should work
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum_x
+                            10\t10.0
+                            20\t30.0
+                            30\t60.0
+                            40\t100.0
+                            """,
+                    "SELECT x, sum(x) OVER w as sum_x " +
+                            "FROM t " +
+                            "WINDOW w AS (ORDER BY y)",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowPartitionByNotInSelect() throws Exception {
+        // Test that PARTITION BY columns in named windows don't need to be in SELECT list
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 'A', 0)");
+            execute("insert into t values (2, 'B', 1000000)");
+            execute("insert into t values (3, 'A', 2000000)");
+            execute("insert into t values (4, 'B', 3000000)");
+
+            // PARTITION BY category, but category is not in SELECT - this should work
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum_x
+                            1\t1.0
+                            2\t2.0
+                            3\t4.0
+                            4\t6.0
+                            """,
+                    "SELECT x, sum(x) OVER w as sum_x " +
+                            "FROM t " +
+                            "WINDOW w AS (PARTITION BY category ORDER BY x)",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowQuotedKeywordAsName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+
+            // Quoted keyword as window name should work
+            assertQueryNoLeakCheck(
+                    """
+                            sum
+                            1.0
+                            3.0
+                            """,
+                    "SELECT sum(x) OVER \"select\" FROM t WINDOW \"select\" AS (ORDER BY ts)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowQuotedNameResolution() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+
+            // Quoted name in WINDOW clause, unquoted in OVER
+            assertSql(
+                    """
+                            sum
+                            1.0
+                            3.0
+                            """,
+                    "SELECT sum(x) OVER w FROM t WINDOW \"w\" AS (ORDER BY ts)"
+            );
+
+            // Unquoted name in WINDOW clause, quoted in OVER
+            assertSql(
+                    """
+                            sum
+                            1.0
+                            3.0
+                            """,
+                    "SELECT sum(x) OVER \"w\" FROM t WINDOW w AS (ORDER BY ts)"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowRankDenseRank() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (1, 1000000)");
+            execute("insert into t values (2, 2000000)");
+            execute("insert into t values (3, 3000000)");
+
+            // rank() and dense_rank() with named window
+            assertQueryNoLeakCheck(
+                    """
+                            x\tr\tdr
+                            1\t1\t1
+                            1\t1\t1
+                            2\t3\t2
+                            3\t4\t3
+                            """,
+                    "SELECT x, rank() OVER w as r, dense_rank() OVER w as dr " +
+                            "FROM t " +
+                            "WINDOW w AS (ORDER BY x)",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowReuseByMultipleFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+            execute("insert into t values (3, 2000000)");
+
+            // Multiple functions using the same named window - use ORDER BY x (in SELECT)
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum\tavg\tcount
+                            1\t1.0\t1.0\t1
+                            2\t3.0\t1.5\t2
+                            3\t6.0\t2.0\t3
+                            """,
+                    "SELECT x, sum(x) OVER w as sum, avg(x) OVER w as avg, count(*) OVER w as count " +
+                            "FROM t " +
+                            "WINDOW w AS (ORDER BY x)",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowRowNumber() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 'A', 0)");
+            execute("insert into t values (2, 'B', 1000000)");
+            execute("insert into t values (3, 'A', 2000000)");
+            execute("insert into t values (4, 'B', 3000000)");
+
+            // row_number() with named window - use ORDER BY x
+            assertQueryNoLeakCheck(
+                    """
+                            x\tcategory\trow_num
+                            1\tA\t1
+                            2\tB\t1
+                            3\tA\t2
+                            4\tB\t2
+                            """,
+                    "SELECT x, category, row_number() OVER w as row_num " +
+                            "FROM t " +
+                            "WINDOW w AS (PARTITION BY category ORDER BY x)",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowScopeDoesNotLeakToSubquery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+
+            // Named window defined in outer query should not be visible in subquery
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM (SELECT sum(x) OVER w FROM t) WINDOW w AS (ORDER BY ts)",
+                    34,
+                    "window 'w' is not defined"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowSpecialCharactersAsName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+
+            // Special character as window name in OVER clause
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) OVER @w FROM t",
+                    19,
+                    "identifier should start with a letter or '_'"
+            );
+
+            // Special character as window name in WINDOW clause
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) OVER w FROM t WINDOW @w AS (ORDER BY ts)",
+                    35,
+                    "identifier should start with a letter or '_'"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowUndefinedError() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+
+            // Reference to undefined window name
+            assertExceptionNoLeakCheck(
+                    "SELECT x, sum(x) OVER undefined_window FROM t",
+                    22,
+                    "window 'undefined_window' is not defined"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowUnicodeName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+
+            // Unicode characters in quoted window name
+            assertSql(
+                    """
+                            sum
+                            1.0
+                            3.0
+                            """,
+                    "SELECT sum(x) OVER \"窗口\" FROM t WINDOW \"窗口\" AS (ORDER BY ts)"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWindowKeywordAsName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+
+            // "window" is a context-sensitive keyword (not in KEYWORDS set),
+            // so it's valid as a window name without quoting
+            assertSql(
+                    """
+                            sum
+                            1.0
+                            3.0
+                            """,
+                    "SELECT sum(x) OVER window FROM t WINDOW window AS (ORDER BY ts)"
+            );
+
+            // Quoted also works
+            assertSql(
+                    """
+                            sum
+                            1.0
+                            3.0
+                            """,
+                    "SELECT sum(x) OVER \"window\" FROM t WINDOW \"window\" AS (ORDER BY ts)"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithCte() throws Exception {
+        // Test that WINDOW clause works with CTEs
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, y int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (10, 1, 0)");
+            execute("insert into t values (20, 2, 1000000)");
+            execute("insert into t values (30, 3, 2000000)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum_x
+                            10\t10.0
+                            20\t30.0
+                            30\t60.0
+                            """,
+                    "WITH a AS (SELECT * FROM t) " +
+                            "SELECT x, sum(x) OVER w as sum_x FROM a WINDOW w AS (ORDER BY ts)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithCteAndPartitionBy() throws Exception {
+        // Test that WINDOW clause with PARTITION BY works with CTEs
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
+            execute("insert into t values (10, 'A', 0)");
+            execute("insert into t values (20, 'B', 1000000)");
+            execute("insert into t values (30, 'A', 2000000)");
+            execute("insert into t values (40, 'B', 3000000)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tcategory\tsum_x
+                            10\tA\t10.0
+                            20\tB\t20.0
+                            30\tA\t40.0
+                            40\tB\t60.0
+                            """,
+                    "WITH a AS (SELECT * FROM t) " +
+                            "SELECT x, category, sum(x) OVER w as sum_x FROM a WINDOW w AS (PARTITION BY category ORDER BY ts)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithCteAndWhere() throws Exception {
+        // Test that WINDOW clause works with CTEs and WHERE clause
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, y int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (10, 1, 0)");
+            execute("insert into t values (20, 2, 1000000)");
+            execute("insert into t values (30, 1, 2000000)");
+            execute("insert into t values (40, 2, 3000000)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum_x
+                            10\t10.0
+                            30\t40.0
+                            """,
+                    "WITH a AS (SELECT * FROM t WHERE y = 1) " +
+                            "SELECT x, sum(x) OVER w as sum_x FROM a WINDOW w AS (ORDER BY ts)",
+                    null,
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithCteReferenceInExpression() throws Exception {
+        // Test that WINDOW clause works when CTE is used in a more complex expression
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (10, 0)");
+            execute("insert into t values (20, 1000000)");
+            execute("insert into t values (30, 2000000)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tdouble_x\tsum_x
+                            10\t20\t10.0
+                            20\t40\t30.0
+                            30\t60\t60.0
+                            """,
+                    "WITH a AS (SELECT x, x * 2 as double_x, ts FROM t) " +
+                            "SELECT x, double_x, sum(x) OVER w as sum_x FROM a WINDOW w AS (ORDER BY ts)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithExcludeCurrentRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+            execute("insert into t values (3, 2000000)");
+
+            // EXCLUDE CURRENT ROW with ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+            // Row 1: no preceding rows, exclude self -> NaN
+            // Row 2: preceding row is 1, exclude self -> 1
+            // Row 3: preceding rows are 1,2, exclude self -> 3
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum
+                            1\tnull
+                            2\t1.0
+                            3\t3.0
+                            """,
+                    "SELECT x, sum(x) OVER w as sum FROM t " +
+                            "WINDOW w AS (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithFrameSpec() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+            execute("insert into t values (3, 2000000)");
+            execute("insert into t values (4, 3000000)");
+            execute("insert into t values (5, 4000000)");
+
+            // Named window with ROWS frame specification - use ORDER BY x (in SELECT)
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum
+                            1\t1.0
+                            2\t3.0
+                            3\t6.0
+                            4\t9.0
+                            5\t12.0
+                            """,
+                    "SELECT x, sum(x) OVER w as sum " +
+                            "FROM t " +
+                            "WINDOW w AS (ORDER BY x ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 'A', 0)");
+            execute("insert into t values (2, 'A', 1000000)");
+            execute("insert into t values (3, 'B', 2000000)");
+            execute("insert into t values (4, 'B', 3000000)");
+
+            // Window function combined with GROUP BY is not supported - must use sub-query
+            assertExceptionNoLeakCheck(
+                    "SELECT category, sum(x) as total, " +
+                            "sum(x) OVER w " +
+                            "FROM t " +
+                            "GROUP BY category " +
+                            "WINDOW w AS (ORDER BY category)",
+                    0,
+                    "Window function is not allowed in context of aggregation. Use sub-query."
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithInlineWindowInSameQuery() throws Exception {
+        // Test that both named window and inline window can be used in the same query with subquery
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (10, 0)");
+            execute("insert into t values (20, 1000000)");
+            execute("insert into t values (30, 2000000)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum_x\tcount_x
+                            10\t10.0\t1
+                            20\t30.0\t2
+                            30\t60.0\t3
+                            """,
+                    "SELECT x, sum(x) OVER w as sum_x, count(*) OVER (ORDER BY ts) as count_x " +
+                            "FROM (SELECT * FROM t) " +
+                            "WINDOW w AS (ORDER BY ts)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+            execute("insert into t values (3, 2000000)");
+
+            // WINDOW clause with LIMIT
+            assertQueryNoLeakCheck(
+                    """
+                            sum
+                            1.0
+                            3.0
+                            """,
+                    "SELECT sum(x) OVER w FROM t WINDOW w AS (ORDER BY ts) LIMIT 2",
+                    null,
+                    false, // window functions don't support random access
+                    true   // expect size
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithMultipleCtes() throws Exception {
+        // Test that WINDOW clause works with multiple CTEs
+        assertMemoryLeak(() -> {
+            execute("create table t1 (x int, ts timestamp) timestamp(ts)");
+            execute("create table t2 (y int, ts timestamp) timestamp(ts)");
+            execute("insert into t1 values (10, 0)");
+            execute("insert into t1 values (20, 1000000)");
+            execute("insert into t2 values (100, 0)");
+            execute("insert into t2 values (200, 1000000)");
+
+            // Use first CTE with window function
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum_x
+                            10\t10.0
+                            20\t30.0
+                            """,
+                    "WITH a AS (SELECT * FROM t1), b AS (SELECT * FROM t2) " +
+                            "SELECT x, sum(x) OVER w as sum_x FROM a WINDOW w AS (ORDER BY ts)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithNestedSubqueries() throws Exception {
+        // Test that WINDOW clause works with deeply nested subqueries
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, y int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (10, 1, 0)");
+            execute("insert into t values (20, 2, 1000000)");
+            execute("insert into t values (30, 3, 2000000)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum_x
+                            10\t10.0
+                            20\t30.0
+                            30\t60.0
+                            """,
+                    "SELECT x, sum(x) OVER w as sum_x FROM (SELECT * FROM (SELECT * FROM t)) WINDOW w AS (ORDER BY ts)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithOrderByAfterWindowClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+            execute("insert into t values (3, 2000000)");
+
+            // SQL standard: WINDOW clause comes before ORDER BY
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum
+                            3\t6.0
+                            2\t3.0
+                            1\t1.0
+                            """,
+                    "SELECT x, sum(x) OVER w as sum FROM t " +
+                            "WINDOW w AS (ORDER BY ts) ORDER BY ts DESC",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithPartitionBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, y int, category symbol, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 10, 'A', 0)");
+            execute("insert into t values (2, 20, 'B', 1000000)");
+            execute("insert into t values (3, 30, 'A', 2000000)");
+            execute("insert into t values (4, 40, 'B', 3000000)");
+
+            // Use ORDER BY x since x is in SELECT list
+            // Note: ORDER BY columns not in SELECT list requires additional column propagation fix
+            assertQueryNoLeakCheck(
+                    """
+                            x\ty\tcategory\tsum
+                            1\t10\tA\t10.0
+                            2\t20\tB\t20.0
+                            3\t30\tA\t40.0
+                            4\t40\tB\t60.0
+                            """,
+                    "SELECT x, y, category, sum(y) OVER w as sum " +
+                            "FROM t " +
+                            "WINDOW w AS (PARTITION BY category ORDER BY x)",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithPartitionByExplainPlan() throws Exception {
+        // Verify explain plan for named window with PARTITION BY
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
+
+            // Note: Default frame is ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            String expectedPlan = """
+                    Window
+                      functions: [sum(x) over (partition by [category] rows between unbounded preceding and current row)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: t
+                    """;
+
+            // Inline window with PARTITION BY
+            assertPlanNoLeakCheck(
+                    "SELECT sum(x) OVER (PARTITION BY category ORDER BY ts) FROM t",
+                    expectedPlan
+            );
+
+            // Named window with PARTITION BY - should produce identical plan
+            assertPlanNoLeakCheck(
+                    "SELECT sum(x) OVER w FROM t WINDOW w AS (PARTITION BY category ORDER BY ts)",
+                    expectedPlan
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithRangeFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, '2024-01-01T00:00:00.000000Z')");
+            execute("insert into t values (2, '2024-01-01T00:00:01.000000Z')");
+            execute("insert into t values (3, '2024-01-01T00:00:02.000000Z')");
+            execute("insert into t values (4, '2024-01-01T00:00:04.000000Z')");
+
+            // Named window with RANGE frame - 2 second window
+            // Row 1 (ts=0s, x=1): sum of rows within [0s-2s, 0s] = sum(1) = 1
+            // Row 2 (ts=1s, x=2): sum of rows within [1s-2s, 1s] = sum(1,2) = 3
+            // Row 3 (ts=2s, x=3): sum of rows within [2s-2s, 2s] = sum(1,2,3) = 6
+            // Row 4 (ts=4s, x=4): sum of rows within [4s-2s, 4s] = sum(3,4) = 7
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum
+                            1\t1.0
+                            2\t3.0
+                            3\t6.0
+                            4\t7.0
+                            """,
+                    "SELECT x, sum(x) OVER w FROM t " +
+                            "WINDOW w AS (ORDER BY ts RANGE BETWEEN '2' SECOND PRECEDING AND CURRENT ROW)",
+                    null,
+                    false,
+                    true
+            );
+
+            // Verify same result with inline window
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum
+                            1\t1.0
+                            2\t3.0
+                            3\t6.0
+                            4\t7.0
+                            """,
+                    "SELECT x, sum(x) OVER (ORDER BY ts RANGE BETWEEN '2' SECOND PRECEDING AND CURRENT ROW) FROM t",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithRowsFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, '2024-01-01T00:00:00.000000Z')");
+            execute("insert into t values (2, '2024-01-01T00:00:01.000000Z')");
+            execute("insert into t values (3, '2024-01-01T00:00:02.000000Z')");
+            execute("insert into t values (4, '2024-01-01T00:00:03.000000Z')");
+
+            // Named window with ROWS frame (2 PRECEDING to CURRENT ROW)
+            // Row 1: sum(1) = 1, Row 2: sum(1,2) = 3, Row 3: sum(1,2,3) = 6, Row 4: sum(2,3,4) = 9
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum
+                            1\t1.0
+                            2\t3.0
+                            3\t6.0
+                            4\t9.0
+                            """,
+                    "SELECT x, sum(x) OVER w FROM t WINDOW w AS (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)",
+                    null,
+                    false,
+                    true
+            );
+
+            // Verify same result with inline window
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum
+                            1\t1.0
+                            2\t3.0
+                            3\t6.0
+                            4\t9.0
+                            """,
+                    "SELECT x, sum(x) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithSubquery() throws Exception {
+        // Test that WINDOW clause works with subqueries (similar structure to CTE)
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, y int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (10, 1, 0)");
+            execute("insert into t values (20, 2, 1000000)");
+            execute("insert into t values (30, 3, 2000000)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum_x
+                            10\t10.0
+                            20\t30.0
+                            30\t60.0
+                            """,
+                    "SELECT x, sum(x) OVER w as sum_x FROM (SELECT * FROM t) WINDOW w AS (ORDER BY ts)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithSubqueryProjection() throws Exception {
+        // Test that WINDOW clause works with a subquery projection
+        assertMemoryLeak(() -> {
+            execute("create table t1 (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t1 values (10, 0)");
+            execute("insert into t1 values (20, 1000000)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum_x
+                            10\t10.0
+                            20\t30.0
+                            """,
+                    "SELECT x, sum(x) OVER w as sum_x FROM (SELECT x, ts FROM t1) WINDOW w AS (ORDER BY ts)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithTableAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades (symbol symbol, price double, side symbol, ts timestamp) timestamp(ts)");
+            execute("insert into trades values ('BTC', 100, 'buy', 0)");
+            execute("insert into trades values ('BTC', 101, 'buy', 1000000)");
+            execute("insert into trades values ('ETH', 200, 'sell', 2000000)");
+
+            // WINDOW clause with table-qualified column references
+            assertSql(
+                    """
+                            symbol\tts\tlag
+                            BTC\t1970-01-01T00:00:00.000000Z\t
+                            BTC\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000Z
+                            ETH\t1970-01-01T00:00:02.000000Z\t
+                            """,
+                    "SELECT t.symbol, t.ts, lag(t.ts) OVER w as lag FROM trades t WINDOW w AS (PARTITION BY t.symbol ORDER BY t.ts)"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithTableAliasAndKeywordColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table fx_trades (symbol symbol, price double, side symbol, timestamp timestamp) timestamp(timestamp)");
+            execute("insert into fx_trades values ('BTC', 100, 'buy', 0)");
+            execute("insert into fx_trades values ('BTC', 101, 'buy', 1000000)");
+            execute("insert into fx_trades values ('ETH', 200, 'sell', 2000000)");
+
+            // WINDOW clause with table-prefixed columns
+            assertSql(
+                    """
+                            symbol\ttimestamp\tlag
+                            BTC\t1970-01-01T00:00:00.000000Z\t
+                            BTC\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000Z
+                            ETH\t1970-01-01T00:00:02.000000Z\t
+                            """,
+                    "SELECT t.symbol, t.timestamp, lag(t.timestamp) OVER w as lag " +
+                            "FROM fx_trades t WINDOW w AS (PARTITION BY t.symbol ORDER BY t.timestamp)"
+            );
+
+            // WINDOW clause with unprefixed columns
+            assertSql(
+                    """
+                            symbol\ttimestamp\tlag
+                            BTC\t1970-01-01T00:00:00.000000Z\t
+                            BTC\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000Z
+                            ETH\t1970-01-01T00:00:02.000000Z\t
+                            """,
+                    "SELECT t.symbol, t.timestamp, lag(t.timestamp) OVER w as lag " +
+                            "FROM fx_trades t WINDOW w AS (PARTITION BY symbol ORDER BY timestamp)"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t1 values (1, 0)");
+            execute("insert into t1 values (2, 1000000)");
+            execute("insert into t1 values (3, 2000000)");
+
+            execute("create table t2 (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t2 values (10, 0)");
+            execute("insert into t2 values (20, 1000000)");
+            execute("insert into t2 values (30, 2000000)");
+
+            // Each SELECT in a UNION ALL has its own WINDOW clause
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum
+                            1\t1.0
+                            2\t3.0
+                            3\t6.0
+                            10\t10.0
+                            20\t30.0
+                            30\t60.0
+                            """,
+                    "SELECT x, sum(x) OVER w FROM t1 WINDOW w AS (ORDER BY ts) " +
+                            "UNION ALL " +
+                            "SELECT x, sum(x) OVER w FROM t2 WINDOW w AS (ORDER BY ts)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNamedWindowWithWindowJoinDisallowed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, ts timestamp) timestamp(ts)");
+            execute("create table quotes (bid double, ts timestamp) timestamp(ts)");
+
+            // WINDOW functions (named or inline) are not allowed in WINDOW JOIN queries
+            assertException(
+                    "SELECT price, bid, avg(price) OVER w as avg_price " +
+                            "FROM trades " +
+                            "WINDOW JOIN quotes ON ts " +
+                            "RANGE BETWEEN 10 SECOND PRECEDING AND 10 SECOND FOLLOWING " +
+                            "WINDOW w AS (ORDER BY ts)",
+                    19,
+                    "WINDOW functions are not allowed in WINDOW JOIN queries"
+            );
+        });
+    }
+
+    @Test
     public void testNegativeLimitWindowOrderedByNotTimestamp() throws Exception {
         // https://github.com/questdb/questdb/issues/4748
         assertMemoryLeak(() -> assertQuery("""
@@ -10203,6 +11671,301 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowInheritanceBaseNotFoundError() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+
+            // Base window 'nonexistent' is not defined
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) OVER w2 FROM t WINDOW w2 AS (nonexistent ORDER BY ts)",
+                    43,
+                    "window 'nonexistent' is not defined"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowInheritanceBaseOnlyRef() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+            execute("insert into t values (3, 2000000)");
+
+            // w2 inherits everything from w1 without adding anything
+            assertQueryNoLeakCheck(
+                    """
+                            sum
+                            1.0
+                            3.0
+                            6.0
+                            """,
+                    "SELECT sum(x) OVER w2 as sum FROM t " +
+                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testWindowInheritanceBasic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+            execute("insert into t values (3, 2000000)");
+
+            // w2 inherits ORDER BY from w1 and adds its own frame
+            assertQueryNoLeakCheck(
+                    """
+                            sum
+                            1.0
+                            3.0
+                            5.0
+                            """,
+                    "SELECT sum(x) OVER w2 as sum FROM t " +
+                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testWindowInheritanceChain() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 'A', 0)");
+            execute("insert into t values (2, 'B', 1000000)");
+            execute("insert into t values (3, 'A', 2000000)");
+            execute("insert into t values (4, 'B', 3000000)");
+
+            // Chained: w3 inherits from w2, which inherits from w1
+            assertQueryNoLeakCheck(
+                    """
+                            x\tcategory\tsum
+                            1\tA\t1.0
+                            2\tB\t2.0
+                            3\tA\t3.0
+                            4\tB\t4.0
+                            """,
+                    "SELECT x, category, sum(x) OVER w3 as sum FROM t " +
+                            "WINDOW w1 AS (PARTITION BY category), " +
+                            "w2 AS (w1 ORDER BY ts), " +
+                            "w3 AS (w2 ROWS BETWEEN CURRENT ROW AND CURRENT ROW)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testWindowInheritanceCircularReferenceError() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+
+            // Circular reference: w1 references w2, w2 references w1
+            // w1 is parsed first, references w2 which doesn't exist yet -> forward reference error
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) OVER w1 FROM t WINDOW w1 AS (w2), w2 AS (w1)",
+                    43,
+                    "window 'w2' is not defined"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowInheritanceForwardReferenceError() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+
+            // Forward reference: w1 references w2 which is defined later
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) OVER w1 FROM t WINDOW w1 AS (w2 ORDER BY ts), w2 AS (ORDER BY ts)",
+                    43,
+                    "window 'w2' is not defined"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowInheritanceInSubquery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+            execute("insert into t values (3, 2000000)");
+
+            // Window inheritance inside a subquery
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum
+                            1\t1.0
+                            2\t3.0
+                            3\t5.0
+                            """,
+                    "SELECT * FROM (" +
+                            "SELECT x, sum(x) OVER w2 as sum FROM t " +
+                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)" +
+                            ")",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testWindowInheritanceMultipleFunctionsSharing() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+            execute("insert into t values (3, 2000000)");
+
+            // Multiple functions sharing the inherited window
+            assertQueryNoLeakCheck(
+                    """
+                            s\ta
+                            1.0\t1.0
+                            3.0\t1.5
+                            6.0\t2.0
+                            """,
+                    "SELECT sum(x) OVER w2 as s, avg(x) OVER w2 as a FROM t " +
+                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testWindowInheritanceOverrideFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+            execute("insert into t values (3, 2000000)");
+
+            // w2 inherits ORDER BY from w1 but overrides frame
+            assertQueryNoLeakCheck(
+                    """
+                            sum
+                            1.0
+                            3.0
+                            6.0
+                            """,
+                    "SELECT sum(x) OVER w2 as sum FROM t " +
+                            "WINDOW w1 AS (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW), " +
+                            "w2 AS (w1 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testWindowInheritanceOverrideOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 0)");
+            execute("insert into t values (2, 1000000)");
+            execute("insert into t values (3, 2000000)");
+
+            // w2 inherits from w1 but overrides ORDER BY with its own
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsum
+                            1\t6.0
+                            2\t5.0
+                            3\t3.0
+                            """,
+                    "SELECT x, sum(x) OVER w2 as sum FROM t " +
+                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 ORDER BY ts DESC)",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testWindowInheritancePartitionByAndAddOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 'A', 0)");
+            execute("insert into t values (2, 'B', 1000000)");
+            execute("insert into t values (3, 'A', 2000000)");
+            execute("insert into t values (4, 'B', 3000000)");
+
+            // w1 provides PARTITION BY, w2 adds ORDER BY on top
+            assertQueryNoLeakCheck(
+                    """
+                            x\tcategory\tsum
+                            1\tA\t1.0
+                            2\tB\t2.0
+                            3\tA\t4.0
+                            4\tB\t6.0
+                            """,
+                    "SELECT x, category, sum(x) OVER w2 as sum FROM t " +
+                            "WINDOW w1 AS (PARTITION BY category), w2 AS (w1 ORDER BY ts)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testWindowInheritancePartitionByInChildError() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
+
+            // SQL standard: PARTITION BY not allowed in child window when base is specified
+            assertExceptionNoLeakCheck(
+                    "SELECT sum(x) OVER w2 FROM t " +
+                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 PARTITION BY category)",
+                    67,
+                    "PARTITION BY not allowed in window referencing another window"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowInheritancePartitionByOrderByAddFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
+            execute("insert into t values (1, 'A', 0)");
+            execute("insert into t values (2, 'B', 1000000)");
+            execute("insert into t values (3, 'A', 2000000)");
+            execute("insert into t values (4, 'B', 3000000)");
+
+            // w1 provides PARTITION BY + ORDER BY, w2 adds frame
+            assertQueryNoLeakCheck(
+                    """
+                            x\tcategory\tsum
+                            1\tA\t1.0
+                            2\tB\t2.0
+                            3\tA\t3.0
+                            4\tB\t4.0
+                            """,
+                    "SELECT x, category, sum(x) OVER w2 as sum FROM t " +
+                            "WINDOW w1 AS (PARTITION BY category ORDER BY ts), " +
+                            "w2 AS (w1 ROWS BETWEEN CURRENT ROW AND CURRENT ROW)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testWindowMultiplePartitionBy() throws Exception {
         // Test window function with multiple PARTITION BY columns
         assertQuery(
@@ -10357,6 +12120,126 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testWindowSpecErrorCurrentWithoutRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertException(
+                    "SELECT sum(x) OVER (ROWS BETWEEN CURRENT xyz AND 1 FOLLOWING) FROM t",
+                    41,
+                    "'row' expected after 'current'"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowSpecErrorEmptySpec() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertException(
+                    "SELECT sum(x) OVER (",
+                    19,
+                    "')' or window specification expected"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowSpecErrorExcludeCurrentWithoutRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertException(
+                    "SELECT sum(x) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT xyz) FROM t",
+                    85,
+                    "'row' expected after 'current'"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowSpecErrorExcludeNoWithoutOthers() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertException(
+                    "SELECT sum(x) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE NO xyz) FROM t",
+                    80,
+                    "'others' expected after 'no'"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowSpecErrorOrderByEndOfInput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertException(
+                    "SELECT sum(x) OVER (ORDER BY ts",
+                    29,
+                    "')' expected to close window specification"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowSpecErrorOrderWithoutBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertException(
+                    "SELECT sum(x) OVER (ORDER xyz) FROM t",
+                    26,
+                    "'by' expected after 'order'"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowSpecErrorPartitionByEndOfInput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertException(
+                    "SELECT sum(x) OVER (PARTITION BY x",
+                    33,
+                    "'order', ',' or ')' expected"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowSpecErrorPartitionWithoutBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertException(
+                    "SELECT sum(x) OVER (PARTITION xyz) FROM t",
+                    30,
+                    "'by' expected after 'partition'"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowSpecErrorUnboundedWithoutDirection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertException(
+                    "SELECT sum(x) OVER (ROWS BETWEEN UNBOUNDED xyz AND CURRENT ROW) FROM t",
+                    43,
+                    "'preceding' or 'following' expected after 'unbounded'"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowSpecErrorUnclosedAfterFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertException(
+                    "SELECT sum(x) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW xyz) FROM t",
+                    81,
+                    "')' expected to close window specification"
+            );
+        });
     }
 
     private static void normalizeSuffix(List<String> values) {

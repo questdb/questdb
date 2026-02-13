@@ -131,10 +131,10 @@ import java.util.stream.Stream;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
-import static io.questdb.test.tools.TestUtils.assertEquals;
 import static io.questdb.test.tools.TestUtils.*;
-import static org.junit.Assert.assertEquals;
+import static io.questdb.test.tools.TestUtils.assertEquals;
 import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
 
 /**
  * This class contains tests which replay PGWIRE traffic.
@@ -7496,7 +7496,7 @@ nodejs code:
             try (PreparedStatement pstmt = connection.prepareStatement("begin")) {
                 pstmt.execute();
             }
-            try (PreparedStatement pstmt = connection.prepareStatement("set")) {
+            try (PreparedStatement pstmt = connection.prepareStatement("set a = b")) {
                 pstmt.execute();
             }
             try (PreparedStatement pstmt = connection.prepareStatement("commit")) {

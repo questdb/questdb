@@ -316,6 +316,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         return batchSize;
     }
 
+    public void setBatchSize(long batchSize) {
+        this.batchSize = batchSize;
+    }
+
     @Override
     public int getColumnCount() {
         return columnNames.size();
