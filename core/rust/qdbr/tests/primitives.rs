@@ -12,7 +12,7 @@ use parquet::{
     file::properties::WriterVersion,
     schema::types::Type,
 };
-use qdb_core::col_type::{nulls, ColumnTypeTag};
+use qdb_core::col_type::{self, nulls, ColumnTypeTag};
 
 use common::{
     decode_file, generate_nulls, qdb_props, write_parquet_column, Encoding, Null, ALL_NULLS, COUNT,
@@ -406,9 +406,9 @@ impl PrimitiveType for Double {
 struct Long128;
 
 impl PrimitiveType for Long128 {
-    type T = [u8; 16];
+    type T = col_type::Long128;
     type U = FixedLenByteArrayType;
-    const NULL: Self::T = [0u8; 16];
+    const NULL: Self::T = col_type::Long128::NULL;
     const TAG: ColumnTypeTag = ColumnTypeTag::Long128;
     const ENCODINGS: &[Encoding] = &[Encoding::Plain];
     const FIXED_LEN: Option<i32> = Some(16);
@@ -419,21 +419,22 @@ impl PrimitiveType for Long128 {
         let mut bytes = [0u8; 16];
         bytes[0..8].copy_from_slice(&lo);
         bytes[8..16].copy_from_slice(&hi);
-        (FixedLenByteArray::from(bytes.to_vec()), bytes)
+        (
+            FixedLenByteArray::from(bytes.to_vec()),
+            col_type::Long128 {
+                lo: i64::from_le_bytes(lo),
+                hi: i64::from_le_bytes(hi),
+            },
+        )
     }
 }
 
 struct Long256;
 
-const LONG256_NULL: [u8; 32] = [
-    0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0,
-    0, 128,
-];
-
 impl PrimitiveType for Long256 {
-    type T = [u8; 32];
+    type T = col_type::Long256;
     type U = FixedLenByteArrayType;
-    const NULL: Self::T = LONG256_NULL;
+    const NULL: Self::T = col_type::Long256::NULL;
     const TAG: ColumnTypeTag = ColumnTypeTag::Long256;
     const ENCODINGS: &[Encoding] = &[Encoding::Plain];
     const FIXED_LEN: Option<i32> = Some(32);
@@ -444,7 +445,15 @@ impl PrimitiveType for Long256 {
         bytes[8..16].copy_from_slice(&((s as i64 + 1000).to_le_bytes()));
         bytes[16..24].copy_from_slice(&((s as i64 + 2000).to_le_bytes()));
         bytes[24..32].copy_from_slice(&((s as i64 + 3000).to_le_bytes()));
-        (FixedLenByteArray::from(bytes.to_vec()), bytes)
+        (
+            FixedLenByteArray::from(bytes.to_vec()),
+            col_type::Long256 {
+                l0: i64::from_le_bytes(bytes[0..8].try_into().unwrap()),
+                l1: i64::from_le_bytes(bytes[8..16].try_into().unwrap()),
+                l2: i64::from_le_bytes(bytes[16..24].try_into().unwrap()),
+                l3: i64::from_le_bytes(bytes[24..32].try_into().unwrap()),
+            },
+        )
     }
 }
 

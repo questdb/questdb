@@ -1,4 +1,3 @@
-pub mod dict_decoder;
 pub mod rle;
 
 #[cfg(test)]
@@ -647,10 +646,6 @@ impl<'a> BooleanRleSlicer<'a> {
         let rle_data = &data[4..];
         let decoder =
             parquet2::encoding::hybrid_rle::HybridRleDecoder::try_new(rle_data, 1, row_count)?;
-        Ok(Self {
-            decoder,
-            sliced_row_count,
-            error: Ok(()),
-        })
+        Ok(Self { decoder, sliced_row_count, error: Ok(()) })
     }
 }

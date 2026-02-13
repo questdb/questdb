@@ -51,7 +51,9 @@ fn assert_binary(nulls: &[bool], data: &[u8]) {
 fn run_binary_test(name: &str, encoding: Encoding) {
     for version in &VERSIONS {
         for null in &ALL_NULLS {
-            eprintln!("Testing {name} with version={version:?}, encoding={encoding:?}, null={null:?}");
+            eprintln!(
+                "Testing {name} with version={version:?}, encoding={encoding:?}, null={null:?}"
+            );
 
             let nulls = generate_nulls(COUNT, *null);
             let values = generate_values(COUNT);

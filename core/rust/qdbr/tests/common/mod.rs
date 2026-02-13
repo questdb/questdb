@@ -173,7 +173,11 @@ pub fn qdb_meta_with_format(col_type: ColumnType, format: u8) -> String {
 }
 
 /// Build writer properties with QDB metadata for a full column type and encoding.
-pub fn qdb_props_col_type(col_type: ColumnType, version: WriterVersion, encoding: Encoding) -> WriterProperties {
+pub fn qdb_props_col_type(
+    col_type: ColumnType,
+    version: WriterVersion,
+    encoding: Encoding,
+) -> WriterProperties {
     let qdb_json = format!(
         r#"{{"version":1,"schema":[{{"column_type":{},"column_top":0}}]}}"#,
         col_type.code()
@@ -182,12 +186,20 @@ pub fn qdb_props_col_type(col_type: ColumnType, version: WriterVersion, encoding
 }
 
 /// Build writer properties with QDB metadata for a column type tag and encoding.
-pub fn qdb_props(tag: ColumnTypeTag, version: WriterVersion, encoding: Encoding) -> WriterProperties {
+pub fn qdb_props(
+    tag: ColumnTypeTag,
+    version: WriterVersion,
+    encoding: Encoding,
+) -> WriterProperties {
     let qdb_json = qdb_meta(tag);
     qdb_props_with_json(qdb_json, version, encoding)
 }
 
-fn qdb_props_with_json(qdb_json: String, version: WriterVersion, encoding: Encoding) -> WriterProperties {
+fn qdb_props_with_json(
+    qdb_json: String,
+    version: WriterVersion,
+    encoding: Encoding,
+) -> WriterProperties {
     let props = WriterProperties::builder()
         .set_writer_version(version)
         .set_key_value_metadata(Some(vec![KeyValue::new("questdb".to_string(), qdb_json)]));
@@ -211,7 +223,8 @@ fn qdb_props_with_json(qdb_json: String, version: WriterVersion, encoding: Encod
 
 /// Build an optional ByteArray schema with an optional logical type.
 pub fn optional_byte_array_schema(col_name: &str, logical: Option<LogicalType>) -> Type {
-    let mut builder = parquet::schema::types::Type::primitive_type_builder(col_name, PhysicalType::BYTE_ARRAY);
+    let mut builder =
+        parquet::schema::types::Type::primitive_type_builder(col_name, PhysicalType::BYTE_ARRAY);
     if let Some(lt) = logical {
         builder = builder.with_logical_type(Some(lt));
     }
@@ -223,8 +236,9 @@ pub fn optional_byte_array_schema(col_name: &str, logical: Option<LogicalType>) 
 
 /// Build a required ByteArray schema with an optional logical type.
 pub fn required_byte_array_schema(col_name: &str, logical: Option<LogicalType>) -> Type {
-    let mut builder = parquet::schema::types::Type::primitive_type_builder(col_name, PhysicalType::BYTE_ARRAY)
-        .with_repetition(Repetition::REQUIRED);
+    let mut builder =
+        parquet::schema::types::Type::primitive_type_builder(col_name, PhysicalType::BYTE_ARRAY)
+            .with_repetition(Repetition::REQUIRED);
     if let Some(lt) = logical {
         builder = builder.with_logical_type(Some(lt));
     }

@@ -22,6 +22,7 @@
  *
  ******************************************************************************/
 use crate::error::{CoreError, CoreErrorExt, CoreResult, fmt_err};
+use num_traits::AsPrimitive;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt::{Debug, Display, Formatter};
 use std::num::NonZeroI32;
@@ -423,7 +424,54 @@ pub mod nulls {
     pub const GEOHASH_SHORT: i16 = -1;
     pub const GEOHASH_INT: i32 = -1;
     pub const GEOHASH_LONG: i64 = -1;
-    pub const SYMBOL_NULL: i32 = i32::MIN;
+    pub const SYMBOL: i32 = i32::MIN;
+    pub const TIMESTAMP: i64 = i64::MIN;
+    pub const UUID: u128 =
+        u128::from_le_bytes([0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128]);
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct Long128 {
+    pub lo: i64,
+    pub hi: i64,
+}
+
+impl Long128 {
+    pub const NULL: Self = Self {
+        lo: i64::MIN,
+        hi: i64::MIN,
+    };
+}
+
+impl AsPrimitive<Long128> for Long128 {
+    fn as_(self) -> Long128 {
+        self
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct Long256 {
+    pub l0: i64,
+    pub l1: i64,
+    pub l2: i64,
+    pub l3: i64,
+}
+
+impl Long256 {
+    pub const NULL: Self = Self {
+        l0: i64::MIN,
+        l1: i64::MIN,
+        l2: i64::MIN,
+        l3: i64::MIN,
+    };
+}
+
+impl AsPrimitive<Long256> for Long256 {
+    fn as_(self) -> Long256 {
+        self
+    }
 }
 
 #[cfg(test)]

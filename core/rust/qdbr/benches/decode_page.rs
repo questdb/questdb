@@ -5,7 +5,7 @@ use parquet2::encoding::hybrid_rle::{encode_bool, encode_u32};
 use parquet2::encoding::Encoding;
 use parquet2::metadata::Descriptor;
 use parquet2::page::{DataPage, DataPageHeader, DataPageHeaderV1, DictPage, Page};
-use parquet2::schema::types::{ParquetType, PrimitiveType};
+use parquet2::schema::types::{ParquetType, PhysicalType, PrimitiveType};
 use parquet2::statistics::{serialize_statistics, PrimitiveStatistics};
 use parquet2::types::NativeType;
 use parquet2::write::Version;
@@ -341,6 +341,47 @@ fn make_boolean_data(row_count: usize) -> Vec<u8> {
     data
 }
 
+fn boolean_to_rle_data_page(
+    slice: &[u8],
+    column_top: usize,
+    primitive_type: PrimitiveType,
+) -> DataPage {
+    let num_rows = column_top + slice.len();
+    let mut data_buffer = vec![0u8; 4];
+    let payload_start = data_buffer.len();
+
+    let iter = (0..num_rows).map(|i| {
+        if i < column_top {
+            false
+        } else {
+            slice[i - column_top] != 0
+        }
+    });
+    encode_bool(&mut data_buffer, iter, num_rows).expect("encode boolean rle");
+
+    let payload_len = (data_buffer.len() - payload_start) as i32;
+    data_buffer[..4].copy_from_slice(&payload_len.to_le_bytes());
+
+    let header = DataPageHeader::V1(DataPageHeaderV1 {
+        num_values: num_rows as i32,
+        encoding: Encoding::Rle.into(),
+        definition_level_encoding: Encoding::Rle.into(),
+        repetition_level_encoding: Encoding::Rle.into(),
+        statistics: None,
+    });
+
+    DataPage::new(
+        header,
+        data_buffer,
+        Descriptor {
+            primitive_type,
+            max_def_level: 0,
+            max_rep_level: 0,
+        },
+        Some(num_rows),
+    )
+}
+
 struct BinaryData {
     data: Vec<u8>,
     offsets: Vec<i64>,
@@ -560,6 +601,62 @@ fn make_long256_data(row_count: usize, null_pct: u8) -> Vec<[u8; 32]> {
     data
 }
 
+fn int96_primitive_type() -> PrimitiveType {
+    PrimitiveType::from_physical("col".to_string(), PhysicalType::Int96)
+}
+
+fn make_int96_data(row_count: usize, null_pct: u8) -> Vec<[u8; 12]> {
+    const JULIAN_UNIX_EPOCH: u32 = 2_440_588;
+
+    let null_value = {
+        let mut v = [0u8; 12];
+        let long_bytes = i64::MIN.to_le_bytes();
+        for i in 0..12 {
+            v[i] = long_bytes[i % long_bytes.len()];
+        }
+        v
+    };
+
+    let mut data = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        if is_null_at(i, null_pct) {
+            data.push(null_value);
+        } else {
+            let julian_date = JULIAN_UNIX_EPOCH + 18000 + (i / 1000) as u32;
+            let nanos_in_day = (i % 1000) as u64 * 1_000_000_000;
+            let mut bytes = [0u8; 12];
+            bytes[0..8].copy_from_slice(&nanos_in_day.to_le_bytes());
+            bytes[8..12].copy_from_slice(&julian_date.to_le_bytes());
+            if bytes == null_value {
+                bytes[0] = 1;
+            }
+            data.push(bytes);
+        }
+    }
+    data
+}
+
+fn make_int96_dict_data(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<[u32; 3]> {
+    const JULIAN_UNIX_EPOCH: u32 = 2_440_588;
+
+    (0..row_count)
+        .map(|i| {
+            if is_null_at(i, null_pct) {
+                [0u32; 3]
+            } else {
+                let j = i % cardinality;
+                let julian_date = JULIAN_UNIX_EPOCH + 18000 + (j / 1000) as u32;
+                let nanos_in_day = (j % 1000) as u64 * 1_000_000_000;
+                [
+                    nanos_in_day as u32,
+                    (nanos_in_day >> 32) as u32,
+                    julian_date,
+                ]
+            }
+        })
+        .collect()
+}
+
 fn make_byte_dict_data(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<i32> {
     let card = cardinality.min(120);
     (0..row_count)
@@ -646,12 +743,11 @@ fn build_fixed_rle_dict_pages<T: NativeType>(
     data: &[T],
     null_pct: u8,
     row_count: usize,
-    column_type: ColumnType,
+    primitive_type: PrimitiveType,
 ) -> (DataPage, DictPage) {
     let elem_size = std::mem::size_of::<T>();
-    let raw_data: &[u8] = unsafe {
-        std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * elem_size)
-    };
+    let raw_data: &[u8] =
+        unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * elem_size) };
 
     let mut dict_map: HashMap<&[u8], u32> = HashMap::new();
     let mut dict_entries: Vec<&[u8]> = Vec::new();
@@ -735,8 +831,6 @@ fn build_fixed_rle_dict_pages<T: NativeType>(
         bits_per_key as u32,
     )
     .unwrap();
-
-    let primitive_type = primitive_type_for(column_type);
 
     let statistics = serialize_statistics(
         &(PrimitiveStatistics::<T> {
@@ -900,7 +994,8 @@ macro_rules! fixed_dict_cases {
             for &$np in null_pcts(true) {
                 let data: Vec<$T> = $data;
                 let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
-                let (page, dict) = build_fixed_rle_dict_pages(&data, $np, ROW_COUNT, ct);
+                let pt = primitive_type_for(ct);
+                let (page, dict) = build_fixed_rle_dict_pages(&data, $np, ROW_COUNT, pt);
                 $cases.push(build_case(
                     format!(
                         concat!($name, "_dict_c{card}_n{null_pct}"),
@@ -927,11 +1022,22 @@ fn build_cases() -> Vec<BenchCase> {
         let data = make_boolean_data(ROW_COUNT);
         let column_type = ColumnType::new(ColumnTypeTag::Boolean, 0);
         let primitive_type = primitive_type_for(column_type);
-        let page =
-            data_page_from(boolean_to_page(&data, 0, options, primitive_type).expect("page"));
+        let page = data_page_from(
+            boolean_to_page(&data, 0, options, primitive_type.clone()).expect("page"),
+        );
         cases.push(build_case(
             format!("boolean_plain_n{null_pct}"),
             page,
+            None,
+            column_type,
+            None,
+            ROW_COUNT,
+        ));
+
+        let rle_page = boolean_to_rle_data_page(&data, 0, primitive_type);
+        cases.push(build_case(
+            format!("boolean_rle_n{null_pct}"),
+            rle_page,
             None,
             column_type,
             None,
@@ -987,6 +1093,25 @@ fn build_cases() -> Vec<BenchCase> {
         make_f64_data(ROW_COUNT, np)
     });
 
+    // Int96 timestamp (plain) — external Parquet files may use Int96 physical type
+    {
+        let int96_pt = int96_primitive_type();
+        for &null_pct in null_pcts(true) {
+            let data = make_int96_data(ROW_COUNT, null_pct);
+            let page = data_page_from(
+                bytes_to_page(&data, false, 0, options, int96_pt.clone()).expect("page"),
+            );
+            cases.push(build_case(
+                format!("timestamp_int96_plain_n{null_pct}"),
+                page,
+                None,
+                ColumnType::new(ColumnTypeTag::Timestamp, 0),
+                None,
+                ROW_COUNT,
+            ));
+        }
+    }
+
     // RLE dictionary-encoded fixed-size types
     fixed_dict_cases!(cases, "byte", Byte, i32, |np, card| make_byte_dict_data(
         ROW_COUNT, np, card
@@ -1003,9 +1128,35 @@ fn build_cases() -> Vec<BenchCase> {
     fixed_dict_cases!(cases, "date", Date, i64, |np, card| make_i64_dict_data(
         ROW_COUNT, np, card
     ));
-    fixed_dict_cases!(cases, "timestamp", Timestamp, i64, |np, card| make_i64_dict_data(
-        ROW_COUNT, np, card
-    ));
+    fixed_dict_cases!(cases, "timestamp", Timestamp, i64, |np, card| {
+        make_i64_dict_data(ROW_COUNT, np, card)
+    });
+
+    // Int96 timestamp (RLE dictionary)
+    {
+        let int96_pt = int96_primitive_type();
+        for &card in &DICT_CARDINALITIES {
+            for &null_pct in null_pcts(true) {
+                let data = make_int96_dict_data(ROW_COUNT, null_pct, card);
+                let ct = ColumnType::new(ColumnTypeTag::Timestamp, 0);
+                let (page, dict) =
+                    build_fixed_rle_dict_pages(&data, null_pct, ROW_COUNT, int96_pt.clone());
+                cases.push(build_case(
+                    format!(
+                        "timestamp_int96_dict_c{card}_n{null_pct}",
+                        card = card,
+                        null_pct = null_pct,
+                    ),
+                    page,
+                    Some(dict),
+                    ct,
+                    None,
+                    ROW_COUNT,
+                ));
+            }
+        }
+    }
+
     fixed_dict_cases!(cases, "float", Float, f32, |np, card| make_f32_dict_data(
         ROW_COUNT, np, card
     ));

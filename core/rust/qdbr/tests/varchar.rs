@@ -15,8 +15,8 @@ const HEADER_FLAGS_WIDTH: u8 = 4;
 
 fn read_offset(aux: &[u8], base: usize) -> usize {
     let lo = u16::from_le_bytes([aux[base], aux[base + 1]]) as usize;
-    let hi = u32::from_le_bytes([aux[base + 2], aux[base + 3], aux[base + 4], aux[base + 5]])
-        as usize;
+    let hi =
+        u32::from_le_bytes([aux[base + 2], aux[base + 3], aux[base + 4], aux[base + 5]]) as usize;
     lo | (hi << 16)
 }
 
@@ -86,7 +86,9 @@ fn assert_varchar(nulls: &[bool], data: &[u8], aux: &[u8]) {
 fn run_varchar_test(name: &str, encoding: Encoding) {
     for version in &VERSIONS {
         for null in &ALL_NULLS {
-            eprintln!("Testing {name} with version={version:?}, encoding={encoding:?}, null={null:?}");
+            eprintln!(
+                "Testing {name} with version={version:?}, encoding={encoding:?}, null={null:?}"
+            );
 
             let nulls = generate_nulls(COUNT, *null);
             let values = generate_values(COUNT);

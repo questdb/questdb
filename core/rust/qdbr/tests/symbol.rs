@@ -5,9 +5,9 @@ use parquet::data_type::{ByteArray, ByteArrayType};
 use parquet::file::properties::WriterVersion;
 
 use common::{
-    decode_file, def_levels_from_nulls, generate_nulls, non_null_only,
-    optional_byte_array_schema, qdb_meta_with_format, required_byte_array_schema,
-    write_parquet_column, Null, ALL_NULLS, COUNT, VERSIONS,
+    decode_file, def_levels_from_nulls, generate_nulls, non_null_only, optional_byte_array_schema,
+    qdb_meta_with_format, required_byte_array_schema, write_parquet_column, Null, ALL_NULLS, COUNT,
+    VERSIONS,
 };
 use parquet::file::properties::WriterProperties;
 use parquet::format::KeyValue;

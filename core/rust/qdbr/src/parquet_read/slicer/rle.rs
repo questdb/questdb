@@ -1,86 +1,9 @@
 use crate::parquet::error::{fmt_err, ParquetError, ParquetResult};
-use crate::parquet_read::page::DictPage;
-use crate::parquet_read::slicer::dict_decoder::{DictDecoder, PrimitiveDictDecoder};
+use crate::parquet_read::decoders::{RepeatN, RleIterator, VarDictDecoder};
 use crate::parquet_read::slicer::{ByteSink, DataPageSlicer};
 use parquet2::encoding::bitpacked;
 use parquet2::encoding::hybrid_rle::{Decoder, HybridEncoded};
 use std::mem::size_of;
-
-/// Custom repeat iterator that supports efficient skipping.
-pub struct RepeatN {
-    pub value: u32,
-    pub remaining: usize,
-}
-
-impl RepeatN {
-    #[inline]
-    pub fn new(value: u32, count: usize) -> Self {
-        Self { value, remaining: count }
-    }
-
-    #[inline]
-    pub fn next(&mut self) -> Option<u32> {
-        if self.remaining > 0 {
-            self.remaining -= 1;
-            Some(self.value)
-        } else {
-            None
-        }
-    }
-
-    #[inline]
-    pub fn skip(&mut self, n: usize) -> usize {
-        let skipped = n.min(self.remaining);
-        self.remaining -= skipped;
-        skipped
-    }
-}
-
-type BitpackedIterator<'a> = bitpacked::Decoder<'a, u32>;
-
-pub enum RleIterator<'a> {
-    Bitpacked(BitpackedIterator<'a>),
-    Rle(RepeatN),
-    /// Fast path for 8-bit bitpacked data: each byte is a dict index.
-    /// Avoids the unpack step entirely.
-    ByteIndices {
-        data: &'a [u8],
-        pos: usize,
-    },
-}
-
-impl RleIterator<'_> {
-    #[inline(always)]
-    pub fn next(&mut self) -> Option<u32> {
-        match self {
-            RleIterator::Bitpacked(iter) => iter.next(),
-            RleIterator::Rle(iter) => iter.next(),
-            RleIterator::ByteIndices { data, pos } => {
-                if *pos < data.len() {
-                    let val = data[*pos] as u32;
-                    *pos += 1;
-                    Some(val)
-                } else {
-                    None
-                }
-            }
-        }
-    }
-
-    #[inline]
-    pub fn skip(&mut self, n: usize) -> usize {
-        match self {
-            RleIterator::Bitpacked(iter) => iter.advance(n),
-            RleIterator::Rle(iter) => iter.skip(n),
-            RleIterator::ByteIndices { data, pos } => {
-                let avail = data.len() - *pos;
-                let skipped = n.min(avail);
-                *pos += skipped;
-                skipped
-            }
-        }
-    }
-}
 
 struct SlicerInner<'a, 'b> {
     decoder: Option<Decoder<'a>>,
@@ -174,12 +97,12 @@ impl<'a, 'b> SlicerInner<'a, 'b> {
     }
 }
 
-pub struct RleDictionarySlicer<'a, 'b, T: DictDecoder> {
+pub struct RleDictionarySlicer<'a, 'b, T: VarDictDecoder> {
     dict: T,
     inner: SlicerInner<'a, 'b>,
 }
 
-impl<T: DictDecoder> DataPageSlicer for RleDictionarySlicer<'_, '_, T> {
+impl<T: VarDictDecoder> DataPageSlicer for RleDictionarySlicer<'_, '_, T> {
     // TODO(amunra): Clean this up -- non-idiomatic Rust code -- Should this just be a
     //               fn next(&mut self) -> Option<Result<&[u8], ParquetReadError>> ?
     fn next(&mut self) -> &[u8] {
@@ -265,7 +188,7 @@ impl<T: DictDecoder> DataPageSlicer for RleDictionarySlicer<'_, '_, T> {
     }
 }
 
-impl<'a, 'b, T: DictDecoder> RleDictionarySlicer<'a, 'b, T> {
+impl<'a, 'b, T: VarDictDecoder> RleDictionarySlicer<'a, 'b, T> {
     pub fn try_new(
         mut buffer: &'a [u8],
         dict: T,
@@ -303,29 +226,6 @@ impl<'a, 'b, T: DictDecoder> RleDictionarySlicer<'a, 'b, T> {
 
     fn decode(&mut self) -> ParquetResult<()> {
         self.inner.decode()
-    }
-}
-
-pub struct RleLocalIsGlobalSymbolDictDecoder {
-    len: u32,
-}
-
-impl RleLocalIsGlobalSymbolDictDecoder {
-    pub fn new(dict: &DictPage) -> Self {
-        let len = dict.num_values as u32;
-        Self { len }
-    }
-}
-
-impl PrimitiveDictDecoder<i32> for RleLocalIsGlobalSymbolDictDecoder {
-    #[inline]
-    fn len(&self) -> u32 {
-        self.len as u32
-    }
-
-    #[inline]
-    fn get_dict_value(&self, idx: u32) -> i32 {
-        idx as i32
     }
 }
 

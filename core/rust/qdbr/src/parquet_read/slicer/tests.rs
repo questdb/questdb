@@ -1,15 +1,6 @@
-use num_traits::AsPrimitive;
-
 use super::*;
-use crate::allocator::{AcVec, TestAllocatorState};
-use crate::parquet_read::column_sink::fixed::{Day, Millis};
-use crate::parquet_read::column_sink::Pushable;
-use crate::parquet_read::slicer::dict_decoder::{
-    DictDecoder, PrimitiveDictDecoder, RleDictionaryDecoder,
-};
+use crate::parquet_read::decoders::VarDictDecoder;
 use crate::parquet_read::slicer::rle::RleDictionarySlicer;
-use crate::parquet_read::ColumnChunkBuffers;
-use std::ptr;
 
 /// A simple ByteSink for testing
 struct TestSink(Vec<u8>);
@@ -233,50 +224,6 @@ fn test_boolean_bitmap_slicer_skip() {
 }
 
 #[test]
-fn test_value_convert_slicer_next_into() {
-    let data: Vec<u8> = vec![0, 0, 0, 0, 1, 0, 0, 0, 109, 1, 0, 0];
-    let data = unsafe {
-        std::slice::from_raw_parts(
-            data.as_ptr() as *const Day,
-            data.len() / std::mem::size_of::<Day>(),
-        )
-    };
-
-    // Day 0 = 0 millis
-    let millis: Millis = data[0].as_();
-    assert_eq!(millis, Millis::new(0));
-
-    // Day 1 = 86400000 millis
-    let millis: Millis = data[1].as_();
-    assert_eq!(millis, Millis::new(86400 * 1000));
-
-    // Day 365
-    let millis: Millis = data[2].as_();
-    assert_eq!(millis, Millis::new(365 * 86400 * 1000));
-}
-
-#[test]
-fn test_value_convert_slicer_next_slice_into() {
-    let data: Vec<u8> = vec![0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0];
-    let data = unsafe {
-        std::slice::from_raw_parts(
-            data.as_ptr() as *const Day,
-            data.len() / std::mem::size_of::<Day>(),
-        )
-    };
-
-    let millis = data.iter().map(|x| x.as_()).collect::<Vec<Millis>>();
-    assert_eq!(
-        millis,
-        vec![
-            Millis::new(0),
-            Millis::new(86400 * 1000),
-            Millis::new(2 * 86400 * 1000)
-        ]
-    );
-}
-
-#[test]
 fn test_fixed_slicer_mixed_operations() {
     let data: Vec<u8> = (0u8..20).collect();
     let mut slicer = DataPageFixedSlicer::<2>::new(&data, 10);
@@ -427,7 +374,7 @@ impl TestDictDecoder {
     }
 }
 
-impl DictDecoder for TestDictDecoder {
+impl VarDictDecoder for TestDictDecoder {
     fn get_dict_value(&self, index: u32) -> &[u8] {
         &self.values[index as usize]
     }

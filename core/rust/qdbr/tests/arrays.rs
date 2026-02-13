@@ -42,7 +42,8 @@ fn assert_raw_array(nulls: &[bool], data: &[u8], aux: &[u8]) {
     for i in 0..row_count {
         let aux_base = i * 16;
         let offset = u64::from_le_bytes(aux[aux_base..aux_base + 8].try_into().unwrap()) as usize;
-        let size = u64::from_le_bytes(aux[aux_base + 8..aux_base + 16].try_into().unwrap()) as usize;
+        let size =
+            u64::from_le_bytes(aux[aux_base + 8..aux_base + 16].try_into().unwrap()) as usize;
 
         if nulls[i] {
             assert_eq!(size, 0, "row {i}: null array should have size 0");
@@ -55,8 +56,7 @@ fn assert_raw_array(nulls: &[bool], data: &[u8], aux: &[u8]) {
             let actual = &data[offset..offset + size];
             for j in 0..len {
                 let expected_val = (orig * 10 + j) as f64;
-                let actual_val =
-                    f64::from_le_bytes(actual[j * 8..(j + 1) * 8].try_into().unwrap());
+                let actual_val = f64::from_le_bytes(actual[j * 8..(j + 1) * 8].try_into().unwrap());
                 assert_eq!(
                     actual_val.to_bits(),
                     expected_val.to_bits(),
@@ -72,7 +72,9 @@ fn run_raw_array_test(name: &str, encoding: Encoding) {
     let col_type = encode_array_type(ColumnTypeTag::Double, 1).unwrap();
     for version in &VERSIONS {
         for null in &ALL_NULLS {
-            eprintln!("Testing {name} with version={version:?}, encoding={encoding:?}, null={null:?}");
+            eprintln!(
+                "Testing {name} with version={version:?}, encoding={encoding:?}, null={null:?}"
+            );
 
             let nulls = generate_nulls(COUNT, *null);
             let values = generate_values(COUNT);
@@ -149,10 +151,7 @@ fn array_element_value(i: usize, j: usize) -> f64 {
 ///   null array   → (rep=0, def=0, no value)
 ///   first elem   → (rep=0, def=3, value)
 ///   next elems   → (rep=1, def=3, value)
-fn flatten_arrays_optional(
-    count: usize,
-    nulls: &[bool],
-) -> (Vec<f64>, Vec<i16>, Vec<i16>) {
+fn flatten_arrays_optional(count: usize, nulls: &[bool]) -> (Vec<f64>, Vec<i16>, Vec<i16>) {
     let mut values = Vec::new();
     let mut def_levels = Vec::new();
     let mut rep_levels = Vec::new();
@@ -202,9 +201,8 @@ fn write_double_array_parquet(
 ) -> Vec<u8> {
     let props = qdb_props_col_type(col_type, version, encoding);
     let mut cursor = Cursor::new(Vec::new());
-    let mut file_writer =
-        SerializedFileWriter::new(&mut cursor, Arc::new(schema), Arc::new(props))
-            .expect("create file writer");
+    let mut file_writer = SerializedFileWriter::new(&mut cursor, Arc::new(schema), Arc::new(props))
+        .expect("create file writer");
 
     let mut row_group_writer = file_writer.next_row_group().expect("next row group");
     if let Some(mut col_writer) = row_group_writer.next_column().expect("next column") {
@@ -227,8 +225,7 @@ fn assert_double_array(nulls: &[bool], data: &[u8], aux: &[u8]) {
 
     for i in 0..row_count {
         let aux_base = i * 16;
-        let offset =
-            u64::from_le_bytes(aux[aux_base..aux_base + 8].try_into().unwrap()) as usize;
+        let offset = u64::from_le_bytes(aux[aux_base..aux_base + 8].try_into().unwrap()) as usize;
         let size =
             u64::from_le_bytes(aux[aux_base + 8..aux_base + 16].try_into().unwrap()) as usize;
 
@@ -242,8 +239,7 @@ fn assert_double_array(nulls: &[bool], data: &[u8], aux: &[u8]) {
             let arr = &data[offset..offset + size];
 
             // Shape header: [element_count: u32, pad: u32]
-            let elem_count =
-                u32::from_le_bytes(arr[0..4].try_into().unwrap()) as usize;
+            let elem_count = u32::from_le_bytes(arr[0..4].try_into().unwrap()) as usize;
             let pad = u32::from_le_bytes(arr[4..8].try_into().unwrap());
             assert_eq!(elem_count, len, "row {i}: element count mismatch");
             assert_eq!(pad, 0, "row {i}: padding should be 0");
@@ -251,9 +247,8 @@ fn assert_double_array(nulls: &[bool], data: &[u8], aux: &[u8]) {
             // Elements
             for j in 0..len {
                 let expected = array_element_value(i, j);
-                let actual = f64::from_le_bytes(
-                    arr[8 + j * 8..8 + (j + 1) * 8].try_into().unwrap(),
-                );
+                let actual =
+                    f64::from_le_bytes(arr[8 + j * 8..8 + (j + 1) * 8].try_into().unwrap());
                 assert_eq!(
                     actual.to_bits(),
                     expected.to_bits(),
@@ -268,7 +263,9 @@ fn run_double_array_test(name: &str, encoding: Encoding) {
     let col_type = encode_array_type(ColumnTypeTag::Double, 1).unwrap();
     for version in &VERSIONS {
         for null in &ALL_NULLS {
-            eprintln!("Testing {name} with version={version:?}, encoding={encoding:?}, null={null:?}");
+            eprintln!(
+                "Testing {name} with version={version:?}, encoding={encoding:?}, null={null:?}"
+            );
 
             let nulls = generate_nulls(COUNT, *null);
             let (values, def_levels, rep_levels) = if matches!(null, Null::None) {
@@ -279,7 +276,13 @@ fn run_double_array_test(name: &str, encoding: Encoding) {
             let schema = list_double_schema(!matches!(null, Null::None));
 
             let buf = write_double_array_parquet(
-                schema, &values, &def_levels, &rep_levels, col_type, *version, encoding,
+                schema,
+                &values,
+                &def_levels,
+                &rep_levels,
+                col_type,
+                *version,
+                encoding,
             );
             let (data, aux) = decode_file(&buf);
             assert_double_array(&nulls, &data, &aux);

@@ -2,24 +2,24 @@ use crate::allocator::{AcVec, QdbAllocator};
 use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
 use crate::parquet::util::{align8b, ARRAY_NDIMS_LIMIT};
-use crate::parquet_read::column_sink::fixed::{
-    Day, DeltaBinaryPackedPrimitiveDecoder, FixedBooleanColumnSink, FixedLong128ColumnSink,
-    FixedLong256ColumnSink, IntDecimalColumnSink, Millis, NanoTimestampColumnSink,
-    PlainPrimitiveDecoder, ReverseFixedColumnSink,
-};
 use crate::parquet_read::column_sink::var::ARRAY_AUX_SIZE;
 use crate::parquet_read::column_sink::var::{
     BinaryColumnSink, RawArrayColumnSink, StringColumnSink, VarcharColumnSink,
 };
 use crate::parquet_read::column_sink::Pushable;
-use crate::parquet_read::page::{split_buffer, DataPage, DictPage};
-use crate::parquet_read::slicer::dict_decoder::{
-    FixedDictDecoder, PrimitiveFixedDictDecoder, RleDictionaryDecoder, VarDictDecoder,
+use crate::parquet_read::decoders::int128::Int128ToUuidConverter;
+use crate::parquet_read::decoders::int96::{Int96Timestamp, Int96ToTimestampConverter};
+use crate::parquet_read::decoders::{
+    int32::DayToMillisConverter, int32::Int32ToDoubleConverter, BasePrimitiveDictDecoder,
+    BaseVarDictDecoder, ConvertablePrimitiveDictDecoder, DeltaBinaryPackedPrimitiveDecoder,
+    FixedDictDecoder, PlainBooleanDecoder, PlainPrimitiveDecoder, RleBooleanDecoder,
+    RleDictionaryDecoder, RleLocalIsGlobalSymbolDictDecoder,
 };
-use crate::parquet_read::slicer::rle::{RleDictionarySlicer, RleLocalIsGlobalSymbolDictDecoder};
+use crate::parquet_read::page::{split_buffer, DataPage, DictPage};
+use crate::parquet_read::slicer::rle::RleDictionarySlicer;
 use crate::parquet_read::slicer::{
-    BooleanBitmapSlicer, BooleanRleSlicer, DataPageFixedSlicer, DataPageSlicer,
-    DeltaBytesArraySlicer, DeltaLengthArraySlicer, PlainVarSlicer,
+    DataPageFixedSlicer, DataPageSlicer, DeltaBytesArraySlicer, DeltaLengthArraySlicer,
+    PlainVarSlicer,
 };
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnChunkStats, DecodeContext, ParquetDecoder, RowGroupBuffers,
@@ -36,7 +36,7 @@ use parquet2::page::DataPageHeader;
 use parquet2::read::levels::get_bit_width;
 use parquet2::read::{SlicePageReader, SlicedDataPage, SlicedDictPage, SlicedPage};
 use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
-use qdb_core::col_type::{nulls, ColumnType, ColumnTypeTag};
+use qdb_core::col_type::{nulls, ColumnType, ColumnTypeTag, Long128, Long256};
 use std::cmp::min;
 use std::{cmp, i32, ptr, slice};
 
@@ -126,15 +126,11 @@ impl ColumnChunkStats {
     }
 }
 
-const UUID_NULL: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128];
 const LONG256_NULL: [u8; 32] = [
     0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0,
     0, 128,
 ];
-const INT_NULL: [u8; 4] = i32::MIN.to_le_bytes();
-const LONG_NULL: [u8; 8] = i64::MIN.to_le_bytes();
 const DOUBLE_NULL: [u8; 8] = [0, 0, 0, 0, 0, 0, 248, 127];
-const TIMESTAMP_96_EMPTY: [u8; 12] = [0; 12];
 
 /// The local positional index as it is stored in parquet.
 /// Not to be confused with the field_id in the parquet metadata.
@@ -940,7 +936,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                     _,
                     ColumnTypeTag::Byte,
                 ) => {
-                    let dict_decoder = PrimitiveFixedDictDecoder::<i32, i8>::try_new(dict_page)?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -965,7 +961,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                     _,
                     ColumnTypeTag::GeoByte,
                 ) => {
-                    let dict_decoder = PrimitiveFixedDictDecoder::<i32, i8>::try_new(dict_page)?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -1058,7 +1054,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                     _,
                     ColumnTypeTag::Short | ColumnTypeTag::Char,
                 ) => {
-                    let dict_decoder = PrimitiveFixedDictDecoder::<i32, i16>::try_new(dict_page)?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -1083,7 +1079,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                     _,
                     ColumnTypeTag::GeoShort,
                 ) => {
-                    let dict_decoder = PrimitiveFixedDictDecoder::<i32, i16>::try_new(dict_page)?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -1111,11 +1107,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut PlainPrimitiveDecoder::<i32, i32>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::INT,
-                        ),
+                        &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::INT),
                     )?;
                     Ok(())
                 }
@@ -1128,11 +1120,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut PlainPrimitiveDecoder::<i32, i32>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::IPV4,
-                        ),
+                        &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::IPV4),
                     )?;
                     Ok(())
                 }
@@ -1145,7 +1133,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut PlainPrimitiveDecoder::<i32, i32>::new(
+                        &mut PlainPrimitiveDecoder::<i32>::new(
                             values_buffer,
                             bufs,
                             nulls::GEOHASH_INT,
@@ -1162,10 +1150,11 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut PlainPrimitiveDecoder::<Day, Millis>::new(
+                        &mut PlainPrimitiveDecoder::<i32, i64, DayToMillisConverter>::new_with(
                             values_buffer,
                             bufs,
-                            Millis::NULL_VALUE,
+                            nulls::TIMESTAMP,
+                            DayToMillisConverter::new(),
                         ),
                     )?;
                     Ok(())
@@ -1227,7 +1216,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                     _,
                     ColumnTypeTag::Int,
                 ) => {
-                    let dict_decoder = PrimitiveFixedDictDecoder::<i32, i32>::try_new(dict_page)?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -1252,7 +1241,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                     _,
                     ColumnTypeTag::IPv4,
                 ) => {
-                    let dict_decoder = PrimitiveFixedDictDecoder::<i32, i32>::try_new(dict_page)?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -1277,7 +1266,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                     _,
                     ColumnTypeTag::GeoInt,
                 ) => {
-                    let dict_decoder = PrimitiveFixedDictDecoder::<i32, i32>::try_new(dict_page)?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -1307,14 +1296,10 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
 
                     match (encoding, dict) {
                         (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
-                            let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
-                            let mut slicer = RleDictionarySlicer::try_new(
-                                values_buffer,
-                                dict_decoder,
-                                page_row_count,
-                                page_row_count,
-                                &INT_NULL,
-                            )?;
+                            let dict_decoder = ConvertablePrimitiveDictDecoder::new(
+                                dict_page,
+                                Int32ToDoubleConverter::new(scale),
+                            );
                             decode_page0_filtered::<_, FILL_NULLS>(
                                 page,
                                 page_row_start,
@@ -1323,12 +1308,13 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                                 row_lo,
                                 row_hi,
                                 rows_filter,
-                                &mut IntDecimalColumnSink::new(
-                                    &mut slicer,
+                                &mut RleDictionaryDecoder::try_new(
+                                    values_buffer,
+                                    dict_decoder,
+                                    page_row_count,
+                                    nulls::DOUBLE,
                                     bufs,
-                                    &DOUBLE_NULL,
-                                    scale as i32,
-                                ),
+                                )?,
                             )?;
                             Ok(())
                         }
@@ -1341,14 +1327,11 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                                 row_lo,
                                 row_hi,
                                 rows_filter,
-                                &mut IntDecimalColumnSink::new(
-                                    &mut DataPageFixedSlicer::<4>::new(
-                                        values_buffer,
-                                        page_row_count,
-                                    ),
+                                &mut PlainPrimitiveDecoder::new_with(
+                                    values_buffer,
                                     bufs,
-                                    &DOUBLE_NULL,
-                                    scale as i32,
+                                    nulls::DOUBLE,
+                                    Int32ToDoubleConverter::new(scale),
                                 ),
                             )?;
                             Ok(())
@@ -1378,7 +1361,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut PlainPrimitiveDecoder::<i64, i64>::new(values_buffer, bufs, i64::MIN),
+                        &mut PlainPrimitiveDecoder::<i64>::new(values_buffer, bufs, i64::MIN),
                     )?;
                     Ok(())
                 }
@@ -1416,7 +1399,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                     | ColumnTypeTag::Date
                     | ColumnTypeTag::GeoLong,
                 ) => {
-                    let dict_decoder = PrimitiveFixedDictDecoder::<i64, i64>::try_new(dict_page)?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -1449,10 +1432,11 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut ReverseFixedColumnSink::new(
-                            &mut DataPageFixedSlicer::<16>::new(values_buffer, page_row_count),
+                        &mut PlainPrimitiveDecoder::<u128, u128, Int128ToUuidConverter>::new_with(
+                            values_buffer,
                             bufs,
-                            UUID_NULL,
+                            nulls::UUID,
+                            Int128ToUuidConverter::new(),
                         ),
                     )?;
                     Ok(())
@@ -1471,10 +1455,10 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedLong128ColumnSink::new(
-                            &mut DataPageFixedSlicer::<16>::new(values_buffer, page_row_count),
+                        &mut PlainPrimitiveDecoder::<Long128, Long128>::new(
+                            values_buffer,
                             bufs,
-                            &UUID_NULL,
+                            Long128::NULL,
                         ),
                     )?;
                     Ok(())
@@ -1493,10 +1477,10 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedLong256ColumnSink::new(
-                            &mut DataPageFixedSlicer::<32>::new(values_buffer, page_row_count),
+                        &mut PlainPrimitiveDecoder::<Long256, Long256>::new(
+                            values_buffer,
                             bufs,
-                            &LONG256_NULL,
+                            Long256::NULL,
                         ),
                     )?;
                     Ok(())
@@ -1549,7 +1533,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                     Some(dict_page),
                     ColumnTypeTag::Varchar,
                 ) => {
-                    let dict_decoder = VarDictDecoder::try_new(dict_page, true)?;
+                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page, true)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
                         dict_decoder,
@@ -1635,7 +1619,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                             values_buffer,
                             dict_decoder,
                             row_hi,
-                            nulls::SYMBOL_NULL,
+                            nulls::SYMBOL,
                             bufs,
                         )?,
                     )?;
@@ -1684,7 +1668,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                     Some(dict_page),
                     ColumnTypeTag::Binary,
                 ) => {
-                    let dict_decoder = VarDictDecoder::try_new(dict_page, false)?;
+                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page, false)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
                         dict_decoder,
@@ -1752,10 +1736,11 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut NanoTimestampColumnSink::new(
-                            &mut DataPageFixedSlicer::<12>::new(values_buffer, page_row_count),
+                        &mut PlainPrimitiveDecoder::new_with(
+                            values_buffer,
                             bufs,
-                            &LONG_NULL,
+                            nulls::TIMESTAMP,
+                            Int96ToTimestampConverter::new(),
                         ),
                     )?;
                     Ok(())
@@ -1766,14 +1751,12 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                     _,
                     ColumnTypeTag::Timestamp,
                 ) => {
-                    let dict_decoder = FixedDictDecoder::<12>::try_new(dict_page)?;
-                    let mut slicer = RleDictionarySlicer::try_new(
-                        values_buffer,
-                        dict_decoder,
-                        page_row_count,
-                        page_row_count,
-                        &TIMESTAMP_96_EMPTY,
-                    )?;
+                    let dict_decoder =
+                        ConvertablePrimitiveDictDecoder::<
+                            Int96Timestamp,
+                            i64,
+                            Int96ToTimestampConverter,
+                        >::new(dict_page, Int96ToTimestampConverter::new());
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -1782,7 +1765,13 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut NanoTimestampColumnSink::new(&mut slicer, bufs, &LONG_NULL),
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            page_row_count,
+                            nulls::TIMESTAMP,
+                            bufs,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -1802,7 +1791,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                     row_lo,
                     row_hi,
                     rows_filter,
-                    &mut PlainPrimitiveDecoder::<f64, f64>::new(values_buffer, bufs, f64::NAN),
+                    &mut PlainPrimitiveDecoder::<f64>::new(values_buffer, bufs, f64::NAN),
                 )?;
                 Ok(())
             }
@@ -1814,7 +1803,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                 bufs.aux_vec.clear();
                 bufs.aux_ptr = ptr::null_mut();
 
-                let dict_decoder = PrimitiveFixedDictDecoder::<f64, f64>::try_new(dict_page)?;
+                let dict_decoder = BasePrimitiveDictDecoder::<f64, f64>::try_new(dict_page)?;
                 decode_page0_filtered::<_, FILL_NULLS>(
                     page,
                     page_row_start,
@@ -1888,7 +1877,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                     PhysicalType::Float,
                     ColumnTypeTag::Float,
                 ) => {
-                    let dict_decoder = PrimitiveFixedDictDecoder::<f32, f32>::try_new(dict_page)?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<f32, f32>::try_new(dict_page)?;
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -1916,7 +1905,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut PlainPrimitiveDecoder::<f32, f32>::new(values_buffer, bufs, f32::NAN),
+                        &mut PlainPrimitiveDecoder::<f32>::new(values_buffer, bufs, f32::NAN),
                     )?;
                     Ok(())
                 }
@@ -1929,15 +1918,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedBooleanColumnSink::new(
-                            &mut BooleanBitmapSlicer::new(
-                                values_buffer,
-                                page_row_count,
-                                page_row_count,
-                            ),
-                            bufs,
-                            &[0],
-                        ),
+                        &mut PlainBooleanDecoder::new(values_buffer, page_row_count, bufs, 0),
                     )?;
                     Ok(())
                 }
@@ -1950,15 +1931,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedBooleanColumnSink::new(
-                            &mut BooleanRleSlicer::try_new(
-                                values_buffer,
-                                page_row_count,
-                                page_row_count,
-                            )?,
-                            bufs,
-                            &[0],
-                        ),
+                        &mut RleBooleanDecoder::try_new(values_buffer, page_row_count, bufs, 0)?,
                     )?;
                     Ok(())
                 }
@@ -2063,7 +2036,7 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Byte,
                 ) => {
-                    let dict_decoder = PrimitiveFixedDictDecoder::<i32, i8>::try_new(dict_page)?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
                     decode_page0(
                         page,
                         row_lo,
@@ -2084,7 +2057,7 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::GeoByte,
                 ) => {
-                    let dict_decoder = PrimitiveFixedDictDecoder::<i32, i8>::try_new(dict_page)?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
                     decode_page0(
                         page,
                         row_lo,
@@ -2157,7 +2130,7 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Short | ColumnTypeTag::Char,
                 ) => {
-                    let dict_decoder = PrimitiveFixedDictDecoder::<i32, i16>::try_new(dict_page)?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
                     decode_page0(
                         page,
                         row_lo,
@@ -2178,7 +2151,7 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::GeoShort,
                 ) => {
-                    let dict_decoder = PrimitiveFixedDictDecoder::<i32, i16>::try_new(dict_page)?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
                     decode_page0(
                         page,
                         row_lo,
@@ -2198,11 +2171,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut PlainPrimitiveDecoder::<i32, i32>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::INT,
-                        ),
+                        &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::INT),
                     )?;
                     Ok(())
                 }
@@ -2211,11 +2180,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut PlainPrimitiveDecoder::<i32, i32>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::IPV4,
-                        ),
+                        &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::IPV4),
                     )?;
                     Ok(())
                 }
@@ -2224,7 +2189,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut PlainPrimitiveDecoder::<i32, i32>::new(
+                        &mut PlainPrimitiveDecoder::<i32>::new(
                             values_buffer,
                             bufs,
                             nulls::GEOHASH_INT,
@@ -2237,10 +2202,11 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut PlainPrimitiveDecoder::<Day, Millis>::new(
+                        &mut PlainPrimitiveDecoder::<i32, i64, DayToMillisConverter>::new_with(
                             values_buffer,
                             bufs,
-                            Millis::NULL_VALUE,
+                            nulls::TIMESTAMP,
+                            DayToMillisConverter::new(),
                         ),
                     )?;
                     Ok(())
@@ -2290,7 +2256,7 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Int,
                 ) => {
-                    let dict_decoder = PrimitiveFixedDictDecoder::<i32, i32>::try_new(dict_page)?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
                     decode_page0(
                         page,
                         row_lo,
@@ -2311,7 +2277,7 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::IPv4,
                 ) => {
-                    let dict_decoder = PrimitiveFixedDictDecoder::<i32, i32>::try_new(dict_page)?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
                     decode_page0(
                         page,
                         row_lo,
@@ -2332,7 +2298,7 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::GeoInt,
                 ) => {
-                    let dict_decoder = PrimitiveFixedDictDecoder::<i32, i32>::try_new(dict_page)?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
                     decode_page0(
                         page,
                         row_lo,
@@ -2358,24 +2324,21 @@ pub fn decode_page(
 
                     match (encoding, dict) {
                         (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
-                            let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
-                            let mut slicer = RleDictionarySlicer::try_new(
-                                values_buffer,
-                                dict_decoder,
-                                row_hi,
-                                row_count,
-                                &INT_NULL,
-                            )?;
+                            let dict_decoder = ConvertablePrimitiveDictDecoder::new(
+                                dict_page,
+                                Int32ToDoubleConverter::new(scale),
+                            );
                             decode_page0(
                                 page,
                                 row_lo,
                                 row_hi,
-                                &mut IntDecimalColumnSink::new(
-                                    &mut slicer,
+                                &mut RleDictionaryDecoder::try_new(
+                                    values_buffer,
+                                    dict_decoder,
+                                    row_hi,
+                                    nulls::DOUBLE,
                                     bufs,
-                                    &DOUBLE_NULL,
-                                    scale as i32,
-                                ),
+                                )?,
                             )?;
                             Ok(())
                         }
@@ -2384,11 +2347,11 @@ pub fn decode_page(
                                 page,
                                 row_lo,
                                 row_hi,
-                                &mut IntDecimalColumnSink::new(
-                                    &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
+                                &mut PlainPrimitiveDecoder::new_with(
+                                    values_buffer,
                                     bufs,
-                                    &DOUBLE_NULL,
-                                    scale as i32,
+                                    nulls::DOUBLE,
+                                    Int32ToDoubleConverter::new(scale),
                                 ),
                             )?;
                             Ok(())
@@ -2411,11 +2374,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut PlainPrimitiveDecoder::<i64, i64>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::LONG,
-                        ),
+                        &mut PlainPrimitiveDecoder::<i64>::new(values_buffer, bufs, nulls::LONG),
                     )?;
                     Ok(())
                 }
@@ -2424,7 +2383,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut PlainPrimitiveDecoder::<i64, i64>::new(
+                        &mut PlainPrimitiveDecoder::<i64>::new(
                             values_buffer,
                             bufs,
                             nulls::GEOHASH_LONG,
@@ -2469,7 +2428,7 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Long | ColumnTypeTag::Timestamp | ColumnTypeTag::Date,
                 ) => {
-                    let dict_decoder = PrimitiveFixedDictDecoder::<i64, i64>::try_new(dict_page)?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
                     decode_page0(
                         page,
                         row_lo,
@@ -2490,7 +2449,7 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::GeoLong,
                 ) => {
-                    let dict_decoder = PrimitiveFixedDictDecoder::<i64, i64>::try_new(dict_page)?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
                     decode_page0(
                         page,
                         row_lo,
@@ -2515,10 +2474,11 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut ReverseFixedColumnSink::new(
-                            &mut DataPageFixedSlicer::<16>::new(values_buffer, row_count),
+                        &mut PlainPrimitiveDecoder::<u128, u128, Int128ToUuidConverter>::new_with(
+                            values_buffer,
                             bufs,
-                            UUID_NULL,
+                            nulls::UUID,
+                            Int128ToUuidConverter::new(),
                         ),
                     )?;
                     Ok(())
@@ -2533,7 +2493,11 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut PlainPrimitiveDecoder::<i128, i128>::new(values_buffer, bufs, 0),
+                        &mut PlainPrimitiveDecoder::<Long128, Long128>::new(
+                            values_buffer,
+                            bufs,
+                            Long128::NULL,
+                        ),
                     )?;
                     Ok(())
                 }
@@ -2547,10 +2511,10 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedLong256ColumnSink::new(
-                            &mut DataPageFixedSlicer::<32>::new(values_buffer, row_count),
+                        &mut PlainPrimitiveDecoder::<Long256, Long256>::new(
+                            values_buffer,
                             bufs,
-                            &LONG256_NULL,
+                            Long256::NULL,
                         ),
                     )?;
                     Ok(())
@@ -2589,7 +2553,7 @@ pub fn decode_page(
                     Some(dict_page),
                     ColumnTypeTag::Varchar,
                 ) => {
-                    let dict_decoder = VarDictDecoder::try_new(dict_page, true)?;
+                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page, true)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
                         dict_decoder,
@@ -2652,7 +2616,7 @@ pub fn decode_page(
                             values_buffer,
                             dict_decoder,
                             row_hi,
-                            nulls::SYMBOL_NULL,
+                            nulls::SYMBOL,
                             bufs,
                         )?,
                     )?;
@@ -2690,7 +2654,7 @@ pub fn decode_page(
                     Some(dict_page),
                     ColumnTypeTag::Binary,
                 ) => {
-                    let dict_decoder = VarDictDecoder::try_new(dict_page, false)?;
+                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page, false)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
                         dict_decoder,
@@ -2739,10 +2703,11 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut NanoTimestampColumnSink::new(
-                            &mut DataPageFixedSlicer::<12>::new(values_buffer, row_count),
+                        &mut PlainPrimitiveDecoder::new_with(
+                            values_buffer,
                             bufs,
-                            &LONG_NULL,
+                            nulls::TIMESTAMP,
+                            Int96ToTimestampConverter::new(),
                         ),
                     )?;
                     Ok(())
@@ -2753,19 +2718,23 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Timestamp,
                 ) => {
-                    let dict_decoder = FixedDictDecoder::<12>::try_new(dict_page)?;
-                    let mut slicer = RleDictionarySlicer::try_new(
-                        values_buffer,
-                        dict_decoder,
-                        row_hi,
-                        row_count,
-                        &TIMESTAMP_96_EMPTY,
-                    )?;
+                    let dict_decoder =
+                        ConvertablePrimitiveDictDecoder::<
+                            Int96Timestamp,
+                            i64,
+                            Int96ToTimestampConverter,
+                        >::new(dict_page, Int96ToTimestampConverter::new());
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
-                        &mut NanoTimestampColumnSink::new(&mut slicer, bufs, &LONG_NULL),
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            row_hi,
+                            nulls::TIMESTAMP,
+                            bufs,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -2781,7 +2750,7 @@ pub fn decode_page(
                     page,
                     row_lo,
                     row_hi,
-                    &mut PlainPrimitiveDecoder::<f64, f64>::new(values_buffer, bufs, f64::NAN),
+                    &mut PlainPrimitiveDecoder::<f64>::new(values_buffer, bufs, f64::NAN),
                 )?;
                 Ok(())
             }
@@ -2793,7 +2762,7 @@ pub fn decode_page(
                 bufs.aux_vec.clear();
                 bufs.aux_ptr = ptr::null_mut();
 
-                let dict_decoder = PrimitiveFixedDictDecoder::<f64, f64>::try_new(dict_page)?;
+                let dict_decoder = BasePrimitiveDictDecoder::<f64, f64>::try_new(dict_page)?;
                 decode_page0(
                     page,
                     row_lo,
@@ -2843,7 +2812,7 @@ pub fn decode_page(
                     PhysicalType::Float,
                     ColumnTypeTag::Float,
                 ) => {
-                    let dict_decoder = PrimitiveFixedDictDecoder::<f32, f32>::try_new(dict_page)?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<f32, f32>::try_new(dict_page)?;
                     decode_page0(
                         page,
                         row_lo,
@@ -2863,7 +2832,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut PlainPrimitiveDecoder::<f32, f32>::new(values_buffer, bufs, f32::NAN),
+                        &mut PlainPrimitiveDecoder::<f32>::new(values_buffer, bufs, f32::NAN),
                     )?;
                     Ok(())
                 }
@@ -2872,11 +2841,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedBooleanColumnSink::new(
-                            &mut BooleanBitmapSlicer::new(values_buffer, row_hi, row_count),
-                            bufs,
-                            &[0],
-                        ),
+                        &mut PlainBooleanDecoder::new(values_buffer, row_count, bufs, 0),
                     )?;
                     Ok(())
                 }
@@ -2885,11 +2850,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedBooleanColumnSink::new(
-                            &mut BooleanRleSlicer::try_new(values_buffer, row_hi, row_count)?,
-                            bufs,
-                            &[0],
-                        ),
+                        &mut RleBooleanDecoder::try_new(values_buffer, row_hi, bufs, 0)?,
                     )?;
                     Ok(())
                 }
@@ -4365,7 +4326,6 @@ mod tests {
     use crate::allocator::{AcVec, TestAllocatorState};
     use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
     use crate::parquet::tests::ColumnTypeTagExt;
-    use crate::parquet_read::decode::{INT_NULL, LONG_NULL, UUID_NULL};
     use crate::parquet_read::{ColumnChunkBuffers, DecodeContext, ParquetDecoder, RowGroupBuffers};
     use crate::parquet_write::array::{append_array_null, append_raw_array};
     use crate::parquet_write::file::ParquetWriter;
@@ -4378,6 +4338,10 @@ mod tests {
     use std::io::Cursor;
     use std::mem::size_of;
     use std::ptr::null;
+
+    const INT_NULL: [u8; 4] = i32::MIN.to_le_bytes();
+    const LONG_NULL: [u8; 8] = i64::MIN.to_le_bytes();
+    const UUID_NULL: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128];
 
     #[test]
     fn test_decode_int_column_v2_nulls() {
@@ -4603,7 +4567,7 @@ mod tests {
         columns.push(create_fix_column(
             columns.len() as i32,
             row_count,
-            "bool_short",
+            "short_col",
             expected_col_buff.data_vec.as_ref(),
             ColumnTypeTag::Short.into_type(),
         ));
@@ -4616,7 +4580,7 @@ mod tests {
         columns.push(create_fix_column(
             columns.len() as i32,
             row_count,
-            "bool_char",
+            "char_col",
             expected_bool_buff.data_vec.as_ref(),
             ColumnTypeTag::Char.into_type(),
         ));
@@ -4627,7 +4591,7 @@ mod tests {
         columns.push(create_fix_column(
             columns.len() as i32,
             row_count,
-            "bool_char",
+            "uuid_col",
             expected_uuid_buff.data_vec.as_ref(),
             ColumnTypeTag::Uuid.into_type(),
         ));

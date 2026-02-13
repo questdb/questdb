@@ -6,6 +6,7 @@ use qdb_core::col_type::ColumnType;
 
 pub mod column_sink;
 pub mod decode;
+pub mod decoders;
 pub mod jni;
 pub mod meta;
 pub mod page;
