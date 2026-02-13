@@ -3665,7 +3665,15 @@ public class SqlOptimiser implements Mutable {
             }
 
             if (timestamp != null) {
-                return model.getColumnNameToAliasMap().get(timestamp);
+                CharSequence result = model.getColumnNameToAliasMap().get(timestamp);
+                if (result != null) {
+                    return result;
+                }
+                // CTE wrapper models may have empty columnNameToAliasMap.
+                // Fall back to checking if the timestamp is a known alias.
+                if (model.getAliasToColumnMap().get(timestamp) != null) {
+                    return timestamp;
+                }
             }
         }
         return null;

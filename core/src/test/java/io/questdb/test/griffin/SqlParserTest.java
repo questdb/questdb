@@ -9865,6 +9865,82 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPushDownTimestampFilterThroughUnionAllCte() throws SqlException {
+        // Two separate CTEs combined with UNION ALL in the main query.
+        // The timestamp filter must be pushed into both CTE branches.
+        createModelsAndRun(
+                () -> {
+                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                        // First verify that a single CTE wrapping the whole UNION works
+                        // (structurally identical to the nested subquery form)
+                        sink.clear();
+                        ExecutionModel singleCteModel = compiler.generateExecutionModel(
+                                "WITH u AS (SELECT ts1 ts FROM t1 UNION ALL SELECT ts2 ts FROM t2) " +
+                                        "SELECT ts FROM u WHERE ts in '2025-12-01T01;2h'",
+                                sqlExecutionContext);
+                        ((Sinkable) singleCteModel).toSink(sink);
+                        String singleCtePlan = sink.toString();
+
+                        Assert.assertTrue(
+                                "single CTE: timestamp filter not pushed into first branch: " + singleCtePlan,
+                                singleCtePlan.contains("where ts1 in '2025-12-01T01;2h'"));
+                        Assert.assertTrue(
+                                "single CTE: timestamp filter not pushed into second branch: " + singleCtePlan,
+                                singleCtePlan.contains("where ts2 in '2025-12-01T01;2h'"));
+
+                        // Now verify that two separate CTEs combined with UNION ALL also push down
+                        sink.clear();
+                        ExecutionModel twoCteModel = compiler.generateExecutionModel(
+                                "WITH l AS (SELECT ts1 ts FROM t1), " +
+                                        "r AS (SELECT ts2 ts FROM t2) " +
+                                        "SELECT ts FROM (l UNION ALL r) " +
+                                        "WHERE ts in '2025-12-01T01;2h'",
+                                sqlExecutionContext);
+                        ((Sinkable) twoCteModel).toSink(sink);
+                        String twoCtePlan = sink.toString();
+
+                        Assert.assertTrue(
+                                "two CTEs: timestamp filter not pushed into first CTE branch: " + twoCtePlan,
+                                twoCtePlan.contains("where ts1 in '2025-12-01T01;2h'"));
+                        Assert.assertTrue(
+                                "two CTEs: timestamp filter not pushed into second CTE branch: " + twoCtePlan,
+                                twoCtePlan.contains("where ts2 in '2025-12-01T01;2h'"));
+                    }
+                },
+                modelOf("t1").timestamp("ts1"),
+                modelOf("t2").timestamp("ts2")
+        );
+    }
+
+    @Test
+    public void testPushDownTimestampFilterThroughUnionAllMismatchedAliases() throws SqlException {
+        // The "ts" alias maps to the TIMESTAMP column in branch 1 (position 1),
+        // but to the SYMBOL column in branch 2 (position 2). The filter should be
+        // remapped by position so that branch 2 filters on ts2 (the TIMESTAMP at
+        // position 1), not on sym2 which carries the "ts" alias.
+        assertQuery(
+                "select-choose ts from (" +
+                        /**/ "select [ts] from (" +
+                        /**/   "select-choose [ts1 ts] name1, ts1 ts, sym1 from (" +
+                        /**/     "select [ts1] from t1 timestamp (ts1) where ts1 in '2025-12-01T01;2h'" +
+                        /**/   ") union all select-choose [ts2] name2, ts2, sym2 ts from (" +
+                        /**/     "select [ts2] from t2 timestamp (ts2) where ts2 in '2025-12-01T01;2h'" +
+                        /**/   ")" +
+                        /**/ ") _xQdbA1 where ts in '2025-12-01T01;2h'" +
+                        ")",
+                """
+                        SELECT ts FROM (
+                            SELECT name1, ts1 ts, sym1 FROM t1
+                            UNION ALL
+                            SELECT name2, ts2, sym2 ts FROM t2
+                        ) WHERE ts IN '2025-12-01T01;2h'
+                        """,
+                modelOf("t1").col("name1", ColumnType.VARCHAR).timestamp("ts1").col("sym1", ColumnType.SYMBOL),
+                modelOf("t2").col("name2", ColumnType.VARCHAR).timestamp("ts2").col("sym2", ColumnType.SYMBOL)
+        );
+    }
+
+    @Test
     public void testPushDownTimestampFilterThroughUnionAllNonPushableBranch() throws SqlException {
         // One branch aliases the column to a non-literal expression (ts2+1).
         // The filter is pushed to both branches (since the parent's alias map sees it as a literal),
@@ -9903,34 +9979,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("t1").timestamp("ts1"),
                 modelOf("t2").timestamp("ts2"),
                 modelOf("t3").timestamp("ts3")
-        );
-    }
-
-    @Test
-    public void testPushDownTimestampFilterThroughUnionAllMismatchedAliases() throws SqlException {
-        // The "ts" alias maps to the TIMESTAMP column in branch 1 (position 1),
-        // but to the SYMBOL column in branch 2 (position 2). The filter should be
-        // remapped by position so that branch 2 filters on ts2 (the TIMESTAMP at
-        // position 1), not on sym2 which carries the "ts" alias.
-        assertQuery(
-                "select-choose ts from (" +
-                        /**/ "select [ts] from (" +
-                        /**/   "select-choose [ts1 ts] name1, ts1 ts, sym1 from (" +
-                        /**/     "select [ts1] from t1 timestamp (ts1) where ts1 in '2025-12-01T01;2h'" +
-                        /**/   ") union all select-choose [ts2] name2, ts2, sym2 ts from (" +
-                        /**/     "select [ts2] from t2 timestamp (ts2) where ts2 in '2025-12-01T01;2h'" +
-                        /**/   ")" +
-                        /**/ ") _xQdbA1 where ts in '2025-12-01T01;2h'" +
-                        ")",
-                """
-                        SELECT ts FROM (
-                            SELECT name1, ts1 ts, sym1 FROM t1
-                            UNION ALL
-                            SELECT name2, ts2, sym2 ts FROM t2
-                        ) WHERE ts IN '2025-12-01T01;2h'
-                        """,
-                modelOf("t1").col("name1", ColumnType.VARCHAR).timestamp("ts1").col("sym1", ColumnType.SYMBOL),
-                modelOf("t2").col("name2", ColumnType.VARCHAR).timestamp("ts2").col("sym2", ColumnType.SYMBOL)
         );
     }
 

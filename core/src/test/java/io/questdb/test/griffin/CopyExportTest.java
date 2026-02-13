@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -34,9 +35,12 @@ import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.Job;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
@@ -56,6 +60,7 @@ import java.util.HashSet;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertTrue;
 
@@ -455,6 +460,70 @@ public class CopyExportTest extends AbstractCairoTest {
                 37,
                 "unsupported format, only 'parquet' is supported"
         );
+    }
+
+    @Test
+    public void testCopyParquetFailsWithMmapErrorCleansTempTable() throws Exception {
+        final LongHashSet tempTableColumnFds = new LongHashSet();
+        final AtomicBoolean failed = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                tempTableColumnFds.remove(fd);
+                return super.close(fd);
+            }
+
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (tempTableColumnFds.contains(fd) && failed.compareAndSet(false, true)) {
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (Utf8s.containsAscii(name, File.separator + "copy.") && Utf8s.endsWithAscii(name, ".d")) {
+                    tempTableColumnFds.add(fd);
+                }
+                return fd;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute("create table test_table (x int, y long, z string)");
+            execute("insert into test_table values (1, 100L, 'hello'), (2, 200L, 'world')");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "copy (select * from test_table) to 'mmap_fail_output' with format parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                """
+                                        status
+                                        failed
+                                        """,
+                                "SELECT status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+
+                        ObjHashSet<TableToken> bucket = new ObjHashSet<>();
+                        engine.getTableTokens(bucket, false);
+                        for (int i = 0, n = bucket.size(); i < n; i++) {
+                            TableToken token = bucket.get(i);
+                            Assert.assertFalse(
+                                    "temp table should have been cleaned up: " + token.getTableName(),
+                                    token.getTableName().startsWith("copy.")
+                            );
+                        }
+                    });
+
+            testCopyExport(stmt, test);
+        });
     }
 
     @Test
@@ -1917,6 +1986,64 @@ public class CopyExportTest extends AbstractCairoTest {
                             ". This suggests per-row commits are happening (regression of batchSize bug).",
                     newCommits < 100
             );
+        });
+    }
+
+    @Test
+    public void testParquetExportWithLargeSymbolTable() throws Exception {
+        // Test export with 10k distinct symbols using a projection that forces temp table creation.
+        // This tests batch commits and symbol re-scaling during parquet export.
+        final int symbolCount = 10_000;
+        AtomicInteger symbolCapacityScaled = new AtomicInteger(0);
+        setProperty(PropertyKey.CAIRO_PARQUET_EXPORT_BATCH_SIZE, 1000);
+
+        // Custom FilesFacade to intercept parquet file rename and verify symbol capacity
+        // This happens when the parquet export is complete, just before temp table cleanup
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                // Check if we're renaming a parquet file (export completion)
+                if (Utf8s.containsAscii(to, "_meta.prev") && Utf8s.containsAscii(to, "dbRoot" + Files.SEPARATOR + "copy.")) {
+                    symbolCapacityScaled.incrementAndGet();
+                }
+                return super.rename(from, to);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            // Create table with symbol column
+            execute("create table symbol_test (ts timestamp, sym symbol, value long) timestamp(ts) partition by DAY BYPASS WAL;");
+
+            // Insert rows with 10k distinct symbol values
+            String insertQuery = "insert batch 10000 into symbol_test select " +
+                    "x::timestamp as ts, " +
+                    "'sym' || (x % " + symbolCount + ")::string as sym, " +
+                    "x as value " +
+                    "from long_sequence(" + symbolCount + ")";
+            execute(insertQuery);
+            drainWalQueue();
+
+            // Export using a projection that keeps the symbol column but forces temp table usage
+            // The computed column (value + 1) forces the query to use a temp table
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "copy (select ts, sym, value + 1 as adjusted_value from symbol_test order by ts) to 'symbol_export' with format parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        // Verify distinct symbol count matches
+                        assertSql("count_distinct\n" + symbolCount + "\n",
+                                "select count(distinct sym) from read_parquet('" + exportRoot + File.separator + "symbol_export.parquet')");
+
+                        // Expect at least a few symbol re-scaling operations from default capacity 128 to 10,000.
+                        // In practice it's 6, but the scaling algorithm may become more aggressive in the future.
+                        Assert.assertTrue("Expected symbol capacity to be scaled up during export, but it was not. This suggests the batch commit and symbol re-scaling logic may not have been triggered.",
+                                symbolCapacityScaled.get() > 3);
+                    });
+
+            testCopyExport(stmt, test);
         });
     }
 

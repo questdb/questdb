@@ -126,6 +126,146 @@ public class UnionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterPushdownBlockedByLatestOnInUnionBranch() throws Exception {
+        // Verify that a timestamp filter is NOT pushed into a UNION ALL branch
+        // that has LATEST ON. Pushing a filter before LATEST ON would narrow the
+        // scan window, changing which row is considered "latest" for each partition.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_sym (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t_sym VALUES
+                        ('2024-01-01T00:00:00.000000Z', 'A', 1),
+                        ('2024-01-02T00:00:00.000000Z', 'A', 2),
+                        ('2024-01-03T00:00:00.000000Z', 'A', 3)
+                    """);
+
+            execute("CREATE TABLE t_plain (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts)");
+            execute("INSERT INTO t_plain VALUES ('2024-01-02T00:00:00.000000Z', 'C', 99)");
+
+            // Correct semantics:
+            //   1. LATEST ON: latest for A = Jan 3 (3)
+            //   2. t_plain: Jan 2 (C, 99)
+            //   3. UNION ALL: (Jan 3, A, 3), (Jan 2, C, 99)
+            //   4. WHERE ts <= Jan 2: A's row filtered out → only (Jan 2, C, 99)
+            //
+            // Buggy semantics (if filter pushed before LATEST ON):
+            //   1. WHERE ts <= Jan 2 then LATEST ON: latest for A within [<=Jan 2]
+            //      is Jan 2 (2), which passes the outer WHERE too
+            //   2. t_plain: Jan 2 (C, 99)
+            //   3. Both rows survive → wrong!
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tx
+                            2024-01-02T00:00:00.000000Z\tC\t99
+                            """,
+                    """
+                            SELECT * FROM (
+                                SELECT ts, sym, x FROM t_sym LATEST ON ts PARTITION BY sym
+                                UNION ALL
+                                SELECT ts, sym, x FROM t_plain
+                            ) WHERE ts <= '2024-01-02'""",
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testFilterPushdownBlockedByLimitInUnionBranch() throws Exception {
+        // Verify that a timestamp filter is NOT pushed past a LIMIT inside a
+        // UNION ALL branch. Pushing a filter before LIMIT would change which
+        // rows are selected.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (ts TIMESTAMP, x LONG) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t1 VALUES
+                        ('2024-01-01T00:00:00.000000Z', 1),
+                        ('2024-01-02T00:00:00.000000Z', 2),
+                        ('2024-01-03T00:00:00.000000Z', 3),
+                        ('2024-01-04T00:00:00.000000Z', 4)
+                    """);
+
+            execute("CREATE TABLE t2 (ts TIMESTAMP, x LONG) TIMESTAMP(ts)");
+            execute("INSERT INTO t2 VALUES ('2024-01-03T00:00:00.000000Z', 30)");
+
+            // Correct semantics:
+            //   1. Branch 1 inner: LIMIT 2 → Jan 1 (1), Jan 2 (2)
+            //   2. Branch 2: Jan 3 (30)
+            //   3. UNION ALL: (Jan 1, 1), (Jan 2, 2), (Jan 3, 30)
+            //   4. WHERE ts >= Jan 3: only (Jan 3, 30) survives
+            //
+            // Buggy semantics (if filter pushed before LIMIT):
+            //   1. Branch 1: WHERE ts >= Jan 3 then LIMIT 2 → Jan 3 (3), Jan 4 (4)
+            //   2. Branch 2: Jan 3 (30)
+            //   3. All 3 rows pass outer WHERE → wrong!
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tx
+                            2024-01-03T00:00:00.000000Z\t30
+                            """,
+                    """
+                            SELECT * FROM (
+                                SELECT * FROM (SELECT ts, x FROM t1 LIMIT 2)
+                                UNION ALL
+                                SELECT ts, x FROM t2
+                            ) WHERE ts >= '2024-01-03'""",
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testFilterPushdownBlockedByLimitOnLastUnionBranch() throws Exception {
+        // When LIMIT is on the last branch of UNION ALL, it semantically applies
+        // to the whole union result. A timestamp filter must not be pushed into
+        // any branch because it would change which rows enter the LIMIT window.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (ts TIMESTAMP, x LONG) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t1 VALUES
+                        ('2024-01-01T00:00:00.000000Z', 1),
+                        ('2024-01-02T00:00:00.000000Z', 2),
+                        ('2024-01-03T00:00:00.000000Z', 3)
+                    """);
+
+            execute("CREATE TABLE t2 (ts TIMESTAMP, x LONG) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t2 VALUES
+                        ('2024-01-04T00:00:00.000000Z', 4),
+                        ('2024-01-05T00:00:00.000000Z', 5)
+                    """);
+
+            // Correct semantics:
+            //   1. UNION ALL: (Jan 1,1), (Jan 2,2), (Jan 3,3), (Jan 4,4), (Jan 5,5)
+            //   2. LIMIT 3: (Jan 1,1), (Jan 2,2), (Jan 3,3)
+            //   3. WHERE ts >= Jan 3: only (Jan 3, 3)
+            //
+            // Buggy semantics (if filter pushed into branches before LIMIT):
+            //   1. t1 WHERE ts >= Jan 3: (Jan 3, 3)
+            //   2. t2 WHERE ts >= Jan 3: (Jan 4, 4), (Jan 5, 5)
+            //   3. UNION ALL: (Jan 3,3), (Jan 4,4), (Jan 5,5)
+            //   4. LIMIT 3: all 3
+            //   5. WHERE ts >= Jan 3: all 3 → wrong!
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tx
+                            2024-01-03T00:00:00.000000Z\t3
+                            """,
+                    """
+                            SELECT * FROM (
+                                SELECT ts, x FROM t1
+                                UNION ALL
+                                SELECT ts, x FROM t2
+                                LIMIT 3
+                            ) WHERE ts >= '2024-01-03'""",
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testFilterPushdownShouldNotChangeSampleByInUnionBranch() throws Exception {
         // Regression test: pushing a WHERE filter into a UNION branch that has
         // SAMPLE BY must not change aggregation semantics. The filter should be
