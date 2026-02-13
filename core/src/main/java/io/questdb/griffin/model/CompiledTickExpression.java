@@ -90,7 +90,7 @@ public class CompiledTickExpression extends UntypedFunction {
     private final LongList exchangeSchedule;
     private final String expression;
     private final boolean hasDurationWithExchange;
-    private final long[] ir;
+    private final LongList ir;
     private final int timeOverrideCount;
     private final TimestampDriver timestampDriver;
     private final int toOff;
@@ -99,7 +99,7 @@ public class CompiledTickExpression extends UntypedFunction {
 
     CompiledTickExpression(
             TimestampDriver timestampDriver,
-            long[] ir,
+            LongList ir,
             CharSequence expression,
             TimeZoneRules tzRules,
             DateLocale dateLocale,
@@ -113,7 +113,7 @@ public class CompiledTickExpression extends UntypedFunction {
         this.exchangeSchedule = exchangeSchedule;
 
         // Pre-decode header and section offsets
-        long header = ir[0];
+        long header = ir.getQuick(0);
         this.elemCount = (int) ((header >>> HDR_ELEM_SHIFT) & 0xFF);
         this.timeOverrideCount = (int) ((header >>> HDR_TO_SHIFT) & 0xFF);
         this.durationPartCount = (int) ((header >>> HDR_DUR_SHIFT) & 0xFF);
@@ -152,22 +152,22 @@ public class CompiledTickExpression extends UntypedFunction {
      * the resulting [lo, hi] interval pairs to outIntervals. Pure long arithmetic,
      * no string parsing.
      */
-    public void evaluate(LongList outIntervals) throws SqlException {
+    public void evaluate(LongList outIntervals) {
         int outStart = outIntervals.size();
 
         // Phase 1: Emit intervals for each element
         int pos = elemOff;
         for (int i = 0; i < elemCount; i++) {
-            long word = ir[pos];
+            long word = ir.getQuick(pos);
             long tag = word & TAG_MASK;
             if (tag == TAG_SINGLE_VAR) {
                 emitSingleVar(word, outIntervals);
                 pos++;
             } else if (tag == TAG_STATIC) {
-                outIntervals.add(ir[pos + 1], ir[pos + 2]);
+                outIntervals.add(ir.getQuick(pos + 1), ir.getQuick(pos + 2));
                 pos += 3;
             } else {
-                emitRange(word, ir[pos + 1], outIntervals);
+                emitRange(word, ir.getQuick(pos + 1), outIntervals);
                 pos += 2;
             }
         }
@@ -239,7 +239,7 @@ public class CompiledTickExpression extends UntypedFunction {
     private long applyDuration(long timestamp) {
         long result = timestamp;
         for (int i = 0; i < durationPartCount; i++) {
-            long encoded = ir[durationOff + i];
+            long encoded = ir.getQuick(durationOff + i);
             char unit = (char) ((encoded >>> 32) & 0xFFFF);
             int value = (int) encoded;
             result = timestampDriver.add(result, unit, value);
@@ -282,7 +282,7 @@ public class CompiledTickExpression extends UntypedFunction {
     }
 
     private void applyTimezone(LongList out, int startIndex) {
-        long numericTzOffset = ir[1];
+        long numericTzOffset = ir.getQuick(1);
         int size = out.size();
         if (numericTzOffset != Long.MIN_VALUE) {
             for (int i = startIndex; i < size; i++) {
@@ -315,9 +315,9 @@ public class CompiledTickExpression extends UntypedFunction {
     private void emitDayInterval(long dayStart, LongList out) {
         if (timeOverrideCount > 0) {
             for (int j = 0; j < timeOverrideCount; j++) {
-                long offset = ir[toOff + j * 3];
-                long width = ir[toOff + j * 3 + 1];
-                long zoneMatch = ir[toOff + j * 3 + 2];
+                long offset = ir.getQuick(toOff + j * 3);
+                long width = ir.getQuick(toOff + j * 3 + 1);
+                long zoneMatch = ir.getQuick(toOff + j * 3 + 2);
                 long lo = dayStart + offset;
                 long hi;
                 if (durationPartCount > 0 && !hasDurationWithExchange) {
@@ -395,7 +395,7 @@ public class CompiledTickExpression extends UntypedFunction {
      * Used for per-element timezone entries that are already in UTC.
      */
     private long utcToGlobalLocal(long utc) {
-        long numericTzOffset = ir[1];
+        long numericTzOffset = ir.getQuick(1);
         if (numericTzOffset != Long.MIN_VALUE) {
             return utc + numericTzOffset;
         } else if (tzRules != null) {
