@@ -822,6 +822,25 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinSlaveNoTimeFrameWithFilter() throws Exception {
+        // Slave subquery doesn't support time frames, error after filter stealing — verifies no resource leak
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "SELECT avg(p.price) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN (SELECT * FROM prices LIMIT 100) AS p ON (t.sym = p.sym) " +
+                            "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                            "WHERE t.qty > 0",
+                    37,
+                    "HORIZON JOIN slave table must support time frame cursors"
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinSmoke() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -899,6 +918,31 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Test
     public void testHorizonJoinTypeMismatchIntVsDouble() throws Exception {
         assertHorizonJoinTypeMismatch("INT", "DOUBLE");
+    }
+
+    @Test
+    public void testHorizonJoinTypeMismatchIntVsDoubleWithFilter() throws Exception {
+        // Type mismatch after filter stealing — verifies no resource leak
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE orders (ts #TIMESTAMP, k INT, qty LONG) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, k DOUBLE, price DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            assertExceptionNoLeakCheck(
+                    "SELECT avg(p.price) " +
+                            "FROM orders AS t " +
+                            "HORIZON JOIN prices AS p ON (t.k = p.k) " +
+                            "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                            "WHERE t.qty > 0",
+                    72,
+                    "join column type mismatch"
+            );
+        });
     }
 
     @Test

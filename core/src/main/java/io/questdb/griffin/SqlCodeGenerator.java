@@ -3265,318 +3265,287 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             filterFactory.halfClose();
         }
 
-        if (supportsParallelism) {
-            // HORIZON JOIN tasks are "heavy", hence smaller frame sizes
-            masterFactory.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
-        }
-
-        // Check slave factory supports TimeFrameCursor for parallel cursor creation
-        if (!slaveFactory.supportsTimeFrameCursor()) {
-            throw SqlException.position(slaveModel.getJoinKeywordPosition())
-                    .put("HORIZON JOIN slave table must support time frame cursors");
-        }
-
-        final int workerCount = executionContext.getSharedQueryWorkerCount();
-        final int masterTimestampColumnIndex = masterMetadata.getTimestampIndex();
-
-        if (masterTimestampColumnIndex == -1) {
-            throw SqlException.position(slaveModel.getJoinKeywordPosition())
-                    .put("HORIZON JOIN master table must have a designated timestamp");
-        }
-
-        // Create the inner join metadata (master + horizon columns + slave)
-        // The horizon pseudo-table has two columns: offset (LONG) and timestamp (same type as master)
-        if (horizonContext.getAlias() == null) {
-            throw SqlException.position(slaveModel.getJoinKeywordPosition())
-                    .put("HORIZON JOIN requires alias for RANGE/LIST to be specified");
-        }
-        final CharSequence horizonAlias = horizonContext.getAlias().token;
-        final CharSequence slaveAlias = slaveModel.getAlias() != null ? slaveModel.getAlias().token : slaveModel.getName();
-        final RecordMetadata innerMetadata = createHorizonJoinMetadata(
-                masterAlias,
-                masterMetadata,
-                horizonAlias,
-                slaveAlias,
-                slaveMetadata
-        );
-
-        // Prepare GROUP BY functions using the join result metadata
-        final int timestampIndex = getTimestampIndex(parentModel, innerMetadata);
-        keyTypes.clear();
-        valueTypes.clear();
-        listColumnFilterA.clear();
-
-        final int columnCount = parentModel.getColumns().size();
-        final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
-        tempInnerProjectionFunctions.clear();
-        tempOuterProjectionFunctions.clear();
-        final GenericRecordMetadata outerProjectionMetadata = new GenericRecordMetadata();
-        final IntList projectionFunctionFlags = new IntList(columnCount);
-
-        GroupByUtils.assembleGroupByFunctions(
-                functionParser,
-                sqlNodeStack,
-                parentModel,
-                executionContext,
-                innerMetadata,
-                timestampIndex,
-                true,
-                groupByFunctions,
-                groupByFunctionPositions,
-                tempOuterProjectionFunctions,
-                tempInnerProjectionFunctions,
-                recordFunctionPositions,
-                projectionFunctionFlags,
-                outerProjectionMetadata,
-                valueTypes,
-                keyTypes,
-                listColumnFilterA,
-                null,
-                validateSampleByFillType,
-                parentModel.getColumns()
-        );
-
-        // Check if parallel execution is supported
-        ObjList<Function> keyFunctions = extractVirtualFunctionsFromProjection(tempInnerProjectionFunctions, projectionFunctionFlags);
-        if (!SqlUtil.isParallelismSupported(keyFunctions) || !GroupByUtils.isParallelismSupported(groupByFunctions)) {
-            supportsParallelism = false;
-        }
-
-        ObjList<ObjList<Function>> perWorkerKeyFunctions = null;
-        ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = null;
-
-        if (supportsParallelism) {
-            // Compile per-worker inner projection functions for expression keys
-            ObjList<ObjList<Function>> perWorkerInnerProjectionFunctions = compilePerWorkerInnerProjectionFunctions(
-                    executionContext,
-                    parentModel.getColumns(),
-                    tempInnerProjectionFunctions,
-                    workerCount,
-                    innerMetadata
-            );
-
-            // Extract per-worker key functions (for expression keys)
-            perWorkerKeyFunctions = extractWorkerFunctionsConditionally(
-                    tempInnerProjectionFunctions,
-                    projectionFunctionFlags,
-                    perWorkerInnerProjectionFunctions,
-                    GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL
-            );
-
-            // Compile per-worker GROUP BY functions
-            perWorkerGroupByFunctions = compileWorkerGroupByFunctionsConditionally(
-                    executionContext,
-                    parentModel,
-                    groupByFunctions,
-                    workerCount,
-                    innerMetadata
-            );
-
-            // If null (thread-safe functions), create per-worker lists that reuse owner functions
-            if (perWorkerGroupByFunctions == null) {
-                perWorkerGroupByFunctions = new ObjList<>(workerCount);
-                for (int i = 0; i < workerCount; i++) {
-                    perWorkerGroupByFunctions.add(groupByFunctions);
-                }
-            }
-        }
-
-        final ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes().addAll(keyTypes);
-        final ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes().addAll(valueTypes);
-
-        // Build column mappings from innerMetadata to source records (master, horizon, slave)
-        // These mappings are needed by HorizonJoinRecord to route column accesses
-        final int baseColumnCount = innerMetadata.getColumnCount();
-        final int[] columnSources = new int[baseColumnCount];
-        final int[] columnIndices = new int[baseColumnCount];
-
-        for (int i = 0; i < baseColumnCount; i++) {
-            final CharSequence fullName = innerMetadata.getColumnName(i);
-
-            // Parse "tableAlias.columnName" format
-            int dotIndex = Chars.indexOf(fullName, '.');
-            if (dotIndex > 0) {
-                CharSequence tableAlias = fullName.subSequence(0, dotIndex);
-                CharSequence columnName = fullName.subSequence(dotIndex + 1, fullName.length());
-                if (masterAlias != null && Chars.equalsIgnoreCase(tableAlias, masterAlias)) {
-                    columnSources[i] = HorizonJoinRecord.SOURCE_MASTER;
-                    columnIndices[i] = masterMetadata.getColumnIndexQuiet(columnName);
-                    continue;
-                }
-                if (Chars.equalsIgnoreCase(tableAlias, horizonAlias)) {
-                    columnSources[i] = HorizonJoinRecord.SOURCE_SEQUENCE;
-                    // offset column is 0, timestamp column is 1
-                    columnIndices[i] = Chars.equalsIgnoreCase(columnName, "offset") ? 0 : 1;
-                    continue;
-                }
-                if (slaveAlias != null && Chars.equalsIgnoreCase(tableAlias, slaveAlias)) {
-                    columnSources[i] = HorizonJoinRecord.SOURCE_SLAVE;
-                    columnIndices[i] = slaveMetadata.getColumnIndexQuiet(columnName);
-                    continue;
-                }
-                throw SqlException.$(0, "failed to resolve table.column: ").put(fullName);
-            }
-            // No alias prefix - try matching by name in priority order
-            // Horizon columns first (offset, timestamp)
-            if (Chars.equalsIgnoreCase(fullName, "offset")) {
-                columnSources[i] = HorizonJoinRecord.SOURCE_SEQUENCE;
-                columnIndices[i] = 0;
-                continue;
-            }
-            int idx = slaveMetadata.getColumnIndexQuiet(fullName);
-            if (idx >= 0) {
-                columnSources[i] = HorizonJoinRecord.SOURCE_SLAVE;
-                columnIndices[i] = idx;
-                continue;
-            }
-            idx = masterMetadata.getColumnIndexQuiet(fullName);
-            if (idx >= 0) {
-                columnSources[i] = HorizonJoinRecord.SOURCE_MASTER;
-                columnIndices[i] = idx;
-                continue;
-            }
-            throw SqlException.$(0, "failed to resolve column: ").put(fullName);
-        }
-
-        // Save GROUP BY column filter before ASOF join processing overwrites it
-        final ListColumnFilter groupByColumnFilter = listColumnFilterA.copy();
-
-        // Process ASOF join key information for the join lookup
-        ArrayColumnTypes asOfJoinKeyTypes = null;
-        Class<RecordSink> masterAsOfJoinMapSinkClass = null;
-        Class<RecordSink> slaveAsOfJoinMapSinkClass = null;
-        BitSet asOfWriteSymbolAsString = null;
-        BitSet asOfWriteStringAsVarcharA = null;
-        BitSet asOfWriteStringAsVarcharB = null;
-        int[] masterSymbolKeyColumnIndices = null;
-        int[] slaveSymbolKeyColumnIndices = null;
-
-        JoinContext asOfJoinContext = slaveModel.getJoinContext();
-        if (asOfJoinContext != null && !asOfJoinContext.isEmpty()) {
-            // Process join context to get key types and column filters
-            // listColumnFilterA -> slave columns
-            // listColumnFilterB -> master columns
-            lookupColumnIndexesUsingVanillaNames(listColumnFilterA, asOfJoinContext.aNames, slaveMetadata);
-            lookupColumnIndexes(listColumnFilterB, asOfJoinContext.bNodes, masterMetadata);
-
-            // Build ASOF join key types and configure symbol/string handling
-            asOfJoinKeyTypes = new ArrayColumnTypes();
-            asOfWriteSymbolAsString = new BitSet();
-            asOfWriteStringAsVarcharA = new BitSet();
-            asOfWriteStringAsVarcharB = new BitSet();
-            IntList masterSymbolKeyCols = null;
-            IntList slaveSymbolKeyCols = null;
-            writeTimestampAsNanosA.clear();
-            writeTimestampAsNanosB.clear();
-
-            for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
-                final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
-                final int columnIndexB = listColumnFilterB.getColumnIndexFactored(k);
-                final int columnTypeA = slaveMetadata.getColumnType(columnIndexA);
-                final int columnTypeB = masterMetadata.getColumnType(columnIndexB);
-
-                if (columnTypeB != columnTypeA
-                        && !(isSymbolOrStringOrVarchar(columnTypeB) && isSymbolOrStringOrVarchar(columnTypeA))
-                        && !(isTimestamp(columnTypeB) && isTimestamp(columnTypeA))
-                ) {
-                    throw SqlException.$(asOfJoinContext.aNodes.getQuick(k).position, "join column type mismatch");
-                }
-
-                // For SYMBOL columns from different tables, write as STRING for comparison
-                if (ColumnType.isVarchar(columnTypeA) || ColumnType.isVarchar(columnTypeB)) {
-                    asOfJoinKeyTypes.add(ColumnType.VARCHAR);
-                    if (ColumnType.isVarchar(columnTypeA)) {
-                        asOfWriteStringAsVarcharB.set(columnIndexB);
-                    } else {
-                        asOfWriteStringAsVarcharA.set(columnIndexA);
-                    }
-                    asOfWriteSymbolAsString.set(columnIndexA);
-                    asOfWriteSymbolAsString.set(columnIndexB);
-                } else if (columnTypeA == ColumnType.SYMBOL && columnTypeB == ColumnType.SYMBOL) {
-                    // Both sides are SYMBOL: use integer comparison with translation cache
-                    asOfJoinKeyTypes.add(ColumnType.SYMBOL);
-                    // Do NOT set asOfWriteSymbolAsString — copiers will use getInt/putInt
-                    if (masterSymbolKeyCols == null) {
-                        masterSymbolKeyCols = new IntList();
-                        slaveSymbolKeyCols = new IntList();
-                    }
-                    masterSymbolKeyCols.add(columnIndexB);
-                    slaveSymbolKeyCols.add(columnIndexA);
-                } else if (columnTypeB == ColumnType.SYMBOL || columnTypeA == ColumnType.SYMBOL) {
-                    // Mixed SYMBOL + non-SYMBOL: write as STRING
-                    asOfJoinKeyTypes.add(ColumnType.STRING);
-                    asOfWriteSymbolAsString.set(columnIndexA);
-                    asOfWriteSymbolAsString.set(columnIndexB);
-                } else if (ColumnType.isString(columnTypeA) || ColumnType.isString(columnTypeB)) {
-                    asOfJoinKeyTypes.add(columnTypeB);
-                    asOfWriteSymbolAsString.set(columnIndexA);
-                    asOfWriteSymbolAsString.set(columnIndexB);
-                } else if (columnTypeA != columnTypeB && isTimestamp(columnTypeA) && isTimestamp(columnTypeB)) {
-                    asOfJoinKeyTypes.add(TIMESTAMP_NANO);
-                    if (!isTimestampNano(columnTypeA)) {
-                        writeTimestampAsNanosA.set(columnIndexA);
-                    }
-                    if (!isTimestampNano(columnTypeB)) {
-                        writeTimestampAsNanosB.set(columnIndexB);
-                    }
-                } else {
-                    asOfJoinKeyTypes.add(columnTypeA);
-                }
+        try {
+            if (supportsParallelism) {
+                // HORIZON JOIN tasks are "heavy", hence smaller frame sizes
+                masterFactory.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
             }
 
-            if (masterSymbolKeyCols != null) {
-                masterSymbolKeyColumnIndices = masterSymbolKeyCols.toArray();
-                slaveSymbolKeyColumnIndices = slaveSymbolKeyCols.toArray();
+            // Check slave factory supports TimeFrameCursor for parallel cursor creation
+            if (!slaveFactory.supportsTimeFrameCursor()) {
+                throw SqlException.position(slaveModel.getJoinKeywordPosition())
+                        .put("HORIZON JOIN slave table must support time frame cursors");
             }
 
-            // Generate key copier classes with proper symbol/varchar handling
-            // Two-phase pattern: generate class once, create per-worker instances in atoms
-            masterAsOfJoinMapSinkClass = RecordSinkFactory.getInstanceClass(
-                    configuration,
-                    asm,
+            final int workerCount = executionContext.getSharedQueryWorkerCount();
+            final int masterTimestampColumnIndex = masterMetadata.getTimestampIndex();
+
+            if (masterTimestampColumnIndex == -1) {
+                throw SqlException.position(slaveModel.getJoinKeywordPosition())
+                        .put("HORIZON JOIN master table must have a designated timestamp");
+            }
+
+            // Create the inner join metadata (master + horizon columns + slave)
+            // The horizon pseudo-table has two columns: offset (LONG) and timestamp (same type as master)
+            if (horizonContext.getAlias() == null) {
+                throw SqlException.position(slaveModel.getJoinKeywordPosition())
+                        .put("HORIZON JOIN requires alias for RANGE/LIST to be specified");
+            }
+            final CharSequence horizonAlias = horizonContext.getAlias().token;
+            final CharSequence slaveAlias = slaveModel.getAlias() != null ? slaveModel.getAlias().token : slaveModel.getName();
+            final RecordMetadata innerMetadata = createHorizonJoinMetadata(
+                    masterAlias,
                     masterMetadata,
-                    listColumnFilterB,
-                    null,
-                    null,
-                    asOfWriteSymbolAsString,
-                    asOfWriteStringAsVarcharB,
-                    writeTimestampAsNanosB
+                    horizonAlias,
+                    slaveAlias,
+                    slaveMetadata
             );
-            slaveAsOfJoinMapSinkClass = RecordSinkFactory.getInstanceClass(
-                    configuration,
-                    asm,
-                    slaveMetadata,
+
+            // Prepare GROUP BY functions using the join result metadata
+            final int timestampIndex = getTimestampIndex(parentModel, innerMetadata);
+            keyTypes.clear();
+            valueTypes.clear();
+            listColumnFilterA.clear();
+
+            final int columnCount = parentModel.getColumns().size();
+            final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
+            tempInnerProjectionFunctions.clear();
+            tempOuterProjectionFunctions.clear();
+            final GenericRecordMetadata outerProjectionMetadata = new GenericRecordMetadata();
+            final IntList projectionFunctionFlags = new IntList(columnCount);
+
+            GroupByUtils.assembleGroupByFunctions(
+                    functionParser,
+                    sqlNodeStack,
+                    parentModel,
+                    executionContext,
+                    innerMetadata,
+                    timestampIndex,
+                    true,
+                    groupByFunctions,
+                    groupByFunctionPositions,
+                    tempOuterProjectionFunctions,
+                    tempInnerProjectionFunctions,
+                    recordFunctionPositions,
+                    projectionFunctionFlags,
+                    outerProjectionMetadata,
+                    valueTypes,
+                    keyTypes,
                     listColumnFilterA,
                     null,
-                    null,
-                    asOfWriteSymbolAsString,
-                    asOfWriteStringAsVarcharA,
-                    writeTimestampAsNanosA
+                    validateSampleByFillType,
+                    parentModel.getColumns()
             );
-        }
 
-        if (!supportsParallelism) {
-            // Single-threaded path: verify master factory supports random access (needed to revisit rows in sorted order)
-            if (!masterFactory.recordCursorSupportsRandomAccess()) {
-                throw SqlException.position(slaveModel.getJoinKeywordPosition())
-                        .put("HORIZON JOIN master table must support random access or page frames");
+            // Check if parallel execution is supported
+            ObjList<Function> keyFunctions = extractVirtualFunctionsFromProjection(tempInnerProjectionFunctions, projectionFunctionFlags);
+            if (!SqlUtil.isParallelismSupported(keyFunctions) || !GroupByUtils.isParallelismSupported(groupByFunctions)) {
+                supportsParallelism = false;
             }
 
-            // Create sink instances from generated classes for single-threaded path
-            final RecordSink masterAsOfJoinMapSink;
-            final RecordSink slaveAsOfJoinMapSink;
-            if (masterAsOfJoinMapSinkClass != null) {
-                masterAsOfJoinMapSink = RecordSinkFactory.getInstance(
-                        masterAsOfJoinMapSinkClass,
+            ObjList<ObjList<Function>> perWorkerKeyFunctions = null;
+            ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = null;
+
+            if (supportsParallelism) {
+                // Compile per-worker inner projection functions for expression keys
+                ObjList<ObjList<Function>> perWorkerInnerProjectionFunctions = compilePerWorkerInnerProjectionFunctions(
+                        executionContext,
+                        parentModel.getColumns(),
+                        tempInnerProjectionFunctions,
+                        workerCount,
+                        innerMetadata
+                );
+
+                // Extract per-worker key functions (for expression keys)
+                perWorkerKeyFunctions = extractWorkerFunctionsConditionally(
+                        tempInnerProjectionFunctions,
+                        projectionFunctionFlags,
+                        perWorkerInnerProjectionFunctions,
+                        GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL
+                );
+
+                // Compile per-worker GROUP BY functions
+                perWorkerGroupByFunctions = compileWorkerGroupByFunctionsConditionally(
+                        executionContext,
+                        parentModel,
+                        groupByFunctions,
+                        workerCount,
+                        innerMetadata
+                );
+
+                // If null (thread-safe functions), create per-worker lists that reuse owner functions
+                if (perWorkerGroupByFunctions == null) {
+                    perWorkerGroupByFunctions = new ObjList<>(workerCount);
+                    for (int i = 0; i < workerCount; i++) {
+                        perWorkerGroupByFunctions.add(groupByFunctions);
+                    }
+                }
+            }
+
+            final ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes().addAll(keyTypes);
+            final ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes().addAll(valueTypes);
+
+            // Build column mappings from innerMetadata to source records (master, horizon, slave)
+            // These mappings are needed by HorizonJoinRecord to route column accesses
+            final int baseColumnCount = innerMetadata.getColumnCount();
+            final int[] columnSources = new int[baseColumnCount];
+            final int[] columnIndices = new int[baseColumnCount];
+
+            for (int i = 0; i < baseColumnCount; i++) {
+                final CharSequence fullName = innerMetadata.getColumnName(i);
+
+                // Parse "tableAlias.columnName" format
+                int dotIndex = Chars.indexOf(fullName, '.');
+                if (dotIndex > 0) {
+                    CharSequence tableAlias = fullName.subSequence(0, dotIndex);
+                    CharSequence columnName = fullName.subSequence(dotIndex + 1, fullName.length());
+                    if (masterAlias != null && Chars.equalsIgnoreCase(tableAlias, masterAlias)) {
+                        columnSources[i] = HorizonJoinRecord.SOURCE_MASTER;
+                        columnIndices[i] = masterMetadata.getColumnIndexQuiet(columnName);
+                        continue;
+                    }
+                    if (Chars.equalsIgnoreCase(tableAlias, horizonAlias)) {
+                        columnSources[i] = HorizonJoinRecord.SOURCE_SEQUENCE;
+                        // offset column is 0, timestamp column is 1
+                        columnIndices[i] = Chars.equalsIgnoreCase(columnName, "offset") ? 0 : 1;
+                        continue;
+                    }
+                    if (slaveAlias != null && Chars.equalsIgnoreCase(tableAlias, slaveAlias)) {
+                        columnSources[i] = HorizonJoinRecord.SOURCE_SLAVE;
+                        columnIndices[i] = slaveMetadata.getColumnIndexQuiet(columnName);
+                        continue;
+                    }
+                    throw SqlException.$(0, "failed to resolve table.column: ").put(fullName);
+                }
+                // No alias prefix - try matching by name in priority order
+                // Horizon columns first (offset, timestamp)
+                if (Chars.equalsIgnoreCase(fullName, "offset")) {
+                    columnSources[i] = HorizonJoinRecord.SOURCE_SEQUENCE;
+                    columnIndices[i] = 0;
+                    continue;
+                }
+                int idx = slaveMetadata.getColumnIndexQuiet(fullName);
+                if (idx >= 0) {
+                    columnSources[i] = HorizonJoinRecord.SOURCE_SLAVE;
+                    columnIndices[i] = idx;
+                    continue;
+                }
+                idx = masterMetadata.getColumnIndexQuiet(fullName);
+                if (idx >= 0) {
+                    columnSources[i] = HorizonJoinRecord.SOURCE_MASTER;
+                    columnIndices[i] = idx;
+                    continue;
+                }
+                throw SqlException.$(0, "failed to resolve column: ").put(fullName);
+            }
+
+            // Save GROUP BY column filter before ASOF join processing overwrites it
+            final ListColumnFilter groupByColumnFilter = listColumnFilterA.copy();
+
+            // Process ASOF join key information for the join lookup
+            ArrayColumnTypes asOfJoinKeyTypes = null;
+            Class<RecordSink> masterAsOfJoinMapSinkClass = null;
+            Class<RecordSink> slaveAsOfJoinMapSinkClass = null;
+            BitSet asOfWriteSymbolAsString = null;
+            BitSet asOfWriteStringAsVarcharA = null;
+            BitSet asOfWriteStringAsVarcharB = null;
+            int[] masterSymbolKeyColumnIndices = null;
+            int[] slaveSymbolKeyColumnIndices = null;
+
+            JoinContext asOfJoinContext = slaveModel.getJoinContext();
+            if (asOfJoinContext != null && !asOfJoinContext.isEmpty()) {
+                // Process join context to get key types and column filters
+                // listColumnFilterA -> slave columns
+                // listColumnFilterB -> master columns
+                lookupColumnIndexesUsingVanillaNames(listColumnFilterA, asOfJoinContext.aNames, slaveMetadata);
+                lookupColumnIndexes(listColumnFilterB, asOfJoinContext.bNodes, masterMetadata);
+
+                // Build ASOF join key types and configure symbol/string handling
+                asOfJoinKeyTypes = new ArrayColumnTypes();
+                asOfWriteSymbolAsString = new BitSet();
+                asOfWriteStringAsVarcharA = new BitSet();
+                asOfWriteStringAsVarcharB = new BitSet();
+                IntList masterSymbolKeyCols = null;
+                IntList slaveSymbolKeyCols = null;
+                writeTimestampAsNanosA.clear();
+                writeTimestampAsNanosB.clear();
+
+                for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
+                    final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
+                    final int columnIndexB = listColumnFilterB.getColumnIndexFactored(k);
+                    final int columnTypeA = slaveMetadata.getColumnType(columnIndexA);
+                    final int columnTypeB = masterMetadata.getColumnType(columnIndexB);
+
+                    if (columnTypeB != columnTypeA
+                            && !(isSymbolOrStringOrVarchar(columnTypeB) && isSymbolOrStringOrVarchar(columnTypeA))
+                            && !(isTimestamp(columnTypeB) && isTimestamp(columnTypeA))
+                    ) {
+                        throw SqlException.$(asOfJoinContext.aNodes.getQuick(k).position, "join column type mismatch");
+                    }
+
+                    // For SYMBOL columns from different tables, write as STRING for comparison
+                    if (ColumnType.isVarchar(columnTypeA) || ColumnType.isVarchar(columnTypeB)) {
+                        asOfJoinKeyTypes.add(ColumnType.VARCHAR);
+                        if (ColumnType.isVarchar(columnTypeA)) {
+                            asOfWriteStringAsVarcharB.set(columnIndexB);
+                        } else {
+                            asOfWriteStringAsVarcharA.set(columnIndexA);
+                        }
+                        asOfWriteSymbolAsString.set(columnIndexA);
+                        asOfWriteSymbolAsString.set(columnIndexB);
+                    } else if (columnTypeA == ColumnType.SYMBOL && columnTypeB == ColumnType.SYMBOL) {
+                        // Both sides are SYMBOL: use integer comparison with translation cache
+                        asOfJoinKeyTypes.add(ColumnType.SYMBOL);
+                        // Do NOT set asOfWriteSymbolAsString — copiers will use getInt/putInt
+                        if (masterSymbolKeyCols == null) {
+                            masterSymbolKeyCols = new IntList();
+                            slaveSymbolKeyCols = new IntList();
+                        }
+                        masterSymbolKeyCols.add(columnIndexB);
+                        slaveSymbolKeyCols.add(columnIndexA);
+                    } else if (columnTypeB == ColumnType.SYMBOL || columnTypeA == ColumnType.SYMBOL) {
+                        // Mixed SYMBOL + non-SYMBOL: write as STRING
+                        asOfJoinKeyTypes.add(ColumnType.STRING);
+                        asOfWriteSymbolAsString.set(columnIndexA);
+                        asOfWriteSymbolAsString.set(columnIndexB);
+                    } else if (ColumnType.isString(columnTypeA) || ColumnType.isString(columnTypeB)) {
+                        asOfJoinKeyTypes.add(columnTypeB);
+                        asOfWriteSymbolAsString.set(columnIndexA);
+                        asOfWriteSymbolAsString.set(columnIndexB);
+                    } else if (columnTypeA != columnTypeB && isTimestamp(columnTypeA) && isTimestamp(columnTypeB)) {
+                        asOfJoinKeyTypes.add(TIMESTAMP_NANO);
+                        if (!isTimestampNano(columnTypeA)) {
+                            writeTimestampAsNanosA.set(columnIndexA);
+                        }
+                        if (!isTimestampNano(columnTypeB)) {
+                            writeTimestampAsNanosB.set(columnIndexB);
+                        }
+                    } else {
+                        asOfJoinKeyTypes.add(columnTypeA);
+                    }
+                }
+
+                if (masterSymbolKeyCols != null) {
+                    masterSymbolKeyColumnIndices = masterSymbolKeyCols.toArray();
+                    slaveSymbolKeyColumnIndices = slaveSymbolKeyCols.toArray();
+                }
+
+                // Generate key copier classes with proper symbol/varchar handling
+                // Two-phase pattern: generate class once, create per-worker instances in atoms
+                masterAsOfJoinMapSinkClass = RecordSinkFactory.getInstanceClass(
+                        configuration,
+                        asm,
                         masterMetadata,
                         listColumnFilterB,
-                        null, null,
+                        null,
+                        null,
                         asOfWriteSymbolAsString,
                         asOfWriteStringAsVarcharB,
                         writeTimestampAsNanosB
                 );
-                slaveAsOfJoinMapSink = RecordSinkFactory.getInstance(
-                        slaveAsOfJoinMapSinkClass,
+                slaveAsOfJoinMapSinkClass = RecordSinkFactory.getInstanceClass(
+                        configuration,
+                        asm,
                         slaveMetadata,
                         listColumnFilterA,
                         null,
@@ -3585,14 +3554,68 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         asOfWriteStringAsVarcharA,
                         writeTimestampAsNanosA
                 );
-            } else {
-                masterAsOfJoinMapSink = null;
-                slaveAsOfJoinMapSink = null;
             }
 
-            // Choose single-threaded factory based on whether there are GROUP BY keys
-            if (keyTypesCopy.getColumnCount() == 0) {
-                return new HorizonJoinNotKeyedRecordCursorFactory(
+            if (!supportsParallelism) {
+                // Single-threaded path: verify master factory supports random access (needed to revisit rows in sorted order)
+                if (!masterFactory.recordCursorSupportsRandomAccess()) {
+                    throw SqlException.position(slaveModel.getJoinKeywordPosition())
+                            .put("HORIZON JOIN master table must support random access or page frames");
+                }
+
+                // Create sink instances from generated classes for single-threaded path
+                final RecordSink masterAsOfJoinMapSink;
+                final RecordSink slaveAsOfJoinMapSink;
+                if (masterAsOfJoinMapSinkClass != null) {
+                    masterAsOfJoinMapSink = RecordSinkFactory.getInstance(
+                            masterAsOfJoinMapSinkClass,
+                            masterMetadata,
+                            listColumnFilterB,
+                            null, null,
+                            asOfWriteSymbolAsString,
+                            asOfWriteStringAsVarcharB,
+                            writeTimestampAsNanosB
+                    );
+                    slaveAsOfJoinMapSink = RecordSinkFactory.getInstance(
+                            slaveAsOfJoinMapSinkClass,
+                            slaveMetadata,
+                            listColumnFilterA,
+                            null,
+                            null,
+                            asOfWriteSymbolAsString,
+                            asOfWriteStringAsVarcharA,
+                            writeTimestampAsNanosA
+                    );
+                } else {
+                    masterAsOfJoinMapSink = null;
+                    slaveAsOfJoinMapSink = null;
+                }
+
+                // Choose single-threaded factory based on whether there are GROUP BY keys
+                if (keyTypesCopy.getColumnCount() == 0) {
+                    return new HorizonJoinNotKeyedRecordCursorFactory(
+                            configuration,
+                            outerProjectionMetadata,
+                            innerMetadata,
+                            masterFactory,
+                            slaveFactory,
+                            offsets,
+                            masterTimestampColumnIndex,
+                            groupByFunctions,
+                            valueTypesCopy.getColumnCount(),
+                            asOfJoinKeyTypes,
+                            masterAsOfJoinMapSink,
+                            slaveAsOfJoinMapSink,
+                            masterMetadata.getColumnCount(),
+                            masterSymbolKeyColumnIndices,
+                            slaveSymbolKeyColumnIndices,
+                            columnSources,
+                            columnIndices,
+                            asm
+                    );
+                }
+
+                return new HorizonJoinRecordCursorFactory(
                         configuration,
                         outerProjectionMetadata,
                         innerMetadata,
@@ -3601,57 +3624,78 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         offsets,
                         masterTimestampColumnIndex,
                         groupByFunctions,
-                        valueTypesCopy.getColumnCount(),
+                        new ObjList<>(tempOuterProjectionFunctions),
+                        keyTypesCopy,
+                        valueTypesCopy,
                         asOfJoinKeyTypes,
                         masterAsOfJoinMapSink,
                         slaveAsOfJoinMapSink,
                         masterMetadata.getColumnCount(),
                         masterSymbolKeyColumnIndices,
                         slaveSymbolKeyColumnIndices,
+                        groupByColumnFilter,
+                        keyFunctions,
                         columnSources,
                         columnIndices,
                         asm
                 );
             }
 
-            return new HorizonJoinRecordCursorFactory(
-                    configuration,
-                    outerProjectionMetadata,
-                    innerMetadata,
-                    masterFactory,
-                    slaveFactory,
-                    offsets,
-                    masterTimestampColumnIndex,
-                    groupByFunctions,
-                    new ObjList<>(tempOuterProjectionFunctions),
-                    keyTypesCopy,
-                    valueTypesCopy,
-                    asOfJoinKeyTypes,
-                    masterAsOfJoinMapSink,
-                    slaveAsOfJoinMapSink,
-                    masterMetadata.getColumnCount(),
-                    masterSymbolKeyColumnIndices,
-                    slaveSymbolKeyColumnIndices,
-                    groupByColumnFilter,
-                    keyFunctions,
-                    columnSources,
-                    columnIndices,
-                    asm
+            final ObjList<Function> perWorkerFilters = compileWorkerFiltersConditionally(
+                    executionContext,
+                    filter,
+                    workerCount,
+                    filterExpr,
+                    masterMetadata
             );
-        }
 
-        final ObjList<Function> perWorkerFilters = compileWorkerFiltersConditionally(
-                executionContext,
-                filter,
-                workerCount,
-                filterExpr,
-                masterMetadata
-        );
+            // Choose async factory based on whether there are GROUP BY keys
+            if (keyTypesCopy.getColumnCount() == 0) {
+                // Non-keyed GROUP BY: produces a single output row
+                return new AsyncHorizonJoinNotKeyedRecordCursorFactory(
+                        configuration,
+                        executionContext.getCairoEngine(),
+                        executionContext.getMessageBus(),
+                        outerProjectionMetadata,
+                        innerMetadata,
+                        masterFactory,
+                        slaveFactory,
+                        offsets,
+                        masterTimestampColumnIndex,
+                        groupByFunctions,
+                        perWorkerGroupByFunctions,
+                        valueTypesCopy.getColumnCount(),
+                        asOfJoinKeyTypes,
+                        masterAsOfJoinMapSinkClass,
+                        slaveAsOfJoinMapSinkClass,
+                        masterMetadata,
+                        listColumnFilterB,
+                        slaveMetadata,
+                        listColumnFilterA,
+                        asOfWriteSymbolAsString,
+                        asOfWriteStringAsVarcharB,
+                        asOfWriteStringAsVarcharA,
+                        writeTimestampAsNanosB,
+                        writeTimestampAsNanosA,
+                        masterMetadata.getColumnCount(),
+                        masterSymbolKeyColumnIndices,
+                        slaveSymbolKeyColumnIndices,
+                        columnSources,
+                        columnIndices,
+                        compiledFilter,
+                        bindVarMemory,
+                        bindVarFunctions,
+                        filter,
+                        perWorkerFilters,
+                        workerCount,
+                        asm,
+                        reduceTaskFactory
+                );
+            }
 
-        // Choose async factory based on whether there are GROUP BY keys
-        if (keyTypesCopy.getColumnCount() == 0) {
-            // Non-keyed GROUP BY: produces a single output row
-            return new AsyncHorizonJoinNotKeyedRecordCursorFactory(
+            // Keyed GROUP BY: create keyCopier for GROUP BY key population
+            // Pass keyFunctions to handle expression keys (virtual columns)
+            return new AsyncHorizonJoinRecordCursorFactory(
                     configuration,
                     executionContext.getCairoEngine(),
                     executionContext.getMessageBus(),
@@ -3663,7 +3707,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterTimestampColumnIndex,
                     groupByFunctions,
                     perWorkerGroupByFunctions,
-                    valueTypesCopy.getColumnCount(),
+                    new ObjList<>(tempOuterProjectionFunctions),
+                    keyTypesCopy,
+                    valueTypesCopy,
                     asOfJoinKeyTypes,
                     masterAsOfJoinMapSinkClass,
                     slaveAsOfJoinMapSinkClass,
@@ -3679,6 +3725,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterMetadata.getColumnCount(),
                     masterSymbolKeyColumnIndices,
                     slaveSymbolKeyColumnIndices,
+                    groupByColumnFilter,
+                    keyFunctions,
+                    perWorkerKeyFunctions,
                     columnSources,
                     columnIndices,
                     compiledFilter,
@@ -3690,54 +3739,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     asm,
                     reduceTaskFactory
             );
+        } catch (Throwable th) {
+            Misc.free(compiledFilter);
+            Misc.free(bindVarMemory);
+            Misc.freeObjList(bindVarFunctions);
+            Misc.free(filter);
+            throw th;
         }
-
-        // Keyed GROUP BY: create keyCopier for GROUP BY key population
-        // Pass keyFunctions to handle expression keys (virtual columns)
-        return new AsyncHorizonJoinRecordCursorFactory(
-                configuration,
-                executionContext.getCairoEngine(),
-                executionContext.getMessageBus(),
-                outerProjectionMetadata,
-                innerMetadata,
-                masterFactory,
-                slaveFactory,
-                offsets,
-                masterTimestampColumnIndex,
-                groupByFunctions,
-                perWorkerGroupByFunctions,
-                new ObjList<>(tempOuterProjectionFunctions),
-                keyTypesCopy,
-                valueTypesCopy,
-                asOfJoinKeyTypes,
-                masterAsOfJoinMapSinkClass,
-                slaveAsOfJoinMapSinkClass,
-                masterMetadata,
-                listColumnFilterB,
-                slaveMetadata,
-                listColumnFilterA,
-                asOfWriteSymbolAsString,
-                asOfWriteStringAsVarcharB,
-                asOfWriteStringAsVarcharA,
-                writeTimestampAsNanosB,
-                writeTimestampAsNanosA,
-                masterMetadata.getColumnCount(),
-                masterSymbolKeyColumnIndices,
-                slaveSymbolKeyColumnIndices,
-                groupByColumnFilter,
-                keyFunctions,
-                perWorkerKeyFunctions,
-                columnSources,
-                columnIndices,
-                compiledFilter,
-                bindVarMemory,
-                bindVarFunctions,
-                filter,
-                perWorkerFilters,
-                workerCount,
-                asm,
-                reduceTaskFactory
-        );
     }
 
     private RecordCursorFactory generateIntersectOrExceptAllFactory(
