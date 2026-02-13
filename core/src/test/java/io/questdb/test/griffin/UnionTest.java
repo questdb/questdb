@@ -169,6 +169,41 @@ public class UnionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterPushdownShouldNotChangeSampleByInNonFirstUnionBranch() throws Exception {
+        // Regression test: when the second UNION branch has SAMPLE BY and a
+        // different timestamp column name, canPushToSampleBy fails to detect
+        // that the outer filter references the timestamp (alias mismatch).
+        // This allows the timestamp filter to be pushed pre-aggregation into
+        // the SAMPLE BY branch, changing aggregation results.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (created_at TIMESTAMP, val DOUBLE) TIMESTAMP(created_at) PARTITION BY DAY");
+
+            execute("INSERT INTO t1 VALUES('2024-01-01T00:00:00.000000Z', 1.0)");
+            execute("""
+                    INSERT INTO t2 VALUES
+                    ('2024-01-01T00:00:00.000000Z', 10.0),
+                    ('2024-01-15T00:00:00.000000Z', 20.0),
+                    ('2024-01-31T00:00:00.000000Z', 30.0)
+                    """);
+
+            // Check the plan first
+            assertQueryNoLeakCheck(
+                    "PLACEHOLDER\n",
+                    """
+                            EXPLAIN SELECT * FROM (
+                                SELECT ts, val FROM t1
+                                UNION ALL
+                                SELECT created_at, avg(val) AS val FROM t2 SAMPLE BY 1M ALIGN TO CALENDAR
+                            ) WHERE ts IN '2024-01-01'
+                            """,
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testFilteredUnionAll() throws Exception {
         assertMemoryLeak(() -> {
             execute(
