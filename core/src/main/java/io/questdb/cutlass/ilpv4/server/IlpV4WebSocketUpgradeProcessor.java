@@ -28,6 +28,7 @@ import io.questdb.cutlass.ilpv4.protocol.*;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.ilpv4.websocket.*;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRawSocket;
@@ -102,7 +103,7 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
     }
 
     @Override
-    public void onHeadersReady(HttpConnectionContext context) {
+    public void onHeadersReady(HttpConnectionContext context) throws PeerDisconnectedException {
         // Validate the WebSocket handshake (version, key, etc.) before allocating
         // any per-connection state. getProcessor() returns unconditionally (needed for
         // protocol-switched resume), so we validate here before sending the 101.
@@ -121,9 +122,12 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
             if (bytesWritten > 0) {
                 try {
                     rawSocket.send(bytesWritten);
-                } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
-                    // best-effort
+                } catch (PeerIsSlowToReadException e) {
+                    // Send buffer full right after receiving headers with invalid handshake, that's weird error response cannot be delivered.
+                    // Throw HttpException so handleClientRecv disconnects the connection
+                    throw HttpException.instance("WebSocket handshake rejected: ").put(validationError);
                 }
+                // PeerDisconnectedException propagates to handleClientRecv → disconnectHttp()
             }
             return;
         }
@@ -150,16 +154,13 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
         if (bytesWritten > 0) {
             try {
                 rawSocket.send(bytesWritten);
-            } catch (PeerDisconnectedException e) {
-                LOG.info().$("WebSocket handshake failed, peer disconnected [fd=").$(context.getFd()).I$();
-                return;
             } catch (PeerIsSlowToReadException e) {
-                // Handshake blocked - this shouldn't happen on a fresh connection.
-                // The buffer now has handshake data that we can't track with our ACK state machine.
-                // Safest to disconnect rather than leave buffer in inconsistent state.
-                LOG.error().$("WebSocket handshake blocked, disconnecting [fd=").$(context.getFd()).I$();
-                return;
+                // Handshake blocked — shouldn't happen on a fresh connection.
+                // Throw HttpException so handleClientRecv disconnects the connection
+                // rather than leaving the buffer in an inconsistent state.
+                throw HttpException.instance("WebSocket 101 handshake blocked");
             }
+            // PeerDisconnectedException propagates to handleClientRecv → disconnectHttp()
             state.setWsHandshakeSent(true);
             LOG.info().$("WebSocket handshake sent [fd=").$(context.getFd()).I$();
 

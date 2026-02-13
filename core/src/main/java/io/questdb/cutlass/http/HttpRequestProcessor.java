@@ -108,7 +108,7 @@ public interface HttpRequestProcessor {
     default void onConnectionClosed(HttpConnectionContext context) {
     }
 
-    default void onHeadersReady(HttpConnectionContext context) {
+    default void onHeadersReady(HttpConnectionContext context) throws PeerDisconnectedException {
     }
 
     default void onRequestComplete(
