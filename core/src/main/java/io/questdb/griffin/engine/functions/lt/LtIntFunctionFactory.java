@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.lt;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -55,20 +56,32 @@ public class LtIntFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new LtIntFunction(args.getQuick(0), args.getQuick(1));
+        final Function left = args.getQuick(0);
+        final Function right = args.getQuick(1);
+        final boolean unsigned32 = left.getType() == ColumnType.UINT32 || right.getType() == ColumnType.UINT32;
+        return new LtIntFunction(left, right, unsigned32);
     }
 
     private static class LtIntFunction extends NegatableBooleanFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
+        private final boolean unsigned32;
 
-        public LtIntFunction(Function left, Function right) {
+        public LtIntFunction(Function left, Function right, boolean unsigned32) {
             this.left = left;
             this.right = right;
+            this.unsigned32 = unsigned32;
         }
 
         @Override
         public boolean getBool(Record rec) {
+            if (unsigned32) {
+                return Numbers.lessThanUInt32(
+                        left.getInt(rec),
+                        right.getInt(rec),
+                        negated
+                );
+            }
             return Numbers.lessThan(
                     left.getInt(rec),
                     right.getInt(rec),

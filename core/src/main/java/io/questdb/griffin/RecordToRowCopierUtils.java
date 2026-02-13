@@ -737,6 +737,14 @@ public class RecordToRowCopierUtils {
                     timestampTypeRef = toColumnType_0 + 2 * i;
                 }
 
+                if (fromColumnTypeTag == ColumnType.NULL && toColumnType == ColumnType.UINT16) {
+                    asm.aload(3);
+                    asm.iconst(toColumnWriterIndex);
+                    asm.iconst(Numbers.UINT16_NULL);
+                    asm.invokeInterface(wPutShort, 2);
+                    continue;
+                }
+
                 if (fromColumnTypeTag == ColumnType.NULL) {
                     fromColumnTypeTag = toColumnTypeTag;
                 }
@@ -1864,6 +1872,14 @@ public class RecordToRowCopierUtils {
                     fromColumnTypeTag == ColumnType.VARCHAR || fromColumnTypeTag == ColumnType.STRING || // Varchar -> Timestamp or String -> Timestamp
                     (fromColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != toColumnType))) { // Timestamp -> Timestamp
                 timestampTypeRef = toColumnType_0 + 2 * i;
+            }
+
+            if (fromColumnTypeTag == ColumnType.NULL && toColumnType == ColumnType.UINT16) {
+                asm.aload(3);
+                asm.iconst(toColumnWriterIndex);
+                asm.iconst(Numbers.UINT16_NULL);
+                asm.invokeInterface(wPutShort, 2);
+                continue;
             }
 
             if (fromColumnTypeTag == ColumnType.NULL) {

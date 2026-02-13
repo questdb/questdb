@@ -59,6 +59,42 @@ public class CursorPrinter {
 
     public static void printColumn(Record record, RecordMetadata metadata, int columnIndex, CharSink<?> sink, boolean symbolAsString, boolean printTypes, String nullStringValue) {
         final int columnType = metadata.getColumnType(columnIndex);
+        if (columnType == ColumnType.UINT16) {
+            final short value = record.getShort(columnIndex);
+            if (value != Numbers.UINT16_NULL) {
+                sink.put(Short.toUnsignedInt(value));
+            } else {
+                sink.put(nullStringValue);
+            }
+            if (printTypes) {
+                sink.put(':').put(ColumnType.nameOf(columnType));
+            }
+            return;
+        }
+        if (columnType == ColumnType.UINT32) {
+            final int value = record.getInt(columnIndex);
+            if (value != Numbers.UINT32_NULL) {
+                sink.put(Integer.toUnsignedLong(value));
+            } else {
+                sink.put(nullStringValue);
+            }
+            if (printTypes) {
+                sink.put(':').put(ColumnType.nameOf(columnType));
+            }
+            return;
+        }
+        if (columnType == ColumnType.UINT64) {
+            final long value = record.getLong(columnIndex);
+            if (value != Numbers.UINT64_NULL) {
+                sink.put(Long.toUnsignedString(value));
+            } else {
+                sink.put(nullStringValue);
+            }
+            if (printTypes) {
+                sink.put(':').put(ColumnType.nameOf(columnType));
+            }
+            return;
+        }
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.DATE:
                 DateFormatUtils.appendDateTime(sink, record.getDate(columnIndex));

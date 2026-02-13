@@ -56,6 +56,15 @@ public final class Constants {
     }
 
     public static ConstantFunction getNullConstant(int columnType) {
+        if (columnType == ColumnType.UINT16) {
+            return UInt16Constant.NULL;
+        }
+        if (columnType == ColumnType.UINT32) {
+            return UInt32Constant.NULL;
+        }
+        if (columnType == ColumnType.UINT64) {
+            return UInt64Constant.NULL;
+        }
         int typeTag = ColumnType.tagOf(columnType);
         switch (typeTag) {
             case ColumnType.GEOBYTE:
@@ -160,6 +169,9 @@ public final class Constants {
         typeConstants.put(ColumnType.INTERVAL_RAW, IntervalTypeConstant.RAW_INSTANCE);
         typeConstants.put(ColumnType.INTERVAL_TIMESTAMP_MICRO, IntervalTypeConstant.TIMESTAMP_MICRO_INSTANCE);
         typeConstants.put(ColumnType.INTERVAL_TIMESTAMP_NANO, IntervalTypeConstant.TIMESTAMP_NANO_INSTANCE);
+        typeConstants.put(ColumnType.UINT16, UInt16TypeConstant.INSTANCE);
+        typeConstants.put(ColumnType.UINT32, UInt32TypeConstant.INSTANCE);
+        typeConstants.put(ColumnType.UINT64, UInt64TypeConstant.INSTANCE);
 
 
         // pre-populate double array types up to 10 dimensions

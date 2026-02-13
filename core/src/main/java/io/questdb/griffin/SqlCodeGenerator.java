@@ -142,6 +142,7 @@ import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
@@ -2201,7 +2202,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int toTag = tagOf(toType);
             int fromTag = tagOf(fromType);
             if (fromTag == NULL) {
-                castFunctions.add(NullConstant.NULL);
+                castFunctions.add(Constants.getNullConstant(toType));
             } else {
                 switch (toTag) {
                     case BOOLEAN:

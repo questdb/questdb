@@ -794,6 +794,17 @@ public final class TableUtils {
     public static long getNullLong(int columnType, int longIndex) {
         // In theory, we can have a column type where `NULL` value will be different `LONG` values,
         // then this should return different values on longIndex. At the moment there are no such types.
+        if (columnType == ColumnType.UINT16) {
+            final int value = Numbers.UINT16_NULL & 0xFFFF;
+            final int packed = value | (value << 16);
+            return Numbers.encodeLowHighInts(packed, packed);
+        }
+        if (columnType == ColumnType.UINT32) {
+            return Numbers.encodeLowHighInts(Numbers.UINT32_NULL, Numbers.UINT32_NULL);
+        }
+        if (columnType == ColumnType.UINT64) {
+            return Numbers.UINT64_NULL;
+        }
         return switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.CHAR, ColumnType.SHORT -> 0L;
             case ColumnType.SYMBOL -> Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, SymbolTable.VALUE_IS_NULL);
@@ -1726,6 +1737,18 @@ public final class TableUtils {
     }
 
     public static void setNull(int columnType, long addr, long count) {
+        if (columnType == ColumnType.UINT16) {
+            Vect.setMemoryShort(addr, Numbers.UINT16_NULL, count);
+            return;
+        }
+        if (columnType == ColumnType.UINT32) {
+            Vect.setMemoryInt(addr, Numbers.UINT32_NULL, count);
+            return;
+        }
+        if (columnType == ColumnType.UINT64) {
+            Vect.setMemoryLong(addr, Numbers.UINT64_NULL, count);
+            return;
+        }
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:

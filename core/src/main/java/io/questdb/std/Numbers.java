@@ -50,6 +50,9 @@ public final class Numbers {
     public static final long JULIAN_EPOCH_OFFSET_MILLIS = 946684800000L;
     public static final long JULIAN_EPOCH_OFFSET_USEC = 946684800000000L;
     public static final long LONG_NULL = Long.MIN_VALUE;
+    public static final short UINT16_NULL = Short.MIN_VALUE;
+    public static final int UINT32_NULL = Integer.MIN_VALUE;
+    public static final long UINT64_NULL = Long.MIN_VALUE;
     public static final int MAX_DOUBLE_SCALE = 19;
     public static final int MAX_FLOAT_SCALE = 10;
     public static final long MAX_SAFE_INT_POW_2 = 1L << 30;
@@ -641,6 +644,33 @@ public final class Numbers {
         return Boolean.compare(isNull(a), isNull(b));
     }
 
+    public static int compare(int a, int b) {
+        final boolean aNull = a == UINT32_NULL;
+        final boolean bNull = b == UINT32_NULL;
+        if (aNull || bNull) {
+            return aNull == bNull ? 0 : (aNull ? -1 : 1);
+        }
+        return Integer.compareUnsigned(a, b);
+    }
+
+    public static int compare(long a, long b) {
+        final boolean aNull = a == UINT64_NULL;
+        final boolean bNull = b == UINT64_NULL;
+        if (aNull || bNull) {
+            return aNull == bNull ? 0 : (aNull ? -1 : 1);
+        }
+        return Long.compareUnsigned(a, b);
+    }
+
+    public static int compare(short a, short b) {
+        final boolean aNull = a == UINT16_NULL;
+        final boolean bNull = b == UINT16_NULL;
+        if (aNull || bNull) {
+            return aNull == bNull ? 0 : (aNull ? -1 : 1);
+        }
+        return Integer.compareUnsigned(Short.toUnsignedInt(a), Short.toUnsignedInt(b));
+    }
+
     public static int compareUnsigned(byte a, byte b) {
         return Byte.toUnsignedInt(a) - Byte.toUnsignedInt(b);
     }
@@ -1076,11 +1106,46 @@ public final class Numbers {
         return (eq || (a != IPv4_NULL && b != IPv4_NULL)) && (negated ? (eq || a1 > b1) : (!eq && a1 < b1));
     }
 
+    public static boolean lessThanUInt16(short a, short b, boolean negated) {
+        final boolean eq = a == b;
+        return (eq || (a != UINT16_NULL && b != UINT16_NULL))
+                && (negated
+                ? (eq || Integer.compareUnsigned(Short.toUnsignedInt(a), Short.toUnsignedInt(b)) > 0)
+                : (!eq && Integer.compareUnsigned(Short.toUnsignedInt(a), Short.toUnsignedInt(b)) < 0));
+    }
+
+    public static boolean lessThanUInt32(int a, int b, boolean negated) {
+        final boolean eq = a == b;
+        return (eq || (a != UINT32_NULL && b != UINT32_NULL))
+                && (negated
+                ? (eq || Integer.compareUnsigned(a, b) > 0)
+                : (!eq && Integer.compareUnsigned(a, b) < 0));
+    }
+
+    public static boolean lessThanUInt64(long a, long b, boolean negated) {
+        final boolean eq = a == b;
+        return (eq || (a != UINT64_NULL && b != UINT64_NULL))
+                && (negated
+                ? (eq || Long.compareUnsigned(a, b) > 0)
+                : (!eq && Long.compareUnsigned(a, b) < 0));
+    }
+
     public static float longToFloat(long value) {
         if (value != Numbers.LONG_NULL) {
             return value;
         }
         return Float.NaN;
+    }
+
+    public static double longToUnsignedDouble(long value) {
+        if (value >= 0) {
+            return value;
+        }
+        return (double) (value & Long.MAX_VALUE) + 0x1.0p63;
+    }
+
+    public static float longToUnsignedFloat(long value) {
+        return (float) longToUnsignedDouble(value);
     }
 
     public static int msb(int value) {

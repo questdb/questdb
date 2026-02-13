@@ -1061,7 +1061,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         for (int i = outResendColumnIndex; i < columnCount; i++) {
             final int columnType = pgResultSetColumnTypes.getQuick(2 * i);
             final int typeTag = ColumnType.tagOf(columnType);
-            final short columnBinaryFlag = getPgResultSetColumnFormatCode(i, typeTag);
+            final short columnBinaryFlag = getPgResultSetColumnFormatCode(i, columnType);
             // if column is not variable size and format code is text, we can't calculate size
             if (columnBinaryFlag == 0 && txtAndBinSizesCanBeDifferent(columnType)) {
                 return -1;
@@ -1279,7 +1279,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         for (int i = 0; i < columnCount; i++) {
             final int columnType = pgResultSetColumnTypes.getQuick(2 * i);
             final int typeTag = ColumnType.tagOf(columnType);
-            final short columnBinaryFlag = getPgResultSetColumnFormatCode(i, typeTag);
+            final short columnBinaryFlag = getPgResultSetColumnFormatCode(i, columnType);
 
             // number of bits or chars for geohash
             final int geohashSize = Math.abs(pgResultSetColumnTypes.getQuick(2 * i + 1));
@@ -1308,10 +1308,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     private short getPgResultSetColumnFormatCode(int columnIndex, int columnType) {
         // binary is always sent as binary (e.g.) we never Base64 encode that
-        if (columnType != ColumnType.BINARY) {
-            return (msgBindSelectFormatCodeCount > 1 ? msgBindSelectFormatCodes.get(columnIndex) : msgBindSelectFormatCodes.get(0)) ? (short) 1 : 0;
+        if (columnType == ColumnType.BINARY) {
+            return 1;
         }
-        return 1;
+        return (msgBindSelectFormatCodeCount > 1 ? msgBindSelectFormatCodes.get(columnIndex) : msgBindSelectFormatCodes.get(0)) ? (short) 1 : 0;
     }
 
     private boolean hasResultSet() {
@@ -2001,6 +2001,26 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         utf8Sink.putNetworkShort(value);
     }
 
+    private void outColBinUInt16(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final short value = record.getShort(columnIndex);
+        if (value != Numbers.UINT16_NULL) {
+            utf8Sink.putNetworkInt(Integer.BYTES);
+            utf8Sink.putNetworkInt(Short.toUnsignedInt(value));
+        } else {
+            utf8Sink.setNullValue();
+        }
+    }
+
+    private void outColBinUInt32(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final int value = record.getInt(columnIndex);
+        if (value != Numbers.UINT32_NULL) {
+            utf8Sink.putNetworkInt(Long.BYTES);
+            utf8Sink.putNetworkLong(Integer.toUnsignedLong(value));
+        } else {
+            utf8Sink.setNullValue();
+        }
+    }
+
     private void outColBinTimestamp(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType) {
         final long longValue = record.getTimestamp(columnIndex);
         if (longValue == Numbers.LONG_NULL) {
@@ -2292,6 +2312,39 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         utf8Sink.putLenEx(a);
     }
 
+    private void outColTxtUInt16(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final short value = record.getShort(columnIndex);
+        if (value != Numbers.UINT16_NULL) {
+            final long a = utf8Sink.skipInt();
+            utf8Sink.put(Short.toUnsignedInt(value));
+            utf8Sink.putLenEx(a);
+        } else {
+            utf8Sink.setNullValue();
+        }
+    }
+
+    private void outColTxtUInt32(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final int value = record.getInt(columnIndex);
+        if (value != Numbers.UINT32_NULL) {
+            final long a = utf8Sink.skipInt();
+            utf8Sink.put(Integer.toUnsignedLong(value));
+            utf8Sink.putLenEx(a);
+        } else {
+            utf8Sink.setNullValue();
+        }
+    }
+
+    private void outColTxtUInt64(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final long value = record.getLong(columnIndex);
+        if (value != Numbers.UINT64_NULL) {
+            final long a = utf8Sink.skipInt();
+            utf8Sink.put(Long.toUnsignedString(value));
+            utf8Sink.putLenEx(a);
+        } else {
+            utf8Sink.setNullValue();
+        }
+    }
+
     private void outColTxtTimestamp(PGResponseSink utf8Sink, Record record, int columnIndex, int timestampType) {
         long offset;
         long timestamp = record.getTimestamp(columnIndex);
@@ -2524,10 +2577,18 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 final int tagWithFlag = toColumnBinaryType(columnBinaryFlag, columnTag);
                 switch (tagWithFlag) {
                     case BINARY_TYPE_INT:
-                        outColBinInt(utf8Sink, record, colIndex);
+                        if (columnType == ColumnType.UINT32) {
+                            outColBinUInt32(utf8Sink, record, colIndex);
+                        } else {
+                            outColBinInt(utf8Sink, record, colIndex);
+                        }
                         break;
                     case ColumnType.INT:
-                        outColTxtInt(utf8Sink, record, colIndex);
+                        if (columnType == ColumnType.UINT32) {
+                            outColTxtUInt32(utf8Sink, record, colIndex);
+                        } else {
+                            outColTxtInt(utf8Sink, record, colIndex);
+                        }
                         break;
                     case ColumnType.IPv4:
                         outColTxtIPv4(utf8Sink, record, colIndex);
@@ -2554,13 +2615,25 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         outColSymbol(utf8Sink, record, colIndex);
                         break;
                     case BINARY_TYPE_LONG:
-                        outColBinLong(utf8Sink, record, colIndex);
+                        if (columnType == ColumnType.UINT64) {
+                            outColTxtUInt64(utf8Sink, record, colIndex);
+                        } else {
+                            outColBinLong(utf8Sink, record, colIndex);
+                        }
                         break;
                     case ColumnType.LONG:
-                        outColTxtLong(utf8Sink, record, colIndex);
+                        if (columnType == ColumnType.UINT64) {
+                            outColTxtUInt64(utf8Sink, record, colIndex);
+                        } else {
+                            outColTxtLong(utf8Sink, record, colIndex);
+                        }
                         break;
                     case ColumnType.SHORT:
-                        outColTxtShort(utf8Sink, record, colIndex);
+                        if (columnType == ColumnType.UINT16) {
+                            outColTxtUInt16(utf8Sink, record, colIndex);
+                        } else {
+                            outColTxtShort(utf8Sink, record, colIndex);
+                        }
                         break;
                     case BINARY_TYPE_DOUBLE:
                         outColBinDouble(utf8Sink, record, colIndex);
@@ -2572,7 +2645,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         outColBinFloat(utf8Sink, record, colIndex);
                         break;
                     case BINARY_TYPE_SHORT:
-                        outColBinShort(utf8Sink, record, colIndex);
+                        if (columnType == ColumnType.UINT16) {
+                            outColBinUInt16(utf8Sink, record, colIndex);
+                        } else {
+                            outColBinShort(utf8Sink, record, colIndex);
+                        }
                         break;
                     case BINARY_TYPE_DATE:
                         outColBinDate(utf8Sink, record, colIndex);

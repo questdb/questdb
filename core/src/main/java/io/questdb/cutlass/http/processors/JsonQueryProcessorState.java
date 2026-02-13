@@ -556,6 +556,42 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
     }
 
+    private static void putUInt16Value(HttpChunkedResponse response, Record rec, int col) {
+        final short value = rec.getShort(col);
+        if (value == Numbers.UINT16_NULL) {
+            response.putAscii("null");
+            return;
+        }
+        response.put(Short.toUnsignedInt(value));
+    }
+
+    private static void putUInt32Value(HttpChunkedResponse response, Record rec, int col, boolean quoteLargeNum) {
+        final int value = rec.getInt(col);
+        if (value == Numbers.UINT32_NULL) {
+            response.putAscii("null");
+            return;
+        }
+        final long unsignedValue = Integer.toUnsignedLong(value);
+        if (quoteLargeNum && unsignedValue > Integer.MAX_VALUE) {
+            response.putAscii('"').put(unsignedValue).putAscii('"');
+            return;
+        }
+        response.put(unsignedValue);
+    }
+
+    private static void putUInt64Value(HttpChunkedResponse response, Record rec, int col, boolean quoteLargeNum) {
+        final long value = rec.getLong(col);
+        if (value == Numbers.UINT64_NULL) {
+            response.putAscii("null");
+            return;
+        }
+        if (quoteLargeNum) {
+            response.putAscii('"').put(Long.toUnsignedString(value)).putAscii('"');
+            return;
+        }
+        response.put(Long.toUnsignedString(value));
+    }
+
     private static void putIntervalValue(HttpChunkedResponse response, Record rec, int col, int intervalType) {
         final Interval interval = rec.getInterval(col);
         if (Interval.NULL.equals(interval)) {
@@ -786,10 +822,18 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putFloatValue(response, record, columnIdx);
                     break;
                 case ColumnType.INT:
-                    putIntValue(response, record, columnIdx);
+                    if (columnType == ColumnType.UINT32) {
+                        putUInt32Value(response, record, columnIdx, quoteLargeNum);
+                    } else {
+                        putIntValue(response, record, columnIdx);
+                    }
                     break;
                 case ColumnType.LONG:
-                    putLongValue(response, record, columnIdx, quoteLargeNum);
+                    if (columnType == ColumnType.UINT64) {
+                        putUInt64Value(response, record, columnIdx, quoteLargeNum);
+                    } else {
+                        putLongValue(response, record, columnIdx, quoteLargeNum);
+                    }
                     break;
                 case ColumnType.DATE:
                     putDateValue(response, record, columnIdx);
@@ -798,7 +842,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putTimestampValue(response, record, columnIdx, ColumnType.getTimestampDriver(columnType));
                     break;
                 case ColumnType.SHORT:
-                    putShortValue(response, record, columnIdx);
+                    if (columnType == ColumnType.UINT16) {
+                        putUInt16Value(response, record, columnIdx);
+                    } else {
+                        putShortValue(response, record, columnIdx);
+                    }
                     break;
                 case ColumnType.CHAR:
                     putCharValue(response, record, columnIdx);

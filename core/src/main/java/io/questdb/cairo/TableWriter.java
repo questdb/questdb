@@ -3172,6 +3172,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private static void configureNullSetters(ObjList<Runnable> nullers, int columnType, MemoryA dataMem, MemoryA auxMem, int columnIndex, ObjList<MapWriter> symbolWriters) {
+        if (columnType == ColumnType.UINT16) {
+            nullers.add(() -> dataMem.putShort(Numbers.UINT16_NULL));
+            return;
+        }
+        if (columnType == ColumnType.UINT32) {
+            nullers.add(() -> dataMem.putInt(Numbers.UINT32_NULL));
+            return;
+        }
+        if (columnType == ColumnType.UINT64) {
+            nullers.add(() -> dataMem.putLong(Numbers.UINT64_NULL));
+            return;
+        }
         short columnTag = ColumnType.tagOf(columnType);
         if (ColumnType.isVarSize(columnTag)) {
             final ColumnTypeDriver typeDriver = ColumnType.getDriver(columnTag);

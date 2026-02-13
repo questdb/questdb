@@ -236,6 +236,37 @@ public class ColumnTypeTest {
         Assert.assertFalse(ColumnType.isDecimal(ColumnType.GEOHASH));
     }
 
+    @Test
+    public void testUnsignedTypes() {
+        Assert.assertEquals(ColumnType.UINT16, ColumnType.typeOf("uint16"));
+        Assert.assertEquals(ColumnType.UINT32, ColumnType.typeOf("uint32"));
+        Assert.assertEquals(ColumnType.UINT64, ColumnType.typeOf("uint64"));
+
+        Assert.assertEquals("UINT16", ColumnType.nameOf(ColumnType.UINT16));
+        Assert.assertEquals("UINT32", ColumnType.nameOf(ColumnType.UINT32));
+        Assert.assertEquals("UINT64", ColumnType.nameOf(ColumnType.UINT64));
+
+        Assert.assertEquals(ColumnType.SHORT, ColumnType.tagOf(ColumnType.UINT16));
+        Assert.assertEquals(ColumnType.INT, ColumnType.tagOf(ColumnType.UINT32));
+        Assert.assertEquals(ColumnType.LONG, ColumnType.tagOf(ColumnType.UINT64));
+
+        Assert.assertTrue(ColumnType.isFixedSize(ColumnType.UINT16));
+        Assert.assertTrue(ColumnType.isFixedSize(ColumnType.UINT32));
+        Assert.assertTrue(ColumnType.isFixedSize(ColumnType.UINT64));
+        Assert.assertTrue(ColumnType.isUnsigned(ColumnType.UINT16));
+        Assert.assertTrue(ColumnType.isUnsigned(ColumnType.UINT32));
+        Assert.assertTrue(ColumnType.isUnsigned(ColumnType.UINT64));
+        Assert.assertFalse(ColumnType.isUnsigned(ColumnType.INT));
+
+        Assert.assertEquals(ColumnType.UINT16, Constants.getTypeConstant(ColumnType.UINT16).getType());
+        Assert.assertEquals(ColumnType.UINT32, Constants.getTypeConstant(ColumnType.UINT32).getType());
+        Assert.assertEquals(ColumnType.UINT64, Constants.getTypeConstant(ColumnType.UINT64).getType());
+
+        Assert.assertEquals(ColumnType.UINT16, Constants.getNullConstant(ColumnType.UINT16).getType());
+        Assert.assertEquals(ColumnType.UINT32, Constants.getNullConstant(ColumnType.UINT32).getType());
+        Assert.assertEquals(ColumnType.UINT64, Constants.getNullConstant(ColumnType.UINT64).getType());
+    }
+
     private void callGetterForType(Function func, short type) {
         switch (type) {
             case ColumnType.BOOLEAN -> func.getBool(null);
