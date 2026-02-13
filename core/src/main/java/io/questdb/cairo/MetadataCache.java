@@ -460,6 +460,8 @@ public class MetadataCache implements QuietCloseable {
                 }
             }
 
+            localCache.sortKeys(CharSequence::compare);
+
             return version;
         }
 
