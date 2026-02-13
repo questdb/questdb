@@ -441,6 +441,8 @@ def main():
         print(f"  {stmt}")
         print()
 
+    sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
