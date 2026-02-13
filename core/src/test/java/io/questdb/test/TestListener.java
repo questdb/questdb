@@ -103,8 +103,7 @@ public class TestListener extends RunListener {
         testStartMs = System.currentTimeMillis();
         LOG.infoW().$(">>>> ")
                 .$safe(description.getClassName()).$('.')
-                .$safe(description.getMethodName())
-                .$();
+                .$safe(description.getMethodName());
         System.out.println(">>>>= " + description.getClassName() + '.' + description.getMethodName());
     }
 
