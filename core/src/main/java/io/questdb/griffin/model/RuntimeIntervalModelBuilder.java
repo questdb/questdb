@@ -68,7 +68,12 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     private TimestampDriver timestampDriver;
 
     public RuntimeIntrinsicIntervalModel build() {
-        return new RuntimeIntervalModel(timestampDriver, partitionBy, new LongList(staticIntervals), new ObjList<>(dynamicRangeList));
+        return new RuntimeIntervalModel(
+                timestampDriver,
+                partitionBy,
+                new LongList(staticIntervals),
+                new ObjList<>(dynamicRangeList)
+        );
     }
 
     @Override
@@ -133,6 +138,17 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
         if (isEmptySet()) {
+            return;
+        }
+
+        // Date variable expressions ($now, $today, etc.) must be evaluated dynamically
+        // so that cached queries always use the current time.
+        // compileTickExpr() validates the expression at compile time and returns
+        // a CompiledTickExpression that re-evaluates on each query execution.
+        if (containsDateVariable(seq, lo, lim)) {
+            CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                    timestampDriver, configuration, seq, lo, lim, position);
+            intersectCompiledTickExpr(compiled);
             return;
         }
 
@@ -346,6 +362,15 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
+        // Date variable expressions ($now, $today, etc.) must be evaluated dynamically
+        // so that cached queries always use the current time.
+        if (containsDateVariable(seq, lo, lim)) {
+            CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                    timestampDriver, configuration, seq, lo, lim, position);
+            subtractCompiledTickExpr(compiled);
+            return;
+        }
+
         int size = staticIntervals.size();
         boolean noDynamicIntervals = dynamicRangeList.size() == 0;
         IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, staticIntervals, IntervalOperation.SUBTRACT, sink, noDynamicIntervals);
@@ -393,6 +418,15 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void unionIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
         if (isEmptySet()) {
+            return;
+        }
+
+        // Date variable expressions ($now, $today, etc.) must be evaluated dynamically
+        // so that cached queries always use the current time.
+        if (containsDateVariable(seq, lo, lim)) {
+            CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                    timestampDriver, configuration, seq, lo, lim, position);
+            unionCompiledTickExpr(compiled);
             return;
         }
 
@@ -453,6 +487,15 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         return result;
     }
 
+    private static boolean containsDateVariable(CharSequence seq, int lo, int lim) {
+        for (int i = lo; i < lim - 1; i++) {
+            if (seq.charAt(i) == '$' && DateExpressionEvaluator.isDateVariable(seq, i, lim)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void intersectBetweenDynamic(Function funcValue1, Function funcValue2) {
         if (isEmptySet()) {
             return;
@@ -486,6 +529,33 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
         IntervalUtils.encodeInterval(constValue, 0, (short) 0, IntervalDynamicIndicator.IS_HI_DYNAMIC, operation, staticIntervals);
         dynamicRangeList.add(funcValue);
+        intervalApplied = true;
+    }
+
+    private void intersectCompiledTickExpr(CompiledTickExpression expr) {
+        if (isEmptySet()) {
+            return;
+        }
+        IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
+        dynamicRangeList.add(expr);
+        intervalApplied = true;
+    }
+
+    private void subtractCompiledTickExpr(CompiledTickExpression expr) {
+        if (isEmptySet()) {
+            return;
+        }
+        IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);
+        dynamicRangeList.add(expr);
+        intervalApplied = true;
+    }
+
+    private void unionCompiledTickExpr(CompiledTickExpression expr) {
+        if (isEmptySet()) {
+            return;
+        }
+        IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.UNION, staticIntervals);
+        dynamicRangeList.add(expr);
         intervalApplied = true;
     }
 

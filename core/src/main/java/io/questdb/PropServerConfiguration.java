@@ -365,6 +365,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean o3QuickSortEnabled;
     private final int parallelIndexThreshold;
     private final boolean parallelIndexingEnabled;
+    private final long parquetExportBatchSize;
     private final int parquetExportCompressionCodec;
     private final int parquetExportCompressionLevel;
     private final int parquetExportCopyReportFrequencyLines;
@@ -1536,6 +1537,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.parquetExportCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_COMPRESSION_LEVEL, defaultCompressionLevel);
             this.parquetExportRowGroupSize = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_ROW_GROUP_SIZE, 100_000);
             this.parquetExportDataPageSize = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_DATA_PAGE_SIZE, 1_048_576);
+            this.parquetExportBatchSize = getLong(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_BATCH_SIZE, 100_000);
             this.sqlMaxArrayElementCount = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_ARRAY_ELEMENT_COUNT, 10_000_000);
             this.preferencesStringPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_PREFERENCES_STRING_POOL_CAPACITY, 64);
 
@@ -3784,6 +3786,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getParquetExportCopyReportFrequencyLines() {
             return parquetExportCopyReportFrequencyLines;
+        }
+
+        @Override
+        public long getParquetExportBatchSize() {
+            return parquetExportBatchSize;
         }
 
         @Override
