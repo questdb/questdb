@@ -39,6 +39,7 @@ exclude:
     paths:
       - benchmarks
       - core/src/main/java/io/questdb/cairo/TickCalendarService.java
+      - core/src/main/java/io/questdb/griffin/SqlCompilerImpl.java
   # Exclude noisy style/migration inspections globally
   - name: EmptyMethod
   - name: JavadocBlankLines
