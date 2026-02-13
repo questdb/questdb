@@ -1513,7 +1513,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     -1,
                     MemoryTag.MMAP_TABLE_WAL_WRITER,
                     configuration.getWriterFileOpenOpts(),
-                    Files.POSIX_MADV_RANDOM
+                    Files.POSIX_MADV_SEQUENTIAL
             );
 
             final MemoryMA auxMem = getAuxColumn(columnIndex);
@@ -1528,7 +1528,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         getDataAppendPageSize(),
                         MemoryTag.MMAP_TABLE_WAL_WRITER,
                         configuration.getWriterFileOpenOpts(),
-                        Files.POSIX_MADV_RANDOM
+                        Files.POSIX_MADV_SEQUENTIAL
                 );
             }
         } finally {
