@@ -6136,31 +6136,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             2019-10-21T20:00:33.400000Z\tMiami\tOmron\t19.040759013405363
                             2019-10-21T21:00:33.400000Z\tMiami\tOmron\t18.880447260735636
                             2019-10-21T22:00:33.400000Z\tMiami\tOmron\t18.931106673084784
-                            2019-10-21T23:00:33.400000Z\tMiami\tOmron\t18.902751956422147
-                            2019-10-22T00:00:33.400000Z\tMiami\tOmron\t19.17787378419351
-                            2019-10-22T01:00:33.400000Z\tMiami\tOmron\t19.152877099534674
-                            2019-10-22T02:00:33.400000Z\tMiami\tOmron\t18.758696537494444
-                            2019-10-22T03:00:33.400000Z\tMiami\tOmron\t18.976188057903155
-                            2019-10-22T04:00:33.400000Z\tMiami\tOmron\t19.012327751968147
-                            2019-10-22T05:00:33.400000Z\tMiami\tOmron\t19.10191226261768
-                            2019-10-22T06:00:33.400000Z\tMiami\tOmron\t18.901817634883447
-                            2019-10-22T07:00:33.400000Z\tMiami\tOmron\t18.978597612188544
-                            2019-10-22T08:00:33.400000Z\tMiami\tOmron\t18.81682404517824
-                            2019-10-22T09:00:33.400000Z\tMiami\tOmron\t18.990314654856732
-                            2019-10-22T10:00:33.400000Z\tMiami\tOmron\t19.18799015324707
-                            2019-10-22T11:00:33.400000Z\tMiami\tOmron\t19.364656961385503
-                            2019-10-22T12:00:33.400000Z\tMiami\tOmron\t18.995868339279518
-                            2019-10-22T13:00:33.400000Z\tMiami\tOmron\t18.96954916895684
-                            2019-10-22T14:00:33.400000Z\tMiami\tOmron\t19.011398221478398
-                            2019-10-22T15:00:33.400000Z\tMiami\tOmron\t18.865504622696875
-                            2019-10-22T16:00:33.400000Z\tMiami\tOmron\t18.837200881627382
-                            2019-10-22T17:00:33.400000Z\tMiami\tOmron\t19.09786870870688
-                            2019-10-22T18:00:33.400000Z\tMiami\tOmron\t19.06560806760199
-                            2019-10-22T19:00:33.400000Z\tMiami\tOmron\t18.843835675155812
-                            2019-10-22T20:00:33.400000Z\tMiami\tOmron\t18.939776640738202
-                            2019-10-22T21:00:33.400000Z\tMiami\tOmron\t18.87168249042935
-                            2019-10-22T22:00:33.400000Z\tMiami\tOmron\t18.835373939360398
-                            2019-10-22T23:00:33.400000Z\tMiami\tOmron\t18.90154105169603
+                            2019-10-21T23:00:33.400000Z\tMiami\tOmron\t18.893692358480305
                             """
             );
         });
@@ -8889,6 +8865,112 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionAllSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("CREATE TABLE trades_agg (high DOUBLE, timestamp TIMESTAMP)");
+            execute("""
+                    INSERT INTO trades VALUES
+                     (10.0, '2024-01-01T00:00:10Z'),
+                     (20.0, '2024-01-01T00:00:40Z'),
+                     (15.0, '2024-01-01T00:01:20Z')""");
+            execute("""
+                    INSERT INTO trades_agg VALUES
+                     (50.0, '2024-01-01T00:02:00Z'),
+                     (60.0, '2024-01-01T00:03:00Z')""");
+            assertQueryNoLeakCheck(
+                    """
+                            high
+                            20.0
+                            15.0
+                            50.0
+                            60.0
+                            """,
+                    """
+                            SELECT high FROM (
+                                SELECT timestamp, max(price) AS high FROM trades SAMPLE BY 1m
+                                UNION ALL
+                                SELECT timestamp, high FROM trades_agg
+                            )""",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testUnionAllSampleBy2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("CREATE TABLE trades_agg (high DOUBLE, timestamp TIMESTAMP)");
+            execute("""
+                    INSERT INTO trades VALUES
+                     (10.0, '2024-01-01T00:00:10Z'),
+                     (20.0, '2024-01-01T00:00:40Z'),
+                     (15.0, '2024-01-01T00:01:20Z')""");
+            execute("""
+                    INSERT INTO trades_agg VALUES
+                     (50.0, '2024-01-01T00:02:00Z'),
+                     (60.0, '2024-01-01T00:03:00Z')""");
+            assertQueryNoLeakCheck(
+                    """
+                            high
+                            50.0
+                            60.0
+                            20.0
+                            15.0
+                            """,
+                    """
+                            SELECT high FROM (
+                                SELECT timestamp, high FROM trades_agg
+                                UNION ALL
+                                SELECT timestamp, max(price) AS high FROM trades SAMPLE BY 1m
+                            )""",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testUnionAllWithFilterUsesAliasFromFirstBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (name1 VARCHAR, ts1 TIMESTAMP, sym1 SYMBOL) TIMESTAMP(ts1)");
+            execute("CREATE TABLE t2 (name2 VARCHAR, ts2 TIMESTAMP, sym2 SYMBOL) TIMESTAMP(ts2)");
+            execute("""
+                    INSERT INTO t1 VALUES
+                     ('alice', '2025-12-01T01:30:00Z', 'X'),
+                     ('bob', '2025-12-01T05:00:00Z', 'Y')""");
+            execute("""
+                    INSERT INTO t2 VALUES
+                     ('carol', '2025-12-01T02:00:00Z', 'A'),
+                     ('dave', '2025-12-01T05:00:00Z', 'B')""");
+            // Query assigns the "ts" alias to the TIMESTAMP column in the first branch,
+            // but to the SYMBOL column in the second branch.
+            // WHERE honors the alias assignment in the first branch.
+            assertQueryNoLeakCheck(
+                    """
+                            ts
+                            2025-12-01T01:30:00.000000Z
+                            2025-12-01T02:00:00.000000Z
+                            """,
+                    """
+                            SELECT ts FROM (
+                                SELECT name1, ts1 ts, sym1 FROM t1
+                                UNION ALL
+                                SELECT name2, ts2, sym2 ts FROM t2
+                            ) WHERE ts IN '2025-12-01T01;2h'
+                            """,
+                    "",
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testUnionCastMatrix() {
         final int[][] expected = SqlCodeGenerator.expectedUnionCastMatrix();
         printExpectedUnionCastMatrix(expected);
@@ -9066,6 +9148,33 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 false,
                 true
         );
+    }
+
+    @Test
+    public void testVirtualColumnWithDateaddTimestampMetadata() throws Exception {
+        // Test that when using dateadd on timestamp column, the result metadata has correct timestamp
+        // even without explicit timestamp(ts) clause
+        assertMemoryLeak(() -> {
+            execute("create table trades (timestamp TIMESTAMP, price DOUBLE, amount DOUBLE) timestamp(timestamp) partition by DAY");
+            execute("insert into trades values ('2022-01-15T12:00:00.000000Z', 100.0, 10.0)");
+            execute("insert into trades values ('2022-06-15T12:00:00.000000Z', 150.0, 20.0)");
+
+            // Query with dateadd but without explicit timestamp(ts) clause
+            try (
+                    RecordCursorFactory factory = select("SELECT dateadd('h', -1, timestamp) as ts, price FROM trades");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                RecordMetadata metadata = factory.getMetadata();
+                // Verify timestamp index is set to the 'ts' column (index 0)
+                Assert.assertEquals("Expected timestamp index to be 0 (ts column)", 0, metadata.getTimestampIndex());
+
+                // Also verify data is correct
+                Record record = cursor.getRecord();
+                Assert.assertTrue(cursor.hasNext());
+                // First row: 2022-01-15T12:00:00 - 1h = 2022-01-15T11:00:00 = 1642244400000000 microseconds
+                Assert.assertEquals(100.0, record.getDouble(1), 0.001);
+            }
+        });
     }
 
     @Test

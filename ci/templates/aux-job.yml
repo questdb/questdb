@@ -11,7 +11,7 @@ jobs:
     pool:
       vmImage: $(imageName)
       name: $(poolName)
-    timeoutInMinutes: 15
+    timeoutInMinutes: 55
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
       RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]

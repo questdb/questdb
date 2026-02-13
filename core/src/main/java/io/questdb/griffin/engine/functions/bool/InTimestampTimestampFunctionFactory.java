@@ -39,16 +39,17 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Vect;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 
 import static io.questdb.griffin.model.IntervalUtils.isInIntervals;
-import static io.questdb.griffin.model.IntervalUtils.parseAndApplyInterval;
 
 public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
@@ -103,7 +104,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             if (intervalSearch) {
                 Function rightFn = args.getQuick(1);
                 CharSequence right = rightFn.getStrA(null);
-                return new EqTimestampStrConstantFunction(args.getQuick(0), timestampType, right, argPositions.getQuick(1));
+                return new EqTimestampStrConstantFunction(args.getQuick(0), timestampType, right, argPositions.getQuick(1), configuration);
             }
             return new InTimestampConstFunction(args.getQuick(0), parseDiscreteTimestampValues(timestampType, args, argPositions));
         }
@@ -122,7 +123,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
 
         if (intervalSearch) {
-            return new EqTimestampStrFunction(args.get(0), args.get(1), timestampType);
+            return new EqTimestampStrFunction(args.get(0), args.get(1), timestampType, configuration);
         }
 
         // have to copy, args is mutable
@@ -205,10 +206,12 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 Function left,
                 int leftTimestampType,
                 CharSequence right,
-                int rightPosition
+                int rightPosition,
+                CairoConfiguration configuration
         ) throws SqlException {
             this.left = left;
-            parseAndApplyInterval(ColumnType.getTimestampDriver(leftTimestampType), right, intervals, rightPosition);
+            final StringSink sink = new StringSink();
+            IntervalUtils.parseTickExprAndIntersect(ColumnType.getTimestampDriver(leftTimestampType), configuration, right, intervals, rightPosition, sink, true);
         }
 
         @Override
@@ -232,15 +235,18 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
     }
 
     private static class EqTimestampStrFunction extends NegatableBooleanFunction implements BinaryFunction {
+        private final CairoConfiguration configuration;
         private final LongList intervals = new LongList();
         private final Function left;
         private final Function right;
         private final TimestampDriver timestampDriver;
+        private final StringSink sink = new StringSink();
 
-        public EqTimestampStrFunction(Function left, Function right, int timestampType) {
+        public EqTimestampStrFunction(Function left, Function right, int timestampType, CairoConfiguration configuration) {
             this.left = left;
             this.right = right;
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
+            this.configuration = configuration;
         }
 
         @Override
@@ -256,7 +262,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             intervals.clear();
             try {
                 // we are ignoring exception contents here, so we do not need the exact position
-                parseAndApplyInterval(timestampDriver, timestampAsString, intervals, 0);
+                IntervalUtils.parseTickExprAndIntersect(timestampDriver, configuration, timestampAsString, intervals, 0, sink, true);
             } catch (SqlException e) {
                 return negated;
             }
@@ -386,6 +392,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         private final int intervalFuncPos;
         private final LongList intervals = new LongList();
         private final Function left;
+        private final StringSink sink = new StringSink();
 
         public InTimestampRuntimeConstIntervalFunction(Function left, Function intervalFunc, int timestampType, int intervalFuncPos) {
             this.left = left;
@@ -423,7 +430,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             switch (intervalFunc.getType()) {
                 case ColumnType.STRING:
                 case ColumnType.VARCHAR:
-                    parseAndApplyInterval(driver, intervalFunc.getStrA(null), intervals, 0);
+                    IntervalUtils.parseTickExprAndIntersect(driver, executionContext.getCairoEngine().getConfiguration(), intervalFunc.getStrA(null), intervals, 0, sink, true);
                     break;
                 default:
                     throw SqlException

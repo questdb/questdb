@@ -92,6 +92,7 @@ pub fn binary_to_page(
         primitive_type,
         options,
         encoding,
+        false,
     )
     .map(Page::Data)
 }

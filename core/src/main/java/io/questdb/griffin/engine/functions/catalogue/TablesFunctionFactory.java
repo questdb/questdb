@@ -33,6 +33,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -55,11 +56,7 @@ import io.questdb.std.str.StringSink;
 
 public class TablesFunctionFactory implements FunctionFactory {
     private static final int DEDUP_NAME_COLUMN = 5;
-    private static final int TABLE_NAME = 1;
-    // Replica metrics (39-44) - replica_* prefix
-    private static final int REPLICA_BATCH_COUNT_COLUMN = 39;
     private static final int DESIGNATED_TIMESTAMP_COLUMN = 2;
-    private static final int WAL_ENABLED_COLUMN = 4;
     private static final int DIRECTORY_NAME_COLUMN = 9;
     // Base columns (0-11) - pre-existing, keep names
     private static final int ID_COLUMN = 0;
@@ -68,6 +65,8 @@ public class TablesFunctionFactory implements FunctionFactory {
     private static final RecordMetadata METADATA;
     private static final int O3_MAX_LAG_COLUMN = 11;
     private static final int PARTITION_BY_COLUMN = 3;
+    // Replica metrics (39-44) - replica_* prefix
+    private static final int REPLICA_BATCH_COUNT_COLUMN = 39;
     private static final int REPLICA_BATCH_SIZE_MAX_COLUMN = 43;
     private static final int REPLICA_BATCH_SIZE_P50_COLUMN = 40;
     private static final int REPLICA_BATCH_SIZE_P90_COLUMN = 41;
@@ -82,19 +81,21 @@ public class TablesFunctionFactory implements FunctionFactory {
     private static final int TABLE_MERGE_RATE_P90_COLUMN = 27;
     private static final int TABLE_MERGE_RATE_P99_COLUMN = 28;
     private static final int TABLE_MIN_TIMESTAMP_COLUMN = 15;
+    private static final int TABLE_NAME = 1;
+    private static final int TABLE_ROW_COUNT_COLUMN = 14;
     // Table metrics (12-29) - table_* prefix
     private static final int TABLE_SUSPENDED_COLUMN = 12;
-    private static final int TABLE_ROW_COUNT_COLUMN = 14;
     private static final int TABLE_TXN_COLUMN = 18;
-    private static final int TABLE_WRITE_AMP_COUNT_COLUMN = 20;
     private static final int TABLE_TYPE_COLUMN = 13;
+    private static final int TABLE_WRITE_AMP_COUNT_COLUMN = 20;
     private static final int TABLE_WRITE_AMP_MAX_COLUMN = 24;
     private static final int TABLE_WRITE_AMP_P50_COLUMN = 21;
     private static final int TABLE_WRITE_AMP_P90_COLUMN = 22;
     private static final int TABLE_WRITE_AMP_P99_COLUMN = 23;
-    private static final int WAL_DEDUP_ROW_COUNT_COLUMN = 31;
     private static final int TTL_UNIT_COLUMN = 7;
     private static final int TTL_VALUE_COLUMN = 6;
+    private static final int WAL_DEDUP_ROW_COUNT_COLUMN = 31;
+    private static final int WAL_ENABLED_COLUMN = 4;
     private static final int WAL_MAX_TIMESTAMP_COLUMN = 33;
     // WAL metrics (30-38) - wal_* prefix
     private static final int WAL_PENDING_ROW_COUNT_COLUMN = 30;
@@ -254,6 +255,7 @@ public class TablesFunctionFactory implements FunctionFactory {
                 private StringSink lazyStringSink = null;
                 private CairoTable table;
                 private TableSequencerAPI tableSequencerAPI;
+                private TimestampDriver timestampDriver;
                 private RecentWriteTracker.WriteStats writeStats;
 
                 @Override
@@ -397,10 +399,11 @@ public class TablesFunctionFactory implements FunctionFactory {
                         return Numbers.LONG_NULL;
                     }
                     return switch (col) {
-                        case TABLE_MIN_TIMESTAMP_COLUMN -> writeStats.getTableMinTimestamp();
-                        case TABLE_MAX_TIMESTAMP_COLUMN -> writeStats.getTableMaxTimestamp();
+                        case TABLE_MIN_TIMESTAMP_COLUMN -> timestampDriver.toMicros(writeStats.getTableMinTimestamp());
+                        case TABLE_MAX_TIMESTAMP_COLUMN -> timestampDriver.toMicros(writeStats.getTableMaxTimestamp());
+                        case WAL_MAX_TIMESTAMP_COLUMN -> timestampDriver.toMicros(writeStats.getLastWalTimestamp());
+                        // table_last_write_timestamp is always in microseconds (system clock)
                         case TABLE_LAST_WRITE_TIMESTAMP_COLUMN -> writeStats.getTimestamp();
-                        case WAL_MAX_TIMESTAMP_COLUMN -> writeStats.getLastWalTimestamp();
                         default -> Numbers.LONG_NULL;
                     };
                 }
@@ -409,6 +412,7 @@ public class TablesFunctionFactory implements FunctionFactory {
                     this.table = table;
                     this.tableSequencerAPI = tableSequencerAPI;
                     this.writeStats = recentWriteTracker.getWriteStats(table.getTableToken());
+                    this.timestampDriver = ColumnType.getTimestampDriver(table.getTimestampType());
                 }
             }
         }

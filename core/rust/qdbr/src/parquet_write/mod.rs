@@ -8,6 +8,7 @@ mod fixed_len_bytes;
 mod jni;
 mod primitive;
 pub mod schema;
+pub mod simd;
 mod string;
 mod symbol;
 mod update;
@@ -631,5 +632,138 @@ mod tests {
             "Expected descending=false for ascending timestamp"
         );
         assert!(!sorting_cols[0].nulls_first);
+    }
+
+    #[test]
+    fn test_write_row_group_from_partitions_symbol_non_parallel() {
+        test_write_row_group_from_partitions_symbol(false);
+    }
+
+    #[test]
+    fn test_write_row_group_from_partitions_symbol_parallel() {
+        test_write_row_group_from_partitions_symbol(true);
+    }
+
+    fn test_write_row_group_from_partitions_symbol(parallel: bool) {
+        use crate::parquet_write::schema::{to_encodings, to_parquet_schema};
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let (col_chars, offsets) =
+            serialize_as_symbols(vec!["apple", "banana", "cherry", "date", "elderberry"]);
+
+        // Partition 1: keys [0, 1, 2] -> "apple", "banana", "cherry"
+        let keys1 = [0i32, 1, 2];
+        // Partition 2: keys [null, 3, 4] -> null, "date", "elderberry"
+        let keys2 = [i32::MIN, 3, 4];
+        // Partition 3: keys [1, null, 0] -> "banana", null, "apple"
+        let keys3 = [1i32, i32::MIN, 0];
+        let col1 = Column::from_raw_data(
+            0,
+            "sym",
+            12,
+            0,
+            keys1.len(),
+            keys1.as_ptr() as *const u8,
+            keys1.len() * size_of::<i32>(),
+            col_chars.as_ptr(),
+            col_chars.len(),
+            offsets.as_ptr(),
+            offsets.len(),
+            false,
+            false,
+        )
+        .unwrap();
+
+        let col2 = Column::from_raw_data(
+            0,
+            "sym",
+            12,
+            0,
+            keys2.len(),
+            keys2.as_ptr() as *const u8,
+            keys2.len() * size_of::<i32>(),
+            col_chars.as_ptr(),
+            col_chars.len(),
+            offsets.as_ptr(),
+            offsets.len(),
+            false,
+            false,
+        )
+        .unwrap();
+
+        let col3 = Column::from_raw_data(
+            0,
+            "sym",
+            12,
+            0,
+            keys3.len(),
+            keys3.as_ptr() as *const u8,
+            keys3.len() * size_of::<i32>(),
+            col_chars.as_ptr(),
+            col_chars.len(),
+            offsets.as_ptr(),
+            offsets.len(),
+            false,
+            false,
+        )
+        .unwrap();
+
+        let partition1 = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1],
+        };
+        let partition2 = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col2],
+        };
+        let partition3 = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col3],
+        };
+
+        let (schema, additional_meta) = to_parquet_schema(&partition1, false).unwrap();
+        let encodings = to_encodings(&partition1);
+
+        let mut chunked = ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_parallel(parallel)
+            .chunked(schema, encodings)
+            .unwrap();
+
+        let partitions: Vec<&Partition> = vec![&partition1, &partition2, &partition3];
+        chunked
+            .write_row_group_from_partitions(&partitions, 0, keys3.len())
+            .unwrap();
+        chunked.finish(additional_meta).unwrap();
+
+        // Verify output
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+        let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes.clone())
+            .expect("reader")
+            .with_batch_size(8192)
+            .build()
+            .expect("builder");
+
+        let expected = vec![
+            Some("apple"),
+            Some("banana"),
+            Some("cherry"),
+            None,
+            Some("date"),
+            Some("elderberry"),
+            Some("banana"),
+            None,
+            Some("apple"),
+        ];
+
+        for batch in parquet_reader.flatten() {
+            let symbol_array = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::StringArray>()
+                .expect("Failed to downcast");
+            let collected: Vec<_> = symbol_array.iter().collect();
+            assert_eq!(collected, expected);
+        }
     }
 }

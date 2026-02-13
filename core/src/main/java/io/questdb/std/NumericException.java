@@ -32,10 +32,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class NumericException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
-    /**
-     * @deprecated use {@link #instance()}
-     */
-    @Deprecated
     public static final NumericException INSTANCE = new NumericException();
     private static final io.questdb.std.ThreadLocal<NumericException> tlInstance = new ThreadLocal<>(NumericException::new);
     private final StringSink message = new StringSink();

@@ -131,6 +131,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<QueryModel> joinModels = new ObjList<>();
     private final ObjList<ExpressionNode> latestBy = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap modelAliasIndexes = new LowerCaseCharSequenceIntHashMap();
+    // Named window definitions from WINDOW clause (e.g., WINDOW w AS (PARTITION BY ...))
+    private final LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<ExpressionNode> orderBy = new ObjList<>();
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntList orderByDirection = new IntList();
@@ -226,6 +228,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode tableNameExpr;
     private RecordCursorFactory tableNameFunction;
     private ExpressionNode timestamp;
+    private CharSequence timestampOffsetAlias;  // The alias name for the transformed timestamp (e.g., "ts")
+    // Timestamp offset information for virtual models where timestamp is computed via dateadd.
+    // Used to enable timestamp predicate pushdown with appropriate offset adjustment.
+    // NOTE: The optimizer intrinsically understands dateadd(char, int, timestamp) and pushes
+    // predicates through it. The offset type must match dateadd's signature (int).
+    // See TimestampAddFunctionFactory for the function definition.
+    private char timestampOffsetUnit;           // 'h', 'd', 'm', 's', etc. (0 means no offset)
+    private int timestampOffsetValue;           // The offset value (inverse, e.g., +1 for dateadd -1)
+    private CharSequence timestampSourceColumn; // The original column name before dateadd transformation
+    private int timestampColumnIndex = -1;      // Index of the timestamp column in virtual models (-1 means not set)
     private QueryModel unionModel;
     private QueryModel updateTableModel;
     private TableToken updateTableToken;
@@ -476,9 +488,15 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         limitAdviceLo = null;
         limitPosition = 0;
         timestamp = null;
+        timestampOffsetUnit = 0;
+        timestampOffsetValue = 0;
+        timestampSourceColumn = null;
+        timestampOffsetAlias = null;
+        timestampColumnIndex = -1;
         sqlNodeStack.clear();
         joinColumns.clear();
         withClauseModel.clear();
+        namedWindows.clear();
         selectModelType = SELECT_MODEL_NONE;
         columnNameToAliasMap.clear();
         tableNameFunction = null;
@@ -616,8 +634,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void copyDeclsFrom(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, boolean overrideDeclares) throws SqlException {
         if (decls != null && decls.size() > 0) {
+            final ObjList<CharSequence> keys = decls.keys();
             if (overrideDeclares) {
-                final ObjList<CharSequence> keys = decls.keys();
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     final CharSequence key = keys.getQuick(i);
                     // Only allow override if the variable is marked as OVERRIDABLE
@@ -629,7 +647,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 }
                 this.decls.putAll(decls);
             } else {
-                final ObjList<CharSequence> keys = decls.keys();
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     final CharSequence key = keys.getQuick(i);
                     this.decls.putIfAbsent(key, decls.get(key));
@@ -846,6 +863,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return null;
     }
 
+    public LowerCaseCharSequenceObjHashMap<WindowExpression> getNamedWindows() {
+        return namedWindows;
+    }
+
     public QueryModel getNestedModel() {
         return nestedModel;
     }
@@ -983,6 +1004,30 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ExpressionNode getTimestamp() {
         return timestamp;
+    }
+
+    public CharSequence getTimestampOffsetAlias() {
+        return timestampOffsetAlias;
+    }
+
+    public char getTimestampOffsetUnit() {
+        return timestampOffsetUnit;
+    }
+
+    public int getTimestampOffsetValue() {
+        return timestampOffsetValue;
+    }
+
+    public CharSequence getTimestampSourceColumn() {
+        return timestampSourceColumn;
+    }
+
+    public boolean hasTimestampOffset() {
+        return timestampOffsetUnit != 0;
+    }
+
+    public int getTimestampColumnIndex() {
+        return timestampColumnIndex;
     }
 
     public ObjList<QueryColumn> getTopDownColumns() {
@@ -1513,6 +1558,26 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.timestamp = timestamp;
     }
 
+    public void setTimestampOffsetAlias(CharSequence alias) {
+        this.timestampOffsetAlias = alias;
+    }
+
+    public void setTimestampOffsetUnit(char unit) {
+        this.timestampOffsetUnit = unit;
+    }
+
+    public void setTimestampOffsetValue(int value) {
+        this.timestampOffsetValue = value;
+    }
+
+    public void setTimestampSourceColumn(CharSequence col) {
+        this.timestampSourceColumn = col;
+    }
+
+    public void setTimestampColumnIndex(int index) {
+        this.timestampColumnIndex = index;
+    }
+
     public void setUnionModel(QueryModel unionModel) {
         this.unionModel = unionModel;
         if (unionModel != null && viewNameExpr != null) {
@@ -1821,6 +1886,17 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             if (getLatestByType() != LATEST_BY_NEW && timestamp != null) {
                 sink.putAscii(" timestamp (");
                 timestamp.toSink(sink);
+                sink.putAscii(')');
+            }
+
+            // Output timestamp offset info if present (for dateadd-transformed timestamps)
+            if (hasTimestampOffset()) {
+                sink.putAscii(" ts_offset ('");
+                sink.putAscii(timestampOffsetUnit);
+                sink.putAscii("', ");
+                sink.put(timestampOffsetValue);
+                sink.putAscii(", ");
+                sink.put(timestampColumnIndex);
                 sink.putAscii(')');
             }
 

@@ -667,6 +667,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getParquetExportBatchSize() {
+        return getDelegate().getParquetExportBatchSize();
+    }
+
+    @Override
     public int getParquetExportCompressionCodec() {
         return getDelegate().getParquetExportCompressionCodec();
     }
@@ -1149,6 +1154,21 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlWindowTreeKeyPageSize() {
         return getDelegate().getSqlWindowTreeKeyPageSize();
+    }
+
+    @Override
+    public int getSqlIntervalIncrementalMergeThreshold() {
+        return getDelegate().getSqlIntervalIncrementalMergeThreshold();
+    }
+
+    @Override
+    public int getSqlIntervalMaxBracketDepth() {
+        return getDelegate().getSqlIntervalMaxBracketDepth();
+    }
+
+    @Override
+    public int getSqlIntervalMaxIntervalsAfterMerge() {
+        return getDelegate().getSqlIntervalMaxIntervalsAfterMerge();
     }
 
     @Override

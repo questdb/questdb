@@ -42,7 +42,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import static io.questdb.griffin.SqlOptimiser.aliasAppearsInFuncArgs;
-import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.*;
 
 public class SqlOptimiserTest extends AbstractSqlParserTest {
     private static final String orderByAdviceDdl = """
@@ -5281,6 +5281,352 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testTimestampDateaddBasicQuery() throws Exception {
+        // Verify basic dateadd query works correctly and timestamp is auto-detected
+        // The dateadd on the designated timestamp is recognized and 'ts' becomes the timestamp column
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
+            execute("insert into trades values (100, 10, '2022-01-01T00:00:00.000000Z');");
+            execute("insert into trades values (150, 20, '2022-06-15T12:00:00.000000Z');");
+            execute("insert into trades values (200, 30, '2023-01-01T00:00:00.000000Z');");
+
+            // Query without explicit timestamp() annotation - timestamp is auto-detected from dateadd
+            final String query = "SELECT dateadd('h', -1, timestamp) as ts, price, amount FROM trades";
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tprice\tamount
+                            2021-12-31T23:00:00.000000Z\t100.0\t10.0
+                            2022-06-15T11:00:00.000000Z\t150.0\t20.0
+                            2022-12-31T23:00:00.000000Z\t200.0\t30.0
+                            """,
+                    query,
+                    "ts",  // ts is now the timestamp column (auto-detected from dateadd)
+                    true,  // supports random access
+                    true   // expect size
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampOffsetRewriteModelBasic() throws Exception {
+        // Test that and_offset wrapper appears in the model when pushing predicates through offset models
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
+
+            final String query = """
+                    SELECT * FROM (
+                        (SELECT dateadd('h', -1, timestamp) as ts, price, amount FROM trades)
+                        timestamp (ts)
+                    ) WHERE ts in '2022'
+                    """;
+
+            final QueryModel model = compileModel(query);
+            String modelStr = model.toString0();
+
+            // Verify that and_offset is present in the nested model's WHERE clause
+            // The predicate should be pushed with and_offset wrapper
+            assertTrue("Expected and_offset in model: " + modelStr,
+                    modelStr.contains("and_offset"));
+            assertTrue("Expected timestamp column reference in and_offset: " + modelStr,
+                    modelStr.contains("timestamp in '2022'") || modelStr.contains("timestamp in \"2022\""));
+        });
+    }
+
+    @Test
+    public void testTimestampOffsetRewriteModelDaysUnit() throws Exception {
+        // Test and_offset with day units
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
+
+            final String query = """
+                    SELECT * FROM (
+                        (SELECT dateadd('d', -3, timestamp) as ts, price, amount FROM trades)
+                        timestamp (ts)
+                    ) WHERE ts >= '2022-01-01' AND ts < '2022-12-31'
+                    """;
+
+            final QueryModel model = compileModel(query);
+            String modelStr = model.toString0();
+
+            // Verify and_offset with day unit
+            assertTrue("Expected and_offset in model: " + modelStr,
+                    modelStr.contains("and_offset"));
+            // The unit should be 'd' for days
+            assertTrue("Expected day unit 'd' in and_offset: " + modelStr,
+                    modelStr.contains("'d'") || modelStr.contains("d,"));
+        });
+    }
+
+    @Test
+    public void testTimestampOffsetRewriteModelNoOffsetNoPush() throws Exception {
+        // Test that without dateadd, predicates are NOT wrapped in and_offset
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
+
+            // Query without dateadd - just column rename
+            final String query = """
+                    SELECT * FROM (
+                        (SELECT timestamp as ts, price, amount FROM trades)
+                        timestamp (ts)
+                    ) WHERE ts in '2022'
+                    """;
+
+            final QueryModel model = compileModel(query);
+            String modelStr = model.toString0();
+
+            // Should NOT have and_offset since there's no dateadd transformation
+            assertFalse("Should NOT have and_offset without dateadd: " + modelStr,
+                    modelStr.contains("and_offset"));
+        });
+    }
+
+    @Test
+    public void testTimestampOffsetRewriteModelNonConstantNotWrapped() throws Exception {
+        // Test that non-constant dateadd offsets do NOT get and_offset wrapper
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, offset_val int, timestamp timestamp) timestamp(timestamp);");
+
+            // Query with non-constant offset
+            final String query = """
+                    SELECT * FROM (
+                        (SELECT dateadd('h', offset_val, timestamp) as ts, price, amount FROM trades)
+                        timestamp (ts)
+                    ) WHERE ts in '2022'
+                    """;
+
+            final QueryModel model = compileModel(query);
+            String modelStr = model.toString0();
+
+            // Should NOT have and_offset since offset is not constant
+            assertFalse("Should NOT have and_offset with non-constant offset: " + modelStr,
+                    modelStr.contains("and_offset"));
+        });
+    }
+
+    @Test
+    public void testTimestampOffsetRewriteModelWithPositiveOffset() throws Exception {
+        // Test and_offset with positive offset (+1 hour in dateadd means -1 in and_offset)
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
+
+            final String query = """
+                    SELECT * FROM (
+                        (SELECT dateadd('h', 1, timestamp) as ts, price, amount FROM trades)
+                        timestamp (ts)
+                    ) WHERE ts >= '2022-01-01'
+                    """;
+
+            final QueryModel model = compileModel(query);
+            String modelStr = model.toString0();
+
+            // Verify and_offset with offset value -1 (inverse of +1)
+            assertTrue("Expected and_offset in model: " + modelStr,
+                    modelStr.contains("and_offset"));
+        });
+    }
+
+    @Test
+    public void testTimestampPredicateNotPushedWithoutOffset() throws Exception {
+        // Test that regular timestamp predicates still work normally
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
+            execute("insert into trades values (100, 10, '2022-01-01T00:00:00.000000Z');");
+            execute("insert into trades values (150, 20, '2022-06-15T12:00:00.000000Z');");
+            execute("insert into trades values (200, 30, '2023-01-01T00:00:00.000000Z');");
+
+            // Query without dateadd - just a direct column rename
+            final String query = """
+                    SELECT * FROM (
+                        (SELECT timestamp as ts, price, amount FROM trades)
+                        timestamp (ts)
+                    ) WHERE ts in '2022'
+                    """;
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tprice\tamount
+                            2022-01-01T00:00:00.000000Z\t100.0\t10.0
+                            2022-06-15T12:00:00.000000Z\t150.0\t20.0
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampPredicatePushdownMultiplePredicates() throws Exception {
+        // Test with multiple timestamp predicates
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
+            execute("insert into trades values (100, 10, '2022-01-01T10:00:00.000000Z');");
+            execute("insert into trades values (150, 20, '2022-06-15T12:00:00.000000Z');");
+            execute("insert into trades values (200, 30, '2022-12-31T23:00:00.000000Z');");
+
+            final String query = """
+                    SELECT * FROM (
+                        (SELECT dateadd('h', -1, timestamp) as ts, price, amount FROM trades)
+                        timestamp (ts)
+                    ) WHERE ts >= '2022-01-01T08:00:00' AND ts < '2022-06-15T12:00:00'
+                    """;
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tprice\tamount
+                            2022-01-01T09:00:00.000000Z\t100.0\t10.0
+                            2022-06-15T11:00:00.000000Z\t150.0\t20.0
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampPredicatePushdownNonConstantOffsetNotPushed() throws Exception {
+        // Test that non-constant dateadd offsets are not pushed
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, offset_val int, timestamp timestamp) timestamp(timestamp);");
+            execute("insert into trades values (100, 10, 1, '2022-01-01T00:00:00.000000Z');");
+
+            // Query with non-constant offset (should not be pushed)
+            final String query = """
+                    SELECT * FROM (
+                        (SELECT dateadd('h', offset_val, timestamp) as ts, price, amount FROM trades)
+                        timestamp (ts)
+                    ) WHERE ts in '2022'
+                    """;
+
+            // This query should still work, just without optimization
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tprice\tamount
+                            2022-01-01T01:00:00.000000Z\t100.0\t10.0
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampPredicatePushdownWithDateaddOffset() throws Exception {
+        // Basic test: predicate on virtual timestamp column derived from dateadd should be pushed down
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
+            execute("insert into trades values (100, 10, '2022-01-01T00:00:00.000000Z');");
+            execute("insert into trades values (150, 20, '2022-06-15T12:00:00.000000Z');");
+            execute("insert into trades values (200, 30, '2023-01-01T00:00:00.000000Z');");
+
+            // Query with dateadd -1 hour offset on timestamp
+            // When ts = dateadd('h', -1, timestamp), a row with timestamp = '2023-01-01T00:00:00' has ts = '2022-12-31T23:00:00'
+            // So ts in '2022' should include the row with timestamp = '2023-01-01T00:00:00'
+            final String query = """
+                    SELECT * FROM (
+                        (SELECT dateadd('h', -1, timestamp) as ts, price, amount FROM trades)
+                        timestamp (ts)
+                    ) WHERE ts in '2022'
+                    """;
+
+            // Verify the query returns the expected results
+            // Row 1: timestamp='2022-01-01', ts='2021-12-31T23:00' - NOT in '2022', excluded
+            // Row 2: timestamp='2022-06-15T12:00', ts='2022-06-15T11:00' - in '2022', included
+            // Row 3: timestamp='2023-01-01', ts='2022-12-31T23:00' - in '2022', included
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tprice\tamount
+                            2022-06-15T11:00:00.000000Z\t150.0\t20.0
+                            2022-12-31T23:00:00.000000Z\t200.0\t30.0
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true,
+                    true  // sizeCanBeVariable = true for virtual timestamp columns
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampPredicatePushdownWithDateaddOffsetDays() throws Exception {
+        // Test with day offset
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
+            execute("insert into trades values (100, 10, '2022-01-05T00:00:00.000000Z');");
+            execute("insert into trades values (150, 20, '2022-06-15T12:00:00.000000Z');");
+            execute("insert into trades values (200, 30, '2022-12-30T00:00:00.000000Z');");
+
+            // Query with dateadd -3 days offset
+            final String query = """
+                    SELECT * FROM (
+                        (SELECT dateadd('d', -3, timestamp) as ts, price, amount FROM trades)
+                        timestamp (ts)
+                    ) WHERE ts >= '2022-01-01' AND ts < '2022-01-03'
+                    """;
+
+            // First row: timestamp = 2022-01-05, ts = 2022-01-02 (in range)
+            // Second row: timestamp = 2022-06-15, ts = 2022-06-12 (NOT in range)
+            // Third row: timestamp = 2022-12-30, ts = 2022-12-27 (NOT in range)
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tprice\tamount
+                            2022-01-02T00:00:00.000000Z\t100.0\t10.0
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampPredicatePushdownWithDateaddOffsetNegative() throws Exception {
+        // Test with positive offset (dateadd adds time)
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
+            execute("insert into trades values (100, 10, '2022-01-01T00:00:00.000000Z');");
+            execute("insert into trades values (150, 20, '2022-06-15T12:00:00.000000Z');");
+            execute("insert into trades values (200, 30, '2022-12-31T23:00:00.000000Z');");
+
+            // Query with dateadd +1 hour offset on timestamp
+            final String query = """
+                    SELECT * FROM (
+                        (SELECT dateadd('h', 1, timestamp) as ts, price, amount FROM trades)
+                        timestamp (ts)
+                    ) WHERE ts in '2022'
+                    """;
+
+            // First row's ts = 2022-01-01T01:00:00 (in 2022)
+            // Second row's ts = 2022-06-15T13:00:00 (in 2022)
+            // Third row's ts = 2023-01-01T00:00:00 (NOT in 2022)
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tprice\tamount
+                            2022-01-01T01:00:00.000000Z\t100.0\t10.0
+                            2022-06-15T13:00:00.000000Z\t150.0\t20.0
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testUnaryMinusInAggregateFunction() throws Exception {
         assertMemoryLeak(() -> {
                     execute(tradesDdl);
@@ -5389,6 +5735,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             );
         });
     }
+
+    // ==================== Timestamp Predicate Pushdown Through Virtual Models with Offset ====================
 
     @Test
     public void testWhereClauseOnNestedModelWithFirstAggregateFunctionOnParentModel() throws Exception {
@@ -5577,6 +5925,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             );
         });
     }
+
+    //
+    // Tests for verifying the and_offset rewrite in the query model
+    //
 
     @Test
     public void testWhereClauseWithMinAggregateFunctions() throws Exception {

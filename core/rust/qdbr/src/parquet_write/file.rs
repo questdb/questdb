@@ -128,7 +128,7 @@ impl<W: Write> ParquetWriter<W> {
 
     /// Serialize columns in parallel
     #[allow(dead_code)]
-    pub fn set_parallel(mut self, parallel: bool) -> Self {
+    pub fn with_parallel(mut self, parallel: bool) -> Self {
         self.parallel = parallel;
         self
     }
@@ -391,6 +391,51 @@ pub fn create_row_group_from_partitions(
             |col_idx: usize| -> ParquetResult<DynStreamingIterator<CompressedPage, ParquetError>> {
                 let column_type = &column_types[col_idx];
                 let col_encoding = encoding[col_idx];
+                let first_partition_column = partitions[0].columns[col_idx];
+
+                if num_partitions > 1 && first_partition_column.data_type.is_symbol() {
+                    let partition_ranges: Vec<(Column, usize, usize)> = partitions
+                        .iter()
+                        .enumerate()
+                        .map(|(part_idx, partition)| {
+                            let column = partition.columns[col_idx];
+                            let (offset, length) = partition_slice_range(
+                                part_idx,
+                                num_partitions,
+                                column.row_count,
+                                first_partition_start,
+                                last_partition_end,
+                            );
+                            (column, offset, length)
+                        })
+                        .collect();
+
+                    let primitive_type = match column_type {
+                        ParquetType::PrimitiveType(pt) => pt,
+                        _ => {
+                            return Err(fmt_err!(
+                                InvalidType,
+                                "Symbol column must have primitive parquet type"
+                            ))
+                        }
+                    };
+
+                    let pages = symbol_column_to_pages_multi_partition(
+                        &partition_ranges,
+                        primitive_type,
+                        options,
+                    )?;
+
+                    let mut all_compressed_pages = VecDeque::new();
+                    for page in pages.into_iter() {
+                        let compressed = compress(page, vec![], options.compression)?;
+                        all_compressed_pages.push_back(Ok(compressed));
+                    }
+
+                    return Ok(DynStreamingIterator::new(CompressedPages::new(
+                        all_compressed_pages,
+                    )));
+                }
 
                 let mut all_compressed_pages = VecDeque::new();
                 for (part_idx, partition) in partitions.iter().enumerate() {
@@ -435,6 +480,7 @@ pub fn create_row_group_from_partitions(
             |col_idx: usize| -> ParquetResult<DynStreamingIterator<CompressedPage, ParquetError>> {
                 let column_type = &column_types[col_idx];
                 let col_encoding = encoding[col_idx];
+                let first_partition_column = partitions[0].columns[col_idx];
 
                 let partition_ranges: Vec<(Column, usize, usize)> = partitions
                     .iter()
@@ -451,6 +497,32 @@ pub fn create_row_group_from_partitions(
                         (column, offset, length)
                     })
                     .collect();
+
+                if num_partitions > 1 && first_partition_column.data_type.is_symbol() {
+                    let primitive_type = match column_type {
+                        ParquetType::PrimitiveType(pt) => pt,
+                        _ => {
+                            return Err(fmt_err!(
+                                InvalidType,
+                                "Symbol column must have primitive parquet type"
+                            ))
+                        }
+                    };
+
+                    let pages = symbol_column_to_pages_multi_partition(
+                        &partition_ranges,
+                        primitive_type,
+                        options,
+                    )?;
+                    let compression_iter = Compressor::new(
+                        DynIter::new(pages.into_iter().map(Ok)),
+                        options.compression,
+                        vec![],
+                    );
+
+                    return Ok(DynStreamingIterator::new(compression_iter));
+                }
+
                 let pages_iter = MultiPartitionColumnIterator::new(
                     partition_ranges,
                     column_type.clone(),
@@ -577,6 +649,82 @@ impl Iterator for MultiPartitionColumnIterator {
             }
         }
     }
+}
+
+fn symbol_column_to_pages_multi_partition(
+    partition_ranges: &[(Column, usize, usize)], // (column, offset, length)
+    primitive_type: &PrimitiveType,
+    options: WriteOptions,
+) -> ParquetResult<Vec<Page>> {
+    if partition_ranges.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // All partitions share the same symbol table
+    let first_column = partition_ranges[0].0;
+    let offsets = first_column.symbol_offsets;
+    let chars = first_column.secondary_data;
+
+    // Collect partition slice info (keys_slice, adjusted_column_top, required)
+    let partition_slices: Vec<(&[i32], usize, bool)> = partition_ranges
+        .iter()
+        .map(|(col, offset, length)| {
+            let keys: &[i32] = unsafe { util::transmute_slice(col.primary_data) };
+            let (keys_slice, adjusted_column_top) =
+                compute_symbol_slice(keys, col.column_top, *offset, *length);
+            (keys_slice, adjusted_column_top, col.required)
+        })
+        .collect();
+
+    // Build global info for dictionary
+    let global_info =
+        symbol::collect_symbol_global_info(partition_slices.iter().map(|(keys, _, _)| *keys));
+    let dict_page = symbol::build_symbol_dict_page(&global_info, offsets, chars)?;
+
+    // Build data pages for each partition
+    let mut pages = Vec::with_capacity(partition_ranges.len() + 1);
+    pages.push(Page::Dict(dict_page));
+
+    for &(keys_slice, adjusted_column_top, required) in &partition_slices {
+        let data_page = symbol::symbol_to_data_page_only(
+            keys_slice,
+            adjusted_column_top,
+            global_info.max_key,
+            options,
+            primitive_type.clone(),
+            offsets,
+            chars,
+            required,
+        )?;
+
+        pages.push(data_page);
+    }
+
+    Ok(pages)
+}
+
+#[inline]
+fn compute_symbol_slice(
+    keys: &[i32],
+    column_top: usize,
+    offset: usize,
+    length: usize,
+) -> (&[i32], usize) {
+    let mut adjusted_column_top = 0;
+    let lower_bound = if offset < column_top {
+        adjusted_column_top = column_top - offset;
+        0
+    } else {
+        (offset - column_top).min(keys.len())
+    };
+    let upper_bound = if offset + length < column_top {
+        adjusted_column_top = length;
+        0
+    } else {
+        (offset + length - column_top).min(keys.len())
+    };
+
+    (&keys[lower_bound..upper_bound], adjusted_column_top)
 }
 
 fn column_chunk_to_pages(
@@ -762,6 +910,7 @@ fn column_chunk_to_primitive_pages(
             adjusted_column_top,
             options,
             primitive_type,
+            column.required,
         );
     }
 
@@ -863,8 +1012,9 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::Int => {
             let data: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::int_slice_to_page_nullable::<i32, i32>(
-                &data[lower_bound..upper_bound],
+            let slice = &data[lower_bound..upper_bound];
+            primitive::slice_to_page_simd(
+                slice,
                 adjusted_column_top,
                 options,
                 primitive_type,
@@ -883,8 +1033,9 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::Long | ColumnTypeTag::Date => {
             let data: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::int_slice_to_page_nullable::<i64, i64>(
-                &data[lower_bound..upper_bound],
+            let slice = &data[lower_bound..upper_bound];
+            primitive::slice_to_page_simd(
+                slice,
                 adjusted_column_top,
                 options,
                 primitive_type,
@@ -894,6 +1045,7 @@ fn chunk_to_primitive_page(
         ColumnTypeTag::Timestamp => {
             let data: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
             if column.designated_timestamp {
+                // Designated timestamp column is NOT NULL, no need for SIMD def level encoding
                 primitive::int_slice_to_page_notnull::<i64, i64>(
                     &data[lower_bound..upper_bound],
                     adjusted_column_top,
@@ -902,8 +1054,9 @@ fn chunk_to_primitive_page(
                     encoding,
                 )
             } else {
-                primitive::int_slice_to_page_nullable::<i64, i64>(
-                    &data[lower_bound..upper_bound],
+                let slice = &data[lower_bound..upper_bound];
+                primitive::slice_to_page_simd(
+                    slice,
                     adjusted_column_top,
                     options,
                     primitive_type,
@@ -953,20 +1106,24 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::Float => {
             let data: &[f32] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::float_slice_to_page_plain::<f32, f32>(
-                &data[lower_bound..upper_bound],
+            let slice = &data[lower_bound..upper_bound];
+            primitive::slice_to_page_simd(
+                slice,
                 adjusted_column_top,
                 options,
                 primitive_type,
+                Encoding::Plain,
             )
         }
         ColumnTypeTag::Double => {
             let data: &[f64] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::float_slice_to_page_plain::<f64, f64>(
-                &data[lower_bound..upper_bound],
+            let slice = &data[lower_bound..upper_bound];
+            primitive::slice_to_page_simd(
+                slice,
                 adjusted_column_top,
                 options,
                 primitive_type,
+                Encoding::Plain,
             )
         }
         ColumnTypeTag::Binary => {
