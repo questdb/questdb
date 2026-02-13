@@ -270,6 +270,23 @@ public class InFlightWindowTest {
     }
 
     @Test
+    public void testFailAllPropagatesError() {
+        InFlightWindow window = new InFlightWindow(8, 1000);
+
+        window.addInFlight(0);
+        window.addInFlight(1);
+        window.failAll(new RuntimeException("Transport down"));
+
+        try {
+            window.awaitEmpty();
+            fail("Expected exception due to failAll");
+        } catch (LineSenderException e) {
+            assertTrue(e.getMessage().contains("failed"));
+            assertTrue(e.getMessage().contains("Transport down"));
+        }
+    }
+
+    @Test
     public void testClearError() {
         InFlightWindow window = new InFlightWindow(8, 1000);
 

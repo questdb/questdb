@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.line.websocket;
 
 import io.questdb.cutlass.ilpv4.client.IlpV4WebSocketSender;
 import io.questdb.cutlass.ilpv4.client.WebSocketResponse;
+import io.questdb.cutlass.ilpv4.websocket.WebSocketCloseCode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Os;
@@ -280,6 +281,123 @@ public class IlpV4WebSocketAckIntegrationTest extends AbstractWebSocketTest {
         }
     }
 
+    @Test
+    public void testAsyncFlushFailsFastOnServerClose() throws Exception {
+        ClosingServerHandler handler = new ClosingServerHandler();
+        int port = TEST_PORT + 20;
+
+        try (TestWebSocketServer server = new TestWebSocketServer(port, handler)) {
+            server.start();
+            Assert.assertTrue("Server failed to start", server.awaitStart(5, TimeUnit.SECONDS));
+
+            boolean errorCaught = false;
+            long start = System.currentTimeMillis();
+            try (IlpV4WebSocketSender sender = IlpV4WebSocketSender.connectAsync(
+                    "localhost", port, false, 0, 0, 0)) {
+                sender.table("test")
+                        .longColumn("value", 1)
+                        .atNow();
+                sender.flush();
+            } catch (Exception e) {
+                errorCaught = true;
+                Assert.assertTrue(
+                        e.getMessage().contains("closed")
+                                || e.getMessage().contains("Error in send queue")
+                                || e.getMessage().contains("failed")
+                );
+            }
+
+            long duration = System.currentTimeMillis() - start;
+            Assert.assertTrue("Expected async close error", errorCaught);
+            Assert.assertTrue("Flush should fail quickly on close [duration=" + duration + "ms]", duration < 10_000);
+        }
+    }
+
+    @Test
+    public void testAsyncFlushFailsFastOnInvalidAckPayload() throws Exception {
+        InvalidAckPayloadHandler handler = new InvalidAckPayloadHandler();
+        int port = TEST_PORT + 21;
+
+        try (TestWebSocketServer server = new TestWebSocketServer(port, handler)) {
+            server.start();
+            Assert.assertTrue("Server failed to start", server.awaitStart(5, TimeUnit.SECONDS));
+
+            boolean errorCaught = false;
+            long start = System.currentTimeMillis();
+            try (IlpV4WebSocketSender sender = IlpV4WebSocketSender.connectAsync(
+                    "localhost", port, false, 0, 0, 0)) {
+                sender.table("test")
+                        .longColumn("value", 1)
+                        .atNow();
+                sender.flush();
+            } catch (Exception e) {
+                errorCaught = true;
+                Assert.assertTrue(
+                        e.getMessage().contains("Invalid ACK response payload")
+                                || e.getMessage().contains("Error in send queue")
+                );
+            }
+
+            long duration = System.currentTimeMillis() - start;
+            Assert.assertTrue("Expected invalid ACK error", errorCaught);
+            Assert.assertTrue("Flush should fail quickly on invalid ACK [duration=" + duration + "ms]", duration < 10_000);
+        }
+    }
+
+    @Test
+    public void testSyncFlushFailsOnInvalidAckPayload() throws Exception {
+        InvalidAckPayloadHandler handler = new InvalidAckPayloadHandler();
+        int port = TEST_PORT + 22;
+
+        try (TestWebSocketServer server = new TestWebSocketServer(port, handler)) {
+            server.start();
+            Assert.assertTrue("Server failed to start", server.awaitStart(5, TimeUnit.SECONDS));
+
+            boolean errorCaught = false;
+            long start = System.currentTimeMillis();
+            try (IlpV4WebSocketSender sender = IlpV4WebSocketSender.connect("localhost", port, false)) {
+                sender.table("test")
+                        .longColumn("value", 7)
+                        .atNow();
+                sender.flush();
+            } catch (Exception e) {
+                errorCaught = true;
+                Assert.assertTrue(
+                        e.getMessage().contains("Invalid ACK response payload")
+                                || e.getMessage().contains("Failed to parse ACK response")
+                );
+            }
+
+            long duration = System.currentTimeMillis() - start;
+            Assert.assertTrue("Expected invalid ACK error in sync mode", errorCaught);
+            Assert.assertTrue("Sync invalid ACK path should fail quickly [duration=" + duration + "ms]", duration < 10_000);
+        }
+    }
+
+    @Test
+    public void testSyncFlushIgnoresPingAndWaitsForAck() throws Exception {
+        final long ackDelayMs = 300;
+        PingThenDelayedAckHandler handler = new PingThenDelayedAckHandler(ackDelayMs);
+        int port = TEST_PORT + 23;
+
+        try (TestWebSocketServer server = new TestWebSocketServer(port, handler)) {
+            server.start();
+            Assert.assertTrue("Server failed to start", server.awaitStart(5, TimeUnit.SECONDS));
+
+            try (IlpV4WebSocketSender sender = IlpV4WebSocketSender.connect("localhost", port, false)) {
+                sender.table("test")
+                        .longColumn("value", 11)
+                        .atNow();
+
+                long start = System.currentTimeMillis();
+                sender.flush();
+                long duration = System.currentTimeMillis() - start;
+
+                Assert.assertTrue("Flush returned too early [duration=" + duration + "ms]", duration >= ackDelayMs / 2);
+            }
+        }
+    }
+
     // ==================== SERVER HANDLERS ====================
 
     /**
@@ -411,6 +529,56 @@ public class IlpV4WebSocketAckIntegrationTest extends AbstractWebSocketTest {
                     byte[] ackResponse = createAckResponse(sequence);
                     client.sendBinary(ackResponse);
                     LOG.debug().$("Server sent delayed ACK for seq ").$(sequence).$();
+                } catch (Exception e) {
+                    LOG.error().$("Failed to send delayed ACK: ").$(e).$();
+                }
+            }).start();
+        }
+    }
+
+    private static class ClosingServerHandler implements TestWebSocketServer.WebSocketServerHandler {
+        @Override
+        public void onBinaryMessage(TestWebSocketServer.ClientHandler client, byte[] data) {
+            try {
+                client.sendClose(WebSocketCloseCode.GOING_AWAY, "bye");
+            } catch (IOException e) {
+                LOG.error().$("Failed to send close frame: ").$(e).$();
+            }
+        }
+    }
+
+    private static class InvalidAckPayloadHandler implements TestWebSocketServer.WebSocketServerHandler {
+        @Override
+        public void onBinaryMessage(TestWebSocketServer.ClientHandler client, byte[] data) {
+            try {
+                client.sendBinary(new byte[]{1, 2, 3});
+            } catch (IOException e) {
+                LOG.error().$("Failed to send invalid payload: ").$(e).$();
+            }
+        }
+    }
+
+    private static class PingThenDelayedAckHandler implements TestWebSocketServer.WebSocketServerHandler {
+        private final long delayMs;
+        private final AtomicLong nextSequence = new AtomicLong(0);
+
+        private PingThenDelayedAckHandler(long delayMs) {
+            this.delayMs = delayMs;
+        }
+
+        @Override
+        public void onBinaryMessage(TestWebSocketServer.ClientHandler client, byte[] data) {
+            long sequence = nextSequence.getAndIncrement();
+            try {
+                client.sendPing(new byte[]{42});
+            } catch (IOException e) {
+                LOG.error().$("Failed to send ping: ").$(e).$();
+            }
+
+            new Thread(() -> {
+                try {
+                    Thread.sleep(delayMs);
+                    client.sendBinary(createAckResponse(sequence));
                 } catch (Exception e) {
                     LOG.error().$("Failed to send delayed ACK: ").$(e).$();
                 }

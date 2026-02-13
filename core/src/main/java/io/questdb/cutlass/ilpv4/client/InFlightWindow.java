@@ -304,15 +304,30 @@ public class InFlightWindow {
         LOG.error().$("Batch failed [batchId=").$(batchId)
                 .$(", error=").$(error).I$();
 
-        // Wake all waiting threads
-        Thread waiter = waitingForSpace;
-        if (waiter != null) {
-            LockSupport.unpark(waiter);
-        }
-        waiter = waitingForEmpty;
-        if (waiter != null) {
-            LockSupport.unpark(waiter);
-        }
+        wakeWaiters();
+    }
+
+    /**
+     * Marks all currently in-flight batches as failed.
+     * <p>
+     * Used for transport-level failures (disconnect/protocol violation) where
+     * no further ACKs are expected and all waiters must be released.
+     *
+     * @param error terminal error to propagate
+     */
+    public void failAll(Throwable error) {
+        long sent = highestSent;
+        long acked = highestAcked;
+        long inFlight = Math.max(0, sent - acked);
+
+        this.failedBatchId = sent;
+        this.lastError.set(error);
+        totalFailed += Math.max(1, inFlight);
+
+        LOG.error().$("All in-flight batches failed [inFlight=").$(inFlight)
+                .$(", error=").$(error).I$();
+
+        wakeWaiters();
     }
 
     /**
@@ -436,7 +451,17 @@ public class InFlightWindow {
         lastError.set(null);
         failedBatchId = -1;
 
-        // Wake any waiting threads
+        wakeWaiters();
+    }
+
+    private void checkError() {
+        Throwable error = lastError.get();
+        if (error != null) {
+            throw new LineSenderException("Batch " + failedBatchId + " failed: " + error.getMessage(), error);
+        }
+    }
+
+    private void wakeWaiters() {
         Thread waiter = waitingForSpace;
         if (waiter != null) {
             LockSupport.unpark(waiter);
@@ -444,13 +469,6 @@ public class InFlightWindow {
         waiter = waitingForEmpty;
         if (waiter != null) {
             LockSupport.unpark(waiter);
-        }
-    }
-
-    private void checkError() {
-        Throwable error = lastError.get();
-        if (error != null) {
-            throw new LineSenderException("Batch " + failedBatchId + " failed: " + error.getMessage(), error);
         }
     }
 }

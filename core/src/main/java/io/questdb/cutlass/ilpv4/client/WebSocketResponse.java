@@ -65,6 +65,7 @@ public class WebSocketResponse {
 
     // Minimum response size: status (1) + sequence (8)
     public static final int MIN_RESPONSE_SIZE = 9;
+    public static final int MIN_ERROR_RESPONSE_SIZE = 11; // status + sequence + error length
     public static final int MAX_ERROR_MESSAGE_LENGTH = 1024;
 
     private byte status;
@@ -96,6 +97,37 @@ public class WebSocketResponse {
         response.sequence = sequence;
         response.errorMessage = errorMessage;
         return response;
+    }
+
+    /**
+     * Validates binary response framing without allocating.
+     * <p>
+     * Accepted formats:
+     * <ul>
+     *   <li>OK: exactly 9 bytes (status + sequence)</li>
+     *   <li>Error: exactly 11 + errorLength bytes</li>
+     * </ul>
+     *
+     * @param ptr    response buffer pointer
+     * @param length response frame payload length
+     * @return true if payload structure is valid
+     */
+    public static boolean isStructurallyValid(long ptr, int length) {
+        if (length < MIN_RESPONSE_SIZE) {
+            return false;
+        }
+
+        byte status = Unsafe.getUnsafe().getByte(ptr);
+        if (status == STATUS_OK) {
+            return length == MIN_RESPONSE_SIZE;
+        }
+
+        if (length < MIN_ERROR_RESPONSE_SIZE) {
+            return false;
+        }
+
+        int msgLen = Unsafe.getUnsafe().getShort(ptr + MIN_RESPONSE_SIZE) & 0xFFFF;
+        return length == MIN_ERROR_RESPONSE_SIZE + msgLen;
     }
 
     /**

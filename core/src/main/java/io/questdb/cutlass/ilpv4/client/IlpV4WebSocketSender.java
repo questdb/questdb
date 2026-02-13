@@ -984,9 +984,18 @@ public class IlpV4WebSocketSender implements Sender {
                 .$(", state=").$(MicrobatchBuffer.stateName(stateBeforeReset)).I$();
         activeBuffer.reset();
 
-        // Enqueue the sealed buffer for sending
-        if (!sendQueue.enqueue(toSend)) {
-            throw new LineSenderException("Failed to enqueue buffer for sending");
+        // Enqueue the sealed buffer for sending.
+        // If enqueue fails, roll back local state so the same batch can be retried.
+        try {
+            if (!sendQueue.enqueue(toSend)) {
+                throw new LineSenderException("Failed to enqueue buffer for sending");
+            }
+        } catch (LineSenderException e) {
+            activeBuffer = toSend;
+            if (toSend.isSealed()) {
+                toSend.rollbackSealForRetry();
+            }
+            throw e;
         }
     }
 
@@ -1109,11 +1118,18 @@ public class IlpV4WebSocketSender implements Sender {
 
         while (System.currentTimeMillis() < deadline) {
             try {
+                final boolean[] sawBinary = {false};
                 boolean received = client.receiveFrame(new WebSocketFrameHandler() {
                     @Override
                     public void onBinaryMessage(long payloadPtr, int payloadLen) {
-                        if (payloadLen >= WebSocketResponse.MIN_RESPONSE_SIZE) {
-                            response.readFrom(payloadPtr, payloadLen);
+                        sawBinary[0] = true;
+                        if (!WebSocketResponse.isStructurallyValid(payloadPtr, payloadLen)) {
+                            throw new LineSenderException(
+                                    "Invalid ACK response payload [length=" + payloadLen + ']'
+                            );
+                        }
+                        if (!response.readFrom(payloadPtr, payloadLen)) {
+                            throw new LineSenderException("Failed to parse ACK response");
                         }
                     }
 
@@ -1124,6 +1140,10 @@ public class IlpV4WebSocketSender implements Sender {
                 }, 1000); // 1 second timeout per read attempt
 
                 if (received) {
+                    // Non-binary frames (e.g. ping/pong/text) are not ACKs.
+                    if (!sawBinary[0]) {
+                        continue;
+                    }
                     long sequence = response.getSequence();
                     if (response.isSuccess()) {
                         // Cumulative ACK - acknowledge all batches up to this sequence
@@ -1144,13 +1164,24 @@ public class IlpV4WebSocketSender implements Sender {
                     }
                 }
             } catch (LineSenderException e) {
+                failExpectedIfNeeded(expectedSequence, e);
                 throw e;
             } catch (Exception e) {
-                throw new LineSenderException("Error waiting for ACK: " + e.getMessage(), e);
+                LineSenderException wrapped = new LineSenderException("Error waiting for ACK: " + e.getMessage(), e);
+                failExpectedIfNeeded(expectedSequence, wrapped);
+                throw wrapped;
             }
         }
 
-        throw new LineSenderException("Timeout waiting for ACK for batch " + expectedSequence);
+        LineSenderException timeout = new LineSenderException("Timeout waiting for ACK for batch " + expectedSequence);
+        failExpectedIfNeeded(expectedSequence, timeout);
+        throw timeout;
+    }
+
+    private void failExpectedIfNeeded(long expectedSequence, LineSenderException error) {
+        if (inFlightWindow != null && inFlightWindow.getLastError() == null) {
+            inFlightWindow.fail(expectedSequence, error);
+        }
     }
 
     @Override

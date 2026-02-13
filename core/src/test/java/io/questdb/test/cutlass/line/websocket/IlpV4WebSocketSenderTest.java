@@ -24,11 +24,19 @@
 
 package io.questdb.test.cutlass.line.websocket;
 
+import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.cutlass.http.client.WebSocketClient;
+import io.questdb.cutlass.ilpv4.client.MicrobatchBuffer;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.ilpv4.client.IlpV4WebSocketSender;
+import io.questdb.cutlass.ilpv4.client.WebSocketSendQueue;
+import io.questdb.network.PlainSocketFactory;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
@@ -332,6 +340,39 @@ public class IlpV4WebSocketSenderTest {
         }
     }
 
+    @Test
+    public void testSealAndSwapRollsBackOnEnqueueFailure() throws Exception {
+        IlpV4WebSocketSender sender = createUnconnectedAsyncSender();
+        ThrowingOnceWebSocketSendQueue queue = new ThrowingOnceWebSocketSendQueue();
+        try {
+            setSendQueue(sender, queue);
+
+            MicrobatchBuffer originalActive = getActiveBuffer(sender);
+            originalActive.writeByte((byte) 7);
+            originalActive.incrementRowCount();
+
+            try {
+                invokeSealAndSwapBuffer(sender);
+                Assert.fail("Expected LineSenderException");
+            } catch (LineSenderException e) {
+                Assert.assertTrue(e.getMessage().contains("Synthetic enqueue failure"));
+            }
+
+            // Failed enqueue must not strand the sealed buffer.
+            Assert.assertSame(originalActive, getActiveBuffer(sender));
+            Assert.assertTrue(originalActive.isFilling());
+            Assert.assertTrue(originalActive.hasData());
+            Assert.assertEquals(1, originalActive.getRowCount());
+
+            // Retry should be possible on the same sender instance.
+            invokeSealAndSwapBuffer(sender);
+            Assert.assertNotSame(originalActive, getActiveBuffer(sender));
+        } finally {
+            sender.close();
+            queue.close();
+        }
+    }
+
     /**
      * Creates a sender without connecting.
      * For unit tests that don't need actual connectivity.
@@ -358,5 +399,77 @@ public class IlpV4WebSocketSenderTest {
         return IlpV4WebSocketSender.createForTesting("localhost", 9000,
                 autoFlushRows, autoFlushBytes, autoFlushIntervalNanos,
                 inFlightWindowSize, sendQueueCapacity);
+    }
+
+    private static MicrobatchBuffer getActiveBuffer(IlpV4WebSocketSender sender) throws Exception {
+        Field field = IlpV4WebSocketSender.class.getDeclaredField("activeBuffer");
+        field.setAccessible(true);
+        return (MicrobatchBuffer) field.get(sender);
+    }
+
+    private static void setSendQueue(IlpV4WebSocketSender sender, WebSocketSendQueue queue) throws Exception {
+        Field field = IlpV4WebSocketSender.class.getDeclaredField("sendQueue");
+        field.setAccessible(true);
+        field.set(sender, queue);
+    }
+
+    private static void invokeSealAndSwapBuffer(IlpV4WebSocketSender sender) throws Exception {
+        Method method = IlpV4WebSocketSender.class.getDeclaredMethod("sealAndSwapBuffer");
+        method.setAccessible(true);
+        try {
+            method.invoke(sender);
+        } catch (InvocationTargetException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof Exception) {
+                throw (Exception) cause;
+            }
+            if (cause instanceof Error) {
+                throw (Error) cause;
+            }
+            throw new RuntimeException(cause);
+        }
+    }
+
+    private static class ThrowingOnceWebSocketSendQueue extends WebSocketSendQueue {
+        private boolean failOnce = true;
+
+        private ThrowingOnceWebSocketSendQueue() {
+            super(new NoOpWebSocketClient(), null, 1, 50, 50);
+        }
+
+        @Override
+        public boolean enqueue(MicrobatchBuffer buffer) {
+            if (failOnce) {
+                failOnce = false;
+                throw new LineSenderException("Synthetic enqueue failure");
+            }
+            return true;
+        }
+    }
+
+    private static class NoOpWebSocketClient extends WebSocketClient {
+        private NoOpWebSocketClient() {
+            super(DefaultHttpClientConfiguration.INSTANCE, PlainSocketFactory.INSTANCE);
+        }
+
+        @Override
+        public boolean isConnected() {
+            return false;
+        }
+
+        @Override
+        public void sendBinary(long dataPtr, int length) {
+            // no-op
+        }
+
+        @Override
+        protected void ioWait(int timeout, int op) {
+            // no-op
+        }
+
+        @Override
+        protected void setupIoWait() {
+            // no-op
+        }
     }
 }

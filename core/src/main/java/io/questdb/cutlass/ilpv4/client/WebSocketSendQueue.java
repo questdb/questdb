@@ -225,10 +225,30 @@ public class WebSocketSendQueue implements QuietCloseable {
         // Check for errors from I/O thread
         checkError();
 
-        // Add to queue and wake I/O thread
-        offerPending(buffer);
+        final long deadline = System.currentTimeMillis() + enqueueTimeoutMs;
         synchronized (processingLock) {
-            processingLock.notifyAll();
+            while (true) {
+                if (!running || shuttingDown) {
+                    throw new LineSenderException("Send queue is not running");
+                }
+                checkError();
+
+                if (offerPending(buffer)) {
+                    processingLock.notifyAll();
+                    break;
+                }
+
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0) {
+                    throw new LineSenderException("Enqueue timeout after " + enqueueTimeoutMs + "ms");
+                }
+                try {
+                    processingLock.wait(Math.min(10, remaining));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new LineSenderException("Interrupted while enqueueing", e);
+                }
+            }
         }
 
         LOG.debug().$("Enqueued batch [id=").$(buffer.getBatchId())
@@ -275,6 +295,9 @@ public class WebSocketSendQueue implements QuietCloseable {
                 checkError();
             }
         }
+
+        // If loop exited because running=false we still need to surface the root cause.
+        checkError();
 
         LOG.debug().$("Flush complete").I$();
     }
@@ -498,7 +521,7 @@ public class WebSocketSendQueue implements QuietCloseable {
         } catch (Exception e) {
             if (running) {
                 LOG.error().$("Error receiving response: ").$(e.getMessage()).I$();
-                lastError = e;
+                failTransport(new LineSenderException("Error receiving response: " + e.getMessage(), e));
             }
         }
     }
@@ -512,7 +535,7 @@ public class WebSocketSendQueue implements QuietCloseable {
         } catch (Throwable t) {
             LOG.error().$("Error sending batch [id=").$(batch.getBatchId()).$("]")
                     .$(t).I$();
-            lastError = t;
+            failTransport(new LineSenderException("Error sending batch " + batch.getBatchId() + ": " + t.getMessage(), t));
             // Mark as recycled even on error to allow cleanup
             if (batch.isSealed()) {
                 batch.markSending();
@@ -579,6 +602,31 @@ public class WebSocketSendQueue implements QuietCloseable {
         }
     }
 
+    private void failTransport(LineSenderException error) {
+        Throwable rootError = lastError;
+        if (rootError == null) {
+            lastError = error;
+            rootError = error;
+        }
+        running = false;
+        shuttingDown = true;
+        if (inFlightWindow != null) {
+            inFlightWindow.failAll(rootError);
+        }
+        synchronized (processingLock) {
+            MicrobatchBuffer dropped = pollPending();
+            if (dropped != null) {
+                if (dropped.isSealed()) {
+                    dropped.markSending();
+                }
+                if (dropped.isSending()) {
+                    dropped.markRecycled();
+                }
+            }
+            processingLock.notifyAll();
+        }
+    }
+
     /**
      * Returns total successful acknowledgments received.
      */
@@ -602,14 +650,20 @@ public class WebSocketSendQueue implements QuietCloseable {
 
         @Override
         public void onBinaryMessage(long payloadPtr, int payloadLen) {
-            if (payloadLen < WebSocketResponse.MIN_RESPONSE_SIZE) {
-                LOG.error().$("Response too short [length=").$(payloadLen).I$();
+            if (!WebSocketResponse.isStructurallyValid(payloadPtr, payloadLen)) {
+                LineSenderException error = new LineSenderException(
+                        "Invalid ACK response payload [length=" + payloadLen + ']'
+                );
+                LOG.error().$("Invalid ACK response payload [length=").$(payloadLen).I$();
+                failTransport(error);
                 return;
             }
 
             // Parse response from binary payload
             if (!response.readFrom(payloadPtr, payloadLen)) {
+                LineSenderException error = new LineSenderException("Failed to parse ACK response");
                 LOG.error().$("Failed to parse response").I$();
+                failTransport(error);
                 return;
             }
 
@@ -648,7 +702,7 @@ public class WebSocketSendQueue implements QuietCloseable {
         public void onClose(int code, String reason) {
             LOG.info().$("WebSocket closed by server [code=").$(code)
                     .$(", reason=").$(reason).I$();
-            running = false;
+            failTransport(new LineSenderException("WebSocket closed by server [code=" + code + ", reason=" + reason + ']'));
         }
     }
 }

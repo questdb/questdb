@@ -367,6 +367,21 @@ public class MicrobatchBuffer implements QuietCloseable {
     }
 
     /**
+     * Rolls back a seal operation, transitioning from SEALED back to FILLING.
+     * <p>
+     * Used when enqueue fails after a buffer has been sealed but before ownership
+     * was transferred to the I/O thread.
+     *
+     * @throws IllegalStateException if not in SEALED state
+     */
+    public void rollbackSealForRetry() {
+        if (state != STATE_SEALED) {
+            throw new IllegalStateException("Cannot rollback seal in state " + stateName(state));
+        }
+        state = STATE_FILLING;
+    }
+
+    /**
      * Marks the buffer as being sent, transitioning from SEALED to SENDING.
      * Only the I/O thread should call this.
      *

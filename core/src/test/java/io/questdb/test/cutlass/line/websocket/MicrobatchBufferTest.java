@@ -430,6 +430,28 @@ public class MicrobatchBufferTest {
         });
     }
 
+    @Test
+    public void testRollbackSealForRetry() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (MicrobatchBuffer buffer = new MicrobatchBuffer(1024)) {
+                buffer.writeByte((byte) 1);
+                buffer.incrementRowCount();
+
+                buffer.seal();
+                Assert.assertTrue(buffer.isSealed());
+
+                buffer.rollbackSealForRetry();
+                Assert.assertTrue(buffer.isFilling());
+
+                // Verify the same batch remains writable after rollback.
+                buffer.writeByte((byte) 2);
+                buffer.incrementRowCount();
+                Assert.assertEquals(2, buffer.getBufferPos());
+                Assert.assertEquals(2, buffer.getRowCount());
+            }
+        });
+    }
+
     // ==================== INVALID STATE TRANSITION TESTS ====================
 
     @Test(expected = IllegalStateException.class)
@@ -447,6 +469,15 @@ public class MicrobatchBufferTest {
         TestUtils.assertMemoryLeak(() -> {
             try (MicrobatchBuffer buffer = new MicrobatchBuffer(1024)) {
                 buffer.markSending(); // Should throw - not sealed
+            }
+        });
+    }
+
+    @Test(expected = IllegalStateException.class)
+    public void testRollbackSealWhenNotSealed() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (MicrobatchBuffer buffer = new MicrobatchBuffer(1024)) {
+                buffer.rollbackSealForRetry(); // Should throw - not sealed
             }
         });
     }
