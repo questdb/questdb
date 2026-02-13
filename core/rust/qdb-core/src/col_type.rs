@@ -411,6 +411,20 @@ pub fn encode_array_type(elem_type: ColumnTypeTag, dim: i32) -> CoreResult<Colum
     Ok(ColumnType::new(ColumnTypeTag::Array, extra))
 }
 
+pub mod nulls {
+    pub const BYTE: i8 = 0;
+    pub const SHORT: i16 = 0;
+    pub const INT: i32 = i32::MIN;
+    pub const LONG: i64 = i64::MIN;
+    pub const IPV4: i32 = 0;
+    pub const FLOAT: f32 = f32::NAN;
+    pub const DOUBLE: f64 = f64::NAN;
+    pub const GEOHASH_BYTE: i8 = -1;
+    pub const GEOHASH_SHORT: i16 = -1;
+    pub const GEOHASH_INT: i32 = -1;
+    pub const GEOHASH_LONG: i64 = -1;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
