@@ -51,6 +51,8 @@ public class IlpV4TableBuffer {
     private final String tableName;
     private final ObjList<ColumnBuffer> columns;
     private final CharSequenceIntHashMap columnNameToIndex;
+    private ColumnBuffer[] fastColumns; // plain array for O(1) sequential access
+    private int columnAccessCursor; // tracks expected next column index
     private int rowCount;
     private long schemaHash;
     private boolean schemaHashComputed;
@@ -112,8 +114,27 @@ public class IlpV4TableBuffer {
 
     /**
      * Gets or creates a column with the given name and type.
+     * <p>
+     * Optimized for the common case where columns are accessed in the same
+     * order every row: a sequential cursor avoids hash map lookups entirely.
      */
     public ColumnBuffer getOrCreateColumn(String name, byte type, boolean nullable) {
+        // Fast path: predict next column in sequence
+        int n = columns.size();
+        if (columnAccessCursor < n) {
+            ColumnBuffer candidate = fastColumns[columnAccessCursor];
+            if (candidate.name.equals(name)) {
+                columnAccessCursor++;
+                if (candidate.type != type) {
+                    throw new IllegalArgumentException(
+                            "Column type mismatch for " + name + ": existing=" + candidate.type + " new=" + type
+                    );
+                }
+                return candidate;
+            }
+        }
+
+        // Slow path: hash map lookup
         int idx = columnNameToIndex.get(name);
         if (idx != CharSequenceIntHashMap.NO_ENTRY_VALUE) {
             ColumnBuffer existing = columns.get(idx);
@@ -130,6 +151,16 @@ public class IlpV4TableBuffer {
         int index = columns.size();
         columns.add(col);
         columnNameToIndex.put(name, index);
+        // Update fast access array
+        if (fastColumns == null || index >= fastColumns.length) {
+            int newLen = Math.max(8, index + 4);
+            ColumnBuffer[] newArr = new ColumnBuffer[newLen];
+            if (fastColumns != null) {
+                System.arraycopy(fastColumns, 0, newArr, 0, index);
+            }
+            fastColumns = newArr;
+        }
+        fastColumns[index] = col;
         schemaHashComputed = false;
         columnDefsCacheValid = false;
         return col;
@@ -141,9 +172,11 @@ public class IlpV4TableBuffer {
      * This should be called after all column values for the current row have been set.
      */
     public void nextRow() {
+        // Reset sequential access cursor for the next row
+        columnAccessCursor = 0;
         // Ensure all columns have the same row count
         for (int i = 0, n = columns.size(); i < n; i++) {
-            ColumnBuffer col = columns.get(i);
+            ColumnBuffer col = fastColumns[i];
             // If column wasn't set for this row, add a null
             while (col.size < rowCount + 1) {
                 col.addNull();
@@ -159,9 +192,11 @@ public class IlpV4TableBuffer {
      * If no values have been added for the current row, this is a no-op.
      */
     public void cancelCurrentRow() {
+        // Reset sequential access cursor
+        columnAccessCursor = 0;
         // Truncate each column back to the committed row count
         for (int i = 0, n = columns.size(); i < n; i++) {
-            ColumnBuffer col = columns.get(i);
+            ColumnBuffer col = fastColumns[i];
             col.truncateTo(rowCount);
         }
     }
@@ -187,8 +222,9 @@ public class IlpV4TableBuffer {
      */
     public void reset() {
         for (int i = 0, n = columns.size(); i < n; i++) {
-            columns.get(i).reset();
+            fastColumns[i].reset();
         }
+        columnAccessCursor = 0;
         rowCount = 0;
     }
 
@@ -198,6 +234,8 @@ public class IlpV4TableBuffer {
     public void clear() {
         columns.clear();
         columnNameToIndex.clear();
+        fastColumns = null;
+        columnAccessCursor = 0;
         rowCount = 0;
         schemaHash = 0;
         schemaHashComputed = false;
