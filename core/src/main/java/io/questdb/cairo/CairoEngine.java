@@ -251,7 +251,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.telemetryWal = createTelemetry(TelemetryWalTask.WAL_TELEMETRY, configuration);
             this.telemetryMatView = createTelemetry(TelemetryMatViewTask.MAT_VIEW_TELEMETRY, configuration);
             this.telemetries = new ObjList<>(telemetryWal, telemetryMatView);
-            if (!configuration.getTelemetryConfiguration().getEnabled()) {
+            if (configuration.getTelemetryConfiguration().getEnabled()) {
                 // This is the only one that can be switched off by the configuration
                 telemetries.add(telemetry);
             }
