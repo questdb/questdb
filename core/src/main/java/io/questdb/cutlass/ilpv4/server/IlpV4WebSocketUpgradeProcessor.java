@@ -536,6 +536,19 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
         LOG.info().$("WebSocket close [fd=").$(context.getFd()).$(", code=").$(closeCode).I$();
 
+        // Flush any pending ACKs for already-committed data before closing.
+        // The client may have sent [BINARY₁, ..., BINARYₙ, CLOSE] in the same
+        // TCP segment — those messages are committed but not yet ACKed. Without
+        // this flush the client would never learn that its data was persisted.
+        try {
+            flushPendingAck(context, state);
+        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
+            // Best effort — if the ACK can't be sent, proceed with close.
+            // PeerIsSlowToReadException transitions state to SENDING, so the
+            // isSendReady() check below will skip the close response (the ACK
+            // in the send buffer is more important than the close frame).
+        }
+
         // Send close response only if buffer is clear
         if (!state.isSendReady()) {
             LOG.debug().$("Skipping close response, buffer busy [fd=").$(context.getFd()).I$();
