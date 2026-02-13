@@ -1698,10 +1698,8 @@ public final class IntervalUtils {
 
     /**
      * Compiles a bare variable (possibly a range like "$today..$today+5bd") into irList.
-     *
-     * @return 1 (always one logical element)
      */
-    private static int compileBareVarElement(
+    private static void compileBareVarElement(
             CharSequence effectiveSeq,
             int elemListLo,
             int elemListHi,
@@ -1731,7 +1729,6 @@ public final class IntervalUtils {
             irList.add(CompiledTickExpression.TAG_SINGLE_VAR
                     | DateVariableExpr.parseEncoded(effectiveSeq, elemListLo, elemListHi, position));
         }
-        return 1;
     }
 
     /**
@@ -1786,7 +1783,8 @@ public final class IntervalUtils {
                 }
 
                 if (effectiveSeq.charAt(es) == '$') {
-                    elemCount += compileVarElement(effectiveSeq, es, ee, position, irList);
+                    compileVarElement(effectiveSeq, es, ee, position, irList);
+                    elemCount++;
                 } else {
                     elemCount += compileStaticElement(
                             timestampDriver, configuration, effectiveSeq,
@@ -1867,7 +1865,8 @@ public final class IntervalUtils {
             LongList tmp
     ) throws SqlException {
         if (isBareVar) {
-            return compileBareVarElement(effectiveSeq, elemListLo, elemListHi, position, irList);
+            compileBareVarElement(effectiveSeq, elemListLo, elemListHi, position, irList);
+            return 1;
         }
         return compileBracketListElements(
                 timestampDriver, configuration, effectiveSeq,
@@ -2199,10 +2198,8 @@ public final class IntervalUtils {
 
     /**
      * Compiles a single variable element (possibly a range) and appends to irList.
-     *
-     * @return 1 (always one logical element)
      */
-    private static int compileVarElement(
+    private static void compileVarElement(
             CharSequence effectiveSeq,
             int es,
             int ee,
@@ -2228,7 +2225,6 @@ public final class IntervalUtils {
             irList.add(CompiledTickExpression.TAG_SINGLE_VAR
                     | DateVariableExpr.parseEncoded(effectiveSeq, es, ee, position));
         }
-        return 1;
     }
 
     /**

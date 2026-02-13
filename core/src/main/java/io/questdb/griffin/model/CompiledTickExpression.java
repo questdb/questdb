@@ -28,7 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UntypedFunction;
 import io.questdb.std.LongList;
@@ -142,7 +141,7 @@ public class CompiledTickExpression extends UntypedFunction {
      * the resulting [lo, hi] interval pairs to outIntervals.
      * This overload is intended for testing without a SqlExecutionContext.
      */
-    public void evaluate(LongList outIntervals, long now) throws SqlException {
+    public void evaluate(LongList outIntervals, long now) {
         this.now = now;
         evaluate(outIntervals);
     }
