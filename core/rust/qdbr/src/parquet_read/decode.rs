@@ -3,9 +3,9 @@ use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
 use crate::parquet::util::{align8b, ARRAY_NDIMS_LIMIT};
 use crate::parquet_read::column_sink::fixed::{
-    Day, DeltaBinaryPackedPrimitiveDecoder, FixedBooleanColumnSink, FixedIntColumnSink,
-    FixedLong128ColumnSink, FixedLong256ColumnSink, IntDecimalColumnSink, Millis,
-    NanoTimestampColumnSink, PlainPrimitiveDecoder, ReverseFixedColumnSink,
+    Day, DeltaBinaryPackedPrimitiveDecoder, FixedBooleanColumnSink, FixedLong128ColumnSink,
+    FixedLong256ColumnSink, IntDecimalColumnSink, Millis, NanoTimestampColumnSink,
+    PlainPrimitiveDecoder, ReverseFixedColumnSink,
 };
 use crate::parquet_read::column_sink::var::ARRAY_AUX_SIZE;
 use crate::parquet_read::column_sink::var::{
@@ -16,7 +16,7 @@ use crate::parquet_read::page::{split_buffer, DataPage, DictPage};
 use crate::parquet_read::slicer::dict_decoder::{
     FixedDictDecoder, PrimitiveFixedDictDecoder, RleDictionaryDecoder, VarDictDecoder,
 };
-use crate::parquet_read::slicer::rle::{RleDictionarySlicer, RleLocalIsGlobalSymbolDecoder};
+use crate::parquet_read::slicer::rle::{RleDictionarySlicer, RleLocalIsGlobalSymbolDictDecoder};
 use crate::parquet_read::slicer::{
     BooleanBitmapSlicer, BooleanRleSlicer, DataPageFixedSlicer, DataPageSlicer,
     DeltaBytesArraySlicer, DeltaLengthArraySlicer, PlainVarSlicer,
@@ -132,7 +132,6 @@ const LONG256_NULL: [u8; 32] = [
     0, 128,
 ];
 const INT_NULL: [u8; 4] = i32::MIN.to_le_bytes();
-const SYMBOL_NULL: [u8; 4] = i32::MIN.to_le_bytes();
 const LONG_NULL: [u8; 8] = i64::MIN.to_le_bytes();
 const DOUBLE_NULL: [u8; 8] = [0, 0, 0, 0, 0, 0, 248, 127];
 const TIMESTAMP_96_EMPTY: [u8; 12] = [0; 12];
@@ -1616,19 +1615,14 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                     )?;
                     Ok(())
                 }
-                (Encoding::RleDictionary, Some(_dict_page), ColumnTypeTag::Symbol) => {
+                (Encoding::RleDictionary, Some(dict_page), ColumnTypeTag::Symbol) => {
                     if col_info.format != Some(QdbMetaColFormat::LocalKeyIsGlobal) {
                         return Err(fmt_err!(
                             Unsupported,
                             "only special LocalKeyIsGlobal-encoded symbol columns are supported",
                         ));
                     }
-                    let mut slicer = RleLocalIsGlobalSymbolDecoder::try_new(
-                        values_buffer,
-                        page_row_count,
-                        page_row_count,
-                        &SYMBOL_NULL,
-                    )?;
+                    let dict_decoder = RleLocalIsGlobalSymbolDictDecoder::new(dict_page);
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -1637,7 +1631,13 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedIntColumnSink::new(&mut slicer, bufs, &SYMBOL_NULL),
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            row_hi,
+                            nulls::SYMBOL_NULL,
+                            bufs,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -2636,24 +2636,25 @@ pub fn decode_page(
                     )?;
                     Ok(())
                 }
-                (Encoding::RleDictionary, Some(_dict_page), ColumnTypeTag::Symbol) => {
+                (Encoding::RleDictionary, Some(dict_page), ColumnTypeTag::Symbol) => {
                     if col_info.format != Some(QdbMetaColFormat::LocalKeyIsGlobal) {
                         return Err(fmt_err!(
                             Unsupported,
                             "only special LocalKeyIsGlobal-encoded symbol columns are supported",
                         ));
                     }
-                    let mut slicer = RleLocalIsGlobalSymbolDecoder::try_new(
-                        values_buffer,
-                        row_hi,
-                        row_count,
-                        &SYMBOL_NULL,
-                    )?;
+                    let dict_decoder = RleLocalIsGlobalSymbolDictDecoder::new(dict_page);
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedIntColumnSink::new(&mut slicer, bufs, &SYMBOL_NULL),
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            row_hi,
+                            nulls::SYMBOL_NULL,
+                            bufs,
+                        )?,
                     )?;
                     Ok(())
                 }

@@ -1,5 +1,6 @@
 use crate::parquet::error::{fmt_err, ParquetError, ParquetResult};
-use crate::parquet_read::slicer::dict_decoder::DictDecoder;
+use crate::parquet_read::page::DictPage;
+use crate::parquet_read::slicer::dict_decoder::{DictDecoder, PrimitiveDictDecoder};
 use crate::parquet_read::slicer::{ByteSink, DataPageSlicer};
 use parquet2::encoding::bitpacked;
 use parquet2::encoding::hybrid_rle::{Decoder, HybridEncoded};
@@ -42,7 +43,10 @@ pub enum RleIterator<'a> {
     Rle(RepeatN),
     /// Fast path for 8-bit bitpacked data: each byte is a dict index.
     /// Avoids the unpack step entirely.
-    ByteIndices { data: &'a [u8], pos: usize },
+    ByteIndices {
+        data: &'a [u8],
+        pos: usize,
+    },
 }
 
 impl RleIterator<'_> {
@@ -299,6 +303,29 @@ impl<'a, 'b, T: DictDecoder> RleDictionarySlicer<'a, 'b, T> {
 
     fn decode(&mut self) -> ParquetResult<()> {
         self.inner.decode()
+    }
+}
+
+pub struct RleLocalIsGlobalSymbolDictDecoder {
+    len: u32,
+}
+
+impl RleLocalIsGlobalSymbolDictDecoder {
+    pub fn new(dict: &DictPage) -> Self {
+        let len = dict.num_values as u32;
+        Self { len }
+    }
+}
+
+impl PrimitiveDictDecoder<i32> for RleLocalIsGlobalSymbolDictDecoder {
+    #[inline]
+    fn len(&self) -> u32 {
+        self.len as u32
+    }
+
+    #[inline]
+    fn get_dict_value(&self, idx: u32) -> i32 {
+        idx as i32
     }
 }
 

@@ -16,8 +16,10 @@ pub trait DictDecoder {
 }
 
 pub trait PrimitiveDictDecoder<T> {
+    // Decode a value from the dictionary at the given index. The caller must ensure that the index is within bounds.
     fn get_dict_value(&self, index: u32) -> T;
-    fn avg_key_len(&self) -> f32;
+
+    // Get the number of values in the dictionary.
     fn len(&self) -> u32;
 }
 
@@ -141,11 +143,6 @@ impl<U, T> PrimitiveDictDecoder<T> for PrimitiveFixedDictDecoder<'_, U, T> {
                 self.dict_page.as_ptr().add(index as usize * size_of::<U>()) as *const T
             )
         }
-    }
-
-    #[inline]
-    fn avg_key_len(&self) -> f32 {
-        size_of::<T>() as f32
     }
 
     #[inline]

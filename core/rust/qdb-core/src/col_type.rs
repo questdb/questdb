@@ -423,6 +423,7 @@ pub mod nulls {
     pub const GEOHASH_SHORT: i16 = -1;
     pub const GEOHASH_INT: i32 = -1;
     pub const GEOHASH_LONG: i64 = -1;
+    pub const SYMBOL_NULL: i32 = i32::MIN;
 }
 
 #[cfg(test)]
