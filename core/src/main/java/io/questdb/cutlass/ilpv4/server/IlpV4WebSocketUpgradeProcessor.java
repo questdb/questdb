@@ -231,47 +231,51 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
         long bufferEnd = buffer + bufferLen;
         long pos = buffer;
 
-        while (pos < bufferEnd) {
-            frameParser.reset();
-            int consumed = frameParser.parse(pos, bufferEnd);
+        try {
+            while (pos < bufferEnd) {
+                frameParser.reset();
+                int consumed = frameParser.parse(pos, bufferEnd);
 
-            if (frameParser.getState() == WebSocketFrameParser.STATE_ERROR) {
-                LOG.error().$("WebSocket frame error [fd=").$(context.getFd()).$(", code=").$(frameParser.getErrorCode()).I$();
-                throw ServerDisconnectException.INSTANCE;
-            }
-
-            if (consumed == 0 || frameParser.getState() == WebSocketFrameParser.STATE_NEED_MORE ||
-                    frameParser.getState() == WebSocketFrameParser.STATE_NEED_PAYLOAD) {
-                // Need more data - compact buffer and wait
-                if (pos > buffer) {
-                    int remaining = (int) (bufferEnd - pos);
-                    if (remaining > 0) {
-                        Unsafe.getUnsafe().copyMemory(pos, buffer, remaining);
-                    }
-                    state.setRecvBufferLen(remaining);
+                if (frameParser.getState() == WebSocketFrameParser.STATE_ERROR) {
+                    LOG.error().$("WebSocket frame error [fd=").$(context.getFd()).$(", code=").$(frameParser.getErrorCode()).I$();
+                    throw ServerDisconnectException.INSTANCE;
                 }
-                throw PeerIsSlowToWriteException.INSTANCE;
+
+                if (consumed == 0 || frameParser.getState() == WebSocketFrameParser.STATE_NEED_MORE ||
+                        frameParser.getState() == WebSocketFrameParser.STATE_NEED_PAYLOAD) {
+                    // Need more data — finally block compacts the buffer
+                    throw PeerIsSlowToWriteException.INSTANCE;
+                }
+
+                // Frame parsed successfully
+                int opcode = frameParser.getOpcode();
+                long payloadPtr = pos + frameParser.getHeaderSize();
+                int payloadLen = (int) frameParser.getPayloadLength();
+
+                // Unmask payload
+                if (frameParser.isMasked()) {
+                    frameParser.unmaskPayload(payloadPtr, payloadLen);
+                }
+
+                // Advance past this frame BEFORE processing. If handleWebSocketFrame
+                // throws (e.g. ACK backpressure), the committed frame won't be replayed.
+                pos += consumed;
+
+                handleWebSocketFrame(context, state, opcode, payloadPtr, payloadLen);
             }
 
-            // Frame parsed successfully
-            int opcode = frameParser.getOpcode();
-            long payloadPtr = pos + frameParser.getHeaderSize();
-            int payloadLen = (int) frameParser.getPayloadLength();
-
-            // Unmask payload
-            if (frameParser.isMasked()) {
-                frameParser.unmaskPayload(payloadPtr, payloadLen);
+            // All frames processed — flush any pending cumulative ACK
+            flushPendingAck(context, state);
+        } finally {
+            // Compact unprocessed bytes to buffer start and update state.
+            // Handles both normal exit (remaining=0) and exception unwind
+            // (e.g. PeerIsSlowToReadException from trySendAck after a committed frame).
+            int remaining = (int) (bufferEnd - pos);
+            if (remaining > 0 && pos > buffer) {
+                Unsafe.getUnsafe().copyMemory(pos, buffer, remaining);
             }
-
-            // Handle frame
-            handleWebSocketFrame(context, state, opcode, payloadPtr, payloadLen);
-
-            pos += consumed;
+            state.setRecvBufferLen(remaining);
         }
-
-        // All data processed - flush any pending cumulative ACK
-        flushPendingAck(context, state);
-        state.setRecvBufferLen(0);
     }
 
     private void handleWebSocketFrame(HttpConnectionContext context, IlpV4ProcessorState state, int opcode, long payload, int length)
@@ -315,8 +319,10 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
             state.processMessage();
 
             if (state.isOk()) {
-                // Commit the transaction
                 state.commit();
+            }
+            // commit() swallows exceptions internally
+            if (state.isOk()) {
                 LOG.debug().$("WebSocket message committed [fd=").$(context.getFd())
                         .$(", seq=").$(seq).I$();
             } else {
