@@ -11,8 +11,71 @@ use parquet2::encoding::Encoding;
 use parquet2::page::{DataPage, Page};
 use parquet2::schema::types::PrimitiveType;
 use parquet2::schema::Repetition;
-use parquet2::statistics::{serialize_statistics, ParquetStatistics, PrimitiveStatistics};
+use parquet2::statistics::{
+    serialize_statistics, FixedLenStatistics, ParquetStatistics, PrimitiveStatistics,
+};
 use parquet2::types::NativeType;
+
+pub fn decimal_slice_to_page_plain<T>(
+    slice: &[T],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+) -> ParquetResult<Page>
+where
+    T: Nullable + NativeType + Debug,
+{
+    assert!(primitive_type.field_info.repetition == Repetition::Optional);
+    let num_rows = column_top + slice.len();
+    let mut null_count = 0;
+    let mut statistics = MaxMin::new();
+
+    let deflevels_iter = (0..num_rows).map(|i| {
+        if i < column_top {
+            false
+        } else {
+            let value = slice[i - column_top];
+            if value.is_null() {
+                null_count += 1;
+                false
+            } else {
+                statistics.update(value);
+                true
+            }
+        }
+    });
+    let mut buffer = vec![];
+    encode_primitive_def_levels(&mut buffer, deflevels_iter, num_rows, options.version)?;
+
+    let definition_levels_byte_length = buffer.len();
+    let buffer = encode_plain_nullable_direct(slice, null_count, buffer);
+
+    let statistics = if options.write_statistics {
+        let s = &FixedLenStatistics {
+            primitive_type: primitive_type.clone(),
+            null_count: Some((column_top + null_count) as i64),
+            distinct_count: None,
+            max_value: statistics.max.map(|x| x.to_bytes().as_ref().to_vec()),
+            min_value: statistics.min.map(|x| x.to_bytes().as_ref().to_vec()),
+        } as &dyn parquet2::statistics::Statistics;
+        Some(serialize_statistics(s))
+    } else {
+        None
+    };
+
+    build_plain_page(
+        buffer,
+        num_rows,
+        column_top + null_count,
+        definition_levels_byte_length,
+        statistics,
+        primitive_type,
+        options,
+        Encoding::Plain,
+        false,
+    )
+    .map(Page::Data)
+}
 
 pub fn int_slice_to_page_nullable<T, P>(
     slice: &[T],
@@ -205,7 +268,7 @@ where
             slice[i - column_top]
         };
         let parquet_native: P = x.as_();
-        buffer.extend_from_slice(parquet_native.to_le_bytes().as_ref())
+        buffer.extend_from_slice(parquet_native.to_bytes().as_ref())
     }
     buffer
 }
@@ -238,7 +301,18 @@ where
     buffer.reserve(size_of::<P>() * (slice.len() - null_count));
     for x in slice.iter().filter(|x| !x.is_null()) {
         let parquet_native: P = x.as_();
-        buffer.extend_from_slice(parquet_native.to_le_bytes().as_ref())
+        buffer.extend_from_slice(parquet_native.to_bytes().as_ref())
+    }
+    buffer
+}
+
+fn encode_plain_nullable_direct<T>(slice: &[T], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8>
+where
+    T: Nullable + NativeType,
+{
+    buffer.reserve(std::mem::size_of::<T>() * (slice.len() - null_count));
+    for x in slice.iter().filter(|x| !x.is_null()) {
+        buffer.extend_from_slice(x.to_bytes().as_ref())
     }
     buffer
 }
@@ -324,7 +398,7 @@ pub trait SimdEncodable: NativeType {
                 } else {
                     // Slow path: filter out nulls
                     for x in slice.iter().filter(|x| !x.is_null()) {
-                        buffer.extend_from_slice(x.to_le_bytes().as_ref());
+                        buffer.extend_from_slice(x.to_bytes().as_ref());
                     }
                 }
                 Ok(buffer)

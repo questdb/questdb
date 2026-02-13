@@ -105,7 +105,7 @@ impl<T: NativeType> NativeIndex<T> {
                 } else {
                     let min = min.as_slice().try_into()?;
                     let max = max.as_slice().try_into()?;
-                    (Some(T::from_le_bytes(min)), Some(T::from_le_bytes(max)))
+                    (Some(T::from_bytes(min)), Some(T::from_bytes(max)))
                 };
                 Ok(PageIndex {
                     min,
