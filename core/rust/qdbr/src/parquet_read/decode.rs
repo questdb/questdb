@@ -2841,7 +2841,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut PlainBooleanDecoder::new(values_buffer, row_count, bufs, 0),
+                        &mut PlainBooleanDecoder::new(values_buffer, row_hi, bufs, 0),
                     )?;
                     Ok(())
                 }
@@ -4449,6 +4449,65 @@ mod tests {
                                 [row_group_offset + 4 * row_lo..row_group_offset + 4 * row_hi]
                         );
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_decode_boolean_column_v2_partial_decode() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let row_count = 100;
+        let row_group_size = 10;
+        let data_page_size = 5;
+        let version = Version::V2;
+        let expected_buff = create_col_data_buff_bool(row_count);
+        let columns = vec![create_fix_column(
+            0,
+            row_count,
+            "bool_col",
+            expected_buff.data_vec.as_ref(),
+            ColumnTypeTag::Boolean.into_type(),
+        )];
+        let file = write_cols_to_parquet_file(row_group_size, data_page_size, version, columns);
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        assert_eq!(decoder.columns.len(), 1);
+        assert_eq!(decoder.row_count, row_count);
+        let row_group_count = decoder.row_group_count as usize;
+        let bufs = &mut ColumnChunkBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+
+        for row_lo in 0..row_group_size - 1 {
+            for row_hi in row_lo + 1..row_group_size {
+                for row_group_index in 0..row_group_count {
+                    decoder
+                        .decode_column_chunk(
+                            &mut ctx,
+                            bufs,
+                            row_group_index,
+                            row_lo,
+                            row_hi,
+                            0,
+                            QdbMetaCol {
+                                column_type: ColumnTypeTag::Boolean.into_type(),
+                                column_top: 0,
+                                format: None,
+                            },
+                        )
+                        .unwrap();
+
+                    assert_eq!(bufs.data_size, row_hi - row_lo);
+                    assert_eq!(bufs.aux_size, 0);
+                    let row_group_offset = row_group_index * row_group_size;
+                    assert_eq!(
+                        bufs.data_vec,
+                        expected_buff.data_vec
+                            [row_group_offset + row_lo..row_group_offset + row_hi]
+                    );
                 }
             }
         }
