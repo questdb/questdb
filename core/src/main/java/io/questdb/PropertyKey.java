@@ -512,6 +512,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_PARQUET_EXPORT_COMPRESSION_CODEC("cairo.parquet.export.compression.codec"),
     CAIRO_PARQUET_EXPORT_COMPRESSION_LEVEL("cairo.parquet.export.compression.level"),
     CAIRO_PARQUET_EXPORT_ROW_GROUP_SIZE("cairo.parquet.export.row.group.size"),
+    CAIRO_PARQUET_EXPORT_BATCH_SIZE("cairo.parquet.export.batch.size"),
     CAIRO_PARQUET_EXPORT_DATA_PAGE_SIZE("cairo.parquet.export.data.page.size"),
     CAIRO_SQL_MAX_ARRAY_ELEMENT_COUNT("cairo.max.array.element.count"),
     CAIRO_MAX_FILE_NAME_LENGTH("cairo.max.file.name.length"),
