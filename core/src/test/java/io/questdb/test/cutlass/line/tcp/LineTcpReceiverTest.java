@@ -720,6 +720,43 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testMalformedBinaryDecimalDoesNotCrash() throws Exception {
+        // Regression test: fuzzer-generated payload that triggered
+        // ArrayIndexOutOfBoundsException in DecimalBinaryFormatParser.load()
+        // when the len byte was read as signed, causing negative len to skip
+        // the VALUES state while bypassing the len == 0 guard.
+        byte[] crashPayload = hexToBytes(
+                "fc20756f793d3d172bae34343434343434343434346459116b3e34bd5f2026"
+                        + "6f34343d343334343434343434343434343434343434343434343434347f51"
+                        + "3e6355000006343434343434343434340034342c0a"
+        );
+        runInContext(receiver -> {
+            int ipv4address = Net.parseIPv4("127.0.0.1");
+            long sockaddr = Net.sockaddr(ipv4address, bindPort);
+            long fd = Net.socketTcp(true);
+            try {
+                TestUtils.connect(fd, sockaddr);
+                long bufaddr = io.questdb.std.Unsafe.malloc(crashPayload.length, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int n = 0; n < crashPayload.length; n++) {
+                        io.questdb.std.Unsafe.getUnsafe().putByte(bufaddr + n, crashPayload[n]);
+                    }
+                    Net.send(fd, bufaddr, crashPayload.length);
+                } finally {
+                    io.questdb.std.Unsafe.free(bufaddr, crashPayload.length, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                }
+            } finally {
+                Net.close(fd);
+                Net.freeSockAddr(sockaddr);
+            }
+            // Verify the server is still alive by sending a valid ILP message
+            sendLinger("test_alive value=1i 1000000000000\n", "test_alive");
+            mayDrainWalQueue();
+            assertTable("value\ttimestamp\n1\t1970-01-01T00:16:40.000000Z\n", "test_alive");
+        });
+    }
+
+    @Test
     public void testMetaDataSizeToHitExactly16K() throws Exception {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         final String tableName = "метеорологично_време";
@@ -2124,6 +2161,17 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     """;
             assertTable(expected, "doubles");
         });
+    }
+
+    @SuppressWarnings("SameParameterValue")
+    private static byte[] hexToBytes(String hex) {
+        int len = hex.length();
+        byte[] data = new byte[len / 2];
+        for (int i = 0; i < len; i += 2) {
+            data[i / 2] = (byte) ((Character.digit(hex.charAt(i), 16) << 4)
+                    + Character.digit(hex.charAt(i + 1), 16));
+        }
+        return data;
     }
 
     private void dropWeatherTable() {
