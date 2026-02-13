@@ -4601,17 +4601,18 @@ public class SqlOptimiser implements Mutable {
                         detectTimestampOffset(parent, nested);
                     }
 
-                    if (nested == null
+                    if (nested != null && nested.getUnionModel() != null) {
+                        // try pushing into each union branch; keep at parent only if some branch wasn't covered
+                        if (!tryPushFilterIntoSetOperationBranches(node, parent, nested)) {
+                            addWhereNode(parent, node);
+                        }
+                    } else if (nested == null
                             || nested.getLatestBy().size() > 0
                             || nested.getLimitLo() != null
                             || nested.getLimitHi() != null
                             || (nested.getSampleBy() != null && !canPushToSampleBy(nested, literalCollectorANames))
                     ) {
                         // there is no nested model for this table, keep where clause element with this model
-                        addWhereNode(parent, node);
-                    } else if (nested.getUnionModel() != null) {
-                        // try pushing into each union branch, always keep at parent too
-                        tryPushFilterIntoSetOperationBranches(node, parent, nested);
                         addWhereNode(parent, node);
                     } else {
                         // now that we have identified sub-query we have to rewrite our where clause
@@ -9522,15 +9523,39 @@ public class SqlOptimiser implements Mutable {
         traversalAlgo.traverse(node.rhs, literalCollector.rhs());
     }
 
-    private void tryPushFilterIntoSetOperationBranches(ExpressionNode node, QueryModel parent, QueryModel nested) throws SqlException {
+    private boolean tryPushFilterIntoSetOperationBranches(ExpressionNode node, QueryModel parent, QueryModel nested) throws SqlException {
         // Only push filters on the designated timestamp into union branches.
         // Timestamp filters enable partition pruning — the only high-value optimization here.
         // Non-timestamp filters risk type mismatches and column resolution issues across branches.
-        CharSequence timestamp = findTimestamp(nested);
+        // Find the timestamp alias from any branch. The first branch may obscure
+        // the raw timestamp (e.g. SAMPLE BY wraps it in timestamp_floor), so we
+        // iterate until one resolves. When found on a non-first branch, map back
+        // to the first branch's alias at the same column position, since UNION
+        // output names come from the first branch.
+        CharSequence timestamp = null;
+        for (QueryModel b = nested; b != null; b = b.getUnionModel()) {
+            CharSequence branchTs = findTimestamp(b);
+            if (branchTs != null) {
+                if (b == nested) {
+                    timestamp = branchTs;
+                } else {
+                    ObjList<QueryColumn> branchCols = b.getBottomUpColumns();
+                    ObjList<QueryColumn> firstCols = nested.getBottomUpColumns();
+                    for (int i = 0, n = branchCols.size(); i < n; i++) {
+                        if (Chars.equals(branchCols.getQuick(i).getAlias(), branchTs)) {
+                            timestamp = firstCols.getQuick(i).getAlias();
+                            break;
+                        }
+                    }
+                }
+                break;
+            }
+        }
         if (timestamp == null || !referencesOnlyTimestampAliasRecursive(node, timestamp, null)) {
-            return;
+            return false;
         }
 
+        boolean allPushed = true;
         QueryModel branch = nested;
         while (branch != null) {
             // Skip branches where pushing could change semantics
@@ -9539,6 +9564,7 @@ public class SqlOptimiser implements Mutable {
                     || branch.getLimitHi() != null
                     || (branch.getSampleBy() != null && !canPushToSampleBy(branch, literalCollectorANames))
             ) {
+                allPushed = false;
                 branch = branch.getUnionModel();
                 continue;
             }
@@ -9558,12 +9584,16 @@ public class SqlOptimiser implements Mutable {
                 }
                 if (allLiteralsMatchBranch(clone, branch.getAliasToColumnMap())) {
                     addWhereNode(branch, clone);
+                } else {
+                    allPushed = false;
                 }
             } catch (NonLiteralException ignore) {
+                allPushed = false;
                 LOG.debug().$("skipping filter push-down into set operation branch: column resolves to expression, not literal [filter=").$(node).$(", branch=").$(branch.getTableName()).I$();
             }
             branch = branch.getUnionModel();
         }
+        return allPushed;
     }
 
     private CharSequence validateColumnAndGetAlias(QueryModel model, CharSequence columnName, int dot, int position) throws SqlException {
