@@ -198,6 +198,13 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
         try {
             // Read data from socket
             int recvBufferLen = state.getRecvBufferLen();
+            if (recvBufferLen >= recvBufferSize) {
+                // Buffer is full but the parser still needs more data — the frame
+                // payload exceeds recv buffer capacity. Disconnect to avoid spinning.
+                LOG.error().$("WebSocket frame too large for recv buffer [fd=").$(context.getFd())
+                        .$(", bufferSize=").$(recvBufferSize).I$();
+                throw ServerDisconnectException.INSTANCE;
+            }
             int read = socket.recv(recvBuffer + recvBufferLen, recvBufferSize - recvBufferLen);
 
             if (read < 0) {
@@ -278,6 +285,11 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
+    // Note: WebSocket fragmentation (FIN=0, CONTINUATION frames) is not supported.
+    // ILP v4 clients are expected to send each message as a single unfragmented frame.
+    // The parser accepts fragmented data frames but we don't track continuation state here;
+    // continuation frames (opcode 0x00) fall through to the default branch and are ignored.
+    // This is acceptable per RFC 6455 Section 5.4 since we control both client and server.
     private void handleWebSocketFrame(HttpConnectionContext context, IlpV4ProcessorState state, int opcode, long payload, int length)
             throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
         switch (opcode) {

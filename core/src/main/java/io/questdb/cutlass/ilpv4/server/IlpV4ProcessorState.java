@@ -78,9 +78,9 @@ public class IlpV4ProcessorState implements QuietCloseable, ConnectionAware {
     private long messageSequence;
     private int recvBufferLen;
     private SecurityContext securityContext;
+    private SendState sendState = SendState.READY;
     private SendStatus sendStatus = SendStatus.NONE;
     private long sequenceInBuffer = -1;
-    private SendState sendState = SendState.READY;
     private boolean wsHandshakeSent;
 
     public IlpV4ProcessorState(
