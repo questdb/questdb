@@ -44,6 +44,7 @@ import io.questdb.mp.Sequence;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -144,125 +145,64 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         dataPageSize
                 );
 
-                // The O3 range [srcOooLo, srcOooHi] has been split into intervals between row group minimums: [rowGroupN-1.min, rowGroupN.min].
-                // Each of these intervals is merged into the previous row group (rowGroupN-1).
-                //   +------+          <- rg0.min
-                //   | rg0  |  +-----+ <- srcOooLo
-                //   |      |  | OOO |
-                //   +------+  |     |
-                //             |     |
-                //   +------+  |     | <- rg1.min
-                //   | rg1  |  |     |
-                //   |      |  |     |
-                //   +------+  |     |
-                //             |     |
-                //   +------+  |     | <- rg2.min
-                //   | rg2  |  |     |
-                //   |      |  |     |
-                //   +------+  |     |
-                //             |     |
-                //             +-----+ <- srcOooHi
+                // Build row group bounds for merge strategy computation
+                final LongList rowGroupBounds = new LongList(rowGroupCount * O3ParquetMergeStrategy.ROW_GROUP_ENTRY_SIZE);
+                parquetColumns.clear();
+                parquetColumns.add(timestampIndex);
+                parquetColumns.add(timestampColumnType);
 
-                // on the first iteration, ooo range [srcOooLo, rg1.min]
-                // is merged into row group 0.
-                // on the second iteration, ooo range [rg1.min, rg2.min]
-                // is merged into row group 1.
-                // as a tail case, ooo range [rg2.min, srcOooHi]
-                // is merged into row group 2.
-
-                //   +------+          <- rg0.min
-                //   | rg0  |  +-----+ <- srcOooLo
-                //   |      |  | OOO |
-                //   +------+  |     |
-                //             +-----+
-                //   +------+         <- rg1.min
-                //   | rg1  |
-                //   |      |
-                //   +------+
-                //
-                //   +------+         <- rg2.min
-                //   | rg2  |
-                //   |      |
-                //   +------+
-                //
-                //   +------+         <- rg3.min
-                //   | rg3  |  +-----+ <- mergeRangeLo
-                //   |      |  | OOO |
-                //   +------+  |     |
-                //             |     |
-                //             +-----+ <- srcOooHi
-
-                // on the first iteration, ooo range [srcOooLo, rg1.min]
-                // is merged into row group 0.
-                // on the second iteration, ooo range [rg1.min, rg2.min]
-                // has no data, continue to the next row group.
-                // on the third iteration, ooo range [rg2.min, rg3.min]
-                // has no data, continue to the next row group.
-                // as a tail case, ooo range [mergeRangeLo, srcOooHi]
-                // is merged into row group 3.
-
-                long mergeRangeLo = srcOooLo;
-                for (int rowGroup = 1; rowGroup < rowGroupCount; rowGroup++) {
-                    parquetColumns.clear();
-                    parquetColumns.add(timestampIndex);
-                    parquetColumns.add(timestampColumnType);
-                    partitionDecoder.readRowGroupStats(rowGroupStatBuffers, parquetColumns, rowGroup);
-                    final long min = rowGroupStatBuffers.getMinValueLong(0);
-                    final long mergeRangeHi = Vect.boundedBinarySearchIndexT(
-                            sortedTimestampsAddr,
-                            min,
-                            mergeRangeLo,
-                            srcOooHi,
-                            Vect.BIN_SEARCH_SCAN_DOWN
-                    );
-
-                    // has no data to merge, continue to the next row group
-                    if (mergeRangeHi < mergeRangeLo) {
-                        continue;
-                    }
-
-                    duplicateCount += mergeRowGroup(
-                            partitionDescriptor,
-                            partitionUpdater,
-                            parquetColumns,
-                            oooColumns,
-                            sortedTimestampsAddr,
-                            tableWriter,
-                            partitionDecoder,
-                            rowGroupBuffers,
-                            rowGroup - 1,
-                            timestampIndex,
-                            partitionTimestamp,
-                            mergeRangeLo,
-                            mergeRangeHi,
-                            tableWriterMetadata,
-                            srcOooBatchRowSize,
-                            dedupColSinkAddr
-                    );
-                    mergeRangeLo = mergeRangeHi + 1;
+                for (int rg = 0; rg < rowGroupCount; rg++) {
+                    partitionDecoder.readRowGroupStats(rowGroupStatBuffers, parquetColumns, rg);
+                    final long rgMin = rowGroupStatBuffers.getMinValueLong(0);
+                    final long rgMax = rowGroupStatBuffers.getMaxValueLong(0);
+                    final long rgRowCount = partitionDecoder.metadata().getRowGroupSize(rg);
+                    O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, rgMin, rgMax, rgRowCount);
                 }
 
-                if (mergeRangeLo <= srcOooHi) {
-                    // merge the tail [mergeRangeLo, srcOooHi] into the last row group
-                    // this also handles the case where there is only a single row group
-                    duplicateCount += mergeRowGroup(
-                            partitionDescriptor,
-                            partitionUpdater,
-                            parquetColumns,
-                            oooColumns,
-                            sortedTimestampsAddr,
-                            tableWriter,
-                            partitionDecoder,
-                            rowGroupBuffers,
-                            rowGroupCount - 1,
-                            timestampIndex,
-                            partitionTimestamp,
-                            mergeRangeLo,
-                            srcOooHi,
-                            tableWriterMetadata,
-                            srcOooBatchRowSize,
-                            dedupColSinkAddr
-                    );
+                // Compute merge actions
+                final ObjList<O3ParquetMergeStrategy.MergeAction> mergeActions = new ObjList<>();
+                O3ParquetMergeStrategy.computeMergeActions(
+                        rowGroupBounds,
+                        sortedTimestampsAddr,
+                        srcOooLo,
+                        srcOooHi,
+                        mergeActions
+                );
+
+                // Execute merge actions
+                for (int i = 0, n = mergeActions.size(); i < n; i++) {
+                    final O3ParquetMergeStrategy.MergeAction action = mergeActions.getQuick(i);
+                    switch (action.type) {
+                        case MERGE:
+                            duplicateCount += mergeRowGroup(
+                                    partitionDescriptor,
+                                    partitionUpdater,
+                                    parquetColumns,
+                                    oooColumns,
+                                    sortedTimestampsAddr,
+                                    tableWriter,
+                                    partitionDecoder,
+                                    rowGroupBuffers,
+                                    action.rowGroupIndex,
+                                    timestampIndex,
+                                    partitionTimestamp,
+                                    action.o3Lo,
+                                    action.o3Hi,
+                                    tableWriterMetadata,
+                                    srcOooBatchRowSize,
+                                    dedupColSinkAddr
+                            );
+                            break;
+                        case COPY_ROW_GROUP_SLICE:
+                            // Row group has no overlapping O3 data - no action needed
+                            // (row group remains unchanged in the parquet file)
+                            break;
+                        case COPY_O3:
+                            // O3 data with no overlapping row group - would create new row group
+                            // For now, this case shouldn't occur with current algorithm
+                            // as all O3 data is merged into existing row groups
+                            throw new UnsupportedOperationException("COPY_O3 not yet implemented");
+                    }
                 }
                 partitionUpdater.updateFileMetadata();
             } finally {
@@ -1696,10 +1636,29 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 if (ColumnType.isVarSize(columnType)) {
                     final ColumnTypeDriver ctd = ColumnType.getDriver(columnType);
 
-                    final long columnDataPtr = rowGroupBuffers.getChunkDataPtr(bufferIndex);
-                    assert columnDataPtr != 0;
-                    final long columnAuxPtr = rowGroupBuffers.getChunkAuxPtr(bufferIndex);
-                    assert columnAuxPtr != 0;
+                    long columnDataPtr = rowGroupBuffers.getChunkDataPtr(bufferIndex);
+                    long columnAuxPtr = rowGroupBuffers.getChunkAuxPtr(bufferIndex);
+                    long nullAuxBuf = 0;
+                    long nullAuxBufSize = 0;
+                    long nullDataBuf = 0;
+                    long nullDataBufSize = 0;
+                    if (columnAuxPtr == 0) {
+                        // Column top: row group data for this column is all-null.
+                        // Populate the aux vector with null references.
+                        nullAuxBufSize = ctd.getAuxVectorSize(rowGroupSize);
+                        nullAuxBuf = Unsafe.malloc(nullAuxBufSize, MemoryTag.NATIVE_O3);
+                        ctd.setFullAuxVectorNull(nullAuxBuf, rowGroupSize);
+                        columnAuxPtr = nullAuxBuf;
+                        // STRING and BINARY null entries occupy space in the data vector
+                        // (length marker per row), so the data buffer must also be populated.
+                        // VARCHAR and ARRAY nulls do not use the data vector (size is 0).
+                        nullDataBufSize = ctd.getDataVectorSizeAt(nullAuxBuf, rowGroupSize - 1);
+                        if (nullDataBufSize > 0) {
+                            nullDataBuf = Unsafe.malloc(nullDataBufSize, MemoryTag.NATIVE_O3);
+                            ctd.setDataVectorEntriesToNull(nullDataBuf, rowGroupSize);
+                            columnDataPtr = nullDataBuf;
+                        }
+                    }
 
                     final long srcOooFixAddr = oooMem2.addressOf(0);
                     final long srcOooVarAddr = oooMem1.addressOf(0);
@@ -1724,6 +1683,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             dstVarMemAddr,
                             0
                     );
+                    if (nullAuxBuf != 0) {
+                        Unsafe.free(nullAuxBuf, nullAuxBufSize, MemoryTag.NATIVE_O3);
+                    }
+                    if (nullDataBuf != 0) {
+                        Unsafe.free(nullDataBuf, nullDataBufSize, MemoryTag.NATIVE_O3);
+                    }
 
                     partitionDescriptor.addColumn(
                             columnName,
@@ -1742,9 +1707,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     long dstFixSize = mergeRowCount * ColumnType.sizeOf(columnType);
                     final long dstFixMemAddr = Unsafe.malloc(dstFixSize, MemoryTag.NATIVE_O3);
 
-                    // TODO(eugene): can be null in case of column top
-                    final long columnDataPtr = rowGroupBuffers.getChunkDataPtr(bufferIndex);
-                    assert columnDataPtr != 0;
+                    long columnDataPtr = rowGroupBuffers.getChunkDataPtr(bufferIndex);
+                    long nullFixBuf = 0;
+                    long nullFixBufSize = 0;
+                    if (columnDataPtr == 0) {
+                        // Column top: row group data for this column is all-null
+                        nullFixBufSize = (long) rowGroupSize * ColumnType.sizeOf(columnType);
+                        nullFixBuf = Unsafe.malloc(nullFixBufSize, MemoryTag.NATIVE_O3);
+                        TableUtils.setNull(columnType, nullFixBuf, rowGroupSize);
+                        columnDataPtr = nullFixBuf;
+                    }
                     // Merge column data
                     O3CopyJob.mergeCopy(
                             notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
@@ -1758,6 +1730,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             0,
                             0
                     );
+                    if (nullFixBuf != 0) {
+                        Unsafe.free(nullFixBuf, nullFixBufSize, MemoryTag.NATIVE_O3);
+                    }
 
                     if (ColumnType.isSymbol(columnType)) {
                         final MapWriter symbolMapWriter = tableWriter.getSymbolMapWriter(columnIndex);

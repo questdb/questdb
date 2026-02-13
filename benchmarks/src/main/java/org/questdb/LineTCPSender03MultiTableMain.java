@@ -34,7 +34,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 
 public class LineTCPSender03MultiTableMain {
     public static void main(String[] args) {
-        int[] tables = new int[]{3};
+        int[] tables = new int[]{1, 2, 3};
         final SOCountDownLatch haltLatch = new SOCountDownLatch(tables.length);
         for (int i = 0; i < tables.length; i++) {
             int k = tables[i];
