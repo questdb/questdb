@@ -267,7 +267,7 @@ public class ServerMain implements Closeable {
                 bootstrap.getLog().advisoryW().$("data id: ").$(uuid).$();
             }
             System.gc(); // final GC
-            bootstrap.getLog().advisoryW().$("enjoy");
+            bootstrap.getLog().advisoryW().$("enjoy").$();
         }
     }
 
