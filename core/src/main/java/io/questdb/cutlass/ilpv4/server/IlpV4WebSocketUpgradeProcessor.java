@@ -103,28 +103,10 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
 
     @Override
     public void onHeadersReady(HttpConnectionContext context) {
-        // Initialize or get the ILP processor state for this connection
-        IlpV4ProcessorState state = LV.get(context);
-        if (state == null) {
-            state = new IlpV4ProcessorState(
-                    recvBufferSize,
-                    maxResponseContentLength,
-                    engine,
-                    httpConfiguration.getLineHttpProcessorConfiguration()
-            );
-            LV.set(context, state);
-        } else {
-            state.clear();
-        }
-        state.of(context.getFd(), context.getSecurityContext());
-
-        // No resetStateMachine() needed:
-        // - Fresh state: field declarations provide correct defaults
-        // - Reused state: onDisconnected() already reset everything
-
-        // Validate the WebSocket handshake (version, key, etc.)
-        // getProcessor() returns unconditionally (needed for protocol-switched resume),
-        // so we validate here before sending the 101.
+        // Validate the WebSocket handshake (version, key, etc.) before allocating
+        // any per-connection state. getProcessor() returns unconditionally (needed for
+        // protocol-switched resume), so we validate here before sending the 101.
+        // Rejecting early avoids allocating native buffers for malformed requests.
         HttpRawSocket rawSocket = context.getRawResponseSocket();
         long bufferAddr = rawSocket.getBufferAddress();
         int bufferSize = rawSocket.getBufferSize();
@@ -145,6 +127,21 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
             }
             return;
         }
+
+        // Initialize or get the ILP processor state for this connection
+        IlpV4ProcessorState state = LV.get(context);
+        if (state == null) {
+            state = new IlpV4ProcessorState(
+                    recvBufferSize,
+                    maxResponseContentLength,
+                    engine,
+                    httpConfiguration.getLineHttpProcessorConfiguration()
+            );
+            LV.set(context, state);
+        } else {
+            state.clear();
+        }
+        state.of(context.getFd(), context.getSecurityContext());
 
         Utf8Sequence wsKey = IlpV4WebSocketHttpProcessor.getWebSocketKey(context.getRequestHeader());
 
