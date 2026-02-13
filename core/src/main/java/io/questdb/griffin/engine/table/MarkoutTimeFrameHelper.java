@@ -392,16 +392,16 @@ public class MarkoutTimeFrameHelper {
             startRowIndex = Rows.toLocalRowID(forwardWatermark) + 1;
 
             timeFrameCursor.jumpTo(startFrameIndex);
-            if (timeFrameCursor.open() == 0) {
-                return;
-            }
-
-            // Check if we need to move to next frame
-            if (startRowIndex >= timeFrame.getRowHi()) {
-                if (!timeFrameCursor.next()) {
-                    return;
+            if (timeFrameCursor.open() == 0 || startRowIndex >= timeFrame.getRowHi()) {
+                // Current frame is empty or exhausted, find next non-empty frame
+                boolean found = false;
+                while (timeFrameCursor.next()) {
+                    if (timeFrameCursor.open() > 0) {
+                        found = true;
+                        break;
+                    }
                 }
-                if (timeFrameCursor.open() == 0) {
+                if (!found) {
                     return;
                 }
                 startFrameIndex = timeFrame.getFrameIndex();

@@ -116,7 +116,7 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
         if (nextPos < masterRowCount) {
             long nextRowIdx = isFiltered ? filteredRows.get(nextPos) : (frameRowLo + nextPos);
             record.setRowIndex(nextRowIdx);
-            long nextHorizonTs = record.getTimestamp(timestampColumnIndex) + offsets.getQuick(offsetIdx);
+            long nextHorizonTs = Math.addExact(record.getTimestamp(timestampColumnIndex), offsets.getQuick(offsetIdx));
             // Replace root and restore heap property
             heapTs[0] = nextHorizonTs;
             heapPos[0] = nextPos;
@@ -187,7 +187,7 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
             record.setRowIndex(firstRowIdx);
             long firstMasterTs = record.getTimestamp(timestampColumnIndex);
             for (int k = 0, n = offsets.size(); k < n; k++) {
-                long horizonTs = firstMasterTs + offsets.getQuick(k);
+                long horizonTs = Math.addExact(firstMasterTs, offsets.getQuick(k));
                 heapInsert(horizonTs, k);
             }
         }

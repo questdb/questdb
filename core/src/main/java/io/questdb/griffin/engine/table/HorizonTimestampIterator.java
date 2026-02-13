@@ -188,7 +188,7 @@ public class HorizonTimestampIterator implements QuietCloseable {
         masterCursor.recordAt(recordB, firstRowId);
         long firstMasterTs = recordB.getTimestamp(timestampColumnIndex);
         for (int k = 0, n = offsets.size(); k < n; k++) {
-            long horizonTs = firstMasterTs + offsets.getQuick(k);
+            long horizonTs = Math.addExact(firstMasterTs, offsets.getQuick(k));
             heapInsert(horizonTs, k);
         }
     }
@@ -210,7 +210,7 @@ public class HorizonTimestampIterator implements QuietCloseable {
         if (nextPos < discoveredCount || discoverNextRow()) {
             long nextRowId = getRowId(nextPos);
             masterCursor.recordAt(recordB, nextRowId);
-            long nextHorizonTs = recordB.getTimestamp(timestampColumnIndex) + offsets.getQuick(offsetIdx);
+            long nextHorizonTs = Math.addExact(recordB.getTimestamp(timestampColumnIndex), offsets.getQuick(offsetIdx));
             // Replace root and restore heap property
             heapTs[0] = nextHorizonTs;
             heapPos[0] = nextPos;
@@ -238,7 +238,7 @@ public class HorizonTimestampIterator implements QuietCloseable {
         }
         long rowId = rowIds.getQuick((int) (discoveredCount - 1 - windowBase));
         masterCursor.recordAt(recordB, rowId);
-        currentHorizonTs = recordB.getTimestamp(timestampColumnIndex) + singleOffsetValue;
+        currentHorizonTs = Math.addExact(recordB.getTimestamp(timestampColumnIndex), singleOffsetValue);
         currentMasterRowId = rowId;
         currentOffsetIdx = 0;
         // No need to cache rowIds; evict immediately
