@@ -327,13 +327,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     /**
      * Switches the connection to a different protocol (e.g., WebSocket).
      * After calling this, normal HTTP parsing is bypassed and the processor
-     * handles raw socket I/O directly.
-     *
-     * @param processor the processor to handle the switched protocol
+     * handles raw socket I/O directly. The processor is resolved via
+     * {@code currentHandlerId} which was set during request routing.
      */
-    public void switchProtocol(HttpRequestProcessor processor) {
+    public void switchProtocol() {
         this.protocolSwitched = true;
-        this.resumeProcessor = processor;
+        this.resumeHandlerId = currentHandlerId;
     }
 
     /**
@@ -418,7 +417,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.totalBytesSent += responseSink.getTotalBytesSent();
         this.responseSink.clear();
         this.nCompletedRequests++;
-        // Preserve resumeProcessor for protocol-switched connections (e.g., WebSocket)
+        // Preserve resumeHandlerId for protocol-switched connections (e.g., WebSocket)
         if (!protocolSwitched) {
             this.resumeHandlerId = NO_RESUME_PROCESSOR;
         }
@@ -965,9 +964,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
      * Handles receive for protocol-switched connections (e.g., WebSocket).
      * Instead of parsing HTTP, delegates to the processor's resumeRecv.
      */
-    private boolean handleProtocolSwitchedRecv() throws PeerIsSlowToWriteException, ServerDisconnectException, PeerIsSlowToReadException {
+    private boolean handleProtocolSwitchedRecv(HttpRequestProcessorSelector selector) throws PeerIsSlowToWriteException, ServerDisconnectException, PeerIsSlowToReadException {
+        final HttpRequestProcessor processor = resolveResumeProcessor(selector);
         try {
-            resumeProcessor.resumeRecv(this);
+            processor.resumeRecv(this);
             // If resumeRecv returns normally, keep processing
             return true;
         } catch (PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
@@ -976,20 +976,20 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         } catch (ServerDisconnectException e) {
             // Connection should be closed
             LOG.info().$("protocol-switched connection closing [fd=").$(getFd()).I$();
-            resumeProcessor.onConnectionClosed(this);
+            processor.onConnectionClosed(this);
             throw e;
         } catch (Throwable e) {
             // Any other error, close connection
             LOG.error().$("error in protocol-switched recv [fd=").$(getFd()).$(", e=").$(e).I$();
-            resumeProcessor.onConnectionClosed(this);
+            processor.onConnectionClosed(this);
             throw registerDispatcherDisconnect(DISCONNECT_REASON_SERVER_ERROR);
         }
     }
 
     private boolean handleClientRecv(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) throws PeerIsSlowToReadException, PeerIsSlowToWriteException, ServerDisconnectException {
         // Handle protocol-switched connections (e.g., WebSocket)
-        if (protocolSwitched && resumeProcessor != null) {
-            return handleProtocolSwitchedRecv();
+        if (protocolSwitched && resumeHandlerId != NO_RESUME_PROCESSOR) {
+            return handleProtocolSwitchedRecv(selector);
         }
 
         boolean busyRecv = true;
@@ -1093,7 +1093,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         processor.onHeadersReady(this);
                         LOG.debug().$("good [fd=").$(getFd()).I$();
                         processor.onRequestComplete(this);
-                        // Don't clear resumeProcessor for protocol-switched connections (e.g., WebSocket)
+                        // Don't clear resumeHandlerId for protocol-switched connections (e.g., WebSocket)
                         if (!protocolSwitched) {
                             resumeHandlerId = NO_RESUME_PROCESSOR;
                         }

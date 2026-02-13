@@ -43,8 +43,7 @@ import io.questdb.std.str.Utf8Sequence;
  */
 public class IlpV4WebSocketHttpProcessor implements HttpRequestHandler {
 
-    private final CairoEngine engine;
-    private final HttpFullFatServerConfiguration httpConfiguration;
+    private final IlpV4WebSocketUpgradeProcessor processor;
 
     /**
      * Creates a new ILP v4 WebSocket HTTP processor.
@@ -53,19 +52,16 @@ public class IlpV4WebSocketHttpProcessor implements HttpRequestHandler {
      * @param httpConfiguration the HTTP server configuration
      */
     public IlpV4WebSocketHttpProcessor(CairoEngine engine, HttpFullFatServerConfiguration httpConfiguration) {
-        this.engine = engine;
-        this.httpConfiguration = httpConfiguration;
+        this.processor = new IlpV4WebSocketUpgradeProcessor(engine, httpConfiguration);
     }
 
     @Override
     public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
-        if (isWebSocketUpgradeRequest(requestHeader)) {
-            // Return the WebSocket upgrade processor with engine and config
-            return new IlpV4WebSocketUpgradeProcessor(engine, httpConfiguration);
-        }
-        // Return null to indicate this handler doesn't handle non-WebSocket requests
-        // The server will use a fallback/default processor
-        return null;
+        // Always return the same processor instance. Per-connection state lives
+        // in LocalValue, so the instance is safe to share. Returning unconditionally
+        // is required because resolveProcessorById() calls this after headers are
+        // cleared (post-protocol-switch).
+        return processor;
     }
 
     /**

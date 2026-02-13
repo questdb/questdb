@@ -71,8 +71,17 @@ public class IlpV4ProcessorState implements QuietCloseable, ConnectionAware {
     private Status currentStatus = Status.OK;
     private long errorId;
     private long fd = -1;
+
+    // WebSocket connection state — persists across ILP messages, reset by onDisconnected()
+    private long highestProcessedSequence = -1;
+    private long lastAckedSequence = -1;
+    private long messageSequence;
+    private int recvBufferLen;
     private SecurityContext securityContext;
     private SendStatus sendStatus = SendStatus.NONE;
+    private long sequenceInBuffer = -1;
+    private SendState sendState = SendState.READY;
+    private boolean wsHandshakeSent;
 
     public IlpV4ProcessorState(
             int initBufferSize,
@@ -135,6 +144,15 @@ public class IlpV4ProcessorState implements QuietCloseable, ConnectionAware {
         tudCache.reset();
         connectionSymbolDict.clear();  // Reset delta symbol dictionary on disconnect
 
+        // Reset WebSocket connection state
+        highestProcessedSequence = -1;
+        lastAckedSequence = -1;
+        messageSequence = 0;
+        recvBufferLen = 0;
+        sequenceInBuffer = -1;
+        sendState = SendState.READY;
+        wsHandshakeSent = false;
+
         // Log cache stats before clearing (only if there were any lookups)
         long hits = symbolCache.getCacheHits();
         long misses = symbolCache.getCacheMisses();
@@ -147,6 +165,89 @@ public class IlpV4ProcessorState implements QuietCloseable, ConnectionAware {
                     .$("%]").$();
         }
         symbolCache.clear();
+    }
+
+    public long getHighestProcessedSequence() {
+        return highestProcessedSequence;
+    }
+
+    public long getLastAckedSequence() {
+        return lastAckedSequence;
+    }
+
+    public int getRecvBufferLen() {
+        return recvBufferLen;
+    }
+
+    /**
+     * Returns true if there are successfully processed messages that haven't been
+     * ACKed yet and the send buffer is clear (READY state).
+     */
+    public boolean hasPendingAck() {
+        return sendState == SendState.READY && highestProcessedSequence > lastAckedSequence;
+    }
+
+    public boolean isSending() {
+        return sendState == SendState.SENDING;
+    }
+
+    public boolean isSendReady() {
+        return sendState == SendState.READY;
+    }
+
+    public boolean isWsHandshakeSent() {
+        return wsHandshakeSent;
+    }
+
+    public long nextMessageSequence() {
+        return messageSequence++;
+    }
+
+    /**
+     * Records that an ACK send was blocked by a full OS buffer.
+     * Transitions from READY to SENDING state.
+     */
+    public void onAckBlocked(long sequence) {
+        sendState = SendState.SENDING;
+        sequenceInBuffer = sequence;
+    }
+
+    /**
+     * Records a successful ACK send. Stays in READY state.
+     */
+    public void onAckSent(long sequence) {
+        lastAckedSequence = sequence;
+    }
+
+    /**
+     * Completes a resumed send that was previously blocked.
+     * Transitions from SENDING back to READY state.
+     */
+    public void onResumeSendComplete() {
+        lastAckedSequence = sequenceInBuffer;
+        sequenceInBuffer = -1;
+        sendState = SendState.READY;
+    }
+
+    public void setHighestProcessedSequence(long highestProcessedSequence) {
+        this.highestProcessedSequence = highestProcessedSequence;
+    }
+
+    public void setRecvBufferLen(int recvBufferLen) {
+        this.recvBufferLen = recvBufferLen;
+    }
+
+    public void setWsHandshakeSent(boolean wsHandshakeSent) {
+        this.wsHandshakeSent = wsHandshakeSent;
+    }
+
+    /**
+     * Returns true if the ACK batch threshold has been reached and the send
+     * buffer is clear, meaning a cumulative ACK should be sent now.
+     */
+    public boolean shouldSendAck(int batchSize) {
+        return sendState == SendState.READY
+                && highestProcessedSequence - lastAckedSequence >= batchSize;
     }
 
     public void addData(long lo, long hi) {
@@ -256,6 +357,11 @@ public class IlpV4ProcessorState implements QuietCloseable, ConnectionAware {
 
     private static String generateErrorId() {
         return UUID.randomUUID().toString().substring(24, 36);
+    }
+
+    enum SendState {
+        READY,
+        SENDING
     }
 
     public enum Status {

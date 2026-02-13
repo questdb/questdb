@@ -33,7 +33,6 @@ import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRawSocket;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
-import io.questdb.cutlass.ilpv4.server.IlpV4ProcessorState;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
@@ -54,6 +53,9 @@ import java.nio.charset.StandardCharsets;
  * 2. Sends the 101 Switching Protocols response
  * 3. Switches to WebSocket protocol for subsequent communication
  * 4. Parses WebSocket frames and processes ILP v4 messages
+ * <p>
+ * Per-connection state is stored in {@link IlpV4ProcessorState} via {@link LocalValue},
+ * so a single processor instance can safely be shared across connections on the same worker.
  */
 public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
     private static final Log LOG = LogFactory.getLog(IlpV4WebSocketUpgradeProcessor.class);
@@ -79,57 +81,17 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
     private static final byte STATUS_SECURITY_ERROR = 4;
     private static final byte STATUS_INTERNAL_ERROR = (byte) 255;
 
-    // Dependencies for ILP processing
+    // Cumulative ACK batch size
+    private static final int ACK_BATCH_SIZE = 8;
+
+    // Dependencies for ILP processing (safe as instance fields — config only)
     private final CairoEngine engine;
     private final HttpFullFatServerConfiguration httpConfiguration;
-    private final int recvBufferSize;
     private final int maxResponseContentLength;
+    private final int recvBufferSize;
 
-    // WebSocket frame parser
+    // WebSocket frame parser (scratchpad — fully reset within each processWebSocketFrames call)
     private final WebSocketFrameParser frameParser = new WebSocketFrameParser();
-
-    // State
-    private boolean handshakeSent = false;
-    private int recvBufferLen = 0;
-    private IlpV4ProcessorState state;
-
-    // Sequence number for response correlation
-    private long messageSequence = 0;
-
-    // Cumulative ACK tracking
-    private static final int ACK_BATCH_SIZE = 8;  // Send ACK every N messages
-    private long highestProcessedSequence = -1;   // Last successful commit
-    private long lastAckedSequence = -1;          // Last ACK sent to client
-
-    /**
-     * Send state machine for ACK responses.
-     * <p>
-     * States:
-     * <ul>
-     *   <li>READY - Buffer is clear, can write new ACK frames</li>
-     *   <li>SENDING - Buffer has ACK frame waiting to be sent (OS buffer was full)</li>
-     * </ul>
-     */
-    private enum SendState {
-        READY,    // Buffer clear, can write new data
-        SENDING   // Buffer has pending ACK, waiting for OS buffer space
-    }
-
-    private SendState sendState = SendState.READY;
-    private long sequenceInBuffer = -1;  // Sequence of ACK in buffer when SENDING
-
-    /**
-     * Resets the state machine for a new connection.
-     */
-    private void resetStateMachine() {
-        handshakeSent = false;
-        recvBufferLen = 0;
-        messageSequence = 0;
-        highestProcessedSequence = -1;
-        lastAckedSequence = -1;
-        sendState = SendState.READY;
-        sequenceInBuffer = -1;
-    }
 
     public IlpV4WebSocketUpgradeProcessor(CairoEngine engine, HttpFullFatServerConfiguration httpConfiguration) {
         this.engine = engine;
@@ -142,7 +104,7 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
     @Override
     public void onHeadersReady(HttpConnectionContext context) {
         // Initialize or get the ILP processor state for this connection
-        state = LV.get(context);
+        IlpV4ProcessorState state = LV.get(context);
         if (state == null) {
             state = new IlpV4ProcessorState(
                     recvBufferSize,
@@ -156,22 +118,35 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
         state.of(context.getFd(), context.getSecurityContext());
 
-        // Reset state machine for new connection
-        resetStateMachine();
+        // No resetStateMachine() needed:
+        // - Fresh state: field declarations provide correct defaults
+        // - Reused state: onDisconnected() already reset everything
 
-        // Get the WebSocket key from request headers
-        Utf8Sequence wsKey = IlpV4WebSocketHttpProcessor.getWebSocketKey(context.getRequestHeader());
-
-        if (wsKey == null) {
-            // Should not happen - we already validated in isWebSocketUpgradeRequest
-            LOG.error().$("WebSocket key missing after validation [fd=").$(context.getFd()).I$();
-            return;
-        }
-
-        // Get raw socket to send the handshake response
+        // Validate the WebSocket handshake (version, key, etc.)
+        // getProcessor() returns unconditionally (needed for protocol-switched resume),
+        // so we validate here before sending the 101.
         HttpRawSocket rawSocket = context.getRawResponseSocket();
         long bufferAddr = rawSocket.getBufferAddress();
         int bufferSize = rawSocket.getBufferSize();
+
+        String validationError = IlpV4WebSocketHttpProcessor.validateHandshake(context.getRequestHeader());
+        if (validationError != null) {
+            LOG.error().$("WebSocket handshake validation failed [fd=").$(context.getFd())
+                    .$(", error=").$(validationError).I$();
+            int bytesWritten = validationError.contains("version")
+                    ? writeUpgradeRequiredResponse(bufferAddr, bufferSize)
+                    : writeBadRequestResponse(bufferAddr, bufferSize, validationError);
+            if (bytesWritten > 0) {
+                try {
+                    rawSocket.send(bytesWritten);
+                } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
+                    // best-effort
+                }
+            }
+            return;
+        }
+
+        Utf8Sequence wsKey = IlpV4WebSocketHttpProcessor.getWebSocketKey(context.getRequestHeader());
 
         // Write the 101 Switching Protocols response
         int bytesWritten = writeHandshakeResponse(bufferAddr, bufferSize, wsKey);
@@ -188,11 +163,11 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
                 LOG.error().$("WebSocket handshake blocked, disconnecting [fd=").$(context.getFd()).I$();
                 return;
             }
-            handshakeSent = true;
+            state.setWsHandshakeSent(true);
             LOG.info().$("WebSocket handshake sent [fd=").$(context.getFd()).I$();
 
             // Switch to WebSocket protocol - this tells the framework to bypass HTTP parsing
-            context.switchProtocol(this);
+            context.switchProtocol();
         }
     }
 
@@ -202,7 +177,8 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
         // The framework will call reset() and then loop back to handleClientRecv().
         // Since we called switchProtocol() in onHeadersReady, the framework will
         // delegate to resumeRecv instead of parsing more HTTP requests.
-        if (handshakeSent) {
+        IlpV4ProcessorState state = LV.get(context);
+        if (state != null && state.isWsHandshakeSent()) {
             LOG.debug().$("WebSocket handshake complete, ready for frames [fd=").$(context.getFd()).I$();
         }
     }
@@ -210,7 +186,7 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
     @Override
     public void resumeRecv(HttpConnectionContext context) throws PeerIsSlowToWriteException, ServerDisconnectException, PeerIsSlowToReadException {
         // Ensure state is available
-        state = LV.get(context);
+        IlpV4ProcessorState state = LV.get(context);
         if (state == null) {
             LOG.error().$("WebSocket resumeRecv but no state available [fd=").$(context.getFd()).I$();
             throw ServerDisconnectException.INSTANCE;
@@ -223,6 +199,7 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
 
         try {
             // Read data from socket
+            int recvBufferLen = state.getRecvBufferLen();
             int read = socket.recv(recvBuffer + recvBufferLen, recvBufferSize - recvBufferLen);
 
             if (read < 0) {
@@ -237,10 +214,11 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
             }
 
             recvBufferLen += read;
+            state.setRecvBufferLen(recvBufferLen);
             LOG.debug().$("WebSocket recv [fd=").$(context.getFd()).$(", bytes=").$(read).$(", total=").$(recvBufferLen).I$();
 
             // Parse WebSocket frames
-            processWebSocketFrames(context, recvBuffer, recvBufferLen);
+            processWebSocketFrames(context, state, recvBuffer, recvBufferLen);
 
         } catch (ServerDisconnectException | PeerIsSlowToWriteException | PeerIsSlowToReadException e) {
             throw e;
@@ -250,7 +228,7 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    private void processWebSocketFrames(HttpConnectionContext context, long buffer, int bufferLen)
+    private void processWebSocketFrames(HttpConnectionContext context, IlpV4ProcessorState state, long buffer, int bufferLen)
             throws ServerDisconnectException, PeerIsSlowToWriteException, PeerDisconnectedException, PeerIsSlowToReadException {
         long bufferEnd = buffer + bufferLen;
         long pos = buffer;
@@ -272,7 +250,7 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
                     if (remaining > 0) {
                         Unsafe.getUnsafe().copyMemory(pos, buffer, remaining);
                     }
-                    recvBufferLen = remaining;
+                    state.setRecvBufferLen(remaining);
                 }
                 throw PeerIsSlowToWriteException.INSTANCE;
             }
@@ -288,63 +266,43 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
             }
 
             // Handle frame
-            handleWebSocketFrame(context, opcode, payloadPtr, payloadLen);
+            handleWebSocketFrame(context, state, opcode, payloadPtr, payloadLen);
 
             pos += consumed;
         }
 
         // All data processed - flush any pending cumulative ACK
-        flushPendingAck(context);
-        recvBufferLen = 0;
+        flushPendingAck(context, state);
+        state.setRecvBufferLen(0);
     }
 
-    private void handleWebSocketFrame(HttpConnectionContext context, int opcode, long payload, int length)
+    private void handleWebSocketFrame(HttpConnectionContext context, IlpV4ProcessorState state, int opcode, long payload, int length)
             throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
         switch (opcode) {
-            case WebSocketOpcode.BINARY:
-                handleBinaryMessage(context, payload, length);
-                break;
-
-            case WebSocketOpcode.TEXT:
-                // ILP v4 is binary-only, but log text messages for debugging
-                LOG.debug().$("WebSocket text message ignored [fd=").$(context.getFd()).$(", len=").$(length).I$();
-                break;
-
-            case WebSocketOpcode.PING:
-                handlePing(context, payload, length);
-                break;
-
-            case WebSocketOpcode.PONG:
-                // Just acknowledge pong
-                LOG.debug().$("WebSocket pong [fd=").$(context.getFd()).I$();
-                break;
-
-            case WebSocketOpcode.CLOSE:
-                handleClose(context, payload, length);
+            case WebSocketOpcode.BINARY -> handleBinaryMessage(context, state, payload, length);
+            case WebSocketOpcode.TEXT ->
+                    LOG.debug().$("WebSocket text message ignored [fd=").$(context.getFd()).$(", len=").$(length).I$();
+            case WebSocketOpcode.PING -> handlePing(context, state, payload, length);
+            case WebSocketOpcode.PONG -> LOG.debug().$("WebSocket pong [fd=").$(context.getFd()).I$();
+            case WebSocketOpcode.CLOSE -> {
+                handleClose(context, state, payload, length);
                 throw ServerDisconnectException.INSTANCE;
-
-            default:
-                LOG.debug().$("WebSocket unknown opcode [fd=").$(context.getFd()).$(", opcode=").$(opcode).I$();
-                break;
+            }
+            default ->
+                    LOG.debug().$("WebSocket unknown opcode [fd=").$(context.getFd()).$(", opcode=").$(opcode).I$();
         }
     }
 
-    private void handleBinaryMessage(HttpConnectionContext context, long payload, int length)
+    private void handleBinaryMessage(HttpConnectionContext context, IlpV4ProcessorState state, long payload, int length)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
-        long seq = messageSequence++;
+        long seq = state.nextMessageSequence();
         LOG.debug().$("WebSocket binary message [fd=").$(context.getFd())
                 .$(", len=").$(length)
                 .$(", seq=").$(seq).I$();
 
-        if (state == null) {
-            LOG.error().$("WebSocket binary message received but state is null [fd=").$(context.getFd()).I$();
-            sendErrorResponse(context, seq, STATUS_INTERNAL_ERROR, "Internal error: state is null");
-            return;
-        }
-
         if (!state.isOk()) {
             LOG.debug().$("WebSocket ignoring message, state is in error [fd=").$(context.getFd()).I$();
-            sendErrorResponse(context, seq, STATUS_INTERNAL_ERROR, "Previous message failed");
+            sendErrorResponse(context, state, seq, STATUS_INTERNAL_ERROR, "Previous message failed");
             return;
         }
 
@@ -368,9 +326,6 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
                 responseStatus = STATUS_WRITE_ERROR;
                 errorMessage = "Processing failed";
             }
-
-            // Reset state for next message (but preserve connectionSymbolDict for delta encoding)
-            state.clear();
         } catch (Throwable e) {
             LOG.error().$("WebSocket ILP processing error [fd=").$(context.getFd())
                     .$(", seq=").$(seq)
@@ -385,7 +340,7 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
                 responseStatus = STATUS_INTERNAL_ERROR;
             }
             errorMessage = e.getMessage();
-
+        } finally {
             // Reset state for next message (but preserve connectionSymbolDict for delta encoding)
             state.clear();
         }
@@ -393,73 +348,47 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
         // Send response using cumulative ACK strategy
         if (responseStatus == STATUS_OK) {
             // Success - update tracking, send ACK if batch size reached
-            highestProcessedSequence = seq;
-            maybeSendCumulativeAck(context);
+            state.setHighestProcessedSequence(seq);
+            if (state.shouldSendAck(ACK_BATCH_SIZE)) {
+                trySendAck(context, state);
+            }
         } else {
             // Error - first ACK all successful messages (if in READY state), then send error
-            if (sendState == SendState.READY && highestProcessedSequence > lastAckedSequence) {
-                trySendAck(context, highestProcessedSequence);
+            if (state.hasPendingAck()) {
+                trySendAck(context, state);
             }
-            sendErrorResponse(context, seq, responseStatus, errorMessage);
-        }
-    }
-
-    /**
-     * Sends a cumulative ACK if the batch size threshold is reached.
-     * Only attempts to send when in READY state (buffer is clear).
-     *
-     * @throws PeerIsSlowToReadException if the client's receive buffer is full
-     * @throws PeerDisconnectedException if the client disconnected
-     */
-    private void maybeSendCumulativeAck(HttpConnectionContext context)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
-        // Can only send new ACKs when in READY state
-        if (sendState != SendState.READY) {
-            return;
-        }
-
-        long gap = highestProcessedSequence - lastAckedSequence;
-        if (gap >= ACK_BATCH_SIZE) {
-            trySendAck(context, highestProcessedSequence);
+            sendErrorResponse(context, state, seq, responseStatus, errorMessage);
         }
     }
 
     /**
      * Flushes any pending cumulative ACK.
      * Only attempts to send when in READY state (buffer is clear).
-     *
-     * @throws PeerIsSlowToReadException if the client's receive buffer is full
-     * @throws PeerDisconnectedException if the client disconnected
      */
-    private void flushPendingAck(HttpConnectionContext context)
+    private void flushPendingAck(HttpConnectionContext context, IlpV4ProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
-        // Can only send new ACKs when in READY state
-        if (sendState != SendState.READY) {
-            return;
-        }
-
-        if (highestProcessedSequence > lastAckedSequence) {
-            trySendAck(context, highestProcessedSequence);
+        if (state.hasPendingAck()) {
+            trySendAck(context, state);
         }
     }
 
     /**
-     * Attempts to send a cumulative ACK for the given sequence number.
+     * Attempts to send a cumulative ACK for the highest processed sequence.
      * <p>
-     * State transitions:
+     * State transitions (managed by {@link IlpV4ProcessorState}):
      * <ul>
      *   <li>READY + success → stays READY, updates lastAckedSequence</li>
      *   <li>READY + PeerIsSlowToReadException → transitions to SENDING, throws</li>
      * </ul>
      *
-     * @param context  the HTTP connection context
-     * @param sequence the sequence number to ACK (cumulative)
+     * @param context the HTTP connection context
+     * @param state   the per-connection processor state
      * @throws PeerIsSlowToReadException if the client's receive buffer is full (transitions to SENDING)
      * @throws PeerDisconnectedException if the client disconnected
      */
-    private void trySendAck(HttpConnectionContext context, long sequence)
+    private void trySendAck(HttpConnectionContext context, IlpV4ProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
-        assert sendState == SendState.READY : "trySendAck called in wrong state: " + sendState;
+        assert state.isSendReady() : "trySendAck called in wrong state";
 
         HttpRawSocket rawSocket = context.getRawResponseSocket();
         long bufferAddr = rawSocket.getBufferAddress();
@@ -477,6 +406,7 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
             throw PeerDisconnectedException.INSTANCE;
         }
 
+        long sequence = state.getHighestProcessedSequence();
         int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, payloadLen);
         // Write status
         Unsafe.getUnsafe().putByte(bufferAddr + headerLen, STATUS_OK);
@@ -485,13 +415,11 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
 
         try {
             rawSocket.send(headerLen + payloadLen);
-            // Successfully sent - update tracking, stay in READY state
-            lastAckedSequence = sequence;
+            state.onAckSent(sequence);
             LOG.debug().$("Sent cumulative ACK [fd=").$(context.getFd()).$(", upTo=").$(sequence).I$();
         } catch (PeerIsSlowToReadException e) {
             // OS buffer full - transition to SENDING state
-            sendState = SendState.SENDING;
-            sequenceInBuffer = sequence;
+            state.onAckBlocked(sequence);
             LOG.debug().$("ACK blocked, transitioning to SENDING [fd=").$(context.getFd())
                     .$(", seq=").$(sequence).I$();
             throw e;
@@ -505,13 +433,12 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
      * the error is logged but not sent (the pending ACK takes priority, and
      * the connection will likely be closed anyway due to the error).
      */
-    private void sendErrorResponse(HttpConnectionContext context, long sequence, byte status, String errorMessage) {
+    private void sendErrorResponse(HttpConnectionContext context, IlpV4ProcessorState state, long sequence, byte status, String errorMessage) {
         // Can only send when buffer is clear
-        if (sendState != SendState.READY) {
+        if (!state.isSendReady()) {
             LOG.error().$("Cannot send error response, buffer busy [fd=").$(context.getFd())
                     .$(", seq=").$(sequence)
-                    .$(", status=").$(status)
-                    .$(", state=").$(sendState).I$();
+                    .$(", status=").$(status).I$();
             return;
         }
 
@@ -561,9 +488,9 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    private void handlePing(HttpConnectionContext context, long payload, int length) {
+    private void handlePing(HttpConnectionContext context, IlpV4ProcessorState state, long payload, int length) {
         // Can only send pong when buffer is clear
-        if (sendState != SendState.READY) {
+        if (!state.isSendReady()) {
             LOG.debug().$("Skipping pong, buffer busy [fd=").$(context.getFd()).I$();
             return;
         }
@@ -584,7 +511,7 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    private void handleClose(HttpConnectionContext context, long payload, int length) {
+    private void handleClose(HttpConnectionContext context, IlpV4ProcessorState state, long payload, int length) {
         int closeCode = -1;
         if (length >= 2) {
             int high = Unsafe.getUnsafe().getByte(payload) & 0xFF;
@@ -594,7 +521,7 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
         LOG.info().$("WebSocket close [fd=").$(context.getFd()).$(", code=").$(closeCode).I$();
 
         // Send close response only if buffer is clear
-        if (sendState != SendState.READY) {
+        if (!state.isSendReady()) {
             LOG.debug().$("Skipping close response, buffer busy [fd=").$(context.getFd()).I$();
             return;
         }
@@ -615,20 +542,23 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
 
     @Override
     public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        if (sendState == SendState.SENDING) {
+        IlpV4ProcessorState state = LV.get(context);
+        if (state == null) {
+            throw ServerDisconnectException.INSTANCE;
+        }
+
+        if (state.isSending()) {
             // Try to flush the pending ACK in the buffer
             context.resumeResponseSend();
 
             // If we get here, the send succeeded
-            lastAckedSequence = sequenceInBuffer;
-            sequenceInBuffer = -1;
-            sendState = SendState.READY;
+            state.onResumeSendComplete();
             LOG.debug().$("Resumed ACK sent successfully [fd=").$(context.getFd())
-                    .$(", upTo=").$(lastAckedSequence).I$();
+                    .$(", upTo=").$(state.getLastAckedSequence()).I$();
 
             // Check if more ACKs are pending (messages arrived while we were blocked)
-            if (highestProcessedSequence > lastAckedSequence) {
-                trySendAck(context, highestProcessedSequence);
+            if (state.hasPendingAck()) {
+                trySendAck(context, state);
             }
         }
         // If in READY state, nothing to do - no pending buffer data
@@ -642,24 +572,23 @@ public class IlpV4WebSocketUpgradeProcessor implements HttpRequestProcessor {
     @Override
     public void onConnectionClosed(HttpConnectionContext context) {
         LOG.info().$("WebSocket connection closed [fd=").$(context.getFd()).I$();
+        IlpV4ProcessorState state = LV.get(context);
+        if (state == null) {
+            return;
+        }
         // Try to flush any pending ACKs before closing
         try {
-            if (sendState == SendState.SENDING) {
+            if (state.isSending()) {
                 // Try to flush pending buffer first
                 context.resumeResponseSend();
-                lastAckedSequence = sequenceInBuffer;
-                sequenceInBuffer = -1;
-                sendState = SendState.READY;
+                state.onResumeSendComplete();
             }
             // Now try to send any remaining ACKs
-            flushPendingAck(context);
+            flushPendingAck(context, state);
         } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
             // Connection is closing anyway, ignore
         }
-        state = LV.get(context);
-        if (state != null) {
-            state.onDisconnected();
-        }
+        state.onDisconnected();
     }
 
     // ==================== STATIC RESPONSE WRITING METHODS ====================
