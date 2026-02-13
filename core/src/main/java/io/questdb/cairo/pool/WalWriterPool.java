@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.pool;
 
+import io.questdb.Telemetry;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DdlListener;
@@ -33,6 +34,7 @@ import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.std.str.CharSink;
+import io.questdb.tasks.TelemetryWalTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -68,7 +70,8 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 engine.getDdlListener(tableToken),
                 engine.getWalDirectoryPolicy(),
                 engine.getWalLocker(),
-                engine.getRecentWriteTracker()
+                engine.getRecentWriteTracker(),
+                engine.getTelemetryWal()
         );
     }
 
@@ -88,7 +91,8 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 DdlListener ddlListener,
                 WalDirectoryPolicy walDirectoryPolicy,
                 WalLocker walLocker,
-                RecentWriteTracker recentWriteTracker
+                RecentWriteTracker recentWriteTracker,
+                Telemetry<TelemetryWalTask> telemetryWal
         ) {
             super(
                     pool.getConfiguration(),
@@ -97,7 +101,8 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                     ddlListener,
                     walDirectoryPolicy,
                     walLocker,
-                    recentWriteTracker
+                    recentWriteTracker,
+                    telemetryWal
             );
             this.pool = pool;
             this.rootEntry = rootEntry;

@@ -25,6 +25,8 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.Metrics;
+import io.questdb.Telemetry;
+import io.questdb.TelemetryEvent;
 import io.questdb.cairo.AlterTableContextException;
 import io.questdb.cairo.BitmapIndexUtils;
 import io.questdb.cairo.CairoConfiguration;
@@ -96,6 +98,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.tasks.TelemetryWalTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -120,7 +123,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private final MetadataService metaWriterSvc = new MetadataWriterService();
     private final WalWriterMetadata metadata;
     private final Metrics metrics;
-    private final boolean noWalTelemetry;
+    private final Telemetry<TelemetryWalTask> telemetryWal;
     private final ObjList<Runnable> nullSetters;
     private final RecentWriteTracker recentWriteTracker;
     private final RowImpl row = new RowImpl();
@@ -129,6 +132,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private final BoolList symbolMapNullFlagsChanged = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<DirectCharSequenceIntHashMap> symbolMaps = new ObjList<>();
+    private final boolean walTelemetryEnabled;
     private final TimestampDriver timestampDriver;
     private final int timestampIndex;
     private final ObjList<Utf8StringIntHashMap> utf8SymbolMaps = new ObjList<>();
@@ -164,15 +168,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             DdlListener ddlListener,
             WalDirectoryPolicy walDirectoryPolicy,
             WalLocker walLocker,
-            RecentWriteTracker recentWriteTracker
+            RecentWriteTracker recentWriteTracker,
+            Telemetry<TelemetryWalTask> telemetryWal
     ) {
         super(configuration, tableToken, tableSequencerAPI, walDirectoryPolicy, walLocker);
 
         LOG.info().$("open [table=").$(tableToken).I$();
         this.ddlListener = ddlListener;
         this.recentWriteTracker = recentWriteTracker;
+        this.telemetryWal = telemetryWal;
         this.metrics = configuration.getMetrics();
-        this.noWalTelemetry = configuration.getTelemetryConfiguration().getDisableCompletely();
+        this.walTelemetryEnabled = !configuration.getTelemetryConfiguration().getDisableCompletely();
 
         try {
             lockWal();
@@ -884,9 +890,23 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 // flush disk before getting next txn
                 syncIfRequired();
                 final long seqTxn = getSequencerTxn();
+                if (walTelemetryEnabled) {
+                    TelemetryWalTask.store(
+                            telemetryWal,
+                            TelemetryEvent.WAL_TXN_COMMITTED,
+                            tableToken.getTableId(),
+                            walId,
+                            seqTxn,
+                            txnRowCount,
+                            txnRowCount,
+                            0L,
+                            txnMinTimestamp,
+                            txnMaxTimestamp
+                    );
+                }
                 final boolean hasReplaceRange = replaceRangeHiTs > replaceRangeLowTs;
                 // Reduce the logging if telementry is enabled all the information is saved in sys.telemetry_wal
-                LogRecord logLine = hasReplaceRange || noWalTelemetry ? LOG.info() : LOG.debug();
+                LogRecord logLine = hasReplaceRange || !walTelemetryEnabled ? LOG.info() : LOG.debug();
                 try {
                     logLine.$("commit [wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
                             .$(", segTxn=").$(lastSegmentTxn)

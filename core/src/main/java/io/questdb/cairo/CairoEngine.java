@@ -250,7 +250,11 @@ public class CairoEngine implements Closeable, WriterSource {
             this.telemetry = createTelemetry(TelemetryTask.TELEMETRY, configuration);
             this.telemetryWal = createTelemetry(TelemetryWalTask.WAL_TELEMETRY, configuration);
             this.telemetryMatView = createTelemetry(TelemetryMatViewTask.MAT_VIEW_TELEMETRY, configuration);
-            this.telemetries = new ObjList<>(telemetry, telemetryWal, telemetryMatView);
+            this.telemetries = new ObjList<>(telemetryWal, telemetryMatView);
+            if (!configuration.getTelemetryConfiguration().getEnabled()) {
+                // This is the only one that can be switched off by the configuration
+                telemetries.add(telemetry);
+            }
             this.tableIdGenerator = IDGeneratorFactory.newIDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME, 1);
             this.checkpointAgent = new DatabaseCheckpointAgent(this);
             this.queryRegistry = new QueryRegistry(configuration);
