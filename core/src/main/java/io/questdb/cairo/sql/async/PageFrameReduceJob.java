@@ -197,8 +197,7 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
                             .$(", frameCount=").$(frameSequence.getFrameCount())
                             .I$();
                     int interruptReason = SqlExecutionCircuitBreaker.STATE_OK;
-                    if (th instanceof CairoException) {
-                        CairoException e = (CairoException) th;
+                    if (th instanceof CairoException e) {
                         interruptReason = e.getInterruptionReason();
                     }
                     task.setErrorMsg(th);

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.LongList;
@@ -181,6 +182,14 @@ public class HorizonTimestampIterator implements QuietCloseable {
         siftUp(i);
     }
 
+    private static long addTimestampAndOffset(long timestamp, long offset) {
+        try {
+            return Math.addExact(timestamp, offset);
+        } catch (ArithmeticException e) {
+            throw CairoException.nonCritical().put("horizon timestamp overflow [timestamp=").put(timestamp).put(", offset=").put(offset).put(']');
+        }
+    }
+
     private void initHeap() {
         heapSize = 0;
         // Read timestamp of first row
@@ -188,7 +197,7 @@ public class HorizonTimestampIterator implements QuietCloseable {
         masterCursor.recordAt(recordB, firstRowId);
         long firstMasterTs = recordB.getTimestamp(timestampColumnIndex);
         for (int k = 0, n = offsets.size(); k < n; k++) {
-            long horizonTs = Math.addExact(firstMasterTs, offsets.getQuick(k));
+            long horizonTs = addTimestampAndOffset(firstMasterTs, offsets.getQuick(k));
             heapInsert(horizonTs, k);
         }
     }
@@ -210,7 +219,7 @@ public class HorizonTimestampIterator implements QuietCloseable {
         if (nextPos < discoveredCount || discoverNextRow()) {
             long nextRowId = getRowId(nextPos);
             masterCursor.recordAt(recordB, nextRowId);
-            long nextHorizonTs = Math.addExact(recordB.getTimestamp(timestampColumnIndex), offsets.getQuick(offsetIdx));
+            long nextHorizonTs = addTimestampAndOffset(recordB.getTimestamp(timestampColumnIndex), offsets.getQuick(offsetIdx));
             // Replace root and restore heap property
             heapTs[0] = nextHorizonTs;
             heapPos[0] = nextPos;
@@ -238,7 +247,7 @@ public class HorizonTimestampIterator implements QuietCloseable {
         }
         long rowId = rowIds.getQuick((int) (discoveredCount - 1 - windowBase));
         masterCursor.recordAt(recordB, rowId);
-        currentHorizonTs = Math.addExact(recordB.getTimestamp(timestampColumnIndex), singleOffsetValue);
+        currentHorizonTs = addTimestampAndOffset(recordB.getTimestamp(timestampColumnIndex), singleOffsetValue);
         currentMasterRowId = rowId;
         currentOffsetIdx = 0;
         // No need to cache rowIds; evict immediately
