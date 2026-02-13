@@ -224,6 +224,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         private final RecordSink slaveAsOfJoinMapSink;
         private final MarkoutTimeFrameHelper slaveTimeFrameHelper;
         private final SymbolTranslatingRecord symbolTranslatingRecord;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isDataMapBuilt;
         private boolean isOpen;
         private MapRecordCursor mapCursor;
@@ -405,6 +406,8 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
 
             while (horizonIterator.next()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+
                 final long horizonTs = horizonIterator.getHorizonTimestamp();
                 final long masterRowId = horizonIterator.getMasterRowId();
                 final int offsetIdx = horizonIterator.getOffsetIndex();
@@ -505,6 +508,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                     asOfJoinMap.reopen();
                 }
             }
+            this.circuitBreaker = executionContext.getCircuitBreaker();
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             slaveTimeFrameHelper.of(slaveCursor);

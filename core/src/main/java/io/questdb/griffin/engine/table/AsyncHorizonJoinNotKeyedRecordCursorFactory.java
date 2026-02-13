@@ -334,7 +334,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             horizonIterator.ofFiltered(record, rows, masterTimestampColumnIndex);
 
             // Process horizon timestamps in sorted order for sequential ASOF lookups
-            processSortedHorizonTimestamps(
+            processHorizonTimestamps(
                     horizonIterator,
                     record,
                     masterKeyRecord,
@@ -347,8 +347,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     slaveRecord,
                     horizonJoinRecord,
                     value,
-                    functionUpdater,
-                    circuitBreaker
+                    functionUpdater
             );
         } finally {
             atom.release(slotId);
@@ -369,7 +368,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
      * Each slave row is scanned at most once per frame (either forward or backward).
      * Watermarks are tracked internally by the helper and reset via toTop().
      */
-    private static void processSortedHorizonTimestamps(
+    private static void processHorizonTimestamps(
             AsyncHorizonTimestampIterator horizonIterator,
             PageFrameMemoryRecord masterRecord,
             Record masterKeyRecord,
@@ -382,8 +381,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             Record slaveRecord,
             HorizonJoinRecord horizonJoinRecord,
             SimpleMapValue value,
-            GroupByFunctionsUpdater functionUpdater,
-            SqlExecutionCircuitBreaker circuitBreaker
+            GroupByFunctionsUpdater functionUpdater
     ) {
         final boolean keyedAsOfJoin = asOfJoinMap != null && masterAsOfJoinMapSink != null && slaveAsOfJoinMapSink != null;
 
@@ -396,8 +394,6 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         final long masterTsScale = atom.getMasterTimestampScale();
 
         while (horizonIterator.next()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-
             // horizonTs is in master's resolution (master_ts + offset)
             final long horizonTs = horizonIterator.getHorizonTimestamp();
             final long masterRowIdx = horizonIterator.getMasterRowIndex();
@@ -527,7 +523,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             horizonIterator.of(record, 0, frameRowCount, masterTimestampColumnIndex);
 
             // Process horizon timestamps in sorted order for sequential ASOF lookups
-            processSortedHorizonTimestamps(
+            processHorizonTimestamps(
                     horizonIterator,
                     record,
                     masterKeyRecord,
@@ -540,8 +536,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     slaveRecord,
                     horizonJoinRecord,
                     value,
-                    functionUpdater,
-                    circuitBreaker
+                    functionUpdater
             );
         } finally {
             atom.release(slotId);

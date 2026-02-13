@@ -1434,8 +1434,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw SqlException.position(context.getRangeFromPosition()).put("FROM must be less than or equal to TO");
             }
 
-            final int count = (int) ((to - from) / step) + 1;
-            final LongList offsets = new LongList(count);
+            final long count = ((to - from) / step) + 1;
+            final int maxOffsets = configuration.getSqlHorizonJoinMaxOffsets();
+            if (count > maxOffsets) {
+                throw SqlException.position(context.getRangeFromPosition())
+                        .put("RANGE generates too many offsets [count=").put(count)
+                        .put(", max=").put(maxOffsets)
+                        .put(']');
+            }
+            final LongList offsets = new LongList((int) count);
             for (int i = 0; i < count; i++) {
                 offsets.add(from + i * step);
             }
@@ -1443,6 +1450,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } else if (context.getMode() == HorizonJoinContext.MODE_LIST) {
             // LIST (offset1, offset2, ...)
             final ObjList<ExpressionNode> offsetExpressions = context.getListOffsets();
+            final int maxOffsets = configuration.getSqlHorizonJoinMaxOffsets();
+            if (offsetExpressions.size() > maxOffsets) {
+                throw SqlException.position(context.getAliasPosition())
+                        .put("LIST has too many offsets [count=").put(offsetExpressions.size())
+                        .put(", max=").put(maxOffsets)
+                        .put(']');
+            }
             final LongList offsets = new LongList(offsetExpressions.size());
             for (int i = 0, n = offsetExpressions.size(); i < n; i++) {
                 ExpressionNode expr = offsetExpressions.getQuick(i);

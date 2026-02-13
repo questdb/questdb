@@ -966,6 +966,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlHorizonJoinMaxOffsets() {
+        return 10_000;
+    }
+
+    @Override
     public int getSqlIntervalIncrementalMergeThreshold() {
         return 256;
     }
