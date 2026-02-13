@@ -216,29 +216,6 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimestampOverflowThrowsError() throws Exception {
-        // When applying the offset to a predicate timestamp would cause overflow,
-        // throw an actionable error instead of silently wrapping around.
-        //
-        // Long.MAX_VALUE microseconds from epoch is approximately year 294247.
-        // If we use dateadd('y', -300000, timestamp), the inverse offset is +300000 years.
-        // Applying +300000 years to '2022-01-01' would result in year 302022,
-        // which exceeds the maximum representable timestamp and causes overflow.
-        assertMemoryLeak(() -> execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;"));
-
-        // dateadd('y', -300000, timestamp) means the optimizer stores +300000 as the inverse offset.
-        // When pushing down ts > '2022-01-01', it needs to apply +300000 years to 2022-01-01,
-        // resulting in year 302022 which overflows the microsecond timestamp range (~year 294247).
-        assertException(
-                "SELECT * FROM (" +
-                        "SELECT dateadd('y', -300000, timestamp) as ts, price FROM trades" +
-                        ") WHERE ts > '2022-01-01'",
-                0,
-                "timestamp overflow"
-        );
-    }
-
-    @Test
     public void testMixedPredicatesPushdown() throws Exception {
         // Test that non-timestamp predicates don't interfere with pushdown
         assertMemoryLeak(() -> {
@@ -618,6 +595,16 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     false
             );
         });
+    }
+
+    @Test
+    public void testNullOffsetThrowsError() throws Exception {
+        // Ensure a NULL stride is rejected
+        assertMemoryLeak(() -> execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;"));
+        assertException("SELECT * FROM (SELECT dateadd('h', NULL, timestamp) as ts, price FROM trades) WHERE ts IN '2022'",
+                35,
+                "`null` is not a valid stride"
+        );
     }
 
     @Test
@@ -1015,10 +1002,6 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== Window Function Timestamp Tests ====================
-    // Window functions don't support predicate pushdown (they need all rows first),
-    // but timestamp detection should still work correctly.
-
     @Test
     public void testRejectPredicateBetweenWithNow() throws Exception {
         // Predicate ts BETWEEN ... AND now() should NOT be pushed down
@@ -1046,6 +1029,10 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ==================== Window Function Timestamp Tests ====================
+    // Window functions don't support predicate pushdown (they need all rows first),
+    // but timestamp detection should still work correctly.
 
     @Test
     public void testRejectPredicateOrWithNow() throws Exception {
@@ -1160,10 +1147,6 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== Tests for rejected predicates ====================
-    // These predicates should NOT be pushed down because they contain
-    // disallowed functions (now, sysdate, etc.) or dateadd without timestamp reference.
-
     @Test
     public void testRejectPredicateWithSysdate() throws Exception {
         // Predicate ts > sysdate() should NOT be pushed down
@@ -1191,6 +1174,10 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ==================== Tests for rejected predicates ====================
+    // These predicates should NOT be pushed down because they contain
+    // disallowed functions (now, sysdate, etc.) or dateadd without timestamp reference.
 
     @Test
     public void testRejectPredicateWithSystimestamp() throws Exception {
@@ -1252,6 +1239,72 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     """
                             ts\tprice
                             2022-01-01T00:00:00.000000Z\t100.0
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampOverflowThrowsError() throws Exception {
+        // When applying the offset to a predicate timestamp would cause overflow,
+        // throw an actionable error instead of silently wrapping around.
+        //
+        // Long.MAX_VALUE microseconds from epoch is approximately year 294247.
+        // If we use dateadd('y', -300000, timestamp), the inverse offset is +300000 years.
+        // Applying +300000 years to '2022-01-01' would result in year 302022,
+        // which exceeds the maximum representable timestamp and causes overflow.
+        assertMemoryLeak(() -> execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;"));
+
+        // dateadd('y', -300000, timestamp) means the optimizer stores +300000 as the inverse offset.
+        // When pushing down ts > '2022-01-01', it needs to apply +300000 years to 2022-01-01,
+        // resulting in year 302022 which overflows the microsecond timestamp range (~year 294247).
+        assertException(
+                "SELECT * FROM (" +
+                        "SELECT dateadd('y', -300000, timestamp) as ts, price FROM trades" +
+                        ") WHERE ts > '2022-01-01'",
+                0,
+                "timestamp overflow"
+        );
+    }
+
+    @Test
+    public void testViewPushdown() throws Exception {
+        // Test that predicates are pushed down through views with dateadd offset
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z');");
+            execute("INSERT INTO trades VALUES (150, '2022-01-02T12:00:00.000000Z');");
+            execute("INSERT INTO trades VALUES (200, '2022-01-03T12:00:00.000000Z');");
+            execute("INSERT INTO trades VALUES (250, '2022-01-04T12:00:00.000000Z');");
+
+            // Create a view that wraps dateadd on the timestamp
+            execute("CREATE VIEW trades_offset AS SELECT dateadd('d', -1, timestamp) as ts, price FROM trades;");
+
+            String query = "SELECT * FROM trades_offset WHERE ts IN '2022-01-01'";
+
+            // Verify plan shows interval pushdown with +1 day offset applied through the view
+            // ts IN '2022-01-01' means original timestamp must be in '2022-01-02'
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            VirtualRecord
+                              functions: [dateadd('d',-1,timestamp),price]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: trades
+                                      intervals: [("2022-01-02T00:00:00.000000Z","2022-01-02T23:59:59.999999Z")]
+                            """
+            );
+
+            // Verify correct data: only the row where ts = 2022-01-01 (original timestamp = 2022-01-02)
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tprice
+                            2022-01-01T12:00:00.000000Z\t150.0
                             """,
                     query,
                     "ts",
@@ -1484,49 +1537,6 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     """
                             ts\tprice
                             2022-06-15T12:00:00.000000Z\t100.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
-        });
-    }
-
-    @Test
-    public void testViewPushdown() throws Exception {
-        // Test that predicates are pushed down through views with dateadd offset
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
-            execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z');");
-            execute("INSERT INTO trades VALUES (150, '2022-01-02T12:00:00.000000Z');");
-            execute("INSERT INTO trades VALUES (200, '2022-01-03T12:00:00.000000Z');");
-            execute("INSERT INTO trades VALUES (250, '2022-01-04T12:00:00.000000Z');");
-
-            // Create a view that wraps dateadd on the timestamp
-            execute("CREATE VIEW trades_offset AS SELECT dateadd('d', -1, timestamp) as ts, price FROM trades;");
-
-            String query = "SELECT * FROM trades_offset WHERE ts IN '2022-01-01'";
-
-            // Verify plan shows interval pushdown with +1 day offset applied through the view
-            // ts IN '2022-01-01' means original timestamp must be in '2022-01-02'
-            assertPlanNoLeakCheck(
-                    query,
-                    """
-                            VirtualRecord
-                              functions: [dateadd('d',-1,timestamp),price]
-                                PageFrame
-                                    Row forward scan
-                                    Interval forward scan on: trades
-                                      intervals: [("2022-01-02T00:00:00.000000Z","2022-01-02T23:59:59.999999Z")]
-                            """
-            );
-
-            // Verify correct data: only the row where ts = 2022-01-01 (original timestamp = 2022-01-02)
-            assertQueryNoLeakCheck(
-                    """
-                            ts\tprice
-                            2022-01-01T12:00:00.000000Z\t150.0
                             """,
                     query,
                     "ts",
