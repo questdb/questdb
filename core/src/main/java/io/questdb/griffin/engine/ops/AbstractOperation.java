@@ -38,9 +38,9 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
     private static final long NO_CORRELATION_ID = -1L;
     protected @Nullable TableToken tableToken;
     @Nullable
-    SecurityContext securityContext;
+    protected SecurityContext securityContext;
     @Nullable
-    SqlExecutionContext sqlExecutionContext;
+    protected SqlExecutionContext sqlExecutionContext;
     @Nullable
     CharSequence sqlText;
     int tableNamePosition;

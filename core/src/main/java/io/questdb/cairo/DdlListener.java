@@ -28,7 +28,9 @@ public interface DdlListener {
 
     void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName);
 
-    void onColumnRenamed(SecurityContext securityContext, TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName);
+    void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions);
+
+    void onColumnRenamed(TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName);
 
     /**
      * Called when a table, view or materialized view is created.
@@ -43,5 +45,7 @@ public interface DdlListener {
      */
     void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind);
 
-    void onTableRenamed(SecurityContext securityContext, TableToken oldTableToken, TableToken newTableToken);
+    void onTableDropped(String tableName, boolean cascadePermissions);
+
+    void onTableRenamed(TableToken oldTableToken, TableToken newTableToken);
 }

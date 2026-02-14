@@ -32,7 +32,15 @@ public class DefaultDdlListener implements DdlListener {
     }
 
     @Override
-    public void onColumnRenamed(SecurityContext securityContext, TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName) {
+    public void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions) {
+    }
+
+    @Override
+    public void onColumnRenamed(TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName) {
+    }
+
+    @Override
+    public void onTableDropped(String tableName, boolean cascadePermissions) {
     }
 
     @Override
@@ -40,6 +48,6 @@ public class DefaultDdlListener implements DdlListener {
     }
 
     @Override
-    public void onTableRenamed(SecurityContext securityContext, TableToken oldTableToken, TableToken newTableToken) {
+    public void onTableRenamed(TableToken oldTableToken, TableToken newTableToken) {
     }
 }

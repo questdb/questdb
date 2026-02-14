@@ -48,7 +48,6 @@ import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
-import io.questdb.griffin.engine.ops.GenericDropOperationBuilder;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
@@ -89,10 +88,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.griffin.CompiledQuery.BEGIN;
-import static io.questdb.griffin.CompiledQuery.COMMIT;
-import static io.questdb.griffin.CompiledQuery.ROLLBACK;
-import static io.questdb.griffin.CompiledQuery.SET;
+import static io.questdb.griffin.CompiledQuery.*;
 
 public class SqlCompilerImplTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(SqlCompilerImplTest.class);
@@ -7965,12 +7961,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         @Override
         protected void compileDropExt(
                 @NotNull SqlExecutionContext executionContext,
-                @NotNull GenericDropOperationBuilder opBuilder,
                 @NotNull CharSequence tok,
                 int position
         ) throws SqlException {
             compileDropTableExtCalled = true;
-            super.compileDropExt(executionContext, opBuilder, tok, position);
+            super.compileDropExt(executionContext, tok, position);
         }
 
         @Override
@@ -7980,9 +7975,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        protected void unknownDropColumnSuffix(SecurityContext securityContext, CharSequence tok, TableToken tableToken, AlterOperationBuilder dropColumnStatement) throws SqlException {
+        protected void unknownDropColumnSuffix(SecurityContext securityContext, CharSequence tok, TableToken tableToken) throws SqlException {
             unknownDropColumnSuffixCalled = true;
-            super.unknownDropColumnSuffix(securityContext, tok, tableToken, dropColumnStatement);
+            super.unknownDropColumnSuffix(securityContext, tok, tableToken);
         }
     }
 }

@@ -4,11 +4,11 @@ import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 
 public class GenericDropOperationBuilder implements Mutable {
-    private CharSequence entityName;
-    private int entityNamePosition;
-    private boolean ifExists;
-    private int operationCode;
-    private CharSequence sqlText;
+    protected CharSequence entityName;
+    protected int entityNamePosition;
+    protected boolean ifExists;
+    protected int operationCode;
+    protected CharSequence sqlText;
 
     public GenericDropOperation build() {
         return new GenericDropOperation(

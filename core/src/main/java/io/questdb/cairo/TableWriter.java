@@ -145,9 +145,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -2680,7 +2680,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void removeColumn(@NotNull CharSequence name) {
+    public void removeColumn(@NotNull CharSequence name, SecurityContext securityContext, boolean cascadePermissions) {
         assert txWriter.getLagRowCount() == 0;
 
         checkDistressed();
@@ -2728,6 +2728,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             clearTodoAndCommitMetaStructureVersion();
 
             finishColumnPurge();
+
+            if (securityContext != null) {
+                ddlListener.onColumnDropped(tableToken, columnName, cascadePermissions);
+            }
 
             try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.hydrateTable(metadata);
@@ -2828,7 +2832,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             if (securityContext != null) {
-                ddlListener.onColumnRenamed(securityContext, tableToken, columnName, newColumnName);
+                ddlListener.onColumnRenamed(tableToken, columnName, newColumnName);
             }
 
             try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
