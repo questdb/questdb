@@ -369,6 +369,37 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 // to avoid O3 commits by pre-calculating safe to commit timestamp for every commit.
                 writer.readWalTxnDetails(transactionLogCursor);
                 transactionLogCursor.toTop();
+
+                // Detect a broken mat view state where the writer has applied a locally
+                // created WAL TXN (e.g. an unauthorized ALTER on a replica) that advanced
+                // appliedSeqTxn past the sequencer's max TXN. In this state, the primary's
+                // TXN with the same number will be permanently skipped, causing data loss.
+                if (tableToken.isMatView()) {
+                    final long maxTxn = transactionLogCursor.getMaxTxn();
+                    if (maxTxn > 0 && maxTxn < writer.getAppliedSeqTxn()) {
+                        final String reason = "sequencer transaction mismatch: writer at "
+                                + writer.getAppliedSeqTxn() + " but sequencer max is " + maxTxn;
+                        LOG.error().$("materialized view writer is ahead of sequencer, invalidating")
+                                .$(" [view=").$(tableToken)
+                                .$(", writerSeqTxn=").$(writer.getAppliedSeqTxn())
+                                .$(", sequencerMaxTxn=").$(maxTxn)
+                                .I$();
+                        try {
+                            tempPath.of(engine.getConfiguration().getDbRoot()).concat(tableToken);
+                            updateMatViewRefreshState(tempPath, -1, microClock.getTicks(), true, reason, 0, null, -1);
+                        } catch (CairoException e) {
+                            LOG.error().$("could not write invalidation state for materialized view [view=").$(tableToken)
+                                    .$(", msg=").$safe(e.getFlyweightMessage())
+                                    .$(", errno=").$(e.getErrno())
+                                    .I$();
+                        }
+                        mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
+                        mvRefreshTask.invalidationReason = reason;
+                        engine.notifyMatViewBaseTableCommit(mvRefreshTask, writer.getSeqTxn());
+                        return;
+                    }
+                }
+
                 isTerminating = runStatus.isTerminating();
                 final long timeLimit = microClock.getTicks() + tableTimeQuotaMicros;
                 boolean firstRun = true;
