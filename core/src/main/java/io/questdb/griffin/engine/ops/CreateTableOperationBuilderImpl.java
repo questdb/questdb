@@ -414,8 +414,12 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         if (from == to || isIPv4Cast(from, to)) {
             return true;
         }
-        if (ColumnType.tagOf(from) == ColumnType.LONG && ColumnType.isStringyType(to)) {
-            return true;
+        // Allow explicit casts to STRING/VARCHAR only for source types that the
+        // row copier (RecordToRowCopierUtils / LoopingRecordToRowCopier) supports.
+        // Expand this list as copier support for more types is added.
+        if (ColumnType.isStringyType(to)) {
+            int fromTag = ColumnType.tagOf(from);
+            return fromTag == ColumnType.LONG || fromTag == ColumnType.CHAR || fromTag == ColumnType.SYMBOL || fromTag == ColumnType.UUID;
         }
         return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
     }
