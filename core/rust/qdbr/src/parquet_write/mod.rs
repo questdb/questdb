@@ -4,6 +4,7 @@ pub mod array;
 mod binary;
 mod boolean;
 pub(crate) mod file;
+pub use file::ParquetWriter;
 mod fixed_len_bytes;
 mod jni;
 mod primitive;
@@ -14,6 +15,21 @@ mod symbol;
 mod update;
 mod util;
 pub mod varchar;
+
+#[doc(hidden)]
+pub mod bench {
+    pub use super::array::array_to_raw_page;
+    pub use super::binary::binary_to_page;
+    pub use super::boolean::slice_to_page as boolean_to_page;
+    pub use super::file::WriteOptions;
+    pub use super::fixed_len_bytes::bytes_to_page;
+    pub use super::primitive::{
+        int_slice_to_page_notnull, int_slice_to_page_nullable, slice_to_page_simd,
+    };
+    pub use super::string::string_to_page;
+    pub use super::symbol::symbol_to_pages;
+    pub use super::varchar::varchar_to_page;
+}
 
 pub trait Nullable {
     fn is_null(&self) -> bool;

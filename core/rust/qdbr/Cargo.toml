@@ -9,7 +9,7 @@ rust-version = "nightly"
 
 [lib]
 name = "questdbr"
-crate-type = ["dylib"]
+crate-type = ["dylib", "rlib"]
 
 [dependencies]
 qdb-core = { path = "../qdb-core" }
@@ -34,3 +34,8 @@ arrow = "56.2.0"
 bytes = "1.11.1"
 tempfile = "3.23.0"
 rand = "0.9.2"
+criterion = "0.4"
+
+[[bench]]
+name = "decode_page"
+harness = false

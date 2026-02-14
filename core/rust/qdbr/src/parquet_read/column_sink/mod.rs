@@ -1,10 +1,6 @@
 use crate::parquet::error::ParquetResult;
 
-pub mod fixed;
 pub mod var;
-
-#[cfg(test)]
-mod tests;
 
 pub trait Pushable {
     fn reserve(&mut self, count: usize) -> ParquetResult<()>;

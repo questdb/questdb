@@ -90,6 +90,44 @@ impl<'a> Block<'a> {
 
         Ok(())
     }
+
+    /// Decode up to `out.len()` delta values into `out`.
+    /// Returns the number of values decoded.
+    #[inline]
+    fn decode_deltas_batch(&mut self, out: &mut [i64]) -> Result<usize, Error> {
+        let count = out.len().min(self.remaining);
+        if count == 0 {
+            return Ok(0);
+        }
+
+        let mut written = 0;
+        while written < count {
+            let left_in_miniblock = self.values_per_mini_block - self.current_index;
+            let to_write = (count - written).min(left_in_miniblock);
+
+            if let Some(ref mut mb) = self.current_miniblock {
+                // Miniblock has bitpacked values
+                for i in 0..to_write {
+                    out[written + i] = self.min_delta + mb.next().unwrap_or_default() as i64;
+                }
+            } else {
+                // All-zero deltas (bitwidth=0)
+                for i in 0..to_write {
+                    out[written + i] = self.min_delta;
+                }
+            }
+
+            written += to_write;
+            self.current_index += to_write;
+            self.remaining -= to_write;
+
+            if self.remaining > 0 && self.current_index == self.values_per_mini_block {
+                self.advance_miniblock()?;
+            }
+        }
+
+        Ok(written)
+    }
 }
 
 impl<'a> Iterator for Block<'a> {
@@ -181,6 +219,66 @@ impl<'a> Decoder<'a> {
     /// Returns the total number of bytes consumed up to this point by [`Decoder`].
     pub fn consumed_bytes(&self) -> usize {
         self.consumed_bytes + self.current_block.as_ref().map_or(0, |b| b.consumed_bytes)
+    }
+
+    /// Decode up to `out.len()` values into `out`. Returns the number of values decoded.
+    /// This is much faster than iterating one-by-one because it avoids per-value
+    /// Option/Result wrapping and processes miniblocks in tight loops.
+    pub fn decode_batch(&mut self, out: &mut [i64]) -> Result<usize, Error> {
+        let count = out.len().min(self.values_remaining);
+        if count == 0 {
+            return Ok(0);
+        }
+
+        let mut written = 0;
+
+        // Emit the pending next_value first
+        out[written] = self.next_value;
+        written += 1;
+        self.values_remaining -= 1;
+
+        // Batch-decode remaining values via the block's delta decoder
+        while written < count && self.values_remaining > 0 {
+            if let Some(ref mut block) = self.current_block {
+                let batch_count = (count - written).min(self.values_remaining);
+                let mut delta_buf = [0i64; 128];
+                let to_decode = batch_count.min(128);
+                let decoded = block.decode_deltas_batch(&mut delta_buf[..to_decode])?;
+
+                // Prefix sum: convert deltas to absolute values
+                let mut acc = self.next_value;
+                for i in 0..decoded {
+                    acc = acc.wrapping_add(delta_buf[i]);
+                    out[written + i] = acc;
+                }
+                self.next_value = acc;
+                written += decoded;
+                self.values_remaining -= decoded;
+
+                if self.values_remaining > 0 && block.remaining == 0 {
+                    // Advance to next block
+                    let consumed = block.consumed_bytes;
+                    self.values = &self.values[consumed..];
+                    self.consumed_bytes += consumed;
+
+                    self.current_block = Some(Block::try_new(
+                        self.values,
+                        self.num_mini_blocks,
+                        self.values_per_mini_block,
+                        self.values_remaining,
+                    )?);
+                }
+            }
+        }
+
+        // Maintain the invariant: next_value must hold the next value to emit.
+        // Load the next delta so next_value is ready for subsequent calls.
+        if self.values_remaining > 0 {
+            let delta = self.load_delta()?;
+            self.next_value = self.next_value.wrapping_add(delta);
+        }
+
+        Ok(written)
     }
 
     fn load_delta(&mut self) -> Result<i64, Error> {

@@ -2,22 +2,24 @@ use crate::allocator::{AcVec, QdbAllocator};
 use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
 use crate::parquet::util::{align8b, ARRAY_NDIMS_LIMIT};
-use crate::parquet_read::column_sink::fixed::{
-    FixedBooleanColumnSink, FixedDoubleColumnSink, FixedFloatColumnSink, FixedInt2ByteColumnSink,
-    FixedInt2ShortColumnSink, FixedIntColumnSink, FixedLong128ColumnSink, FixedLong256ColumnSink,
-    FixedLongColumnSink, IntDecimalColumnSink, NanoTimestampColumnSink, ReverseFixedColumnSink,
-};
 use crate::parquet_read::column_sink::var::ARRAY_AUX_SIZE;
 use crate::parquet_read::column_sink::var::{
     BinaryColumnSink, RawArrayColumnSink, StringColumnSink, VarcharColumnSink,
 };
 use crate::parquet_read::column_sink::Pushable;
-use crate::parquet_read::slicer::dict_decoder::{FixedDictDecoder, VarDictDecoder};
-use crate::parquet_read::slicer::rle::{RleDictionarySlicer, RleLocalIsGlobalSymbolDecoder};
+use crate::parquet_read::decoders::int128::Int128ToUuidConverter;
+use crate::parquet_read::decoders::int96::{Int96Timestamp, Int96ToTimestampConverter};
+use crate::parquet_read::decoders::{
+    int32::DayToMillisConverter, int32::Int32ToDoubleConverter, BasePrimitiveDictDecoder,
+    BaseVarDictDecoder, ConvertablePrimitiveDictDecoder, DeltaBinaryPackedPrimitiveDecoder,
+    FixedDictDecoder, PlainBooleanDecoder, PlainPrimitiveDecoder, RleBooleanDecoder,
+    RleDictionaryDecoder, RleLocalIsGlobalSymbolDictDecoder,
+};
+use crate::parquet_read::page::{split_buffer, DataPage, DictPage};
+use crate::parquet_read::slicer::rle::RleDictionarySlicer;
 use crate::parquet_read::slicer::{
-    BooleanBitmapSlicer, DataPageFixedSlicer, DataPageSlicer, DaysToMillisConverter,
-    DeltaBinaryPackedSlicer, DeltaBytesArraySlicer, DeltaLengthArraySlicer, PlainVarSlicer,
-    ValueConvertSlicer,
+    DataPageFixedSlicer, DataPageSlicer, DeltaBytesArraySlicer, DeltaLengthArraySlicer,
+    PlainVarSlicer,
 };
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnChunkStats, DecodeContext, ParquetDecoder, RowGroupBuffers,
@@ -27,19 +29,16 @@ use crate::parquet_write::array::{
     append_array_null, append_array_nulls, calculate_array_shape, LevelsIterator,
 };
 use parquet2::deserialize::{HybridDecoderBitmapIter, HybridEncoded};
-use parquet2::encoding::hybrid_rle::BitmapIter;
+
 use parquet2::encoding::hybrid_rle::HybridRleDecoder;
 use parquet2::encoding::{hybrid_rle, Encoding};
 use parquet2::page::DataPageHeader;
-use parquet2::page::{split_buffer, DataPage, DictPage};
 use parquet2::read::levels::get_bit_width;
 use parquet2::read::{SlicePageReader, SlicedDataPage, SlicedDictPage, SlicedPage};
 use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
-use qdb_core::col_type::{ColumnType, ColumnTypeTag};
-use std::cmp;
+use qdb_core::col_type::{nulls, ColumnType, ColumnTypeTag, Long128, Long256};
 use std::cmp::min;
-use std::ptr;
-use std::slice;
+use std::{cmp, i32, ptr, slice};
 
 impl RowGroupBuffers {
     pub fn new(allocator: QdbAllocator) -> Self {
@@ -92,11 +91,25 @@ impl ColumnChunkBuffers {
     }
 
     pub fn refresh_ptrs(&mut self) {
-        self.data_size = self.data_vec.len();
-        self.data_ptr = self.data_vec.as_mut_ptr();
+        if self.data_ptr.is_null() {
+            self.data_size = self.data_vec.len();
+            self.data_ptr = self.data_vec.as_mut_ptr();
+        }
 
-        self.aux_size = self.aux_vec.len();
-        self.aux_ptr = self.aux_vec.as_mut_ptr();
+        if self.aux_ptr.is_null() {
+            self.aux_size = self.aux_vec.len();
+            self.aux_ptr = self.aux_vec.as_mut_ptr();
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.data_vec.clear();
+        self.data_size = 0;
+        self.data_ptr = ptr::null_mut();
+
+        self.aux_vec.clear();
+        self.aux_size = 0;
+        self.aux_ptr = ptr::null_mut();
     }
 }
 
@@ -113,16 +126,11 @@ impl ColumnChunkStats {
     }
 }
 
-const UUID_NULL: [u8; 16] = unsafe { std::mem::transmute([i64::MIN; 2]) };
-const LONG256_NULL: [u8; 32] = unsafe { std::mem::transmute([i64::MIN; 4]) };
-const BYTE_NULL: [u8; 1] = [0u8];
-const INT_NULL: [u8; 4] = i32::MIN.to_le_bytes();
-const SHORT_NULL: [u8; 2] = 0i16.to_le_bytes();
-const SYMBOL_NULL: [u8; 4] = i32::MIN.to_le_bytes();
-const LONG_NULL: [u8; 8] = i64::MIN.to_le_bytes();
-const DOUBLE_NULL: [u8; 8] = unsafe { std::mem::transmute([f64::NAN]) };
-const FLOAT_NULL: [u8; 4] = unsafe { std::mem::transmute([f32::NAN]) };
-const TIMESTAMP_96_EMPTY: [u8; 12] = [0; 12];
+const LONG256_NULL: [u8; 32] = [
+    0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0,
+    0, 128,
+];
+const DOUBLE_NULL: [u8; 8] = [0, 0, 0, 0, 0, 0, 248, 127];
 
 /// The local positional index as it is stored in parquet.
 /// Not to be confused with the field_id in the parquet metadata.
@@ -191,12 +199,7 @@ impl ParquetDecoder {
                 .unwrap_or((0, None));
 
             if column_top >= row_group_hi as usize + accumulated_size {
-                column_chunk_bufs.data_vec.clear();
-                column_chunk_bufs.data_size = 0;
-                column_chunk_bufs.data_ptr = ptr::null_mut();
-                column_chunk_bufs.aux_vec.clear();
-                column_chunk_bufs.aux_size = 0;
-                column_chunk_bufs.aux_ptr = ptr::null_mut();
+                column_chunk_bufs.reset();
                 continue;
             }
 
@@ -263,12 +266,7 @@ impl ParquetDecoder {
             row_group_bufs.ensure_n_columns(dest_col_offset + columns.len())?;
             for i in 0..columns.len() {
                 let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_offset + i];
-                column_chunk_bufs.data_vec.clear();
-                column_chunk_bufs.data_size = 0;
-                column_chunk_bufs.data_ptr = ptr::null_mut();
-                column_chunk_bufs.aux_vec.clear();
-                column_chunk_bufs.aux_size = 0;
-                column_chunk_bufs.aux_ptr = ptr::null_mut();
+                column_chunk_bufs.reset();
             }
             return Ok(0);
         }
@@ -317,12 +315,7 @@ impl ParquetDecoder {
                 .unwrap_or((0, None));
 
             if column_top >= row_group_hi as usize + accumulated_size {
-                column_chunk_bufs.data_vec.clear();
-                column_chunk_bufs.data_size = 0;
-                column_chunk_bufs.data_ptr = ptr::null_mut();
-                column_chunk_bufs.aux_vec.clear();
-                column_chunk_bufs.aux_size = 0;
-                column_chunk_bufs.aux_ptr = ptr::null_mut();
+                column_chunk_bufs.reset();
                 continue;
             }
 
@@ -390,20 +383,21 @@ impl ParquetDecoder {
         let mut filter_idx = 0usize;
         let filter_count = rows_filter.len();
 
-        column_chunk_bufs.aux_vec.clear();
-        column_chunk_bufs.data_vec.clear();
+        column_chunk_bufs.reset();
+
+        let dict_decompress_buffer = &mut ctx.dict_decompress_buffer;
+        let decompress_buffer = &mut ctx.decompress_buffer;
 
         for maybe_page in page_reader {
             let sliced_page = maybe_page?;
 
             match sliced_page {
                 SlicedPage::Dict(dict_page) => {
-                    let page = decompress_sliced_dict(dict_page, &mut ctx.decompress_buffer)?;
+                    let page = decompress_sliced_dict(dict_page, dict_decompress_buffer)?;
                     dict = Some(page);
                 }
-                SlicedPage::Data(data_page) => {
-                    let page_row_count_opt =
-                        sliced_page_row_count(&data_page, col_info.column_type);
+                SlicedPage::Data(page) => {
+                    let page_row_count_opt = sliced_page_row_count(&page, col_info.column_type);
 
                     if let Some(page_row_count) = page_row_count_opt {
                         let page_end = page_row_start + page_row_count;
@@ -430,8 +424,7 @@ impl ParquetDecoder {
                         if FILL_NULLS {
                             let row_lo = row_group_lo.saturating_sub(page_row_start);
                             let row_hi = (row_group_hi - page_row_start).min(page_row_count);
-                            let mut page =
-                                decompress_sliced_data(&data_page, &mut ctx.decompress_buffer)?;
+                            let page = decompress_sliced_data(&page, decompress_buffer)?;
                             decode_page_filtered::<true>(
                                 &page,
                                 dict.as_ref(),
@@ -455,10 +448,8 @@ impl ParquetDecoder {
                                     row_group_index,
                                 )
                             })?;
-                            ctx.decompress_buffer = std::mem::take(page.buffer_mut());
                         } else if page_filter_start < filter_idx {
-                            let mut page =
-                                decompress_sliced_data(&data_page, &mut ctx.decompress_buffer)?;
+                            let page = decompress_sliced_data(&page, decompress_buffer)?;
                             decode_page_filtered::<false>(
                                 &page,
                                 dict.as_ref(),
@@ -482,7 +473,6 @@ impl ParquetDecoder {
                                     row_group_index,
                                 )
                             })?;
-                            ctx.decompress_buffer = std::mem::take(page.buffer_mut());
                         }
                         page_row_start = page_end;
                     } else {
@@ -490,13 +480,11 @@ impl ParquetDecoder {
                             break;
                         }
 
-                        let mut page =
-                            decompress_sliced_data(&data_page, &mut ctx.decompress_buffer)?;
+                        let page = decompress_sliced_data(&page, decompress_buffer)?;
                         let page_row_count = page_row_count(&page, col_info.column_type)?;
                         let page_end = page_row_start + page_row_count;
 
                         if page_end <= row_group_lo {
-                            ctx.decompress_buffer = std::mem::take(page.buffer_mut());
                             page_row_start = page_end;
                             continue;
                         }
@@ -565,7 +553,6 @@ impl ParquetDecoder {
                                 )
                             })?;
                         }
-                        ctx.decompress_buffer = std::mem::take(page.buffer_mut());
                         page_row_start = page_end;
                     }
                 }
@@ -609,24 +596,26 @@ impl ParquetDecoder {
 
         let mut dict = None;
         let mut row_count = 0usize;
-        column_chunk_bufs.aux_vec.clear();
-        column_chunk_bufs.data_vec.clear();
+
+        column_chunk_bufs.reset();
+
+        let dict_decompress_buffer = &mut ctx.dict_decompress_buffer;
+        let decompress_buffer = &mut ctx.decompress_buffer;
+
         for maybe_page in page_reader {
             let sliced_page = maybe_page?;
 
             match sliced_page {
                 SlicedPage::Dict(dict_page) => {
-                    let page = decompress_sliced_dict(dict_page, &mut ctx.decompress_buffer)?;
+                    let page = decompress_sliced_dict(dict_page, dict_decompress_buffer)?;
                     dict = Some(page);
                 }
-                SlicedPage::Data(data_page) => {
-                    let page_row_count_opt =
-                        sliced_page_row_count(&data_page, col_info.column_type);
+                SlicedPage::Data(page) => {
+                    let page_row_count_opt = sliced_page_row_count(&page, col_info.column_type);
 
                     if let Some(page_row_count) = page_row_count_opt {
                         if row_group_lo < row_count + page_row_count && row_group_hi > row_count {
-                            let mut page =
-                                decompress_sliced_data(&data_page, &mut ctx.decompress_buffer)?;
+                            let page = decompress_sliced_data(&page, decompress_buffer)?;
                             decode_page(
                                 &page,
                                 dict.as_ref(),
@@ -646,12 +635,10 @@ impl ParquetDecoder {
                                     row_group_index,
                                 )
                             })?;
-                            ctx.decompress_buffer = std::mem::take(page.buffer_mut());
                         }
                         row_count += page_row_count;
                     } else {
-                        let mut page =
-                            decompress_sliced_data(&data_page, &mut ctx.decompress_buffer)?;
+                        let page = decompress_sliced_data(&page, decompress_buffer)?;
                         let page_row_count = page_row_count(&page, col_info.column_type)?;
 
                         if row_group_lo < row_count + page_row_count && row_group_hi > row_count {
@@ -675,7 +662,6 @@ impl ParquetDecoder {
                                 )
                             })?;
                         }
-                        ctx.decompress_buffer = std::mem::take(page.buffer_mut());
                         row_count += page_row_count;
                     }
                 }
@@ -849,7 +835,7 @@ impl ParquetDecoder {
 /// - `FILL_NULLS = false`: skip rows not in filter
 /// - `FILL_NULLS = true`: fill nulls for rows not in filter
 #[allow(clippy::too_many_arguments)]
-pub fn decode_page_filtered<const FILL_NULLS: bool>(
+fn decode_page_filtered<const FILL_NULLS: bool>(
     page: &DataPage,
     dict: Option<&DictPage>,
     bufs: &mut ColumnChunkBuffers,
@@ -876,12 +862,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
     ) {
         (PhysicalType::Int32, logical_type, converted_type) => {
             match (page.encoding(), dict, logical_type, column_type.tag()) {
-                (
-                    Encoding::Plain,
-                    _,
-                    _,
-                    ColumnTypeTag::Short | ColumnTypeTag::Char | ColumnTypeTag::GeoShort,
-                ) => {
+                (Encoding::Plain, _, _, ColumnTypeTag::Byte) => {
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -890,20 +871,15 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedInt2ShortColumnSink::new(
-                            &mut DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
+                        &mut PlainPrimitiveDecoder::<i32, i8>::new(
+                            values_buffer,
                             bufs,
-                            &SHORT_NULL,
+                            nulls::BYTE,
                         ),
                     )?;
                     Ok(())
                 }
-                (
-                    Encoding::DeltaBinaryPacked,
-                    _,
-                    _,
-                    ColumnTypeTag::Short | ColumnTypeTag::Char | ColumnTypeTag::GeoShort,
-                ) => {
+                (Encoding::Plain, _, _, ColumnTypeTag::GeoByte) => {
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -912,18 +888,15 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedInt2ShortColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<2>::try_new(
-                                values_buffer,
-                                page_row_count,
-                            )?,
+                        &mut PlainPrimitiveDecoder::<i32, i8>::new(
+                            values_buffer,
                             bufs,
-                            &SHORT_NULL,
+                            nulls::GEOHASH_BYTE,
                         ),
                     )?;
                     Ok(())
                 }
-                (Encoding::Plain, _, _, ColumnTypeTag::Byte | ColumnTypeTag::GeoByte) => {
+                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Byte) => {
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -932,20 +905,38 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedInt2ByteColumnSink::new(
-                            &mut DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i8>::try_new(
+                            values_buffer,
                             bufs,
-                            &BYTE_NULL,
-                        ),
+                            nulls::BYTE,
+                        )?,
+                    )?;
+                    Ok(())
+                }
+                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoByte) => {
+                    decode_page0_filtered::<_, FILL_NULLS>(
+                        page,
+                        page_row_start,
+                        page_row_count,
+                        row_group_lo,
+                        row_lo,
+                        row_hi,
+                        rows_filter,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i8>::try_new(
+                            values_buffer,
+                            bufs,
+                            nulls::GEOHASH_BYTE,
+                        )?,
                     )?;
                     Ok(())
                 }
                 (
-                    Encoding::DeltaBinaryPacked,
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
                     _,
-                    _,
-                    ColumnTypeTag::Byte | ColumnTypeTag::GeoByte,
+                    ColumnTypeTag::Byte,
                 ) => {
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -954,23 +945,23 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedInt2ByteColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<1>::try_new(
-                                values_buffer,
-                                page_row_count,
-                            )?,
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            page_row_count,
+                            nulls::BYTE,
                             bufs,
-                            &BYTE_NULL,
-                        ),
+                        )?,
                     )?;
                     Ok(())
                 }
                 (
-                    Encoding::Plain,
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
                     _,
-                    _,
-                    ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
+                    ColumnTypeTag::GeoByte,
                 ) => {
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -979,10 +970,173 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedIntColumnSink::new(
-                            &mut DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            page_row_count,
+                            nulls::GEOHASH_BYTE,
                             bufs,
-                            &INT_NULL,
+                        )?,
+                    )?;
+                    Ok(())
+                }
+                (Encoding::Plain, _, _, ColumnTypeTag::Short | ColumnTypeTag::Char) => {
+                    decode_page0_filtered::<_, FILL_NULLS>(
+                        page,
+                        page_row_start,
+                        page_row_count,
+                        row_group_lo,
+                        row_lo,
+                        row_hi,
+                        rows_filter,
+                        &mut PlainPrimitiveDecoder::<i32, i16>::new(
+                            values_buffer,
+                            bufs,
+                            nulls::SHORT,
+                        ),
+                    )?;
+                    Ok(())
+                }
+                (Encoding::Plain, _, _, ColumnTypeTag::GeoShort) => {
+                    decode_page0_filtered::<_, FILL_NULLS>(
+                        page,
+                        page_row_start,
+                        page_row_count,
+                        row_group_lo,
+                        row_lo,
+                        row_hi,
+                        rows_filter,
+                        &mut PlainPrimitiveDecoder::<i32, i16>::new(
+                            values_buffer,
+                            bufs,
+                            nulls::GEOHASH_SHORT,
+                        ),
+                    )?;
+                    Ok(())
+                }
+                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Short | ColumnTypeTag::Char) => {
+                    decode_page0_filtered::<_, FILL_NULLS>(
+                        page,
+                        page_row_start,
+                        page_row_count,
+                        row_group_lo,
+                        row_lo,
+                        row_hi,
+                        rows_filter,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i16>::try_new(
+                            values_buffer,
+                            bufs,
+                            nulls::SHORT,
+                        )?,
+                    )?;
+                    Ok(())
+                }
+                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoShort) => {
+                    decode_page0_filtered::<_, FILL_NULLS>(
+                        page,
+                        page_row_start,
+                        page_row_count,
+                        row_group_lo,
+                        row_lo,
+                        row_hi,
+                        rows_filter,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i16>::try_new(
+                            values_buffer,
+                            bufs,
+                            nulls::GEOHASH_SHORT,
+                        )?,
+                    )?;
+                    Ok(())
+                }
+                (
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
+                    _,
+                    ColumnTypeTag::Short | ColumnTypeTag::Char,
+                ) => {
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
+                    decode_page0_filtered::<_, FILL_NULLS>(
+                        page,
+                        page_row_start,
+                        page_row_count,
+                        row_group_lo,
+                        row_lo,
+                        row_hi,
+                        rows_filter,
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            page_row_count,
+                            nulls::SHORT,
+                            bufs,
+                        )?,
+                    )?;
+                    Ok(())
+                }
+                (
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
+                    _,
+                    ColumnTypeTag::GeoShort,
+                ) => {
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
+                    decode_page0_filtered::<_, FILL_NULLS>(
+                        page,
+                        page_row_start,
+                        page_row_count,
+                        row_group_lo,
+                        row_lo,
+                        row_hi,
+                        rows_filter,
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            page_row_count,
+                            nulls::GEOHASH_SHORT,
+                            bufs,
+                        )?,
+                    )?;
+                    Ok(())
+                }
+                (Encoding::Plain, _, _, ColumnTypeTag::Int) => {
+                    decode_page0_filtered::<_, FILL_NULLS>(
+                        page,
+                        page_row_start,
+                        page_row_count,
+                        row_group_lo,
+                        row_lo,
+                        row_hi,
+                        rows_filter,
+                        &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::INT),
+                    )?;
+                    Ok(())
+                }
+                (Encoding::Plain, _, _, ColumnTypeTag::IPv4) => {
+                    decode_page0_filtered::<_, FILL_NULLS>(
+                        page,
+                        page_row_start,
+                        page_row_count,
+                        row_group_lo,
+                        row_lo,
+                        row_hi,
+                        rows_filter,
+                        &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::IPV4),
+                    )?;
+                    Ok(())
+                }
+                (Encoding::Plain, _, _, ColumnTypeTag::GeoInt) => {
+                    decode_page0_filtered::<_, FILL_NULLS>(
+                        page,
+                        page_row_start,
+                        page_row_count,
+                        row_group_lo,
+                        row_lo,
+                        row_hi,
+                        rows_filter,
+                        &mut PlainPrimitiveDecoder::<i32>::new(
+                            values_buffer,
+                            bufs,
+                            nulls::GEOHASH_INT,
                         ),
                     )?;
                     Ok(())
@@ -996,22 +1150,16 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedLongColumnSink::new(
-                            &mut ValueConvertSlicer::<8, _, DaysToMillisConverter>::new(
-                                DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
-                            ),
+                        &mut PlainPrimitiveDecoder::<i32, i64, DayToMillisConverter>::new_with(
+                            values_buffer,
                             bufs,
-                            &LONG_NULL,
+                            nulls::TIMESTAMP,
+                            DayToMillisConverter::new(),
                         ),
                     )?;
                     Ok(())
                 }
-                (
-                    Encoding::DeltaBinaryPacked,
-                    _,
-                    _,
-                    ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
-                ) => {
+                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Int) => {
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -1020,14 +1168,45 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedIntColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<4>::try_new(
-                                values_buffer,
-                                page_row_count,
-                            )?,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i32>::try_new(
+                            values_buffer,
                             bufs,
-                            &INT_NULL,
-                        ),
+                            nulls::INT,
+                        )?,
+                    )?;
+                    Ok(())
+                }
+                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::IPv4) => {
+                    decode_page0_filtered::<_, FILL_NULLS>(
+                        page,
+                        page_row_start,
+                        page_row_count,
+                        row_group_lo,
+                        row_lo,
+                        row_hi,
+                        rows_filter,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i32>::try_new(
+                            values_buffer,
+                            bufs,
+                            nulls::IPV4,
+                        )?,
+                    )?;
+                    Ok(())
+                }
+                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoInt) => {
+                    decode_page0_filtered::<_, FILL_NULLS>(
+                        page,
+                        page_row_start,
+                        page_row_count,
+                        row_group_lo,
+                        row_lo,
+                        row_hi,
+                        rows_filter,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i32>::try_new(
+                            values_buffer,
+                            bufs,
+                            nulls::GEOHASH_INT,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -1035,16 +1214,9 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                     Encoding::RleDictionary | Encoding::PlainDictionary,
                     Some(dict_page),
                     _,
-                    ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
+                    ColumnTypeTag::Int,
                 ) => {
-                    let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
-                    let mut slicer = RleDictionarySlicer::try_new(
-                        values_buffer,
-                        dict_decoder,
-                        page_row_count,
-                        page_row_count,
-                        &INT_NULL,
-                    )?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -1053,7 +1225,63 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedIntColumnSink::new(&mut slicer, bufs, &INT_NULL),
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            page_row_count,
+                            nulls::INT,
+                            bufs,
+                        )?,
+                    )?;
+                    Ok(())
+                }
+                (
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
+                    _,
+                    ColumnTypeTag::IPv4,
+                ) => {
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
+                    decode_page0_filtered::<_, FILL_NULLS>(
+                        page,
+                        page_row_start,
+                        page_row_count,
+                        row_group_lo,
+                        row_lo,
+                        row_hi,
+                        rows_filter,
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            page_row_count,
+                            nulls::IPV4,
+                            bufs,
+                        )?,
+                    )?;
+                    Ok(())
+                }
+                (
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
+                    _,
+                    ColumnTypeTag::GeoInt,
+                ) => {
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
+                    decode_page0_filtered::<_, FILL_NULLS>(
+                        page,
+                        page_row_start,
+                        page_row_count,
+                        row_group_lo,
+                        row_lo,
+                        row_hi,
+                        rows_filter,
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            page_row_count,
+                            nulls::GEOHASH_INT,
+                            bufs,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -1068,14 +1296,10 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
 
                     match (encoding, dict) {
                         (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
-                            let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
-                            let mut slicer = RleDictionarySlicer::try_new(
-                                values_buffer,
-                                dict_decoder,
-                                page_row_count,
-                                page_row_count,
-                                &INT_NULL,
-                            )?;
+                            let dict_decoder = ConvertablePrimitiveDictDecoder::new(
+                                dict_page,
+                                Int32ToDoubleConverter::new(scale),
+                            );
                             decode_page0_filtered::<_, FILL_NULLS>(
                                 page,
                                 page_row_start,
@@ -1084,12 +1308,13 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                                 row_lo,
                                 row_hi,
                                 rows_filter,
-                                &mut IntDecimalColumnSink::new(
-                                    &mut slicer,
+                                &mut RleDictionaryDecoder::try_new(
+                                    values_buffer,
+                                    dict_decoder,
+                                    page_row_count,
+                                    nulls::DOUBLE,
                                     bufs,
-                                    &DOUBLE_NULL,
-                                    scale as i32,
-                                ),
+                                )?,
                             )?;
                             Ok(())
                         }
@@ -1102,72 +1327,17 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                                 row_lo,
                                 row_hi,
                                 rows_filter,
-                                &mut IntDecimalColumnSink::new(
-                                    &mut DataPageFixedSlicer::<4>::new(
-                                        values_buffer,
-                                        page_row_count,
-                                    ),
+                                &mut PlainPrimitiveDecoder::new_with(
+                                    values_buffer,
                                     bufs,
-                                    &DOUBLE_NULL,
-                                    scale as i32,
+                                    nulls::DOUBLE,
+                                    Int32ToDoubleConverter::new(scale),
                                 ),
                             )?;
                             Ok(())
                         }
                         _ => Err(encoding_error),
                     }
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::Short | ColumnTypeTag::Char | ColumnTypeTag::GeoShort,
-                ) => {
-                    let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
-                    let mut slicer = RleDictionarySlicer::try_new(
-                        values_buffer,
-                        dict_decoder,
-                        page_row_count,
-                        page_row_count,
-                        &INT_NULL,
-                    )?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut FixedInt2ShortColumnSink::new(&mut slicer, bufs, &SHORT_NULL),
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::Byte,
-                ) => {
-                    let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
-                    let mut slicer = RleDictionarySlicer::try_new(
-                        values_buffer,
-                        dict_decoder,
-                        page_row_count,
-                        page_row_count,
-                        &INT_NULL,
-                    )?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut FixedInt2ByteColumnSink::new(&mut slicer, bufs, &BYTE_NULL),
-                    )?;
-                    Ok(())
                 }
                 _ => Err(encoding_error),
             }
@@ -1191,11 +1361,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedLongColumnSink::new(
-                            &mut DataPageFixedSlicer::<8>::new(values_buffer, page_row_count),
-                            bufs,
-                            &LONG_NULL,
-                        ),
+                        &mut PlainPrimitiveDecoder::<i64>::new(values_buffer, bufs, i64::MIN),
                     )?;
                     Ok(())
                 }
@@ -1216,14 +1382,11 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedLongColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<8>::try_new(
-                                values_buffer,
-                                page_row_count,
-                            )?,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i64>::try_new(
+                            values_buffer,
                             bufs,
-                            &LONG_NULL,
-                        ),
+                            i64::MIN,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -1236,14 +1399,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                     | ColumnTypeTag::Date
                     | ColumnTypeTag::GeoLong,
                 ) => {
-                    let dict_decoder = FixedDictDecoder::<8>::try_new(dict_page)?;
-                    let mut slicer = RleDictionarySlicer::try_new(
-                        values_buffer,
-                        dict_decoder,
-                        page_row_count,
-                        page_row_count,
-                        &LONG_NULL,
-                    )?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -1252,7 +1408,13 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedLongColumnSink::new(&mut slicer, bufs, &LONG_NULL),
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            page_row_count,
+                            i64::MIN,
+                            bufs,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -1270,10 +1432,11 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut ReverseFixedColumnSink::new(
-                            &mut DataPageFixedSlicer::<16>::new(values_buffer, page_row_count),
+                        &mut PlainPrimitiveDecoder::<u128, u128, Int128ToUuidConverter>::new_with(
+                            values_buffer,
                             bufs,
-                            UUID_NULL,
+                            nulls::UUID,
+                            Int128ToUuidConverter::new(),
                         ),
                     )?;
                     Ok(())
@@ -1292,10 +1455,10 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedLong128ColumnSink::new(
-                            &mut DataPageFixedSlicer::<16>::new(values_buffer, page_row_count),
+                        &mut PlainPrimitiveDecoder::<Long128, Long128>::new(
+                            values_buffer,
                             bufs,
-                            &UUID_NULL,
+                            Long128::NULL,
                         ),
                     )?;
                     Ok(())
@@ -1314,10 +1477,10 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedLong256ColumnSink::new(
-                            &mut DataPageFixedSlicer::<32>::new(values_buffer, page_row_count),
+                        &mut PlainPrimitiveDecoder::<Long256, Long256>::new(
+                            values_buffer,
                             bufs,
-                            &LONG256_NULL,
+                            Long256::NULL,
                         ),
                     )?;
                     Ok(())
@@ -1370,7 +1533,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                     Some(dict_page),
                     ColumnTypeTag::Varchar,
                 ) => {
-                    let dict_decoder = VarDictDecoder::try_new(dict_page, true)?;
+                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page, true)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
                         dict_decoder,
@@ -1436,19 +1599,14 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                     )?;
                     Ok(())
                 }
-                (Encoding::RleDictionary, Some(_dict_page), ColumnTypeTag::Symbol) => {
+                (Encoding::RleDictionary, Some(dict_page), ColumnTypeTag::Symbol) => {
                     if col_info.format != Some(QdbMetaColFormat::LocalKeyIsGlobal) {
                         return Err(fmt_err!(
                             Unsupported,
                             "only special LocalKeyIsGlobal-encoded symbol columns are supported",
                         ));
                     }
-                    let mut slicer = RleLocalIsGlobalSymbolDecoder::try_new(
-                        values_buffer,
-                        page_row_count,
-                        page_row_count,
-                        &SYMBOL_NULL,
-                    )?;
+                    let dict_decoder = RleLocalIsGlobalSymbolDictDecoder::new(dict_page);
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -1457,7 +1615,13 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedIntColumnSink::new(&mut slicer, bufs, &SYMBOL_NULL),
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            row_hi,
+                            nulls::SYMBOL,
+                            bufs,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -1504,7 +1668,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                     Some(dict_page),
                     ColumnTypeTag::Binary,
                 ) => {
-                    let dict_decoder = VarDictDecoder::try_new(dict_page, false)?;
+                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page, false)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
                         dict_decoder,
@@ -1572,10 +1736,11 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut NanoTimestampColumnSink::new(
-                            &mut DataPageFixedSlicer::<12>::new(values_buffer, page_row_count),
+                        &mut PlainPrimitiveDecoder::new_with(
+                            values_buffer,
                             bufs,
-                            &LONG_NULL,
+                            nulls::TIMESTAMP,
+                            Int96ToTimestampConverter::new(),
                         ),
                     )?;
                     Ok(())
@@ -1586,14 +1751,12 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                     _,
                     ColumnTypeTag::Timestamp,
                 ) => {
-                    let dict_decoder = FixedDictDecoder::<12>::try_new(dict_page)?;
-                    let mut slicer = RleDictionarySlicer::try_new(
-                        values_buffer,
-                        dict_decoder,
-                        page_row_count,
-                        page_row_count,
-                        &TIMESTAMP_96_EMPTY,
-                    )?;
+                    let dict_decoder =
+                        ConvertablePrimitiveDictDecoder::<
+                            Int96Timestamp,
+                            i64,
+                            Int96ToTimestampConverter,
+                        >::new(dict_page, Int96ToTimestampConverter::new());
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -1602,7 +1765,13 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut NanoTimestampColumnSink::new(&mut slicer, bufs, &LONG_NULL),
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            page_row_count,
+                            nulls::TIMESTAMP,
+                            bufs,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -1622,11 +1791,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                     row_lo,
                     row_hi,
                     rows_filter,
-                    &mut FixedDoubleColumnSink::new(
-                        &mut DataPageFixedSlicer::<8>::new(values_buffer, page_row_count),
-                        bufs,
-                        &DOUBLE_NULL,
-                    ),
+                    &mut PlainPrimitiveDecoder::<f64>::new(values_buffer, bufs, f64::NAN),
                 )?;
                 Ok(())
             }
@@ -1638,14 +1803,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                 bufs.aux_vec.clear();
                 bufs.aux_ptr = ptr::null_mut();
 
-                let dict_decoder = FixedDictDecoder::<8>::try_new(dict_page)?;
-                let mut slicer = RleDictionarySlicer::try_new(
-                    values_buffer,
-                    dict_decoder,
-                    page_row_count,
-                    page_row_count,
-                    &DOUBLE_NULL,
-                )?;
+                let dict_decoder = BasePrimitiveDictDecoder::<f64, f64>::try_new(dict_page)?;
                 decode_page0_filtered::<_, FILL_NULLS>(
                     page,
                     page_row_start,
@@ -1654,7 +1812,13 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                     row_lo,
                     row_hi,
                     rows_filter,
-                    &mut FixedDoubleColumnSink::new(&mut slicer, bufs, &DOUBLE_NULL),
+                    &mut RleDictionaryDecoder::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        page_row_count,
+                        f64::NAN,
+                        bufs,
+                    )?,
                 )?;
                 Ok(())
             }
@@ -1713,14 +1877,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                     PhysicalType::Float,
                     ColumnTypeTag::Float,
                 ) => {
-                    let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
-                    let mut slicer = RleDictionarySlicer::try_new(
-                        values_buffer,
-                        dict_decoder,
-                        page_row_count,
-                        page_row_count,
-                        &FLOAT_NULL,
-                    )?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<f32, f32>::try_new(dict_page)?;
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -1729,7 +1886,13 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedFloatColumnSink::new(&mut slicer, bufs, &FLOAT_NULL),
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            page_row_count,
+                            f32::NAN,
+                            bufs,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -1742,11 +1905,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedFloatColumnSink::new(
-                            &mut DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
-                            bufs,
-                            &FLOAT_NULL,
-                        ),
+                        &mut PlainPrimitiveDecoder::<f32>::new(values_buffer, bufs, f32::NAN),
                     )?;
                     Ok(())
                 }
@@ -1759,15 +1918,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedBooleanColumnSink::new(
-                            &mut BooleanBitmapSlicer::new(
-                                values_buffer,
-                                page_row_count,
-                                page_row_count,
-                            ),
-                            bufs,
-                            &[0],
-                        ),
+                        &mut PlainBooleanDecoder::new(values_buffer, page_row_count, bufs, 0),
                     )?;
                     Ok(())
                 }
@@ -1780,15 +1931,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedBooleanColumnSink::new(
-                            &mut BooleanBitmapSlicer::new(
-                                values_buffer,
-                                page_row_count,
-                                page_row_count,
-                            ),
-                            bufs,
-                            &[0],
-                        ),
+                        &mut RleBooleanDecoder::try_new(values_buffer, page_row_count, bufs, 0)?,
                     )?;
                     Ok(())
                 }
@@ -1835,87 +1978,221 @@ pub fn decode_page(
     ) {
         (PhysicalType::Int32, logical_type, converted_type) => {
             match (page.encoding(), dict, logical_type, column_type.tag()) {
-                (
-                    Encoding::Plain,
-                    _,
-                    _,
-                    ColumnTypeTag::Short | ColumnTypeTag::Char | ColumnTypeTag::GeoShort,
-                ) => {
+                (Encoding::Plain, _, _, ColumnTypeTag::Byte) => {
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedInt2ShortColumnSink::new(
-                            &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
+                        &mut PlainPrimitiveDecoder::<i32, i8>::new(
+                            values_buffer,
                             bufs,
-                            &SHORT_NULL,
+                            nulls::BYTE,
                         ),
                     )?;
                     Ok(())
                 }
-                (
-                    Encoding::DeltaBinaryPacked,
-                    _,
-                    _,
-                    ColumnTypeTag::Short | ColumnTypeTag::Char | ColumnTypeTag::GeoShort,
-                ) => {
+                (Encoding::Plain, _, _, ColumnTypeTag::GeoByte) => {
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedInt2ShortColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<2>::try_new(values_buffer, row_count)?,
+                        &mut PlainPrimitiveDecoder::<i32, i8>::new(
+                            values_buffer,
                             bufs,
-                            &SHORT_NULL,
+                            nulls::GEOHASH_BYTE,
                         ),
                     )?;
                     Ok(())
                 }
-                (Encoding::Plain, _, _, ColumnTypeTag::Byte | ColumnTypeTag::GeoByte) => {
+                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Byte) => {
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedInt2ByteColumnSink::new(
-                            &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i8>::try_new(
+                            values_buffer,
                             bufs,
-                            &BYTE_NULL,
-                        ),
+                            nulls::BYTE,
+                        )?,
+                    )?;
+                    Ok(())
+                }
+                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoByte) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i8>::try_new(
+                            values_buffer,
+                            bufs,
+                            nulls::GEOHASH_BYTE,
+                        )?,
                     )?;
                     Ok(())
                 }
                 (
-                    Encoding::DeltaBinaryPacked,
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
                     _,
-                    _,
-                    ColumnTypeTag::Byte | ColumnTypeTag::GeoByte,
+                    ColumnTypeTag::Byte,
                 ) => {
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedInt2ByteColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<1>::try_new(values_buffer, row_count)?,
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            row_hi,
+                            nulls::BYTE,
                             bufs,
-                            &BYTE_NULL,
-                        ),
+                        )?,
                     )?;
                     Ok(())
                 }
                 (
-                    Encoding::Plain,
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
                     _,
-                    _,
-                    ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
+                    ColumnTypeTag::GeoByte,
                 ) => {
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedIntColumnSink::new(
-                            &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            row_hi,
+                            nulls::GEOHASH_BYTE,
                             bufs,
-                            &INT_NULL,
+                        )?,
+                    )?;
+                    Ok(())
+                }
+                (Encoding::Plain, _, _, ColumnTypeTag::Short | ColumnTypeTag::Char) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut PlainPrimitiveDecoder::<i32, i16>::new(
+                            values_buffer,
+                            bufs,
+                            nulls::SHORT,
+                        ),
+                    )?;
+                    Ok(())
+                }
+                (Encoding::Plain, _, _, ColumnTypeTag::GeoShort) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut PlainPrimitiveDecoder::<i32, i16>::new(
+                            values_buffer,
+                            bufs,
+                            nulls::GEOHASH_SHORT,
+                        ),
+                    )?;
+                    Ok(())
+                }
+                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Short | ColumnTypeTag::Char) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i16>::try_new(
+                            values_buffer,
+                            bufs,
+                            nulls::SHORT,
+                        )?,
+                    )?;
+                    Ok(())
+                }
+                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoShort) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i16>::try_new(
+                            values_buffer,
+                            bufs,
+                            nulls::GEOHASH_SHORT,
+                        )?,
+                    )?;
+                    Ok(())
+                }
+                (
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
+                    _,
+                    ColumnTypeTag::Short | ColumnTypeTag::Char,
+                ) => {
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            row_hi,
+                            nulls::SHORT,
+                            bufs,
+                        )?,
+                    )?;
+                    Ok(())
+                }
+                (
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
+                    _,
+                    ColumnTypeTag::GeoShort,
+                ) => {
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            row_hi,
+                            nulls::GEOHASH_SHORT,
+                            bufs,
+                        )?,
+                    )?;
+                    Ok(())
+                }
+                (Encoding::Plain, _, _, ColumnTypeTag::Int) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::INT),
+                    )?;
+                    Ok(())
+                }
+                (Encoding::Plain, _, _, ColumnTypeTag::IPv4) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::IPV4),
+                    )?;
+                    Ok(())
+                }
+                (Encoding::Plain, _, _, ColumnTypeTag::GeoInt) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut PlainPrimitiveDecoder::<i32>::new(
+                            values_buffer,
+                            bufs,
+                            nulls::GEOHASH_INT,
                         ),
                     )?;
                     Ok(())
@@ -1925,31 +2202,51 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedLongColumnSink::new(
-                            &mut ValueConvertSlicer::<8, _, DaysToMillisConverter>::new(
-                                DataPageFixedSlicer::<4>::new(values_buffer, row_count),
-                            ),
+                        &mut PlainPrimitiveDecoder::<i32, i64, DayToMillisConverter>::new_with(
+                            values_buffer,
                             bufs,
-                            &LONG_NULL,
+                            nulls::TIMESTAMP,
+                            DayToMillisConverter::new(),
                         ),
                     )?;
                     Ok(())
                 }
-                (
-                    Encoding::DeltaBinaryPacked,
-                    _,
-                    _,
-                    ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
-                ) => {
+                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Int) => {
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedIntColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<4>::try_new(values_buffer, row_count)?,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i32>::try_new(
+                            values_buffer,
                             bufs,
-                            &INT_NULL,
-                        ),
+                            nulls::INT,
+                        )?,
+                    )?;
+                    Ok(())
+                }
+                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::IPv4) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i32>::try_new(
+                            values_buffer,
+                            bufs,
+                            nulls::IPV4,
+                        )?,
+                    )?;
+                    Ok(())
+                }
+                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoInt) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i32>::try_new(
+                            values_buffer,
+                            bufs,
+                            nulls::GEOHASH_INT,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -1957,21 +2254,62 @@ pub fn decode_page(
                     Encoding::RleDictionary | Encoding::PlainDictionary,
                     Some(dict_page),
                     _,
-                    ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
+                    ColumnTypeTag::Int,
                 ) => {
-                    let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
-                    let mut slicer = RleDictionarySlicer::try_new(
-                        values_buffer,
-                        dict_decoder,
-                        row_hi,
-                        row_count,
-                        &INT_NULL,
-                    )?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedIntColumnSink::new(&mut slicer, bufs, &INT_NULL),
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            row_hi,
+                            nulls::INT,
+                            bufs,
+                        )?,
+                    )?;
+                    Ok(())
+                }
+                (
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
+                    _,
+                    ColumnTypeTag::IPv4,
+                ) => {
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            row_hi,
+                            nulls::IPV4,
+                            bufs,
+                        )?,
+                    )?;
+                    Ok(())
+                }
+                (
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
+                    _,
+                    ColumnTypeTag::GeoInt,
+                ) => {
+                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            row_hi,
+                            nulls::GEOHASH_INT,
+                            bufs,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -1986,24 +2324,21 @@ pub fn decode_page(
 
                     match (encoding, dict) {
                         (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
-                            let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
-                            let mut slicer = RleDictionarySlicer::try_new(
-                                values_buffer,
-                                dict_decoder,
-                                row_hi,
-                                row_count,
-                                &INT_NULL,
-                            )?;
+                            let dict_decoder = ConvertablePrimitiveDictDecoder::new(
+                                dict_page,
+                                Int32ToDoubleConverter::new(scale),
+                            );
                             decode_page0(
                                 page,
                                 row_lo,
                                 row_hi,
-                                &mut IntDecimalColumnSink::new(
-                                    &mut slicer,
+                                &mut RleDictionaryDecoder::try_new(
+                                    values_buffer,
+                                    dict_decoder,
+                                    row_hi,
+                                    nulls::DOUBLE,
                                     bufs,
-                                    &DOUBLE_NULL,
-                                    scale as i32,
-                                ),
+                                )?,
                             )?;
                             Ok(())
                         }
@@ -2012,61 +2347,17 @@ pub fn decode_page(
                                 page,
                                 row_lo,
                                 row_hi,
-                                &mut IntDecimalColumnSink::new(
-                                    &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
+                                &mut PlainPrimitiveDecoder::new_with(
+                                    values_buffer,
                                     bufs,
-                                    &DOUBLE_NULL,
-                                    scale as i32,
+                                    nulls::DOUBLE,
+                                    Int32ToDoubleConverter::new(scale),
                                 ),
                             )?;
                             Ok(())
                         }
                         _ => Err(encoding_error),
                     }
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::Short | ColumnTypeTag::Char | ColumnTypeTag::GeoShort,
-                ) => {
-                    let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
-                    let mut slicer = RleDictionarySlicer::try_new(
-                        values_buffer,
-                        dict_decoder,
-                        row_hi,
-                        row_count,
-                        &INT_NULL,
-                    )?;
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut FixedInt2ShortColumnSink::new(&mut slicer, bufs, &SHORT_NULL),
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::Byte,
-                ) => {
-                    let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
-                    let mut slicer = RleDictionarySlicer::try_new(
-                        values_buffer,
-                        dict_decoder,
-                        row_hi,
-                        row_count,
-                        &INT_NULL,
-                    )?;
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut FixedInt2ByteColumnSink::new(&mut slicer, bufs, &BYTE_NULL),
-                    )?;
-                    Ok(())
                 }
                 _ => Err(encoding_error),
             }
@@ -2077,19 +2368,25 @@ pub fn decode_page(
                     Encoding::Plain,
                     _,
                     _,
-                    ColumnTypeTag::Long
-                    | ColumnTypeTag::Date
-                    | ColumnTypeTag::GeoLong
-                    | ColumnTypeTag::Timestamp,
+                    ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
                 ) => {
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedLongColumnSink::new(
-                            &mut DataPageFixedSlicer::<8>::new(values_buffer, row_count),
+                        &mut PlainPrimitiveDecoder::<i64>::new(values_buffer, bufs, nulls::LONG),
+                    )?;
+                    Ok(())
+                }
+                (Encoding::Plain, _, _, ColumnTypeTag::GeoLong) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut PlainPrimitiveDecoder::<i64>::new(
+                            values_buffer,
                             bufs,
-                            &LONG_NULL,
+                            nulls::GEOHASH_LONG,
                         ),
                     )?;
                     Ok(())
@@ -2098,20 +2395,30 @@ pub fn decode_page(
                     Encoding::DeltaBinaryPacked,
                     _,
                     _,
-                    ColumnTypeTag::Long
-                    | ColumnTypeTag::Timestamp
-                    | ColumnTypeTag::Date
-                    | ColumnTypeTag::GeoLong,
+                    ColumnTypeTag::Long | ColumnTypeTag::Timestamp | ColumnTypeTag::Date,
                 ) => {
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedLongColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<8>::try_new(values_buffer, row_count)?,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i64>::try_new(
+                            values_buffer,
                             bufs,
-                            &LONG_NULL,
-                        ),
+                            nulls::LONG,
+                        )?,
+                    )?;
+                    Ok(())
+                }
+                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoLong) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut DeltaBinaryPackedPrimitiveDecoder::<i64>::try_new(
+                            values_buffer,
+                            bufs,
+                            nulls::GEOHASH_LONG,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -2119,24 +2426,41 @@ pub fn decode_page(
                     Encoding::RleDictionary | Encoding::PlainDictionary,
                     Some(dict_page),
                     _,
-                    ColumnTypeTag::Long
-                    | ColumnTypeTag::Timestamp
-                    | ColumnTypeTag::Date
-                    | ColumnTypeTag::GeoLong,
+                    ColumnTypeTag::Long | ColumnTypeTag::Timestamp | ColumnTypeTag::Date,
                 ) => {
-                    let dict_decoder = FixedDictDecoder::<8>::try_new(dict_page)?;
-                    let mut slicer = RleDictionarySlicer::try_new(
-                        values_buffer,
-                        dict_decoder,
-                        row_hi,
-                        row_count,
-                        &LONG_NULL,
-                    )?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedLongColumnSink::new(&mut slicer, bufs, &LONG_NULL),
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            row_hi,
+                            nulls::LONG,
+                            bufs,
+                        )?,
+                    )?;
+                    Ok(())
+                }
+                (
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
+                    _,
+                    ColumnTypeTag::GeoLong,
+                ) => {
+                    let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            row_hi,
+                            nulls::GEOHASH_LONG,
+                            bufs,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -2150,10 +2474,11 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut ReverseFixedColumnSink::new(
-                            &mut DataPageFixedSlicer::<16>::new(values_buffer, row_count),
+                        &mut PlainPrimitiveDecoder::<u128, u128, Int128ToUuidConverter>::new_with(
+                            values_buffer,
                             bufs,
-                            UUID_NULL,
+                            nulls::UUID,
+                            Int128ToUuidConverter::new(),
                         ),
                     )?;
                     Ok(())
@@ -2168,10 +2493,10 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedLong128ColumnSink::new(
-                            &mut DataPageFixedSlicer::<16>::new(values_buffer, row_count),
+                        &mut PlainPrimitiveDecoder::<Long128, Long128>::new(
+                            values_buffer,
                             bufs,
-                            &UUID_NULL,
+                            Long128::NULL,
                         ),
                     )?;
                     Ok(())
@@ -2186,10 +2511,10 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedLong256ColumnSink::new(
-                            &mut DataPageFixedSlicer::<32>::new(values_buffer, row_count),
+                        &mut PlainPrimitiveDecoder::<Long256, Long256>::new(
+                            values_buffer,
                             bufs,
-                            &LONG256_NULL,
+                            Long256::NULL,
                         ),
                     )?;
                     Ok(())
@@ -2228,7 +2553,7 @@ pub fn decode_page(
                     Some(dict_page),
                     ColumnTypeTag::Varchar,
                 ) => {
-                    let dict_decoder = VarDictDecoder::try_new(dict_page, true)?;
+                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page, true)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
                         dict_decoder,
@@ -2275,24 +2600,25 @@ pub fn decode_page(
                     )?;
                     Ok(())
                 }
-                (Encoding::RleDictionary, Some(_dict_page), ColumnTypeTag::Symbol) => {
+                (Encoding::RleDictionary, Some(dict_page), ColumnTypeTag::Symbol) => {
                     if col_info.format != Some(QdbMetaColFormat::LocalKeyIsGlobal) {
                         return Err(fmt_err!(
                             Unsupported,
                             "only special LocalKeyIsGlobal-encoded symbol columns are supported",
                         ));
                     }
-                    let mut slicer = RleLocalIsGlobalSymbolDecoder::try_new(
-                        values_buffer,
-                        row_hi,
-                        row_count,
-                        &SYMBOL_NULL,
-                    )?;
+                    let dict_decoder = RleLocalIsGlobalSymbolDictDecoder::new(dict_page);
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedIntColumnSink::new(&mut slicer, bufs, &SYMBOL_NULL),
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            row_hi,
+                            nulls::SYMBOL,
+                            bufs,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -2328,7 +2654,7 @@ pub fn decode_page(
                     Some(dict_page),
                     ColumnTypeTag::Binary,
                 ) => {
-                    let dict_decoder = VarDictDecoder::try_new(dict_page, false)?;
+                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page, false)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
                         dict_decoder,
@@ -2377,10 +2703,11 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut NanoTimestampColumnSink::new(
-                            &mut DataPageFixedSlicer::<12>::new(values_buffer, row_count),
+                        &mut PlainPrimitiveDecoder::new_with(
+                            values_buffer,
                             bufs,
-                            &LONG_NULL,
+                            nulls::TIMESTAMP,
+                            Int96ToTimestampConverter::new(),
                         ),
                     )?;
                     Ok(())
@@ -2391,19 +2718,23 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Timestamp,
                 ) => {
-                    let dict_decoder = FixedDictDecoder::<12>::try_new(dict_page)?;
-                    let mut slicer = RleDictionarySlicer::try_new(
-                        values_buffer,
-                        dict_decoder,
-                        row_hi,
-                        row_count,
-                        &TIMESTAMP_96_EMPTY,
-                    )?;
+                    let dict_decoder =
+                        ConvertablePrimitiveDictDecoder::<
+                            Int96Timestamp,
+                            i64,
+                            Int96ToTimestampConverter,
+                        >::new(dict_page, Int96ToTimestampConverter::new());
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
-                        &mut NanoTimestampColumnSink::new(&mut slicer, bufs, &LONG_NULL),
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            row_hi,
+                            nulls::TIMESTAMP,
+                            bufs,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -2419,11 +2750,7 @@ pub fn decode_page(
                     page,
                     row_lo,
                     row_hi,
-                    &mut FixedDoubleColumnSink::new(
-                        &mut DataPageFixedSlicer::<8>::new(values_buffer, row_count),
-                        bufs,
-                        &DOUBLE_NULL,
-                    ),
+                    &mut PlainPrimitiveDecoder::<f64>::new(values_buffer, bufs, f64::NAN),
                 )?;
                 Ok(())
             }
@@ -2435,19 +2762,18 @@ pub fn decode_page(
                 bufs.aux_vec.clear();
                 bufs.aux_ptr = ptr::null_mut();
 
-                let dict_decoder = FixedDictDecoder::<8>::try_new(dict_page)?;
-                let mut slicer = RleDictionarySlicer::try_new(
-                    values_buffer,
-                    dict_decoder,
-                    row_hi,
-                    row_count,
-                    &DOUBLE_NULL,
-                )?;
+                let dict_decoder = BasePrimitiveDictDecoder::<f64, f64>::try_new(dict_page)?;
                 decode_page0(
                     page,
                     row_lo,
                     row_hi,
-                    &mut FixedDoubleColumnSink::new(&mut slicer, bufs, &DOUBLE_NULL),
+                    &mut RleDictionaryDecoder::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        row_hi,
+                        f64::NAN,
+                        bufs,
+                    )?,
                 )?;
                 Ok(())
             }
@@ -2486,19 +2812,18 @@ pub fn decode_page(
                     PhysicalType::Float,
                     ColumnTypeTag::Float,
                 ) => {
-                    let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
-                    let mut slicer = RleDictionarySlicer::try_new(
-                        values_buffer,
-                        dict_decoder,
-                        row_hi,
-                        row_count,
-                        &FLOAT_NULL,
-                    )?;
+                    let dict_decoder = BasePrimitiveDictDecoder::<f32, f32>::try_new(dict_page)?;
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedFloatColumnSink::new(&mut slicer, bufs, &FLOAT_NULL),
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            row_hi,
+                            f32::NAN,
+                            bufs,
+                        )?,
                     )?;
                     Ok(())
                 }
@@ -2507,11 +2832,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedFloatColumnSink::new(
-                            &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
-                            bufs,
-                            &FLOAT_NULL,
-                        ),
+                        &mut PlainPrimitiveDecoder::<f32>::new(values_buffer, bufs, f32::NAN),
                     )?;
                     Ok(())
                 }
@@ -2520,11 +2841,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedBooleanColumnSink::new(
-                            &mut BooleanBitmapSlicer::new(values_buffer, row_hi, row_count),
-                            bufs,
-                            &[0],
-                        ),
+                        &mut PlainBooleanDecoder::new(values_buffer, row_hi, bufs, 0),
                     )?;
                     Ok(())
                 }
@@ -2533,11 +2850,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedBooleanColumnSink::new(
-                            &mut BooleanBitmapSlicer::new(values_buffer, row_hi, row_count),
-                            bufs,
-                            &[0],
-                        ),
+                        &mut RleBooleanDecoder::try_new(values_buffer, row_hi, bufs, 0)?,
                     )?;
                     Ok(())
                 }
@@ -2566,7 +2879,7 @@ pub fn decode_page(
 
 #[allow(clippy::while_let_on_iterator)]
 fn decode_page0<T: Pushable>(
-    page: &DataPage,
+    page: &DataPage<'_>,
     row_lo: usize,
     row_hi: usize,
     sink: &mut T,
@@ -2579,43 +2892,21 @@ fn decode_page0<T: Pushable>(
             let run = run?;
             match run {
                 HybridEncoded::Bitmap(values, length) => {
-                    // consume `length` items
-                    let mut iter = BitmapIter::new(values, 0, length);
-                    // first, scan values to skip, if any
+                    // Handle skip phase using popcnt for fast counting
                     let local_skip_count = min(skip_count, length);
                     skip_count -= local_skip_count;
-                    let mut to_skip = 0usize;
-                    for _ in 0..local_skip_count {
-                        if let Some(item) = iter.next() {
-                            to_skip += item as usize;
-                        }
-                    }
-                    sink.skip(to_skip);
-                    // next, copy the remaining values, if any
-                    // consecutive true/false values together
-                    let mut consecutive_true = 0usize;
-                    let mut consecutive_false = 0usize;
-                    while let Some(item) = iter.next() {
-                        if item {
-                            if consecutive_false > 0 {
-                                sink.push_nulls(consecutive_false)?;
-                                consecutive_false = 0;
-                            }
-                            consecutive_true += 1;
-                        } else {
-                            if consecutive_true > 0 {
-                                sink.push_slice(consecutive_true)?;
-                                consecutive_true = 0;
-                            }
-                            consecutive_false += 1;
-                        }
+                    let mut bit_offset = 0usize;
+
+                    if local_skip_count > 0 {
+                        let to_skip = count_ones_in_bitmap(values, 0, local_skip_count);
+                        sink.skip(to_skip);
+                        bit_offset = local_skip_count;
                     }
 
-                    if consecutive_true > 0 {
-                        sink.push_slice(consecutive_true)?;
-                    }
-                    if consecutive_false > 0 {
-                        sink.push_nulls(consecutive_false)?;
+                    // Process remaining bits using word-at-a-time approach
+                    let remaining = length - bit_offset;
+                    if remaining > 0 {
+                        decode_bitmap_runs(values, bit_offset, remaining, sink)?;
                     }
                 }
                 HybridEncoded::Repeated(is_set, length) => {
@@ -2640,6 +2931,162 @@ fn decode_page0<T: Pushable>(
         sink.push_slice(row_hi - row_lo)?;
     }
     sink.result()
+}
+
+/// Process bitmap runs using word-at-a-time approach with trailing_ones/trailing_zeros.
+#[inline]
+fn decode_bitmap_runs<T: Pushable>(
+    values: &[u8],
+    bit_offset: usize,
+    count: usize,
+    sink: &mut T,
+) -> ParquetResult<()> {
+    let mut remaining = count;
+    let mut pos = bit_offset;
+    let mut consecutive_true = 0usize;
+    let mut consecutive_false = 0usize;
+
+    // Handle unaligned start bits to reach byte boundary
+    let start_bit = pos & 7;
+    if start_bit != 0 {
+        let bits_in_byte = (8 - start_bit).min(remaining);
+        let byte = values[pos >> 3] >> start_bit;
+        for i in 0..bits_in_byte {
+            if (byte >> i) & 1 == 1 {
+                if consecutive_false > 0 {
+                    sink.push_nulls(consecutive_false)?;
+                    consecutive_false = 0;
+                }
+                consecutive_true += 1;
+            } else {
+                if consecutive_true > 0 {
+                    sink.push_slice(consecutive_true)?;
+                    consecutive_true = 0;
+                }
+                consecutive_false += 1;
+            }
+        }
+        pos += bits_in_byte;
+        remaining -= bits_in_byte;
+    }
+
+    // Process 8 bytes (64 bits) at a time
+    while remaining >= 64 && (pos >> 3) + 8 <= values.len() {
+        let word = unsafe { (values.as_ptr().add(pos >> 3) as *const u64).read_unaligned() };
+
+        if word == u64::MAX {
+            // All 64 bits set
+            if consecutive_false > 0 {
+                sink.push_nulls(consecutive_false)?;
+                consecutive_false = 0;
+            }
+            consecutive_true += 64;
+        } else if word == 0 {
+            // All 64 bits clear
+            if consecutive_true > 0 {
+                sink.push_slice(consecutive_true)?;
+                consecutive_true = 0;
+            }
+            consecutive_false += 64;
+        } else {
+            // Mixed: scan runs using trailing_ones/trailing_zeros
+            let mut w = word;
+            let mut bits_left = 64usize;
+            while bits_left > 0 {
+                if w & 1 == 1 {
+                    let ones = (w.trailing_ones() as usize).min(bits_left);
+                    if consecutive_false > 0 {
+                        sink.push_nulls(consecutive_false)?;
+                        consecutive_false = 0;
+                    }
+                    consecutive_true += ones;
+                    w >>= ones;
+                    bits_left -= ones;
+                } else {
+                    let zeros = if w == 0 {
+                        bits_left
+                    } else {
+                        (w.trailing_zeros() as usize).min(bits_left)
+                    };
+                    if consecutive_true > 0 {
+                        sink.push_slice(consecutive_true)?;
+                        consecutive_true = 0;
+                    }
+                    consecutive_false += zeros;
+                    w >>= zeros;
+                    bits_left -= zeros;
+                }
+            }
+        }
+        pos += 64;
+        remaining -= 64;
+    }
+
+    // Process remaining full bytes
+    while remaining >= 8 {
+        let byte = values[pos >> 3];
+        if byte == 0xFF {
+            if consecutive_false > 0 {
+                sink.push_nulls(consecutive_false)?;
+                consecutive_false = 0;
+            }
+            consecutive_true += 8;
+        } else if byte == 0 {
+            if consecutive_true > 0 {
+                sink.push_slice(consecutive_true)?;
+                consecutive_true = 0;
+            }
+            consecutive_false += 8;
+        } else {
+            for i in 0..8 {
+                if (byte >> i) & 1 == 1 {
+                    if consecutive_false > 0 {
+                        sink.push_nulls(consecutive_false)?;
+                        consecutive_false = 0;
+                    }
+                    consecutive_true += 1;
+                } else {
+                    if consecutive_true > 0 {
+                        sink.push_slice(consecutive_true)?;
+                        consecutive_true = 0;
+                    }
+                    consecutive_false += 1;
+                }
+            }
+        }
+        pos += 8;
+        remaining -= 8;
+    }
+
+    // Handle remaining bits
+    if remaining > 0 {
+        let byte = values[pos >> 3];
+        for i in 0..remaining {
+            if (byte >> i) & 1 == 1 {
+                if consecutive_false > 0 {
+                    sink.push_nulls(consecutive_false)?;
+                    consecutive_false = 0;
+                }
+                consecutive_true += 1;
+            } else {
+                if consecutive_true > 0 {
+                    sink.push_slice(consecutive_true)?;
+                    consecutive_true = 0;
+                }
+                consecutive_false += 1;
+            }
+        }
+    }
+
+    // Flush remaining runs
+    if consecutive_true > 0 {
+        sink.push_slice(consecutive_true)?;
+    }
+    if consecutive_false > 0 {
+        sink.push_nulls(consecutive_false)?;
+    }
+
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2673,7 +3120,7 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
     let filter_len = rows_filter.len();
     let mut output_row = row_lo;
 
-    let iter = decode_null_bitmap(page, page_row_count)?;
+    let iter = decode_null_bitmap(&page, page_row_count)?;
     if let Some(iter) = iter {
         let mut current_row = 0usize;
 
@@ -3015,10 +3462,15 @@ fn get_bit_at(values: &[u8], bit_offset: usize) -> bool {
     unsafe { (values.get_unchecked(byte_idx) >> bit_idx) & 1 == 1 }
 }
 
-fn decode_null_bitmap(
-    page: &DataPage,
+fn decode_null_bitmap<'a>(
+    page: &DataPage<'a>,
     count: usize,
-) -> ParquetResult<Option<HybridDecoderBitmapIter<'_>>> {
+) -> ParquetResult<Option<HybridDecoderBitmapIter<'a>>> {
+    let nc = page.header.null_count();
+    if nc == Some(0) {
+        return Ok(None);
+    }
+
     let def_levels = split_buffer(page)?.1;
     if def_levels.is_empty() {
         return Ok(None);
@@ -3032,7 +3484,7 @@ fn decode_null_bitmap(
 #[allow(clippy::while_let_on_iterator)]
 #[allow(clippy::too_many_arguments)]
 fn decode_array_page_filtered<T: DataPageSlicer, const FILL_NULLS: bool>(
-    page: &DataPage,
+    page: &DataPage<'_>,
     page_row_start: usize,
     page_row_count: usize,
     row_group_lo: usize,
@@ -3719,23 +4171,30 @@ fn append_array<T: DataPageSlicer>(
     Ok(value_size)
 }
 
-fn decompress_sliced_dict(page: SlicedDictPage, buffer: &mut Vec<u8>) -> ParquetResult<DictPage> {
+fn decompress_sliced_dict<'a>(
+    page: SlicedDictPage<'a>,
+    buffer: &'a mut Vec<u8>,
+) -> ParquetResult<DictPage<'a>> {
     let buf = if page.compression != parquet2::compression::Compression::Uncompressed {
         let read_size = page.uncompressed_size;
         buffer.resize(read_size, 0);
         parquet2::compression::decompress(page.compression, page.buffer, buffer)?;
-        std::mem::take(buffer)
+        buffer
     } else {
-        page.buffer.to_vec()
+        page.buffer
     };
-    Ok(DictPage::new(buf, page.num_values, page.is_sorted))
+    Ok(DictPage {
+        buffer: buf,
+        num_values: page.num_values,
+        is_sorted: page.is_sorted,
+    })
 }
 
-fn decompress_sliced_data(
-    page: &SlicedDataPage<'_>,
-    decompress_buffer: &mut Vec<u8>,
-) -> ParquetResult<DataPage> {
-    if page.compression != parquet2::compression::Compression::Uncompressed {
+fn decompress_sliced_data<'a>(
+    page: &'a SlicedDataPage<'a>,
+    decompress_buffer: &'a mut Vec<u8>,
+) -> ParquetResult<DataPage<'a>> {
+    let buffer = if page.compression != parquet2::compression::Compression::Uncompressed {
         match &page.header {
             DataPageHeader::V1(_) => {
                 let read_size = page.uncompressed_size;
@@ -3745,6 +4204,7 @@ fn decompress_sliced_data(
                     page.buffer,
                     decompress_buffer,
                 )?;
+                decompress_buffer
             }
             DataPageHeader::V2(header) => {
                 let read_size = page.uncompressed_size;
@@ -3765,6 +4225,7 @@ fn decompress_sliced_data(
                         &page.buffer[offset..],
                         &mut decompress_buffer[offset..],
                     )?;
+                    decompress_buffer
                 } else {
                     if decompress_buffer.len() != page.buffer.len() {
                         return Err(fmt_err!(
@@ -3772,20 +4233,18 @@ fn decompress_sliced_data(
                             "V2 Page Header reported incorrect decompressed size"
                         ));
                     }
-                    decompress_buffer.copy_from_slice(page.buffer);
+                    page.buffer
                 }
             }
         }
     } else {
-        decompress_buffer.clear();
-        decompress_buffer.extend_from_slice(page.buffer);
-    }
-    Ok(DataPage::new(
-        page.header.clone(),
-        std::mem::take(decompress_buffer),
-        page.descriptor.clone(),
-        None,
-    ))
+        page.buffer
+    };
+    Ok(DataPage {
+        buffer,
+        header: &page.header,
+        descriptor: &page.descriptor,
+    })
 }
 
 fn sliced_page_row_count(page: &SlicedDataPage, column_type: ColumnType) -> Option<usize> {
@@ -3805,7 +4264,7 @@ fn sliced_page_row_count(page: &SlicedDataPage, column_type: ColumnType) -> Opti
 }
 
 fn page_row_count(page: &DataPage, column_type: ColumnType) -> ParquetResult<usize> {
-    match page.header() {
+    match &page.header {
         // V2 has explicit number of rows in the header.
         DataPageHeader::V2(header) => Ok(header.num_rows as usize),
         // V1 is more tricky in case of group types.
@@ -3867,7 +4326,6 @@ mod tests {
     use crate::allocator::{AcVec, TestAllocatorState};
     use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
     use crate::parquet::tests::ColumnTypeTagExt;
-    use crate::parquet_read::decode::{INT_NULL, LONG_NULL, UUID_NULL};
     use crate::parquet_read::{ColumnChunkBuffers, DecodeContext, ParquetDecoder, RowGroupBuffers};
     use crate::parquet_write::array::{append_array_null, append_raw_array};
     use crate::parquet_write::file::ParquetWriter;
@@ -3880,6 +4338,10 @@ mod tests {
     use std::io::Cursor;
     use std::mem::size_of;
     use std::ptr::null;
+
+    const INT_NULL: [u8; 4] = i32::MIN.to_le_bytes();
+    const LONG_NULL: [u8; 8] = i64::MIN.to_le_bytes();
+    const UUID_NULL: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128];
 
     #[test]
     fn test_decode_int_column_v2_nulls() {
@@ -3987,6 +4449,65 @@ mod tests {
                                 [row_group_offset + 4 * row_lo..row_group_offset + 4 * row_hi]
                         );
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_decode_boolean_column_v2_partial_decode() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let row_count = 100;
+        let row_group_size = 10;
+        let data_page_size = 5;
+        let version = Version::V2;
+        let expected_buff = create_col_data_buff_bool(row_count);
+        let columns = vec![create_fix_column(
+            0,
+            row_count,
+            "bool_col",
+            expected_buff.data_vec.as_ref(),
+            ColumnTypeTag::Boolean.into_type(),
+        )];
+        let file = write_cols_to_parquet_file(row_group_size, data_page_size, version, columns);
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        assert_eq!(decoder.columns.len(), 1);
+        assert_eq!(decoder.row_count, row_count);
+        let row_group_count = decoder.row_group_count as usize;
+        let bufs = &mut ColumnChunkBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+
+        for row_lo in 0..row_group_size - 1 {
+            for row_hi in row_lo + 1..row_group_size {
+                for row_group_index in 0..row_group_count {
+                    decoder
+                        .decode_column_chunk(
+                            &mut ctx,
+                            bufs,
+                            row_group_index,
+                            row_lo,
+                            row_hi,
+                            0,
+                            QdbMetaCol {
+                                column_type: ColumnTypeTag::Boolean.into_type(),
+                                column_top: 0,
+                                format: None,
+                            },
+                        )
+                        .unwrap();
+
+                    assert_eq!(bufs.data_size, row_hi - row_lo);
+                    assert_eq!(bufs.aux_size, 0);
+                    let row_group_offset = row_group_index * row_group_size;
+                    assert_eq!(
+                        bufs.data_vec,
+                        expected_buff.data_vec
+                            [row_group_offset + row_lo..row_group_offset + row_hi]
+                    );
                 }
             }
         }
@@ -4105,7 +4626,7 @@ mod tests {
         columns.push(create_fix_column(
             columns.len() as i32,
             row_count,
-            "bool_short",
+            "short_col",
             expected_col_buff.data_vec.as_ref(),
             ColumnTypeTag::Short.into_type(),
         ));
@@ -4118,7 +4639,7 @@ mod tests {
         columns.push(create_fix_column(
             columns.len() as i32,
             row_count,
-            "bool_char",
+            "char_col",
             expected_bool_buff.data_vec.as_ref(),
             ColumnTypeTag::Char.into_type(),
         ));
@@ -4129,7 +4650,7 @@ mod tests {
         columns.push(create_fix_column(
             columns.len() as i32,
             row_count,
-            "bool_char",
+            "uuid_col",
             expected_uuid_buff.data_vec.as_ref(),
             ColumnTypeTag::Uuid.into_type(),
         ));
@@ -5087,5 +5608,309 @@ mod tests {
             })
             .collect();
         assert_eq!(result, expected);
+    }
+
+    use super::decode_bitmap_runs;
+    use crate::parquet_read::column_sink::Pushable;
+
+    /// Records push_slice / push_nulls calls for verification.
+    struct MockPushable {
+        /// Reconstructed bit pattern: true = set (push_slice), false = null.
+        bits: Vec<bool>,
+    }
+
+    impl MockPushable {
+        fn new() -> Self {
+            Self { bits: Vec::new() }
+        }
+    }
+
+    impl Pushable for MockPushable {
+        fn reserve(
+            &mut self,
+            _count: usize,
+        ) -> super::super::super::parquet::error::ParquetResult<()> {
+            Ok(())
+        }
+        fn push(&mut self) -> super::super::super::parquet::error::ParquetResult<()> {
+            self.bits.push(true);
+            Ok(())
+        }
+        fn push_slice(
+            &mut self,
+            count: usize,
+        ) -> super::super::super::parquet::error::ParquetResult<()> {
+            self.bits.extend(std::iter::repeat(true).take(count));
+            Ok(())
+        }
+        fn push_null(&mut self) -> super::super::super::parquet::error::ParquetResult<()> {
+            self.bits.push(false);
+            Ok(())
+        }
+        fn push_nulls(
+            &mut self,
+            count: usize,
+        ) -> super::super::super::parquet::error::ParquetResult<()> {
+            self.bits.extend(std::iter::repeat(false).take(count));
+            Ok(())
+        }
+        fn skip(&mut self, _count: usize) {}
+        fn result(&self) -> super::super::super::parquet::error::ParquetResult<()> {
+            Ok(())
+        }
+    }
+
+    /// Reference implementation: read bits one at a time from a bitmap.
+    fn expected_bits(values: &[u8], bit_offset: usize, count: usize) -> Vec<bool> {
+        (0..count)
+            .map(|i| {
+                let pos = bit_offset + i;
+                (values[pos >> 3] >> (pos & 7)) & 1 == 1
+            })
+            .collect()
+    }
+
+    fn run_bitmap_test(values: &[u8], bit_offset: usize, count: usize) {
+        let mut sink = MockPushable::new();
+        decode_bitmap_runs(values, bit_offset, count, &mut sink).unwrap();
+        let expected = expected_bits(values, bit_offset, count);
+        assert_eq!(
+            sink.bits, expected,
+            "mismatch at bit_offset={bit_offset}, count={count}"
+        );
+    }
+
+    #[test]
+    fn bitmap_runs_empty() {
+        run_bitmap_test(&[0xFF], 0, 0);
+    }
+
+    #[test]
+    fn bitmap_runs_all_ones_small() {
+        // 5 bits, all set
+        run_bitmap_test(&[0xFF], 0, 5);
+    }
+
+    #[test]
+    fn bitmap_runs_all_zeros_small() {
+        // 5 bits, all clear
+        run_bitmap_test(&[0x00], 0, 5);
+    }
+
+    #[test]
+    fn bitmap_runs_all_ones_one_byte() {
+        run_bitmap_test(&[0xFF], 0, 8);
+    }
+
+    #[test]
+    fn bitmap_runs_all_zeros_one_byte() {
+        run_bitmap_test(&[0x00], 0, 8);
+    }
+
+    #[test]
+    fn bitmap_runs_mixed_byte() {
+        // 0b10101010 = alternating 0,1,0,1,0,1,0,1
+        run_bitmap_test(&[0xAA], 0, 8);
+    }
+
+    #[test]
+    fn bitmap_runs_unaligned_start() {
+        // Start at bit 3 within 0xFF, read 5 bits → all ones
+        run_bitmap_test(&[0xFF], 3, 5);
+    }
+
+    #[test]
+    fn bitmap_runs_unaligned_start_mixed() {
+        // 0b11001010 = bits: 0,1,0,1,0,0,1,1
+        // Start at bit 2, read 4 bits → 0,1,0,0
+        run_bitmap_test(&[0xCA], 2, 4);
+    }
+
+    #[test]
+    fn bitmap_runs_unaligned_start_spans_bytes() {
+        // Start at bit 5 of first byte, read 10 bits spanning two bytes
+        run_bitmap_test(&[0xFF, 0x0F], 5, 10);
+    }
+
+    #[test]
+    fn bitmap_runs_exactly_64_all_ones() {
+        let values = [0xFFu8; 8];
+        run_bitmap_test(&values, 0, 64);
+    }
+
+    #[test]
+    fn bitmap_runs_exactly_64_all_zeros() {
+        let values = [0x00u8; 8];
+        run_bitmap_test(&values, 0, 64);
+    }
+
+    #[test]
+    fn bitmap_runs_exactly_64_mixed() {
+        // First 32 bits set, last 32 bits clear
+        let mut values = [0u8; 8];
+        values[0..4].fill(0xFF);
+        run_bitmap_test(&values, 0, 64);
+    }
+
+    #[test]
+    fn bitmap_runs_64bit_trailing_ones_zeros() {
+        // Pattern: 7 ones, 3 zeros, 5 ones, 1 zero, rest ones
+        // This exercises the trailing_ones/trailing_zeros inner loop
+        // 0b01111111 0b11111_000 0b1_0000000 ...
+        let mut values = [0u8; 8];
+        // Bit 0..6: ones (7 ones)
+        values[0] = 0x7F; // 0b01111111
+                          // Bit 7..9: zeros (3 zeros, bit 7 already 0 from 0x7F)
+        values[1] = 0b11111_00_0; // bits 8,9=0, bits 10-15=1
+                                  // Actually let me be more precise. Let me construct this carefully.
+                                  // I want: 7 ones, 3 zeros, 54 ones
+                                  // bits  0- 6: 1 (7 ones)
+                                  // bits  7- 9: 0 (3 zeros)
+                                  // bits 10-63: 1 (54 ones)
+                                  // byte 0: bits 0-7 = 0111_1111 = 0x7F
+                                  // byte 1: bits 8-15 = 1111_11_00 = 0xFC
+        values[0] = 0x7F;
+        values[1] = 0xFC;
+        values[2..8].fill(0xFF);
+        run_bitmap_test(&values, 0, 64);
+    }
+
+    #[test]
+    fn bitmap_runs_unaligned_into_64bit_path() {
+        // 3 bits unaligned, then 64 bits via word path, then 5 remaining bits
+        // Total: 3 + 64 + 5 = 72 bits, starting at bit_offset=5
+        let values = [0xFFu8; 10]; // 80 bits available
+        run_bitmap_test(&values, 5, 72);
+    }
+
+    #[test]
+    fn bitmap_runs_unaligned_into_64bit_zeros() {
+        let values = [0x00u8; 10];
+        run_bitmap_test(&values, 3, 72);
+    }
+
+    #[test]
+    fn bitmap_runs_remaining_full_bytes_all_ones() {
+        // 24 bits (3 bytes), no 64-bit word path
+        let values = [0xFFu8; 3];
+        run_bitmap_test(&values, 0, 24);
+    }
+
+    #[test]
+    fn bitmap_runs_remaining_full_bytes_all_zeros() {
+        let values = [0x00u8; 3];
+        run_bitmap_test(&values, 0, 24);
+    }
+
+    #[test]
+    fn bitmap_runs_remaining_full_bytes_mixed() {
+        // 0xFF, 0x00, 0xAA → 8 ones, 8 zeros, alternating
+        let values = [0xFF, 0x00, 0xAA];
+        run_bitmap_test(&values, 0, 24);
+    }
+
+    #[test]
+    fn bitmap_runs_trailing_bits() {
+        // 11 bits total: 8 full + 3 remaining
+        run_bitmap_test(&[0xFF, 0x05], 0, 11);
+    }
+
+    #[test]
+    fn bitmap_runs_only_trailing_bits() {
+        // Less than 8 bits, no full byte processing
+        run_bitmap_test(&[0b00110101], 0, 6);
+    }
+
+    #[test]
+    fn bitmap_runs_cross_word_run() {
+        // A run of ones that spans from one 64-bit word into the next
+        // 128 bits all set
+        let values = [0xFFu8; 16];
+        run_bitmap_test(&values, 0, 128);
+    }
+
+    #[test]
+    fn bitmap_runs_cross_word_run_with_transition() {
+        // 128 bits: first 60 ones, then 8 zeros, then 60 ones
+        // This tests run accumulation across the word boundary
+        let mut values = [0xFFu8; 16];
+        // Clear bits 60-67
+        // byte 7: bits 56-63 → clear bits 60-63 → byte7 = 0x0F
+        values[7] = 0x0F;
+        // byte 8: bits 64-71 → clear bits 64-67 → byte8 = 0xF0
+        values[8] = 0xF0;
+        run_bitmap_test(&values, 0, 128);
+    }
+
+    #[test]
+    fn bitmap_runs_large_alternating() {
+        // 256 bits of alternating 0xAA pattern
+        let values = [0xAAu8; 32];
+        run_bitmap_test(&values, 0, 256);
+    }
+
+    #[test]
+    fn bitmap_runs_large_with_offset() {
+        // 200 bits starting at offset 7 with mixed pattern
+        let mut values = [0u8; 30];
+        for (i, v) in values.iter_mut().enumerate() {
+            *v = if i % 3 == 0 {
+                0xFF
+            } else if i % 3 == 1 {
+                0x00
+            } else {
+                0xAA
+            };
+        }
+        run_bitmap_test(&values, 7, 200);
+    }
+
+    #[test]
+    fn bitmap_runs_single_bit_true() {
+        run_bitmap_test(&[0x01], 0, 1);
+    }
+
+    #[test]
+    fn bitmap_runs_single_bit_false() {
+        run_bitmap_test(&[0x00], 0, 1);
+    }
+
+    #[test]
+    fn bitmap_runs_flush_trailing_true() {
+        // Ends with ones: 4 zeros then 4 ones
+        run_bitmap_test(&[0xF0], 0, 8);
+    }
+
+    #[test]
+    fn bitmap_runs_flush_trailing_false() {
+        // Ends with zeros: 4 ones then 4 zeros
+        run_bitmap_test(&[0x0F], 0, 8);
+    }
+
+    #[test]
+    fn bitmap_runs_count_less_than_byte_unaligned() {
+        // bit_offset=3, count=3 → only unaligned path, no full bytes or words
+        run_bitmap_test(&[0b11010110], 3, 3);
+    }
+
+    #[test]
+    fn bitmap_runs_64bit_word_starts_with_zeros() {
+        // Mixed word starting with zeros exercises the else branch first
+        let mut values = [0u8; 8];
+        values[0] = 0x00; // 8 zeros
+        values[1] = 0xFF; // 8 ones
+        values[2..8].fill(0xAA);
+        run_bitmap_test(&values, 0, 64);
+    }
+
+    #[test]
+    fn bitmap_runs_64bit_word_w_becomes_zero() {
+        // Pattern where w becomes 0 mid-loop (all remaining bits are zeros)
+        // First 16 ones, then 48 zeros
+        let mut values = [0u8; 8];
+        values[0] = 0xFF;
+        values[1] = 0xFF;
+        // bytes 2-7 already zero
+        run_bitmap_test(&values, 0, 64);
     }
 }

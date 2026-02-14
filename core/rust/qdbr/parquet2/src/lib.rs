@@ -1,4 +1,3 @@
-#![forbid(unsafe_code)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 /// Unofficial implementation of parquet IO in Rust.
 

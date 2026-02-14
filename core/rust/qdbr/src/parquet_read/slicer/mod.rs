@@ -1,5 +1,3 @@
-pub mod dict_decoder;
-pub mod dict_slicer;
 pub mod rle;
 
 #[cfg(test)]
@@ -8,7 +6,7 @@ mod tests;
 use crate::allocator::{AcVec, AllocFailure};
 use crate::parquet::error::{fmt_err, ParquetResult};
 use parquet2::encoding::delta_bitpacked;
-use parquet2::encoding::hybrid_rle::BitmapIter;
+
 use std::mem::size_of;
 use std::ptr;
 
@@ -36,17 +34,6 @@ impl ByteSink for SliceSink<'_> {
 
 pub trait Converter<const N: usize> {
     fn convert<S: ByteSink>(input: &[u8], output: &mut S) -> ParquetResult<()>;
-}
-
-pub struct DaysToMillisConverter;
-
-impl Converter<8> for DaysToMillisConverter {
-    #[inline]
-    fn convert<S: ByteSink>(input: &[u8], output: &mut S) -> ParquetResult<()> {
-        let days_since_epoch = unsafe { ptr::read_unaligned(input.as_ptr() as *const i32) };
-        let date = days_since_epoch as i64 * 24 * 60 * 60 * 1000;
-        output.extend_from_slice(&date.to_le_bytes())
-    }
 }
 
 impl ByteSink for AcVec<u8> {
@@ -153,92 +140,6 @@ impl<const N: usize> DataPageSlicer for DataPageFixedSlicer<'_, N> {
 impl<'a, const N: usize> DataPageFixedSlicer<'a, N> {
     pub fn new(data: &'a [u8], row_count: usize) -> Self {
         Self { data, pos: 0, sliced_row_count: row_count }
-    }
-}
-
-pub struct DeltaBinaryPackedSlicer<'a, const N: usize> {
-    decoder: delta_bitpacked::Decoder<'a>,
-    sliced_row_count: usize,
-    error: ParquetResult<()>,
-    error_value: [u8; N],
-    buffer: [u8; N],
-}
-
-impl<const N: usize> DataPageSlicer for DeltaBinaryPackedSlicer<'_, N> {
-    #[inline]
-    fn next(&mut self) -> &[u8] {
-        let res = self.decoder.next();
-        match res {
-            Some(val) => match val {
-                Ok(val) => {
-                    let bytes = val.to_le_bytes();
-                    self.buffer[..N].copy_from_slice(&bytes[..N]);
-                    &self.buffer
-                }
-                Err(_) => {
-                    // TODO(amunra): Clean-up, this is _not_ a layout error!
-                    self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
-                    &self.error_value
-                }
-            },
-            None => {
-                // TODO(amunra): Clean-up, this is _not_ a layout error!
-                self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
-                &self.error_value
-            }
-        }
-    }
-
-    #[inline]
-    fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()> {
-        match self.decoder.next() {
-            Some(Ok(val)) => {
-                let bytes = val.to_le_bytes();
-                dest.extend_from_slice(&bytes[..N])
-            }
-            Some(Err(_)) | None => {
-                self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
-                dest.extend_from_slice(&self.error_value)
-            }
-        }
-    }
-
-    fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
-        for _ in 0..count {
-            self.next_into::<S>(dest)?;
-        }
-        Ok(())
-    }
-
-    fn skip(&mut self, count: usize) {
-        for _ in 0..count {
-            self.decoder.next();
-        }
-    }
-
-    fn count(&self) -> usize {
-        self.sliced_row_count
-    }
-
-    fn data_size(&self) -> usize {
-        self.sliced_row_count * N
-    }
-
-    fn result(&self) -> ParquetResult<()> {
-        self.error.clone()
-    }
-}
-
-impl<'a, const N: usize> DeltaBinaryPackedSlicer<'a, N> {
-    pub fn try_new(data: &'a [u8], row_count: usize) -> ParquetResult<Self> {
-        let decoder = delta_bitpacked::Decoder::try_new(data)?;
-        Ok(Self {
-            decoder,
-            sliced_row_count: row_count,
-            error: Ok(()),
-            error_value: [0; N],
-            buffer: [0; N],
-        })
     }
 }
 
@@ -522,8 +423,31 @@ impl<'a> PlainVarSlicer<'a> {
     }
 }
 
+/// Lookup table: maps each byte to 8 expanded bits (LSB-first order).
+const BITMAP_LUT: [[u8; 8]; 256] = {
+    let mut lut = [[0u8; 8]; 256];
+    let mut i = 0u16;
+    while i < 256 {
+        let b = i as u8;
+        lut[i as usize] = [
+            b & 1,
+            (b >> 1) & 1,
+            (b >> 2) & 1,
+            (b >> 3) & 1,
+            (b >> 4) & 1,
+            (b >> 5) & 1,
+            (b >> 6) & 1,
+            (b >> 7) & 1,
+        ];
+        i += 1;
+    }
+    lut
+};
+
 pub struct BooleanBitmapSlicer<'a> {
-    bitmap_iter: BitmapIter<'a>,
+    data: &'a [u8],
+    bit_offset: usize,
+    total_bits: usize,
     sliced_row_count: usize,
     error: ParquetResult<()>,
 }
@@ -534,26 +458,34 @@ const BOOL_FALSE: [u8; 1] = [0];
 impl DataPageSlicer for BooleanBitmapSlicer<'_> {
     #[inline]
     fn next(&mut self) -> &[u8] {
-        if let Some(val) = self.bitmap_iter.next() {
-            if val {
-                return &BOOL_TRUE;
-            }
+        if self.bit_offset >= self.total_bits {
+            self.error = Err(fmt_err!(Layout, "not enough bitmap values to iterate"));
             return &BOOL_FALSE;
         }
-        self.error = Err(fmt_err!(Layout, "not enough bitmap values to iterate"));
-        &BOOL_FALSE
+        let byte_idx = self.bit_offset >> 3;
+        let bit_idx = self.bit_offset & 7;
+        self.bit_offset += 1;
+        if (self.data[byte_idx] >> bit_idx) & 1 == 1 {
+            &BOOL_TRUE
+        } else {
+            &BOOL_FALSE
+        }
     }
 
     #[inline]
     fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()> {
-        if let Some(val) = self.bitmap_iter.next() {
-            if val {
-                return dest.extend_from_slice(&BOOL_TRUE);
-            }
+        if self.bit_offset >= self.total_bits {
+            self.error = Err(fmt_err!(Layout, "not enough bitmap values to iterate"));
             return dest.extend_from_slice(&BOOL_FALSE);
         }
-        self.error = Err(fmt_err!(Layout, "not enough bitmap values to iterate"));
-        dest.extend_from_slice(&BOOL_FALSE)
+        let byte_idx = self.bit_offset >> 3;
+        let bit_idx = self.bit_offset & 7;
+        self.bit_offset += 1;
+        if (self.data[byte_idx] >> bit_idx) & 1 == 1 {
+            dest.extend_from_slice(&BOOL_TRUE)
+        } else {
+            dest.extend_from_slice(&BOOL_FALSE)
+        }
     }
 
     fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
@@ -561,28 +493,49 @@ impl DataPageSlicer for BooleanBitmapSlicer<'_> {
             return Ok(());
         }
 
-        const BATCH: usize = 1024;
-        let mut buf = [0u8; BATCH];
+        if self.bit_offset + count > self.total_bits {
+            self.error = Err(fmt_err!(Layout, "not enough bitmap values to iterate"));
+            return Ok(());
+        }
+
         let mut remaining = count;
 
-        while remaining > 0 {
-            let n = remaining.min(BATCH);
-            for slot in buf.iter_mut().take(n) {
-                *slot = if let Some(val) = self.bitmap_iter.next() {
-                    val as u8
-                } else {
-                    self.error = Err(fmt_err!(Layout, "not enough bitmap values to iterate"));
-                    0
-                };
+        // Handle unaligned start bits
+        let bit_idx = self.bit_offset & 7;
+        if bit_idx != 0 {
+            let bits_in_first_byte = (8 - bit_idx).min(remaining);
+            let byte = self.data[self.bit_offset >> 3] >> bit_idx;
+            let mut buf = [0u8; 8];
+            for i in 0..bits_in_first_byte {
+                buf[i] = (byte >> i) & 1;
             }
-            dest.extend_from_slice(&buf[..n])?;
-            remaining -= n;
+            dest.extend_from_slice(&buf[..bits_in_first_byte])?;
+            self.bit_offset += bits_in_first_byte;
+            remaining -= bits_in_first_byte;
         }
+
+        // Process full bytes using lookup table (8 bits -> 8 bytes at a time)
+        let start_byte = self.bit_offset >> 3;
+        let full_bytes = remaining >> 3;
+        for i in 0..full_bytes {
+            dest.extend_from_slice(&BITMAP_LUT[self.data[start_byte + i] as usize])?;
+        }
+        self.bit_offset += full_bytes << 3;
+        remaining -= full_bytes << 3;
+
+        // Handle remaining bits
+        if remaining > 0 {
+            let byte = self.data[self.bit_offset >> 3];
+            let expanded = &BITMAP_LUT[byte as usize];
+            dest.extend_from_slice(&expanded[..remaining])?;
+            self.bit_offset += remaining;
+        }
+
         Ok(())
     }
 
     fn skip(&mut self, count: usize) {
-        self.bitmap_iter.advance(count);
+        self.bit_offset += count;
     }
 
     fn count(&self) -> usize {
@@ -600,65 +553,99 @@ impl DataPageSlicer for BooleanBitmapSlicer<'_> {
 
 impl<'a> BooleanBitmapSlicer<'a> {
     pub fn new(data: &'a [u8], row_count: usize, sliced_row_count: usize) -> Self {
-        let bitmap_iter = BitmapIter::new(data, 0, row_count);
-        Self { bitmap_iter, sliced_row_count, error: Ok(()) }
+        Self {
+            data,
+            bit_offset: 0,
+            total_bits: row_count,
+            sliced_row_count,
+            error: Ok(()),
+        }
     }
 }
 
-pub struct ValueConvertSlicer<const N: usize, T: DataPageSlicer, C: Converter<N>> {
-    inner_slicer: T,
-    buffer: [u8; N],
-    _converter: std::marker::PhantomData<C>,
+/// Slicer for RLE/Bit-Packed Hybrid encoded boolean values.
+///
+/// The Parquet RLE encoding for booleans uses bit_width=1 with the standard
+/// RLE/Bit-Packed Hybrid format, prefixed by a 4-byte little-endian length.
+pub struct BooleanRleSlicer<'a> {
+    decoder: parquet2::encoding::hybrid_rle::HybridRleDecoder<'a>,
+    sliced_row_count: usize,
+    error: ParquetResult<()>,
 }
 
-impl<const N: usize, T: DataPageSlicer, C: Converter<N>> DataPageSlicer
-    for ValueConvertSlicer<N, T, C>
-{
+impl DataPageSlicer for BooleanRleSlicer<'_> {
     #[inline]
     fn next(&mut self) -> &[u8] {
-        let slice = self.inner_slicer.next();
-        let _ = C::convert(slice, &mut SliceSink(&mut self.buffer));
-        &self.buffer
+        match self.decoder.next() {
+            Some(Ok(val)) => {
+                if val != 0 {
+                    &BOOL_TRUE
+                } else {
+                    &BOOL_FALSE
+                }
+            }
+            Some(Err(e)) => {
+                self.error = Err(e.into());
+                &BOOL_FALSE
+            }
+            None => {
+                self.error = Err(fmt_err!(Layout, "not enough RLE boolean values"));
+                &BOOL_FALSE
+            }
+        }
     }
 
     #[inline]
     fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()> {
-        let slice = self.inner_slicer.next();
-        C::convert(slice, dest)?;
-        Ok(())
+        let val = self.next();
+        dest.extend_from_slice(val)
     }
 
-    #[inline]
     fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
         for _ in 0..count {
-            self.next_into(dest)?;
+            let val = self.next();
+            dest.extend_from_slice(val)?;
         }
         Ok(())
     }
 
     fn skip(&mut self, count: usize) {
-        self.inner_slicer.skip(count);
+        for _ in 0..count {
+            let _ = self.decoder.next();
+        }
     }
 
     fn count(&self) -> usize {
-        self.inner_slicer.count()
+        self.sliced_row_count
     }
 
     fn data_size(&self) -> usize {
-        self.inner_slicer.count() * N
+        self.sliced_row_count
     }
 
     fn result(&self) -> ParquetResult<()> {
-        self.inner_slicer.result()
+        self.error.clone()
     }
 }
 
-impl<const N: usize, T: DataPageSlicer, C: Converter<N>> ValueConvertSlicer<N, T, C> {
-    pub fn new(inner_slicer: T) -> Self {
-        Self {
-            inner_slicer,
-            buffer: [0; N],
-            _converter: std::marker::PhantomData,
+impl<'a> BooleanRleSlicer<'a> {
+    pub fn try_new(
+        data: &'a [u8],
+        row_count: usize,
+        sliced_row_count: usize,
+    ) -> ParquetResult<Self> {
+        // RLE boolean values are prefixed with a 4-byte LE length
+        if data.len() < 4 {
+            return Err(fmt_err!(
+                Layout,
+                "boolean RLE buffer too short: {} bytes",
+                data.len()
+            ));
         }
+        let _length = u32::from_le_bytes(data[..4].try_into().unwrap()) as usize;
+        let rle_data = &data[4..];
+        let decoder =
+            parquet2::encoding::hybrid_rle::HybridRleDecoder::try_new(rle_data, 1, row_count)?;
+        Ok(Self { decoder, sliced_row_count, error: Ok(()) })
     }
 }

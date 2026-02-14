@@ -1,6 +1,6 @@
 use super::*;
-use crate::parquet_read::slicer::dict_decoder::DictDecoder;
-use crate::parquet_read::slicer::rle::{RleDictionarySlicer, RleLocalIsGlobalSymbolDecoder};
+use crate::parquet_read::decoders::VarDictDecoder;
+use crate::parquet_read::slicer::rle::RleDictionarySlicer;
 
 /// A simple ByteSink for testing
 struct TestSink(Vec<u8>);
@@ -224,48 +224,6 @@ fn test_boolean_bitmap_slicer_skip() {
 }
 
 #[test]
-fn test_value_convert_slicer_next_into() {
-    let data: Vec<u8> = vec![0, 0, 0, 0, 1, 0, 0, 0, 109, 1, 0, 0];
-    let inner = DataPageFixedSlicer::<4>::new(&data, 3);
-    let mut slicer = ValueConvertSlicer::<8, _, DaysToMillisConverter>::new(inner);
-
-    // Day 0 = 0 millis
-    let mut sink = TestSink::new();
-    slicer.next_into(&mut sink).unwrap();
-    let millis = i64::from_le_bytes(sink.into_inner().try_into().unwrap());
-    assert_eq!(millis, 0);
-
-    // Day 1 = 86400000 millis
-    let mut sink = TestSink::new();
-    slicer.next_into(&mut sink).unwrap();
-    let millis = i64::from_le_bytes(sink.into_inner().try_into().unwrap());
-    assert_eq!(millis, 86400 * 1000);
-
-    // Day 365
-    let mut sink = TestSink::new();
-    slicer.next_into(&mut sink).unwrap();
-    let millis = i64::from_le_bytes(sink.into_inner().try_into().unwrap());
-    assert_eq!(millis, 365 * 86400 * 1000);
-}
-
-#[test]
-fn test_value_convert_slicer_next_slice_into() {
-    let data: Vec<u8> = vec![0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0];
-    let inner = DataPageFixedSlicer::<4>::new(&data, 3);
-    let mut slicer = ValueConvertSlicer::<8, _, DaysToMillisConverter>::new(inner);
-
-    let mut sink = TestSink::new();
-    slicer.next_slice_into(3, &mut sink).unwrap();
-
-    let result = sink.into_inner();
-    let millis: Vec<i64> = result
-        .chunks(8)
-        .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
-        .collect();
-    assert_eq!(millis, vec![0, 86400 * 1000, 2 * 86400 * 1000]);
-}
-
-#[test]
 fn test_fixed_slicer_mixed_operations() {
     let data: Vec<u8> = (0u8..20).collect();
     let mut slicer = DataPageFixedSlicer::<2>::new(&data, 10);
@@ -303,86 +261,6 @@ fn test_plain_var_slicer_mixed_operations() {
     let mut sink = TestSink::new();
     slicer.next_slice_into(2, &mut sink).unwrap();
     assert_eq!(sink.into_inner(), b"str3str4");
-}
-
-#[test]
-fn test_delta_binary_packed_slicer_next_into() {
-    let values: Vec<i64> = vec![1, 2, 3, 4, 5];
-    let mut encoded = Vec::new();
-    parquet2::encoding::delta_bitpacked::encode(values.iter().copied(), &mut encoded);
-
-    let mut slicer = DeltaBinaryPackedSlicer::<8>::try_new(&encoded, 5).unwrap();
-
-    for expected in &values {
-        let mut sink = TestSink::new();
-        slicer.next_into(&mut sink).unwrap();
-        let value = i64::from_le_bytes(sink.into_inner().try_into().unwrap());
-        assert_eq!(value, *expected);
-    }
-    assert!(slicer.result().is_ok());
-}
-
-#[test]
-fn test_delta_binary_packed_slicer_next_slice_into() {
-    let values: Vec<i64> = vec![10, 20, 30, 40, 50];
-    let mut encoded = Vec::new();
-    parquet2::encoding::delta_bitpacked::encode(values.iter().copied(), &mut encoded);
-
-    let mut slicer = DeltaBinaryPackedSlicer::<8>::try_new(&encoded, 5).unwrap();
-
-    let mut sink = TestSink::new();
-    slicer.next_slice_into(3, &mut sink).unwrap();
-
-    let result: Vec<i64> = sink
-        .into_inner()
-        .chunks(8)
-        .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
-        .collect();
-    assert_eq!(result, vec![10, 20, 30]);
-
-    // Read remaining
-    let mut sink = TestSink::new();
-    slicer.next_slice_into(2, &mut sink).unwrap();
-    let result: Vec<i64> = sink
-        .into_inner()
-        .chunks(8)
-        .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
-        .collect();
-    assert_eq!(result, vec![40, 50]);
-}
-
-#[test]
-fn test_delta_binary_packed_slicer_4byte() {
-    let values: Vec<i64> = vec![100, 200, 300];
-    let mut encoded = Vec::new();
-    parquet2::encoding::delta_bitpacked::encode(values.iter().copied(), &mut encoded);
-    let mut slicer = DeltaBinaryPackedSlicer::<4>::try_new(&encoded, 3).unwrap();
-
-    let mut sink = TestSink::new();
-    slicer.next_slice_into(3, &mut sink).unwrap();
-
-    let result: Vec<i32> = sink
-        .into_inner()
-        .chunks(4)
-        .map(|c| i32::from_le_bytes(c.try_into().unwrap()))
-        .collect();
-    assert_eq!(result, vec![100, 200, 300]);
-}
-
-#[test]
-fn test_delta_binary_packed_slicer_skip() {
-    let values: Vec<i64> = vec![1, 2, 3, 4, 5, 6, 7, 8];
-    let mut encoded = Vec::new();
-    parquet2::encoding::delta_bitpacked::encode(values.iter().copied(), &mut encoded);
-
-    let mut slicer = DeltaBinaryPackedSlicer::<8>::try_new(&encoded, 8).unwrap();
-
-    slicer.skip(3);
-
-    let mut sink = TestSink::new();
-    slicer.next_into(&mut sink).unwrap();
-    let value = i64::from_le_bytes(sink.into_inner().try_into().unwrap());
-    assert_eq!(value, 4);
 }
 
 #[test]
@@ -496,7 +374,7 @@ impl TestDictDecoder {
     }
 }
 
-impl DictDecoder for TestDictDecoder {
+impl VarDictDecoder for TestDictDecoder {
     fn get_dict_value(&self, index: u32) -> &[u8] {
         &self.values[index as usize]
     }
@@ -524,110 +402,6 @@ fn encode_rle_data(values: &[u32], num_bits: u8) -> Vec<u8> {
     )
     .unwrap();
     buffer
-}
-
-#[test]
-fn test_rle_local_is_global_symbol_decoder_skip_zero() {
-    let encoded = encode_rle_data(&[0, 0, 0, 0, 0], 1);
-    let error_value = [0xFFu8; 4];
-    let mut slicer = RleLocalIsGlobalSymbolDecoder::try_new(&encoded, 5, 5, &error_value).unwrap();
-
-    slicer.skip(0);
-    let val = u32::from_le_bytes(slicer.next().try_into().unwrap());
-    assert_eq!(val, 0);
-}
-
-#[test]
-fn test_rle_local_is_global_symbol_decoder_skip_small() {
-    let values: Vec<u32> = (0..10).collect();
-    let encoded = encode_rle_data(&values, 4);
-    let error_value = [0xFFu8; 4];
-
-    for skip in 1..=4 {
-        let mut slicer =
-            RleLocalIsGlobalSymbolDecoder::try_new(&encoded, 10, 10, &error_value).unwrap();
-        slicer.skip(skip);
-        let val = u32::from_le_bytes(slicer.next().try_into().unwrap());
-        assert_eq!(val, skip as u32, "skip={}", skip);
-    }
-}
-
-#[test]
-fn test_rle_local_is_global_symbol_decoder_skip_large() {
-    let values: Vec<u32> = (0..100).collect();
-    let encoded = encode_rle_data(&values, 7);
-    let error_value = [0xFFu8; 4];
-
-    for skip in [5, 10, 25, 50, 75, 99] {
-        let mut slicer =
-            RleLocalIsGlobalSymbolDecoder::try_new(&encoded, 100, 100, &error_value).unwrap();
-        slicer.skip(skip);
-        let val = u32::from_le_bytes(slicer.next().try_into().unwrap());
-        assert_eq!(val, skip as u32, "skip={}", skip);
-    }
-}
-
-#[test]
-fn test_rle_local_is_global_symbol_decoder_skip_interleaved() {
-    let values: Vec<u32> = (0..20).collect();
-    let encoded = encode_rle_data(&values, 5);
-    let error_value = [0xFFu8; 4];
-
-    let mut slicer =
-        RleLocalIsGlobalSymbolDecoder::try_new(&encoded, 20, 20, &error_value).unwrap();
-
-    let val = u32::from_le_bytes(slicer.next().try_into().unwrap());
-    assert_eq!(val, 0);
-
-    slicer.skip(3);
-    let val = u32::from_le_bytes(slicer.next().try_into().unwrap());
-    assert_eq!(val, 4);
-
-    slicer.skip(5);
-    let val = u32::from_le_bytes(slicer.next().try_into().unwrap());
-    assert_eq!(val, 10);
-
-    let mut sink = TestSink::new();
-    slicer.next_slice_into(5, &mut sink).unwrap();
-    let result: Vec<u32> = sink
-        .into_inner()
-        .chunks(4)
-        .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
-        .collect();
-    assert_eq!(result, vec![11, 12, 13, 14, 15]);
-}
-
-#[test]
-fn test_rle_local_is_global_symbol_decoder_skip_rle_run() {
-    let values: Vec<u32> = vec![5, 5, 5, 5, 5, 5, 5, 5, 10, 10, 10, 10];
-    let encoded = encode_rle_data(&values, 4);
-    let error_value = [0xFFu8; 4];
-
-    let mut slicer =
-        RleLocalIsGlobalSymbolDecoder::try_new(&encoded, 12, 12, &error_value).unwrap();
-
-    slicer.skip(3);
-    let val = u32::from_le_bytes(slicer.next().try_into().unwrap());
-    assert_eq!(val, 5);
-
-    slicer.skip(4);
-    let val = u32::from_le_bytes(slicer.next().try_into().unwrap());
-    assert_eq!(val, 10);
-}
-
-#[test]
-fn test_rle_local_is_global_symbol_decoder_all_same_value() {
-    let values: Vec<u32> = vec![42; 100];
-    let encoded = encode_rle_data(&values, 6);
-    let error_value = [0xFFu8; 4];
-
-    for skip in [0, 10, 50, 90] {
-        let mut slicer =
-            RleLocalIsGlobalSymbolDecoder::try_new(&encoded, 100, 100, &error_value).unwrap();
-        slicer.skip(skip);
-        let val = u32::from_le_bytes(slicer.next().try_into().unwrap());
-        assert_eq!(val, 42, "skip={}", skip);
-    }
 }
 
 #[test]
@@ -718,21 +492,6 @@ fn test_rle_dictionary_slicer_skip_repeated_values() {
     assert_eq!(slicer.next(), b"BBB");
     slicer.skip(3);
     assert_eq!(slicer.next(), b"BBB");
-}
-
-#[test]
-fn test_rle_zero_bit_width() {
-    let buffer: Vec<u8> = vec![0]; // num_bits = 0
-    let error_value = [0xFFu8; 4];
-
-    let mut slicer = RleLocalIsGlobalSymbolDecoder::try_new(&buffer, 10, 10, &error_value).unwrap();
-    slicer.skip(5);
-    let val = u32::from_le_bytes(slicer.next().try_into().unwrap());
-    assert_eq!(val, 0);
-
-    slicer.skip(3);
-    let val = u32::from_le_bytes(slicer.next().try_into().unwrap());
-    assert_eq!(val, 0);
 }
 
 #[test]
