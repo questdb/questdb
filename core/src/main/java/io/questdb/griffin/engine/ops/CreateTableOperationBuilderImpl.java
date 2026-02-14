@@ -414,6 +414,9 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         if (from == to || isIPv4Cast(from, to)) {
             return true;
         }
+        if (ColumnType.tagOf(from) == ColumnType.LONG && ColumnType.isStringyType(to)) {
+            return true;
+        }
         return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
     }
 
