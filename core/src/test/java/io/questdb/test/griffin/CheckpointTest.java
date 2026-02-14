@@ -2117,7 +2117,7 @@ public class CheckpointTest extends AbstractCairoTest {
             );
 
 
-            execute("alter table " + tableName + " add column kkk int");
+            execute("alter table " + tableName + " add column zzz int");
             execute("insert into " + tableName + " values (103, 'dfd', '2022-02-24T03', 'xyz', 41, 42, 43)");
 
             // the updates above should apply to WAL, not table
@@ -2138,7 +2138,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
             assertSql(
                     """
-                            x\tsym\tts\tsym2\tiii\tjjj\tkkk
+                            x\tsym\tts\tsym2\tiii\tjjj\tzzz
                             1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tnull\tnull
                             2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tnull\tnull
                             3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tnull\tnull
@@ -2161,7 +2161,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
             assertSql(
                     """
-                            x\tsym\tts\tsym2\tiii\tjjj\tkkk\tlll
+                            x\tsym\tts\tsym2\tiii\tjjj\tzzz\tlll
                             1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tnull\tnull
                             2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tnull\tnull
                             3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tnull\tnull
@@ -2210,7 +2210,7 @@ public class CheckpointTest extends AbstractCairoTest {
             drainWalQueue();
             assertSql(
                     """
-                            x\tsym\tts\tsym2\tiii\tjjj\tkkk\tlll\tC
+                            x\tsym\tts\tsym2\tiii\tjjj\tzzz\tlll\tC
                             1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tnull\tnull\tnull
                             2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tnull\tnull\tnull
                             3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tnull\tnull\tnull

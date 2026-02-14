@@ -891,4 +891,3 @@ io.questdb.griffin.engine.functions.math.IPv4VarcharNetmaskFunctionFactory
 # THERE IS NOT NEED TO ADD ALL FUNCTIONS in the list unless it is required to pin the overload priority
 # Only add the new functions here when there are overloads with the same name and different parameter types
 # and the compilation chooses an unexpected overload
-

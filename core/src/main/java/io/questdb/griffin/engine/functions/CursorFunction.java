@@ -29,6 +29,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
@@ -189,6 +190,11 @@ public class CursorFunction implements Function {
     @Override
     public Long256 getLong256B(Record rec) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return factory.getMetadata();
     }
 
     @Override

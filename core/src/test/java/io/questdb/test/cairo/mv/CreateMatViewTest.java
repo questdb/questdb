@@ -305,9 +305,9 @@ public class CreateMatViewTest extends AbstractCairoTest {
     public void testCreateMatViewCopySymbolCapacityAlias() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
-            final String sql = "select ts, k as kkk, min(v) as v from " + TABLE1 + " sample by 1h";
+            final String sql = "select ts, k as zzz, min(v) as v from " + TABLE1 + " sample by 1h";
             execute("create materialized view test with base " + TABLE1 + " as (" + sql + ") partition by day");
-            assertSql("column\tsymbolCapacity\nkkk\t2048\n", "select \"column\", symbolCapacity from (show columns from test) where type = 'SYMBOL'");
+            assertSql("column\tsymbolCapacity\nzzz\t2048\n", "select \"column\", symbolCapacity from (show columns from test) where type = 'SYMBOL'");
         });
     }
 
@@ -337,9 +337,9 @@ public class CreateMatViewTest extends AbstractCairoTest {
     public void testCreateMatViewCopySymbolCapacityNestedAlias() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
-            final String sql = "with t as ( select ts, k as kk, v as vv from " + TABLE1 + ") select ts, kk as kkk, avg(vv) as vvv from t sample by 1h";
+            final String sql = "with t as ( select ts, k as kk, v as vv from " + TABLE1 + ") select ts, kk as zzz, avg(vv) as vvv from t sample by 1h";
             execute("create materialized view test with base " + TABLE1 + " as (" + sql + ") partition by day");
-            assertSql("column\tsymbolCapacity\nkkk\t2048\n", "select \"column\", symbolCapacity from (show columns from test) where type = 'SYMBOL'");
+            assertSql("column\tsymbolCapacity\nzzz\t2048\n", "select \"column\", symbolCapacity from (show columns from test) where type = 'SYMBOL'");
         });
     }
 
@@ -347,10 +347,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
     public void testCreateMatViewCopySymbolCapacityNotFromBase() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
-            final String sql = "select ts, cast('aaa' as symbol) as kkk, min(v) as v from " + TABLE1 + " sample by 1h";
+            final String sql = "select ts, cast('aaa' as symbol) as zzz, min(v) as v from " + TABLE1 + " sample by 1h";
             execute("create materialized view test with base " + TABLE1 + " as (" + sql + ") partition by day");
             // assert default symbol capacity (128)
-            assertSql("column\tsymbolCapacity\nkkk\t128\n", "select \"column\", symbolCapacity from (show columns from test) where type = 'SYMBOL'");
+            assertSql("column\tsymbolCapacity\nzzz\t128\n", "select \"column\", symbolCapacity from (show columns from test) where type = 'SYMBOL'");
         });
     }
 

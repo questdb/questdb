@@ -43,8 +43,8 @@ public class TrimVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testNotTrimSpace() throws Exception {
         assertQuery(
                 "t1\tt2\tt3\n" +
-                        "a b c\tkkk\t()  /  {}\n",
-                "select trim('a b c'::varchar) t1, trim('kkk'::varchar) t2, trim('()  /  {}'::varchar) t3",
+                        "a b c\tzzz\t()  /  {}\n",
+                "select trim('a b c'::varchar) t1, trim('zzz'::varchar) t2, trim('()  /  {}'::varchar) t3",
                 true
         );
     }

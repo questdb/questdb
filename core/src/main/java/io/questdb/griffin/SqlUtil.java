@@ -35,6 +35,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DoubleArrayParser;
 import io.questdb.cairo.arr.VarcharArrayParser;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
@@ -885,7 +886,6 @@ public class SqlUtil {
         }
     }
 
-
     @SuppressWarnings("unused")
     // used by the row copier
     public static int implicitCastLongAsInt(long value) {
@@ -1486,6 +1486,36 @@ public class SqlUtil {
 
     static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
         return nextExpr(pool, ExpressionNode.LITERAL, token, position);
+    }
+
+    public static class ColumnTypeSymbolTable implements StaticSymbolTable {
+        public static final ColumnTypeSymbolTable INSTANCE = new ColumnTypeSymbolTable();
+
+        @Override
+        public boolean containsNullValue() {
+            return false;
+        }
+
+        @Override
+        public int getSymbolCount() {
+            return ColumnType.NULL;
+        }
+
+        @Override
+        public int keyOf(CharSequence value) {
+            return ColumnType.typeOf(value);
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return ColumnType.nameOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            return ColumnType.nameOf(key);
+        }
+
     }
 
     private static class Long256ConstantFactory implements Long256Acceptor {

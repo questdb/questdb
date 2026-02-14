@@ -44,7 +44,7 @@ public class RTrimVarcharFunctionFactoryTest extends AbstractFunctionFactoryTest
     public void testNoRTrimSpace() throws SqlException {
         call(utf8("     abc")).andAssertUtf8("     abc");
         call(utf8("a b c")).andAssertUtf8("a b c");
-        call(utf8("kkk")).andAssertUtf8("kkk");
+        call(utf8("zzz")).andAssertUtf8("zzz");
         call(utf8("()  /  {}")).andAssertUtf8("()  /  {}");
     }
 

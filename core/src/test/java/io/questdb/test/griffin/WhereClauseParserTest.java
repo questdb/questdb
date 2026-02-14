@@ -3991,7 +3991,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testTwoDiffColLambdas() throws Exception {
-        IntrinsicModel m = modelOf("sym in (select * from xyz) and ex in (select  * from kkk)");
+        IntrinsicModel m = modelOf("sym in (select * from xyz) and ex in (select  * from zzz)");
         TestUtils.assertEquals("ex", m.keyColumn);
         Assert.assertNotNull(m.keySubQuery);
         Assert.assertNotNull(m.filter);
@@ -4126,7 +4126,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testTwoSameColLambdas() {
         try {
-            modelOf("sym in (select * from xyz) and sym in (select * from kkk)");
+            modelOf("sym in (select * from xyz) and sym in (select * from zzz)");
             Assert.fail("exception expected");
         } catch (SqlException e) {
             Assert.assertEquals(4, e.getPosition());

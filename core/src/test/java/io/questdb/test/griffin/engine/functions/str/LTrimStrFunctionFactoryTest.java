@@ -50,7 +50,7 @@ public class LTrimStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testNoLTrimSpace() throws SqlException {
         call("abc     ").andAssert("abc     ");
         call("a b c").andAssert("a b c");
-        call("kkk").andAssert("kkk");
+        call("zzz").andAssert("zzz");
         call("()  /  {}").andAssert("()  /  {}");
     }
 
