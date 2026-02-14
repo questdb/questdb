@@ -27,6 +27,8 @@ package io.questdb.std;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.Reopenable;
 
+import static io.questdb.std.MapUtil.shouldMoveToFillGap;
+
 
 public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenable {
     private static final int MIN_INITIAL_CAPACITY = 4;
@@ -134,32 +136,7 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
             erase(from);
             free++;
             size--;
-
-            // After we have freed up a slot, consider non-empty keys directly below.
-            // They may have been a direct hit but because directly hit slot wasn't
-            // empty these keys would have moved.
-            // After slot is freed these keys require re-hash.
-            from = (from + 1) & mask;
-            for (
-                    long key = keyAtRaw(from);
-                    key != noEntryKey;
-                    from = (from + 1) & mask, key = keyAtRaw(from)
-            ) {
-                long hashCode = Hash.fastHashLong64(key);
-                long idealHit = hashCode & mask;
-                if (idealHit != from) {
-                    long to;
-                    if (keyAtRaw(idealHit) != noEntryKey) {
-                        to = probe(key, idealHit);
-                    } else {
-                        to = idealHit;
-                    }
-
-                    if (to > -1) {
-                        move(from, to);
-                    }
-                }
-            }
+            compactProbeSequence(from);
         }
     }
 
@@ -223,6 +200,30 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
         } while (index != index0);
 
         throw CairoException.critical(0).put("corrupt long-long hash table");
+    }
+
+    /**
+     * When a slot is freed, we examine the non-empty entries that follow it.
+     * Some of them may have originally hashed to this slot but were displaced
+     * because it was occupied. Once the slot becomes free, such entries
+     * may need to be moved backward to preserve correct lookup semantics.
+     */
+    private void compactProbeSequence(long deletedPosition) {
+        long gapPos = deletedPosition;
+        long scanPos = (gapPos + 1) & mask;
+
+        // Scan forward until we hit an empty slot (end of probe sequence)
+        for (long key = keyAtRaw(scanPos);
+             key != noEntryKey;
+             scanPos = (scanPos + 1) & mask, key = keyAtRaw(scanPos)) {
+
+            long idealPos = Hash.fastHashLong64(key) & mask;
+
+            if (shouldMoveToFillGap(scanPos, idealPos, gapPos)) {
+                move(scanPos, gapPos);
+                gapPos = scanPos;
+            }
+        }
     }
 
     private void putAt0(long index, long key, long value) {

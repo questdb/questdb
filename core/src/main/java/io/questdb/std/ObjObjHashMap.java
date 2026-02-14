@@ -29,6 +29,8 @@ import org.jetbrains.annotations.NotNull;
 import java.util.Arrays;
 import java.util.Iterator;
 
+import static io.questdb.std.MapUtil.shouldMoveToFillGap;
+
 
 public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>, Mutable {
     private static final int MIN_INITIAL_CAPACITY = 16;
@@ -177,33 +179,30 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
             int from = -index - 1;
             erase(from);
             free++;
+            compactProbeSequence(from);
+        }
+    }
 
-            // after we have freed up a slot
-            // consider non-empty keys directly below
-            // they may have been a direct hit but because
-            // directly hit slot wasn't empty these keys would
-            // have moved.
-            //
-            // After slot if freed these keys require re-hash
-            from = (from + 1) & mask;
-            for (
-                    K key = keys[from];
-                    key != noEntryValue;
-                    from = (from + 1) & mask, key = keys[from]
-            ) {
-                int idealHit = Hash.spread(key.hashCode()) & mask;
-                if (idealHit != from) {
-                    int to;
-                    if (keys[idealHit] != noEntryValue) {
-                        to = probe(key, idealHit);
-                    } else {
-                        to = idealHit;
-                    }
+    /**
+     * When a slot is freed, we examine the non-empty entries that follow it.
+     * Some of them may have originally hashed to this slot but were displaced
+     * because it was occupied. Once the slot becomes free, such entries
+     * may need to be moved backward to preserve correct lookup semantics.
+     */
+    private void compactProbeSequence(int deletedPosition) {
+        int gapPos = deletedPosition;
+        int scanPos = (gapPos + 1) & mask;
 
-                    if (to > -1) {
-                        move(from, to);
-                    }
-                }
+        // Scan forward until we hit an empty slot (end of probe sequence)
+        for (K key = keys[scanPos];
+             key != noEntryValue;
+             scanPos = (scanPos + 1) & mask, key = keys[scanPos]) {
+
+            long idealPos = Hash.spread(key.hashCode()) & mask;
+
+            if (shouldMoveToFillGap(scanPos, idealPos, gapPos)) {
+                move(scanPos, gapPos);
+                gapPos = scanPos;
             }
         }
     }

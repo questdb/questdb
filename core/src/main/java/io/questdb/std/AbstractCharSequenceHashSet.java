@@ -28,6 +28,8 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
+import static io.questdb.std.MapUtil.shouldMoveToFillGap;
+
 /**
  * Abstract base class for hash sets storing CharSequence keys.
  */
@@ -191,34 +193,7 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
             int from = -index - 1;
             erase(from);
             free++;
-
-            // after we have freed up a slot
-            // consider non-empty keys directly below
-            // they may have been a direct hit but because
-            // directly hit slot wasn't empty these keys would
-            // have moved.
-            //
-            // After slot if freed these keys require re-hash
-            from = (from + 1) & mask;
-            for (
-                    CharSequence key = keys[from];
-                    key != noEntryKey;
-                    from = (from + 1) & mask, key = keys[from]
-            ) {
-                int idealHit = Hash.spread(Chars.hashCode(key)) & mask;
-                if (idealHit != from) {
-                    int to;
-                    if (keys[idealHit] != noEntryKey) {
-                        to = probe(key, idealHit);
-                    } else {
-                        to = idealHit;
-                    }
-
-                    if (to > -1) {
-                        move(from, to);
-                    }
-                }
-            }
+            compactProbeSequence(from);
         }
     }
 
@@ -254,6 +229,30 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
                 return -index - 1;
             }
         } while (true);
+    }
+
+    /**
+     * When a slot is freed, we examine the non-empty entries that follow it.
+     * Some of them may have originally hashed to this slot but were displaced
+     * because it was occupied. Once the slot becomes free, such entries
+     * may need to be moved backward to preserve correct lookup semantics.
+     */
+    private void compactProbeSequence(int deletedPosition) {
+        int gapPos = deletedPosition;
+        int scanPos = (gapPos + 1) & mask;
+
+        // Scan forward until we hit an empty slot (end of probe sequence)
+        for (CharSequence key = keys[scanPos];
+             key != noEntryKey;
+             scanPos = (scanPos + 1) & mask, key = keys[scanPos]) {
+
+            int idealPos = Hash.spread(Chars.hashCode(key)) & mask;
+
+            if (shouldMoveToFillGap(scanPos, idealPos, gapPos)) {
+                move(scanPos, gapPos);
+                gapPos = scanPos;
+            }
+        }
     }
 
     /**
