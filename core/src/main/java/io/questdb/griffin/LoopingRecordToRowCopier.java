@@ -425,6 +425,8 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.TIMESTAMP -> row.putTimestamp(toIndex, value);
             case ColumnType.FLOAT -> row.putFloat(toIndex, SqlUtil.implicitCastLongAsFloat(value));
             case ColumnType.DOUBLE -> row.putDouble(toIndex, SqlUtil.implicitCastLongAsDouble(value));
+            case ColumnType.VARCHAR -> RecordToRowCopierUtils.transferLongToVarcharCol(row, toIndex, value);
+            case ColumnType.STRING -> RecordToRowCopierUtils.transferLongToStrCol(row, toIndex, value);
             default -> {
                 if (ColumnType.isDecimalType(toTypeTag)) {
                     RecordToRowCopierUtils.transferLongToDecimal(row, toIndex, value, decimal256, toType);
