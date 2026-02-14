@@ -89,7 +89,15 @@
         <module>core</module>
         <module>benchmarks</module>
         <module>utils</module>
-        <module>examples</module>
         <module>compat</module>
     </modules>
+
+    <profiles>
+        <profile>
+            <id>local-client</id>
+            <modules>
+                <module>java-questdb-client</module>
+            </modules>
+        </profile>
+    </profiles>
 </project>

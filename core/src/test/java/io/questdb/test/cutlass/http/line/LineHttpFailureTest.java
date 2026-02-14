@@ -24,14 +24,11 @@
 
 package io.questdb.test.cutlass.http.line;
 
-import io.questdb.Bootstrap;
-import io.questdb.DefaultBootstrapConfiguration;
-import io.questdb.DefaultHttpClientConfiguration;
-import io.questdb.PropertyKey;
-import io.questdb.ServerMain;
+import io.questdb.*;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.client.Sender;
+import io.questdb.client.std.bytes.DirectByteSlice;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
@@ -40,7 +37,6 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.bytes.DirectByteSlice;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
@@ -69,6 +65,23 @@ import static java.net.HttpURLConnection.HTTP_BAD_METHOD;
 import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
 
 public class LineHttpFailureTest extends AbstractBootstrapTest {
+
+    @NotNull
+    private static AtomicInteger countWalWriterTakenFromPool(TestServerMain serverMain) {
+        AtomicInteger walWriterTaken = new AtomicInteger();
+
+        serverMain.getEngine().setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+            if (factoryType == PoolListener.SRC_WAL_WRITER && tableToken != null && tableToken.getTableName().equals("line")) {
+                if (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE) {
+                    walWriterTaken.incrementAndGet();
+                }
+                if (event == PoolListener.EV_RETURN) {
+                    walWriterTaken.decrementAndGet();
+                }
+            }
+        });
+        return walWriterTaken;
+    }
 
     @Before
     public void setUp() {
@@ -673,23 +686,6 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                 }
             }
         });
-    }
-
-    @NotNull
-    private static AtomicInteger countWalWriterTakenFromPool(TestServerMain serverMain) {
-        AtomicInteger walWriterTaken = new AtomicInteger();
-
-        serverMain.getEngine().setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
-            if (factoryType == PoolListener.SRC_WAL_WRITER && tableToken != null && tableToken.getTableName().equals("line")) {
-                if (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE) {
-                    walWriterTaken.incrementAndGet();
-                }
-                if (event == PoolListener.EV_RETURN) {
-                    walWriterTaken.decrementAndGet();
-                }
-            }
-        });
-        return walWriterTaken;
     }
 
     private long getSeqTxn(TestServerMain serverMain, TableToken tt) {
