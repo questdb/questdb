@@ -29,8 +29,12 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.model.CompiledTickExpression;
+import io.questdb.griffin.model.DateVariableExpr;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.RuntimeIntervalModelBuilder;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
@@ -656,6 +660,547 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprAllSuffixesCombined() throws SqlException {
+        assertCompiledTickExpr("$today..$today + 5dT09:30@+02:00;1h");
+    }
+
+    @Test
+    public void testCompiledTickExprAllWhitespace() {
+        assertCompileTickExprError("   ", "Empty tick expression");
+    }
+
+    @Test
+    public void testCompiledTickExprBareT() {
+        assertCompileTickExprError("[$today]T", "T with no value");
+    }
+
+    @Test
+    public void testCompiledTickExprBracketExpansionInList() throws SqlException {
+        assertCompiledTickExpr("[2025-01-[13..15], $today]");
+    }
+
+    @Test
+    public void testCompiledTickExprBusinessDayRange() throws SqlException {
+        assertCompiledTickExpr("$today..$today + 5bd");
+    }
+
+    @Test
+    public void testCompiledTickExprCacheReuseProducesDifferentResults() throws SqlException {
+        // Same CompiledTickExpression evaluated with different "now" must produce different results
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampDriver, configuration, "$today", 0, 6, 0)) {
+            long now1 = timestampDriver.parseFloorLiteral("2026-01-15T10:00:00.000000Z");
+            LongList result1 = new LongList();
+            compiled.evaluate(result1, now1);
+
+            long now2 = timestampDriver.parseFloorLiteral("2026-06-20T10:00:00.000000Z");
+            LongList result2 = new LongList();
+            compiled.evaluate(result2, now2);
+
+            Assert.assertNotEquals("Cached query should produce different results for different days",
+                    result1.getQuick(0), result2.getQuick(0));
+        }
+    }
+
+    @Test
+    public void testCompiledTickExprDayFilterMon() throws SqlException {
+        assertCompiledTickExpr("$today..$today + 7d#Mon");
+    }
+
+    // ================= End ISO Week Date Tests =================
+
+    @Test
+    public void testCompiledTickExprDayFilterMultipleDays() throws SqlException {
+        assertCompiledTickExpr("$today..$today + 14d#Mon,Wed,Fri");
+    }
+
+    @Test
+    public void testCompiledTickExprDayFilterWeekend() throws SqlException {
+        assertCompiledTickExpr("$today..$today + 7d#weekend");
+    }
+
+    @Test
+    public void testCompiledTickExprDayFilterWithDuration() throws SqlException {
+        assertCompiledTickExpr("$today..$today + 7d#Mon;4h");
+    }
+
+    @Test
+    public void testCompiledTickExprDayFilterWithTimezone() throws SqlException {
+        assertCompiledTickExpr("$today..$today + 7d@+01:00#workday");
+    }
+
+    @Test
+    public void testCompiledTickExprDayFilterWorkday() throws SqlException {
+        assertCompiledTickExpr("$today..$today + 7d#workday");
+    }
+
+    @Test
+    public void testCompiledTickExprDstFallBack() throws SqlException {
+        // Nov 3, 2024 in America/New_York: clocks fall back at 2:00 AM EDT
+        // T01:30 occurs twice (overlap) — code uses daylight time offset
+        assertCompiledTickExprWithNow("$todayT01:30@America/New_York", "2024-11-03T12:00:00.000000Z");
+    }
+
+    @Test
+    public void testCompiledTickExprDstGapHiOnly() throws SqlException {
+        // March 10, 2024: spring forward at 2:00 AM in America/New_York
+        // T01:59 + 2m duration → hi lands at 02:01 (in the DST gap), lo is before the gap
+        assertCompiledTickExprWithNow("$todayT01:59@America/New_York;2m", "2024-03-10T12:00:00.000000Z");
+    }
+
+    @Test
+    public void testCompiledTickExprDstPerElementSummer() throws SqlException {
+        // Per-element named tz during summer (BST, UTC+1)
+        assertCompiledTickExprWithNow("[$today]T[09:00@Europe/London,14:00]", "2024-07-15T12:00:00.000000Z");
+    }
+
+    @Test
+    public void testCompiledTickExprDstRangeSpanningTransition() throws SqlException {
+        // Range spanning the spring forward DST transition in America/New_York
+        assertCompiledTickExprWithNow("$today..$today+7dT09:00@America/New_York", "2024-03-07T12:00:00.000000Z");
+    }
+
+    @Test
+    public void testCompiledTickExprDstSpringForward() throws SqlException {
+        // March 10, 2024 2:00 AM in America/New_York: clocks spring forward to 3:00 AM
+        // T02:30 falls in the DST gap
+        assertCompiledTickExprWithNow("$todayT02:30@America/New_York", "2024-03-10T12:00:00.000000Z");
+    }
+
+    @Test
+    public void testCompiledTickExprDstSummerVsWinter() throws SqlException {
+        // Europe/London: winter (UTC+0) vs summer (BST, UTC+1)
+        // Same expression, different UTC offsets depending on time of year
+        assertCompiledTickExprWithNow("$todayT08:00@Europe/London", "2024-01-15T12:00:00.000000Z");
+        assertCompiledTickExprWithNow("$todayT08:00@Europe/London", "2024-07-15T12:00:00.000000Z");
+    }
+
+    @Test
+    public void testCompiledTickExprDurationDigitsOnly() {
+        assertCompileTickExprError("$today;30", "Missing unit at end of duration");
+    }
+
+    @Test
+    public void testCompiledTickExprDurationManyParts() throws SqlException {
+        // 65 duration parts to trigger ir[] growth beyond initial capacity of 64
+        assertCompiledTickExpr("$today;" + "1s".repeat(65));
+    }
+
+    @Test
+    public void testCompiledTickExprDurationMissingUnit() {
+        assertCompileTickExprError("$today;1h30", "Missing unit at end of duration");
+    }
+
+    @Test
+    public void testCompiledTickExprDurationMultiPart() throws SqlException {
+        assertCompiledTickExpr("$today;1h30m15s");
+    }
+
+    @Test
+    public void testCompiledTickExprDurationOnly() throws SqlException {
+        assertCompiledTickExpr("$today;6h30m");
+    }
+
+    @Test
+    public void testCompiledTickExprDurationOverflow() {
+        assertCompileTickExprError("$today;99999999999h", "Duration not a number");
+    }
+
+    @Test
+    public void testCompiledTickExprDurationSpaceBeforeUnit() {
+        assertCompileTickExprError("$today; h", "Expected number before unit");
+    }
+
+    @Test
+    public void testCompiledTickExprDurationWithUnderscore() throws SqlException {
+        assertCompiledTickExpr("$today;1_000s");
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicBracketList() throws SqlException {
+        assertCompiledTickExpr("[$today, $tomorrow]");
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicMixedList() throws SqlException {
+        assertCompiledTickExpr("[2025-01-01, $today, 2025-06-15]");
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicNow() throws SqlException {
+        assertCompiledTickExpr("$now");
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicNowDuration() throws SqlException {
+        assertCompiledTickExpr("$now;1h");
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicNowMinusHours() throws SqlException {
+        assertCompiledTickExpr("$now - 2h");
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicOffsetUppercaseD() throws SqlException {
+        assertCompiledTickExpr("$today + 3D");
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicRange() throws SqlException {
+        assertCompiledTickExpr("$today..$today + 2d");
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicRangeTimeLevelWithDuration() throws SqlException {
+        assertCompiledTickExpr("$now - 2h..$now;1h");
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicToday() throws SqlException {
+        assertCompiledTickExpr("$today");
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicTodayMinusBusinessDays() throws SqlException {
+        assertCompiledTickExpr("$today - 3bd");
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicTodayPlusBusinessDays() throws SqlException {
+        assertCompiledTickExpr("$today + 3bd");
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicTodayPlusZeroBusinessDays() throws SqlException {
+        assertCompiledTickExpr("$today + 0bd");
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicTomorrow() throws SqlException {
+        assertCompiledTickExpr("$tomorrow");
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicWithTimeSuffix() throws SqlException {
+        assertCompiledTickExpr("$todayT09:30;1h");
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicYesterday() throws SqlException {
+        assertCompiledTickExpr("$yesterday");
+    }
+
+    @Test
+    public void testCompiledTickExprEmptyElementInDateList() {
+        assertCompileTickExprError("[$today,, $tomorrow]", "Empty element in date list");
+    }
+
+    @Test
+    public void testCompiledTickExprInvalidSingleTimeOverride() {
+        assertCompileTickExprError("[$today]Tabc", "Invalid time override");
+    }
+
+    @Test
+    public void testCompiledTickExprInvalidSuffixAfterBracket() {
+        assertCompileTickExprError("[$today]09:30", "Expected 'T' time override");
+    }
+
+    @Test
+    public void testCompiledTickExprInvalidTimezone() {
+        assertCompileTickExprError("$today@Bogus/Zone", "invalid timezone");
+    }
+
+    @Test
+    public void testCompiledTickExprInvalidVariableFailsAtCompileTime() {
+        // Invalid $-expressions like $garbage must fail at compile time, not be
+        // deferred to runtime. containsDateVariable() only matches known variable
+        // names ($now, $today, $yesterday, $tomorrow), so $garbage falls through
+        // to parseTickExpr which rejects it immediately.
+        RuntimeIntervalModelBuilder builder = new RuntimeIntervalModelBuilder();
+        builder.of(timestampType.getTimestampType(), 0, configuration);
+        try {
+            builder.intersectIntervals("$garbage", 0, 8, 42);
+            Assert.fail("Should throw SqlException at compile time");
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "Unknown date variable");
+            Assert.assertEquals(42, e.getPosition());
+        }
+    }
+
+    @Test
+    public void testCompiledTickExprLeadingWhitespace() throws SqlException {
+        assertCompiledTickExpr("  $today");
+    }
+
+    @Test
+    public void testCompiledTickExprLeadingWhitespaceList() throws SqlException {
+        assertCompiledTickExpr("  [ $today , $tomorrow]");
+    }
+
+    @Test
+    public void testCompiledTickExprMixedListWithRange() throws SqlException {
+        assertCompiledTickExpr("[2025-03-01, $today .. $today + 2d , $yesterday]");
+    }
+
+    @Test
+    public void testCompiledTickExprMixedListWithTimeOverride() throws SqlException {
+        assertCompiledTickExpr("[2025-06-15, $today]T09:30");
+    }
+
+    @Test
+    public void testCompiledTickExprMixedListWithTimeOverrideAndDuration() throws SqlException {
+        assertCompiledTickExpr("[2025-06-15, $today]T09:30;1h");
+    }
+
+    @Test
+    public void testCompiledTickExprMixedListWithTimeOverrideAndTz() throws SqlException {
+        assertCompiledTickExpr("[2025-06-15, $today]T09:30@+05:00");
+    }
+
+    @Test
+    public void testCompiledTickExprMixedListWithTimeOverrideTzAndDuration() throws SqlException {
+        assertCompiledTickExpr("[2025-06-15, $today]T09:30@+05:00;1h");
+    }
+
+    @Test
+    public void testCompiledTickExprMixedPrecisionRange() throws SqlException {
+        // Range where start is day-level ($today = midnight) and end is sub-day ($now).
+        // hasBothTimeComponents = false → day-based iteration (one day if same day).
+        assertCompiledTickExpr("$today..$now");
+    }
+
+    @Test
+    public void testCompiledTickExprMonthPrecisionStaticWithDayFilter() throws SqlException {
+        // Month-precision static element requires multi-day expansion at compile time.
+        // The compile-time applyDayFilter (with hasDatePrecision=false) expands
+        // "2025-01" into individual Mondays; runtime Phase 2 re-checks idempotently.
+        assertCompiledTickExpr("[2025-01, $today]#Mon");
+    }
+
+    @Test
+    public void testCompiledTickExprNamedTimezone() throws SqlException {
+        assertCompiledTickExpr("$today@Europe/London");
+    }
+
+    @Test
+    public void testCompiledTickExprNamedTimezoneWithDuration() throws SqlException {
+        assertCompiledTickExpr("$today@Europe/Berlin;8h");
+    }
+
+    @Test
+    public void testCompiledTickExprNonVariableStaysStatic() throws SqlException {
+        RuntimeIntervalModelBuilder builder = new RuntimeIntervalModelBuilder();
+        builder.of(timestampType.getTimestampType(), 0, configuration);
+        builder.intersectIntervals("2024-01", 0, 7, 0);
+        try (RuntimeIntrinsicIntervalModel m = builder.build()) {
+            Assert.assertTrue("Non-variable expression should produce static model", m.isStatic());
+        }
+    }
+
+    @Test
+    public void testCompiledTickExprNowMixedListWithTimeOverride() throws SqlException {
+        // $now keeps its sub-day time (time override skipped), $today gets T09:30.
+        assertCompiledTickExpr("[$now, $today]T09:30");
+    }
+
+    @Test
+    public void testCompiledTickExprNowTimezone() throws SqlException {
+        // Bare $now with numeric timezone — point interval shifted by offset.
+        assertCompiledTickExpr("$now@+05:00");
+    }
+
+    @Test
+    public void testCompiledTickExprNumericTimezone() throws SqlException {
+        assertCompiledTickExpr("$today@+05:30");
+    }
+
+    @Test
+    public void testCompiledTickExprRangeInDateList() throws SqlException {
+        assertCompiledTickExpr("[$today..$today + 2d, $tomorrow]");
+    }
+
+    @Test
+    public void testCompiledTickExprRangeInListIrGrowth() throws SqlException {
+        // 2 duration parts → irPos=4 after shift, ir.length=64.
+        // 20 bracket-expanded static dates → 60 longs → irPos=64.
+        // Range needs 2 more → triggers IR growth at L529.
+        assertCompiledTickExpr("[2025-01-[01..20], $today..$tomorrow];1s1s");
+    }
+
+    @Test
+    public void testCompiledTickExprRangeWithSpaceBeforeDots() throws SqlException {
+        assertCompiledTickExpr("$today + 1d .. $today + 5d ;1h");
+    }
+
+    @Test
+    public void testCompiledTickExprRangeWithTimeSuffix() throws SqlException {
+        assertCompiledTickExpr("$today..$today + 3dT09:30;1h");
+    }
+
+    @Test
+    public void testCompiledTickExprRangeWithTimezone() throws SqlException {
+        assertCompiledTickExpr("$today..$today + 3d@+05:30");
+    }
+
+    @Test
+    public void testCompiledTickExprSingleTimeWithManyDurationParts() throws SqlException {
+        assertCompiledTickExpr("$todayT09:30;" + "1s".repeat(62));
+    }
+
+    @Test
+    public void testCompiledTickExprSingleVarInListIrGrowth() throws SqlException {
+        // 2 duration parts → irPos=4 after shift, ir.length=64.
+        // 20 bracket-expanded static dates → 60 longs → irPos=64.
+        // Single var needs 1 more → triggers IR growth at L537.
+        assertCompiledTickExpr("[2025-01-[01..20], $today];1s1s");
+    }
+
+    @Test
+    public void testCompiledTickExprStaticElementIrGrowth() throws SqlException {
+        // 22 bracket-expanded dates start at irPos=2, ir.length=64.
+        // 21st date has irPos=62 → 62+3=65>64 → triggers IR growth at L600.
+        assertCompiledTickExpr("[2025-01-[01..22], $today]");
+    }
+
+    @Test
+    public void testCompiledTickExprStaticWithDayFilterInList() throws SqlException {
+        assertCompiledTickExpr("[2025-01-15, $today..$today + 7d]#workday");
+    }
+
+    @Test
+    public void testCompiledTickExprStaticWithDurationInList() throws SqlException {
+        assertCompiledTickExpr("[2025-01-15, $today];4h");
+    }
+
+    @Test
+    public void testCompiledTickExprStaticWithTimezoneInList() throws SqlException {
+        assertCompiledTickExpr("[2025-01-15, $today]@+03:00");
+    }
+
+    @Test
+    public void testCompiledTickExprSubDayRangeSpanningDays() throws SqlException {
+        // Both endpoints are sub-day → hasBothTimeComponents = true → single interval.
+        // The interval spans across midnight into the next day.
+        assertCompiledTickExpr("$now..$now + 1d");
+    }
+
+    @Test
+    public void testCompiledTickExprTimeListBracket() throws SqlException {
+        assertCompiledTickExpr("[$today]T[09:00,14:00]");
+    }
+
+    @Test
+    public void testCompiledTickExprTimeListBracketWithDuration() throws SqlException {
+        assertCompiledTickExpr("[$today]T[09:30,14:30];1h");
+    }
+
+    @Test
+    public void testCompiledTickExprTimeListEmptyEntry() {
+        assertCompileTickExprError("[$today]T[ ,14:00]", "Empty element in time list");
+    }
+
+    @Test
+    public void testCompiledTickExprTimeListInvalidTime() {
+        assertCompileTickExprError("[$today]T[abc,14:00]", "Invalid time in time list");
+    }
+
+    @Test
+    public void testCompiledTickExprTimeListInvalidTimezone() {
+        assertCompileTickExprError("[$today]T[09:00@Bogus,14:00]", "invalid timezone in time list");
+    }
+
+    @Test
+    public void testCompiledTickExprTimeListManyEntries() throws SqlException {
+        // 33 time entries × 2 longs each = 66 > 64 initial ir[] capacity
+        StringBuilder sb = new StringBuilder("[$today]T[");
+        for (int i = 0; i < 33; i++) {
+            if (i > 0) sb.append(',');
+            sb.append(String.format("%02d:00", i % 24));
+        }
+        sb.append(']');
+        assertCompiledTickExpr(sb.toString());
+    }
+
+    @Test
+    public void testCompiledTickExprTimeListWithElemAndGlobalNamedTimezone() throws SqlException {
+        assertCompiledTickExpr("[$today]T[09:00@Europe/London,14:00]@America/New_York");
+    }
+
+    @Test
+    public void testCompiledTickExprTimeListWithElemAndGlobalTimezone() throws SqlException {
+        assertCompiledTickExpr("[$today]T[09:00@Europe/London,14:00]@+03:00");
+    }
+
+    @Test
+    public void testCompiledTickExprTimeListWithElemTimezone() throws SqlException {
+        assertCompiledTickExpr("[$today]T[09:00@+05:00,14:00]");
+    }
+
+    @Test
+    public void testCompiledTickExprTimeListWithNamedTimezone() throws SqlException {
+        assertCompiledTickExpr("[$today]T[09:00@Europe/London,14:00]");
+    }
+
+    @Test
+    public void testCompiledTickExprTimeListWithSpaces() throws SqlException {
+        assertCompiledTickExpr("[$today]T[ 09:00 , 14:00 ]");
+    }
+
+    @Test
+    public void testCompiledTickExprTimeOverrideWithNamedTimezone() throws SqlException {
+        assertCompiledTickExpr("$todayT10:00@America/New_York");
+    }
+
+    @Test
+    public void testCompiledTickExprTimezoneWithDuration() throws SqlException {
+        assertCompiledTickExpr("$today@+03:00;2h");
+    }
+
+    @Test
+    public void testCompiledTickExprTimezoneWithTimeOverride() throws SqlException {
+        assertCompiledTickExpr("$todayT09:30@-05:00");
+    }
+
+    @Test
+    public void testCompiledTickExprTomorrowWithOffset() throws SqlException {
+        assertCompiledTickExpr("$tomorrow - 1d");
+    }
+
+    @Test
+    public void testCompiledTickExprTrailingT() {
+        assertCompileTickExprError("$nowT", "Unknown date variable");
+    }
+
+    @Test
+    public void testCompiledTickExprUnclosedBracket() {
+        assertCompileTickExprError("[$today", "Unclosed '['");
+    }
+
+    @Test
+    public void testCompiledTickExprUnclosedTimeListBracket() {
+        assertCompileTickExprError("[$today]T[09:00", "Unclosed '[' in time list");
+    }
+
+    @Test
+    public void testCompiledTickExprUppercaseTomorrow() throws SqlException {
+        assertCompiledTickExpr("$TOMORROW");
+    }
+
+    @Test
+    public void testCompiledTickExprUppercaseVariable() throws SqlException {
+        assertCompiledTickExpr("$TODAY");
+    }
+
+    @Test
+    public void testCompiledTickExprYesterdayWithOffset() throws SqlException {
+        assertCompiledTickExpr("$yesterday + 3h");
+    }
+
+    // ==================== DateVariableExpr unit tests ====================
+
+    @Test
     public void testDateCeilMicroWithDiffFraction() throws NumericException {
         assertDateFloor("2015-02-28T08:22:44.556012Z", "2015-02-28T08:22:44.556012");
         assertDateFloor("2015-02-28T08:22:44.556010Z", "2015-02-28T08:22:44.55601");
@@ -680,8 +1225,6 @@ public class TickExprTest {
         assertDateFloor("2015-02-28T09:22:44.556011Z", "2015-02-28T08:22:44.556011-01");
         assertDateFloor("2015-02-28T09:22:44.556011Z", "2015-02-28 08:22:44.556011-01");
     }
-
-    // ================= End ISO Week Date Tests =================
 
     @Test
     public void testDateFloorMicroWithTzHrsMins() throws NumericException {
@@ -1584,6 +2127,123 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateVariableExprEvaluateBusinessDays() throws SqlException {
+        // 2026-03-16 is a Monday
+        final TimestampDriver driver = timestampType.getDriver();
+        long now = driver.parseFloorLiteral("2026-03-16T10:00:00.000000Z");
+        DateVariableExpr expr = parseDateVar("$today + 3bd", 12);
+        long todayStart = driver.startOfDay(now, 0);
+        // Mon + 3bd = Thu (skip no weekends)
+        long expected = driver.addDays(todayStart, 3);
+        Assert.assertEquals(expected, expr.evaluate(driver, now));
+    }
+
+    @Test
+    public void testDateVariableExprEvaluateBusinessDaysAcrossWeekend() throws SqlException {
+        // 2026-03-20 is a Friday
+        final TimestampDriver driver = timestampType.getDriver();
+        long now = driver.parseFloorLiteral("2026-03-20T10:00:00.000000Z");
+        DateVariableExpr expr = parseDateVar("$today + 3bd", 12);
+        long todayStart = driver.startOfDay(now, 0);
+        // Fri + 3bd = Wed (skip Sat, Sun)
+        long expected = driver.addDays(todayStart, 5); // Fri + 5 calendar days = Wed
+        Assert.assertEquals(expected, expr.evaluate(driver, now));
+    }
+
+    @Test
+    public void testDateVariableExprEvaluateNow() throws SqlException {
+        final TimestampDriver driver = timestampType.getDriver();
+        long now = driver.parseFloorLiteral("2026-03-15T14:30:00.000000Z");
+        DateVariableExpr expr = parseDateVar("$now", 4);
+        Assert.assertEquals(now, expr.evaluate(driver, now));
+    }
+
+    @Test
+    public void testDateVariableExprEvaluateToday() throws SqlException {
+        final TimestampDriver driver = timestampType.getDriver();
+        long now = driver.parseFloorLiteral("2026-03-15T14:30:00.000000Z");
+        DateVariableExpr expr = parseDateVar("$today", 6);
+        long expected = driver.startOfDay(now, 0);
+        Assert.assertEquals(expected, expr.evaluate(driver, now));
+    }
+
+    @Test
+    public void testDateVariableExprEvaluateTomorrow() throws SqlException {
+        final TimestampDriver driver = timestampType.getDriver();
+        long now = driver.parseFloorLiteral("2026-03-15T14:30:00.000000Z");
+        DateVariableExpr expr = parseDateVar("$tomorrow", 9);
+        long expected = driver.startOfDay(now, 1);
+        Assert.assertEquals(expected, expr.evaluate(driver, now));
+    }
+
+    @Test
+    public void testDateVariableExprEvaluateWithOffset() throws SqlException {
+        final TimestampDriver driver = timestampType.getDriver();
+        long now = driver.parseFloorLiteral("2026-03-15T14:30:00.000000Z");
+        DateVariableExpr expr = parseDateVar("$now - 2h", 9);
+        long expected = driver.add(now, 'h', -2);
+        Assert.assertEquals(expected, expr.evaluate(driver, now));
+    }
+
+    @Test
+    public void testDateVariableExprEvaluateYesterday() throws SqlException {
+        final TimestampDriver driver = timestampType.getDriver();
+        long now = driver.parseFloorLiteral("2026-03-15T14:30:00.000000Z");
+        DateVariableExpr expr = parseDateVar("$yesterday", 10);
+        long expected = driver.startOfDay(now, -1);
+        Assert.assertEquals(expected, expr.evaluate(driver, now));
+    }
+
+    @Test
+    public void testDateVariableExprParseCaseInsensitive() throws SqlException {
+        DateVariableExpr expr1 = parseDateVar("$TODAY", 6);
+        Assert.assertEquals(DateVariableExpr.VAR_TODAY, expr1.getVarType());
+
+        DateVariableExpr expr2 = parseDateVar("$Now", 4);
+        Assert.assertEquals(DateVariableExpr.VAR_NOW, expr2.getVarType());
+
+        DateVariableExpr expr3 = parseDateVar("$YESTERDAY", 10);
+        Assert.assertEquals(DateVariableExpr.VAR_YESTERDAY, expr3.getVarType());
+
+        DateVariableExpr expr4 = parseDateVar("$TOMORROW", 9);
+        Assert.assertEquals(DateVariableExpr.VAR_TOMORROW, expr4.getVarType());
+    }
+
+    @Test
+    public void testDateVariableExprParseCompact() throws SqlException {
+        // Compact form without spaces: $today+3d
+        final TimestampDriver driver = timestampType.getDriver();
+        long now = driver.parseFloorLiteral("2026-03-15T10:00:00.000000Z");
+        DateVariableExpr expr = parseDateVar("$today+3d", 9);
+        long expected = driver.add(driver.startOfDay(now, 0), 'd', 3);
+        Assert.assertEquals(expected, expr.evaluate(driver, now));
+    }
+
+    @Test
+    public void testDateVariableExprParseInvalidVariable() {
+        try {
+            parseDateVar("$garbage", 8);
+            Assert.fail("Should throw SqlException");
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "Unknown date variable");
+        }
+    }
+
+    @Test
+    public void testDateVariableExprProducesDifferentResultsForDifferentNow() throws SqlException {
+        final TimestampDriver driver = timestampType.getDriver();
+        DateVariableExpr expr = parseDateVar("$today", 6);
+
+        long now1 = driver.parseFloorLiteral("2026-01-15T10:00:00.000000Z");
+        long now2 = driver.parseFloorLiteral("2026-06-20T10:00:00.000000Z");
+
+        long result1 = expr.evaluate(driver, now1);
+        long result2 = expr.evaluate(driver, now2);
+
+        Assert.assertNotEquals("Same expr should produce different results for different now", result1, result2);
+    }
+
+    @Test
     public void testDateVariableInvalidAddition() {
         // Adding two date variables is not supported - expects number after operator
         assertBracketIntervalError("[$today + $today]", "Expected number after operator");
@@ -1616,6 +2276,8 @@ public class TickExprTest {
         // Operator at end with nothing after
         assertBracketIntervalError("[$today +]", "Expected number after operator");
     }
+
+    // ==================== Bracket Expansion Tests ====================
 
     @Test
     public void testDateVariableMissingUnit() {
@@ -1687,6 +2349,8 @@ public class TickExprTest {
         );
     }
 
+    // ================= Date Variable Tests =================
+
     @Test
     public void testDateVariableNowMixedWithStaticDate() throws SqlException {
         // [$now, 2026-01-15]T09:00 - $now keeps its time (10:30, point-in-time), static date gets T09:00
@@ -1748,8 +2412,6 @@ public class TickExprTest {
                 "2026-01-22T10:30:00.000000Z"
         );
     }
-
-    // ==================== Bracket Expansion Tests ====================
 
     @Test
     public void testDateVariableRangeBothNegativeArithmetic() throws SqlException {
@@ -1853,8 +2515,6 @@ public class TickExprTest {
                 "2026-01-22T10:30:00.000000Z"
         );
     }
-
-    // ================= Date Variable Tests =================
 
     @Test
     public void testDateVariableRangeCompactVsSpaced() throws SqlException {
@@ -1964,6 +2624,8 @@ public class TickExprTest {
                 "2026-01-22T10:30:00.000000Z"
         );
     }
+
+    // ================= Date Variable Range Tests =================
 
     @Test
     public void testDateVariableRangeSameDaySingleBusinessDay() throws SqlException {
@@ -2095,8 +2757,6 @@ public class TickExprTest {
                 "2026-01-22T10:30:00.000000Z"
         );
     }
-
-    // ================= Date Variable Range Tests =================
 
     @Test
     public void testDateVariableRangeWithHoursBareWithGlobalTimezone() throws SqlException {
@@ -2416,6 +3076,8 @@ public class TickExprTest {
         );
     }
 
+    // ==================== CompiledTickExpression (dynamic date variable) tests ====================
+
     @Test
     public void testDateVariableUnderscoreInNumberRange() throws SqlException {
         // $now-10_000T..$now-9_900T range with underscores
@@ -2725,8 +3387,6 @@ public class TickExprTest {
         );
     }
 
-    // ================= End Date Variable Tests =================
-
     @Test
     public void testDayFilterDateListWeekend() throws SqlException {
         // Weekend filter with date list
@@ -2736,6 +3396,8 @@ public class TickExprTest {
                 "[2024-01-05,2024-01-06,2024-01-07]#weekend"
         );
     }
+
+    // ================= End Date Variable Tests =================
 
     @Test
     public void testDayFilterDateListWithDuration() throws SqlException {
@@ -3088,8 +3750,6 @@ public class TickExprTest {
         );
     }
 
-    // ==================== TIME LIST BRACKET TESTS ====================
-
     @Test
     public void testDayFilterWithMultiDayDuration() throws SqlException {
         // Single date with 3d duration and day filter
@@ -3100,6 +3760,8 @@ public class TickExprTest {
                 "[2024-01-01#Mon];3d"
         );
     }
+
+    // ==================== TIME LIST BRACKET TESTS ====================
 
     @Test
     public void testDayFilterWithOneDayDuration() throws SqlException {
@@ -3496,8 +4158,6 @@ public class TickExprTest {
         );
     }
 
-    // ==================== Date List Tests ====================
-
     @Test
     public void testIsoWeekWithTime() throws SqlException {
         // 2024-W01-1T09:00 is Monday 9am
@@ -3511,6 +4171,8 @@ public class TickExprTest {
                 "2024-W01-1T09:30:15"
         );
     }
+
+    // ==================== Date List Tests ====================
 
     @Test
     public void testIsoWeekWithTimezone() throws SqlException {
@@ -3677,14 +4339,14 @@ public class TickExprTest {
         assertIntervalError("2016-03-21T10:31:61.23");
     }
 
-    // =====================================================
-    // Timezone tests
-    // =====================================================
-
     @Test
     public void testParseShortMinErr() {
         assertIntervalError("2016-03-21T10:3");
     }
+
+    // =====================================================
+    // Timezone tests
+    // =====================================================
 
     @Test
     public void testParseShortMinErr2() {
@@ -3947,8 +4609,6 @@ public class TickExprTest {
         );
     }
 
-    // ==================== Day-of-Week Filter Tests ====================
-
     @Test
     public void testTimeListBracketWithTrailingCommaAndWhitespace() throws SqlException {
         // Time list with trailing comma and whitespace (exercises L1406/L1409 whitespace to bracket end)
@@ -3957,6 +4617,8 @@ public class TickExprTest {
                 "2024-01-15T[09:00,   ]"
         );
     }
+
+    // ==================== Day-of-Week Filter Tests ====================
 
     @Test
     public void testTimeListBracketWithTrailingWhitespace() throws SqlException {
@@ -4382,6 +5044,16 @@ public class TickExprTest {
         return String.format("%04d-%02d-%02d", year, month, day);
     }
 
+    private static DateVariableExpr parseDateVar(CharSequence seq, int hi) throws SqlException {
+        long encoded = DateVariableExpr.parseEncoded(seq, 0, hi, 0);
+        return new DateVariableExpr(
+                (byte) ((encoded >>> 58) & 0x3),
+                (char) ((encoded >>> 40) & 0xFFFF),
+                (int) encoded,
+                (encoded & (1L << 57)) != 0
+        );
+    }
+
     private void assertBracketInterval(String expected, String interval) throws SqlException {
         out.clear();
         final TimestampDriver timestampDriver = timestampType.getDriver();
@@ -4417,6 +5089,85 @@ public class TickExprTest {
                         : expected,
                 intervalToString(timestampDriver, out)
         );
+    }
+
+    private void assertCompileTickExprError(String expression, String expectedError) {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        try {
+            IntervalUtils.compileTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 0).close();
+            Assert.fail("Should throw SqlException for: " + expression);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedError);
+        }
+    }
+
+    /**
+     * Asserts that an expression containing date variables:
+     * 1. Produces a dynamic model when going through RuntimeIntervalModelBuilder
+     * 2. Produces the same intervals via CompiledTickExpression as the static parseTickExpr path
+     */
+    private void assertCompiledTickExpr(String expression) throws SqlException {
+        // Verify the builder produces a dynamic model
+        RuntimeIntervalModelBuilder builder = new RuntimeIntervalModelBuilder();
+        builder.of(timestampType.getTimestampType(), 0, configuration);
+        builder.intersectIntervals(expression, 0, expression.length(), 0);
+        try (RuntimeIntrinsicIntervalModel m = builder.build()) {
+            Assert.assertFalse("Expression should produce dynamic model: " + expression, m.isStatic());
+        }
+
+        // Verify dynamic path produces same results as static path
+        // across multiple random "now" values to catch alignment-dependent bugs
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        long minTimestamp = timestampDriver.parseFloorLiteral("2020-01-01T00:00:00.000000Z");
+        long maxTimestamp = timestampDriver.parseFloorLiteral("2030-12-31T23:59:59.999999Z");
+        long range = maxTimestamp - minTimestamp;
+
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampDriver, configuration, expression, 0, expression.length(), 0)) {
+            LongList dynamicResult = new LongList();
+            LongList staticResult = new LongList();
+
+            for (int trial = 0; trial < 10; trial++) {
+                long randomNow = minTimestamp + Math.abs(rnd.nextLong() % range);
+                randomNow = timestampDriver.startOfDay(randomNow, 0);
+                randomNow += timestampDriver.fromHours(rnd.nextInt(24));
+                randomNow += timestampDriver.fromMinutes(rnd.nextInt(60));
+
+                dynamicResult.clear();
+                compiled.evaluate(dynamicResult, randomNow);
+
+                staticResult.clear();
+                parseTickExprWithNow(timestampDriver, expression, 0, expression.length(), 0,
+                        staticResult, IntervalOperation.INTERSECT, randomNow);
+
+                TestUtils.assertEquals(
+                        intervalToString(timestampDriver, staticResult).toString(),
+                        intervalToString(timestampDriver, dynamicResult)
+                );
+            }
+        }
+    }
+
+    private void assertCompiledTickExprWithNow(String expression, String nowStr) throws SqlException {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        long now = timestampDriver.parseFloorLiteral(nowStr);
+
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampDriver, configuration, expression, 0, expression.length(), 0)) {
+            LongList dynamicResult = new LongList();
+            LongList staticResult = new LongList();
+
+            compiled.evaluate(dynamicResult, now);
+            parseTickExprWithNow(timestampDriver, expression, 0, expression.length(), 0,
+                    staticResult, IntervalOperation.INTERSECT, now);
+
+            TestUtils.assertEquals(
+                    intervalToString(timestampDriver, staticResult).toString(),
+                    intervalToString(timestampDriver, dynamicResult)
+            );
+        }
     }
 
     private void assertDateFloor(String expected, String value) throws NumericException {

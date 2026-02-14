@@ -30,6 +30,7 @@ open module io.questdb.test {
     requires static java.sql;
     requires static org.postgresql.jdbc;
     requires static java.management;
+    requires static io.questdb.client;
     requires jdk.management;
     requires java.net.http;
     requires org.checkerframework.checker.qual;
