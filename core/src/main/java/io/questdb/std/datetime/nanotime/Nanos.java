@@ -872,33 +872,32 @@ public final class Nanos {
      * @return year
      */
     public static int getYear(long nanos) {
-        // Initial year estimate relative to 1970
-        // Use a reasonable approximation of days per year to avoid overflow
-        // 365.25 days per year approximation
         int yearsSinceEpoch = (int) (nanos / AVG_YEAR_NANOS);
         int yearEstimate = 1970 + yearsSinceEpoch;
 
-        // Handle negative years appropriately
         if (nanos < 0 && yearEstimate >= 1970) {
             yearEstimate = 1969;
         }
 
-        // Calculate year start
         boolean leap = isLeapYear(yearEstimate);
         long yearStart = yearNanos(yearEstimate, leap);
-
-        // Check if we need to adjust
         long diff = nanos - yearStart;
 
         if (diff < 0) {
-            // We're in the previous year
-            yearEstimate--;
-        } else {
-            // Check if we're in the next year
-            long yearLength = leap ? YEAR_NANOS_LEAP : YEAR_NANOS_NONLEAP;
-            if (diff >= yearLength) {
-                yearEstimate++;
-            }
+            // The initial estimate may be off by more than one year for negative
+            // timestamps far from epoch due to integer division truncating toward
+            // zero. Loop until we find the correct year.
+            do {
+                yearEstimate--;
+                leap = isLeapYear(yearEstimate);
+                yearStart = yearNanos(yearEstimate, leap);
+                diff = nanos - yearStart;
+            } while (diff < 0);
+        }
+
+        long yearLength = leap ? YEAR_NANOS_LEAP : YEAR_NANOS_NONLEAP;
+        if (diff >= yearLength) {
+            yearEstimate++;
         }
 
         return yearEstimate;

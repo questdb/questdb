@@ -841,33 +841,32 @@ public final class Micros {
     }
 
     public static int getYear(long micros) {
-        // Initial year estimate relative to 1970
-        // Use a reasonable approximation of days per year to avoid overflow
-        // 365.25 days per year approximation
         int yearsSinceEpoch = (int) (micros / AVG_YEAR_MICROS);
         int yearEstimate = 1970 + yearsSinceEpoch;
 
-        // Handle negative years appropriately
         if (micros < 0 && yearEstimate >= 1970) {
             yearEstimate = 1969;
         }
 
-        // Calculate year start
         boolean leap = CommonUtils.isLeapYear(yearEstimate);
         long yearStart = yearMicros(yearEstimate, leap);
-
-        // Check if we need to adjust
         long diff = micros - yearStart;
 
         if (diff < 0) {
-            // We're in the previous year
-            yearEstimate--;
-        } else {
-            // Check if we're in the next year
-            long yearLength = leap ? YEAR_MICROS_LEAP : YEAR_MICROS_NONLEAP;
-            if (diff >= yearLength) {
-                yearEstimate++;
-            }
+            // The initial estimate may be off by more than one year for negative
+            // timestamps far from epoch due to integer division truncating toward
+            // zero. Loop until we find the correct year.
+            do {
+                yearEstimate--;
+                leap = CommonUtils.isLeapYear(yearEstimate);
+                yearStart = yearMicros(yearEstimate, leap);
+                diff = micros - yearStart;
+            } while (diff < 0);
+        }
+
+        long yearLength = leap ? YEAR_MICROS_LEAP : YEAR_MICROS_NONLEAP;
+        if (diff >= yearLength) {
+            yearEstimate++;
         }
 
         return yearEstimate;
