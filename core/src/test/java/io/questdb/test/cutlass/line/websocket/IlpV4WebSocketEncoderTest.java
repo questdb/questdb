@@ -24,13 +24,10 @@
 
 package io.questdb.test.cutlass.line.websocket;
 
-import io.questdb.cutlass.ilpv4.protocol.IlpV4GorillaDecoder;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4GorillaEncoder;
-import io.questdb.client.cutlass.ilpv4.protocol.IlpV4TableBuffer;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4TimestampDecoder;
 import io.questdb.client.cutlass.ilpv4.client.GlobalSymbolDictionary;
 import io.questdb.client.cutlass.ilpv4.client.IlpBufferWriter;
 import io.questdb.client.cutlass.ilpv4.client.IlpV4WebSocketEncoder;
+import io.questdb.client.cutlass.ilpv4.protocol.IlpV4TableBuffer;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
@@ -974,7 +971,7 @@ public class IlpV4WebSocketEncoderTest {
             long pos = ptr + HEADER_SIZE;
 
             // Read deltaStart varint (should be 2 = confirmedMaxId + 1)
-            int deltaStart = (int) (Unsafe.getUnsafe().getByte(pos) & 0x7F);
+            int deltaStart = Unsafe.getUnsafe().getByte(pos) & 0x7F;
             Assert.assertEquals(2, deltaStart);
         }
     }
@@ -1014,12 +1011,12 @@ public class IlpV4WebSocketEncoderTest {
             long pos = ptr + HEADER_SIZE;
 
             // Read deltaStart varint (should be 2 = confirmedMaxId + 1)
-            int deltaStart = (int) (Unsafe.getUnsafe().getByte(pos) & 0x7F);
+            int deltaStart = Unsafe.getUnsafe().getByte(pos) & 0x7F;
             Assert.assertEquals(2, deltaStart);
             pos++;
 
             // Read deltaCount varint (should be 0)
-            int deltaCount = (int) (Unsafe.getUnsafe().getByte(pos) & 0x7F);
+            int deltaCount = Unsafe.getUnsafe().getByte(pos) & 0x7F;
             Assert.assertEquals(0, deltaCount);
         }
     }

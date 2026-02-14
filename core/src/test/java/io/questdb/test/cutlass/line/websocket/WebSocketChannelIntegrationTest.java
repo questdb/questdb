@@ -55,11 +55,9 @@ public class WebSocketChannelIntegrationTest {
             Assert.assertTrue(server.awaitStart(5, TimeUnit.SECONDS));
 
             WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false);
-            try {
+            try (channel) {
                 channel.connect();
                 Assert.assertTrue(channel.isConnected());
-            } finally {
-                channel.close();
             }
             Assert.assertFalse(channel.isConnected());
         }
@@ -81,8 +79,7 @@ public class WebSocketChannelIntegrationTest {
             server.start();
             Assert.assertTrue(server.awaitStart(5, TimeUnit.SECONDS));
 
-            WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false);
-            try {
+            try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false)) {
                 channel.connect();
 
                 // Send binary data
@@ -100,8 +97,6 @@ public class WebSocketChannelIntegrationTest {
                 // Wait for server to receive
                 Assert.assertTrue("Server should receive message", messageLatch.await(5, TimeUnit.SECONDS));
                 Assert.assertArrayEquals(testData, receivedData.get());
-            } finally {
-                channel.close();
             }
         }
     }
@@ -121,8 +116,7 @@ public class WebSocketChannelIntegrationTest {
             server.start();
             Assert.assertTrue(server.awaitStart(5, TimeUnit.SECONDS));
 
-            WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false);
-            try {
+            try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false)) {
                 channel.connect();
 
                 // Pre-allocate buffer
@@ -143,8 +137,6 @@ public class WebSocketChannelIntegrationTest {
 
                 Assert.assertTrue("Server should receive all messages",
                         messageLatch.await(10, TimeUnit.SECONDS));
-            } finally {
-                channel.close();
             }
         }
     }
@@ -165,8 +157,7 @@ public class WebSocketChannelIntegrationTest {
             server.start();
             Assert.assertTrue(server.awaitStart(5, TimeUnit.SECONDS));
 
-            WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false);
-            try {
+            try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false)) {
                 channel.connect();
 
                 // Send large message (128KB)
@@ -189,8 +180,6 @@ public class WebSocketChannelIntegrationTest {
                 for (int i = 0; i < size; i++) {
                     Assert.assertEquals("Byte at " + i, (byte) (i % 256), received[i]);
                 }
-            } finally {
-                channel.close();
             }
         }
     }
@@ -216,8 +205,7 @@ public class WebSocketChannelIntegrationTest {
             server.start();
             Assert.assertTrue(server.awaitStart(5, TimeUnit.SECONDS));
 
-            WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false);
-            try {
+            try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false)) {
                 channel.connect();
 
                 // Receive the server's message
@@ -241,8 +229,6 @@ public class WebSocketChannelIntegrationTest {
                 Assert.assertTrue("Latch should be triggered", receiveLatch.await(1, TimeUnit.SECONDS));
                 Assert.assertArrayEquals("Server says hello".getBytes(StandardCharsets.UTF_8),
                         clientReceived.get());
-            } finally {
-                channel.close();
             }
         }
     }
@@ -261,8 +247,7 @@ public class WebSocketChannelIntegrationTest {
             server.start();
             Assert.assertTrue(server.awaitStart(5, TimeUnit.SECONDS));
 
-            WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false);
-            try {
+            try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false)) {
                 channel.connect();
 
                 // Send ping
@@ -272,8 +257,6 @@ public class WebSocketChannelIntegrationTest {
                 // But since we control both sides, let's just verify the connection works
                 Assert.assertTrue(channel.isConnected());
 
-            } finally {
-                channel.close();
             }
         }
     }
@@ -298,8 +281,7 @@ public class WebSocketChannelIntegrationTest {
             server.start();
             Assert.assertTrue(server.awaitStart(5, TimeUnit.SECONDS));
 
-            WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false);
-            try {
+            try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false)) {
                 channel.connect();
 
                 // Try to receive - should get close frame
@@ -317,8 +299,6 @@ public class WebSocketChannelIntegrationTest {
 
                 Assert.assertTrue("Should receive close", closeLatch.await(5, TimeUnit.SECONDS));
                 Assert.assertEquals(Integer.valueOf(1000), closeCodeRef.get());
-            } finally {
-                channel.close();
             }
         }
     }
@@ -379,21 +359,15 @@ public class WebSocketChannelIntegrationTest {
             Assert.assertTrue(server.awaitStart(5, TimeUnit.SECONDS));
 
             // First connection
-            WebSocketChannel channel1 = new WebSocketChannel("ws://localhost:" + port, false);
-            try {
+            try (WebSocketChannel channel1 = new WebSocketChannel("ws://localhost:" + port, false)) {
                 channel1.connect();
                 Assert.assertTrue(channel1.isConnected());
-            } finally {
-                channel1.close();
             }
 
             // Second connection (new channel instance)
-            WebSocketChannel channel2 = new WebSocketChannel("ws://localhost:" + port, false);
-            try {
+            try (WebSocketChannel channel2 = new WebSocketChannel("ws://localhost:" + port, false)) {
                 channel2.connect();
                 Assert.assertTrue(channel2.isConnected());
-            } finally {
-                channel2.close();
             }
         }
     }
@@ -416,8 +390,7 @@ public class WebSocketChannelIntegrationTest {
             server.start();
             Assert.assertTrue(server.awaitStart(5, TimeUnit.SECONDS));
 
-            WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false);
-            try {
+            try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false)) {
                 channel.connect();
 
                 // Send empty message (0 bytes)
@@ -432,8 +405,6 @@ public class WebSocketChannelIntegrationTest {
                         messageLatch.await(5, TimeUnit.SECONDS));
                 Assert.assertNotNull(receivedData.get());
                 Assert.assertEquals(0, receivedData.get().length);
-            } finally {
-                channel.close();
             }
         }
     }
@@ -454,8 +425,7 @@ public class WebSocketChannelIntegrationTest {
             server.start();
             Assert.assertTrue(server.awaitStart(5, TimeUnit.SECONDS));
 
-            WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false);
-            try {
+            try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false)) {
                 channel.connect();
 
                 // Send all byte values 0x00 to 0xFF
@@ -478,8 +448,6 @@ public class WebSocketChannelIntegrationTest {
                 for (int i = 0; i < 256; i++) {
                     Assert.assertEquals("Byte at " + i, (byte) i, received[i]);
                 }
-            } finally {
-                channel.close();
             }
         }
     }
@@ -500,12 +468,11 @@ public class WebSocketChannelIntegrationTest {
             server.start();
             Assert.assertTrue(server.awaitStart(5, TimeUnit.SECONDS));
 
-            WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false);
-            try {
+            try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false)) {
                 channel.connect();
 
                 // Send message with embedded null bytes
-                byte[] testData = new byte[] {0x00, 0x01, 0x00, 0x02, 0x00, 0x00, 0x03};
+                byte[] testData = new byte[]{0x00, 0x01, 0x00, 0x02, 0x00, 0x00, 0x03};
                 long ptr = Unsafe.malloc(testData.length, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int i = 0; i < testData.length; i++) {
@@ -519,8 +486,6 @@ public class WebSocketChannelIntegrationTest {
                 Assert.assertTrue("Server should receive message",
                         messageLatch.await(5, TimeUnit.SECONDS));
                 Assert.assertArrayEquals(testData, receivedData.get());
-            } finally {
-                channel.close();
             }
         }
     }
@@ -543,8 +508,7 @@ public class WebSocketChannelIntegrationTest {
             server.start();
             Assert.assertTrue(server.awaitStart(5, TimeUnit.SECONDS));
 
-            WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false);
-            try {
+            try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false)) {
                 channel.connect();
 
                 // Send 1MB message
@@ -571,8 +535,6 @@ public class WebSocketChannelIntegrationTest {
                         Assert.fail("Mismatch at byte " + i + ": expected " + (i & 0xFF) + " got " + (received[i] & 0xFF));
                     }
                 }
-            } finally {
-                channel.close();
             }
         }
     }
@@ -598,8 +560,7 @@ public class WebSocketChannelIntegrationTest {
             server.start();
             Assert.assertTrue(server.awaitStart(5, TimeUnit.SECONDS));
 
-            WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false);
-            try {
+            try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false)) {
                 channel.connect();
 
                 // Send messages as fast as possible
@@ -618,8 +579,6 @@ public class WebSocketChannelIntegrationTest {
                 Assert.assertTrue("Server should receive all messages",
                         messageLatch.await(30, TimeUnit.SECONDS));
                 Assert.assertNull("Server should not have errors", serverError.get());
-            } finally {
-                channel.close();
             }
         }
     }
@@ -636,8 +595,7 @@ public class WebSocketChannelIntegrationTest {
             server.start();
             Assert.assertTrue(server.awaitStart(5, TimeUnit.SECONDS));
 
-            WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false);
-            try {
+            try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false)) {
                 channel.connect();
 
                 // Try to receive with short timeout - should return false
@@ -655,8 +613,6 @@ public class WebSocketChannelIntegrationTest {
 
                 Assert.assertFalse("Should timeout without receiving", received);
                 Assert.assertTrue("Channel should still be connected", channel.isConnected());
-            } finally {
-                channel.close();
             }
         }
     }
@@ -681,8 +637,7 @@ public class WebSocketChannelIntegrationTest {
             server.start();
             Assert.assertTrue(server.awaitStart(5, TimeUnit.SECONDS));
 
-            WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false);
-            try {
+            try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false)) {
                 channel.connect();
 
                 channel.receiveFrame(new WebSocketChannel.ResponseHandler() {
@@ -699,8 +654,6 @@ public class WebSocketChannelIntegrationTest {
 
                 Assert.assertTrue("Should receive close", closeLatch.await(5, TimeUnit.SECONDS));
                 Assert.assertEquals(Integer.valueOf(4001), closeCodeRef.get());
-            } finally {
-                channel.close();
             }
         }
     }
@@ -730,15 +683,12 @@ public class WebSocketChannelIntegrationTest {
         serverThread.start();
 
         try {
-            WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false);
-            try {
+            try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false)) {
                 channel.connect();
                 Assert.fail("Expected connection to fail");
             } catch (LineSenderException e) {
                 Assert.assertTrue("Error should mention handshake failure",
                         e.getMessage().contains("handshake"));
-            } finally {
-                channel.close();
             }
         } finally {
             serverSocket.close();
@@ -763,15 +713,12 @@ public class WebSocketChannelIntegrationTest {
         serverThread.start();
 
         try {
-            WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false);
-            try {
+            try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false)) {
                 channel.connect();
                 Assert.fail("Expected connection to fail");
             } catch (LineSenderException e) {
                 // Connection should fail
                 Assert.assertNotNull(e.getMessage());
-            } finally {
-                channel.close();
             }
         } finally {
             serverSocket.close();
@@ -801,8 +748,7 @@ public class WebSocketChannelIntegrationTest {
             server.start();
             Assert.assertTrue(server.awaitStart(5, TimeUnit.SECONDS));
 
-            WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false);
-            try {
+            try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false)) {
                 channel.connect();
 
                 // Send test data
@@ -836,8 +782,6 @@ public class WebSocketChannelIntegrationTest {
 
                 Assert.assertTrue("Should receive echo", echoLatch.await(5, TimeUnit.SECONDS));
                 Assert.assertArrayEquals(testData, echoData.get());
-            } finally {
-                channel.close();
             }
         }
     }
@@ -864,8 +808,7 @@ public class WebSocketChannelIntegrationTest {
             server.start();
             Assert.assertTrue(server.awaitStart(5, TimeUnit.SECONDS));
 
-            WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false);
-            try {
+            try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false)) {
                 channel.connect();
 
                 // Send multiple messages and receive echoes in lockstep
@@ -911,8 +854,6 @@ public class WebSocketChannelIntegrationTest {
                     Assert.assertArrayEquals("Message " + i + " should match",
                             sentMessages.get(i), receivedMessages.get(i));
                 }
-            } finally {
-                channel.close();
             }
         }
     }
@@ -935,8 +876,7 @@ public class WebSocketChannelIntegrationTest {
             server.start();
             Assert.assertTrue(server.awaitStart(5, TimeUnit.SECONDS));
 
-            WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false);
-            try {
+            try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false)) {
                 channel.connect();
 
                 // Send exactly 65536 bytes (64KB, common buffer size boundary)
@@ -959,8 +899,6 @@ public class WebSocketChannelIntegrationTest {
                 for (int i = 0; i < size; i++) {
                     Assert.assertEquals("Byte at " + i, (byte) (i % 251), received[i]);
                 }
-            } finally {
-                channel.close();
             }
         }
     }
@@ -981,8 +919,7 @@ public class WebSocketChannelIntegrationTest {
             server.start();
             Assert.assertTrue(server.awaitStart(5, TimeUnit.SECONDS));
 
-            WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false);
-            try {
+            try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:" + port, false)) {
                 channel.connect();
 
                 // Send exactly 1 byte
@@ -1000,8 +937,6 @@ public class WebSocketChannelIntegrationTest {
                 byte[] received = receivedData.get();
                 Assert.assertEquals(1, received.length);
                 Assert.assertEquals(0x42, received[0]);
-            } finally {
-                channel.close();
             }
         }
     }

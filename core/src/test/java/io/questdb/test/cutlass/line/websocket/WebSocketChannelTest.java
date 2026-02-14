@@ -24,8 +24,8 @@
 
 package io.questdb.test.cutlass.line.websocket;
 
-import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.ilpv4.client.WebSocketChannel;
+import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
@@ -39,42 +39,10 @@ import org.junit.Test;
 public class WebSocketChannelTest {
 
     @Test
-    public void testUrlParsingWsScheme() {
-        WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/write/v4", false);
-        try {
+    public void testChainedTimeoutConfiguration() {
+        try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/path", false)) {
+            channel.setConnectTimeout(5000).setReadTimeout(10000);
             Assert.assertFalse(channel.isConnected());
-        } finally {
-            channel.close();
-        }
-    }
-
-    @Test
-    public void testUrlParsingWssScheme() {
-        WebSocketChannel channel = new WebSocketChannel("wss://localhost:443/write/v4", false);
-        try {
-            Assert.assertFalse(channel.isConnected());
-        } finally {
-            channel.close();
-        }
-    }
-
-    @Test
-    public void testUrlParsingNoPath() {
-        WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000", false);
-        try {
-            Assert.assertFalse(channel.isConnected());
-        } finally {
-            channel.close();
-        }
-    }
-
-    @Test
-    public void testUrlParsingNoPort() {
-        WebSocketChannel channel = new WebSocketChannel("ws://localhost/path", false);
-        try {
-            Assert.assertFalse(channel.isConnected());
-        } finally {
-            channel.close();
         }
     }
 
@@ -86,6 +54,41 @@ public class WebSocketChannelTest {
     }
 
     @Test
+    public void testConnectAfterCloseThrows() {
+        WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/path", false);
+        channel.close();
+        try {
+            channel.connect();
+            Assert.fail("Expected LineSenderException");
+        } catch (LineSenderException e) {
+            Assert.assertTrue(e.getMessage().contains("closed"));
+        }
+    }
+
+    @Test
+    public void testConnectToClosedPortThrows() {
+        // Port 1 is typically not open
+        try (WebSocketChannel channel = new WebSocketChannel("ws://127.0.0.1:1/path", false)) {
+            channel.setConnectTimeout(1000);
+            channel.connect();
+            Assert.fail("Expected LineSenderException");
+        } catch (LineSenderException e) {
+            Assert.assertTrue(e.getMessage().contains("Failed to connect"));
+        }
+    }
+
+    @Test
+    public void testConnectToInvalidHostThrows() {
+        try (WebSocketChannel channel = new WebSocketChannel("ws://invalid.host.that.does.not.exist:9999/path", false)) {
+            channel.setConnectTimeout(1000);
+            channel.connect();
+            Assert.fail("Expected LineSenderException");
+        } catch (LineSenderException e) {
+            Assert.assertTrue(e.getMessage().contains("Failed to connect"));
+        }
+    }
+
+    @Test
     public void testDoubleClose() {
         WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/write/v4", false);
         channel.close();
@@ -94,20 +97,26 @@ public class WebSocketChannelTest {
     }
 
     @Test
-    public void testSendBeforeConnectThrows() {
-        WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/write/v4", false);
-        try {
-            long ptr = Unsafe.malloc(10, MemoryTag.NATIVE_DEFAULT);
-            try {
-                channel.sendBinary(ptr, 10);
-                Assert.fail("Expected LineSenderException");
-            } catch (LineSenderException e) {
-                Assert.assertTrue(e.getMessage().contains("not connected"));
-            } finally {
-                Unsafe.free(ptr, 10, MemoryTag.NATIVE_DEFAULT);
-            }
-        } finally {
-            channel.close();
+    public void testIsConnectedAfterCloseFalse() {
+        WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/path", false);
+        channel.close();
+        Assert.assertFalse(channel.isConnected());
+    }
+
+    @Test
+    public void testIsConnectedInitiallyFalse() {
+        try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/path", false)) {
+            Assert.assertFalse(channel.isConnected());
+        }
+    }
+
+    @Test
+    public void testReceiveBeforeConnectThrows() {
+        try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/path", false)) {
+            channel.receiveFrame(null, 100);
+            Assert.fail("Expected LineSenderException");
+        } catch (LineSenderException e) {
+            Assert.assertTrue(e.getMessage().contains("not connected"));
         }
     }
 
@@ -128,261 +137,174 @@ public class WebSocketChannelTest {
     }
 
     @Test
-    public void testConnectToInvalidHostThrows() {
-        WebSocketChannel channel = new WebSocketChannel("ws://invalid.host.that.does.not.exist:9999/path", false);
-        try {
-            channel.setConnectTimeout(1000);
-            channel.connect();
-            Assert.fail("Expected LineSenderException");
-        } catch (LineSenderException e) {
-            Assert.assertTrue(e.getMessage().contains("Failed to connect"));
-        } finally {
-            channel.close();
-        }
-    }
-
-    @Test
-    public void testConnectToClosedPortThrows() {
-        // Port 1 is typically not open
-        WebSocketChannel channel = new WebSocketChannel("ws://127.0.0.1:1/path", false);
-        try {
-            channel.setConnectTimeout(1000);
-            channel.connect();
-            Assert.fail("Expected LineSenderException");
-        } catch (LineSenderException e) {
-            Assert.assertTrue(e.getMessage().contains("Failed to connect"));
-        } finally {
-            channel.close();
-        }
-    }
-
-    @Test
-    public void testSetTimeouts() {
-        WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/path", false);
-        try {
-            channel.setConnectTimeout(5000);
-            channel.setReadTimeout(10000);
-            // Just verify it doesn't throw
-            Assert.assertFalse(channel.isConnected());
-        } finally {
-            channel.close();
+    public void testSendBeforeConnectThrows() {
+        try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/write/v4", false)) {
+            long ptr = Unsafe.malloc(10, MemoryTag.NATIVE_DEFAULT);
+            try {
+                channel.sendBinary(ptr, 10);
+                Assert.fail("Expected LineSenderException");
+            } catch (LineSenderException e) {
+                Assert.assertTrue(e.getMessage().contains("not connected"));
+            } finally {
+                Unsafe.free(ptr, 10, MemoryTag.NATIVE_DEFAULT);
+            }
         }
     }
 
     // ==================== URL Parsing Edge Cases ====================
 
     @Test
-    public void testUrlParsingEmptyPath() {
-        WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000", false);
-        try {
-            Assert.assertFalse(channel.isConnected());
-        } finally {
-            channel.close();
+    public void testSendPingBeforeConnectThrows() {
+        try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/path", false)) {
+            channel.sendPing();
+            Assert.fail("Expected LineSenderException");
+        } catch (LineSenderException e) {
+            Assert.assertTrue(e.getMessage().contains("not connected"));
         }
     }
 
     @Test
-    public void testUrlParsingRootPath() {
-        WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/", false);
-        try {
+    public void testSetConnectTimeoutReturnsThis() {
+        try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/path", false)) {
+            WebSocketChannel result = channel.setConnectTimeout(5000);
+            Assert.assertSame(channel, result);
+        }
+    }
+
+    @Test
+    public void testSetReadTimeoutReturnsThis() {
+        try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/path", false)) {
+            WebSocketChannel result = channel.setReadTimeout(5000);
+            Assert.assertSame(channel, result);
+        }
+    }
+
+    @Test
+    public void testSetTimeouts() {
+        try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/path", false)) {
+            channel.setConnectTimeout(5000);
+            channel.setReadTimeout(10000);
+            // Just verify it doesn't throw
             Assert.assertFalse(channel.isConnected());
-        } finally {
-            channel.close();
+        }
+    }
+
+    @Test
+    public void testTlsEnabledViaConstructor() {
+        try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/path", true)) {
+            Assert.assertFalse(channel.isConnected());
+        }
+    }
+
+    @Test
+    public void testTlsValidationDisabled() {
+        try (WebSocketChannel channel = new WebSocketChannel("wss://localhost:9000/path", true, false)) {
+            Assert.assertFalse(channel.isConnected());
         }
     }
 
     @Test
     public void testUrlParsingDeepPath() {
-        WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/a/b/c/d/e/f", false);
-        try {
+        try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/a/b/c/d/e/f", false)) {
             Assert.assertFalse(channel.isConnected());
-        } finally {
-            channel.close();
-        }
-    }
-
-    @Test
-    public void testUrlParsingWithQueryParams() {
-        WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/path?key=value&foo=bar", false);
-        try {
-            Assert.assertFalse(channel.isConnected());
-        } finally {
-            channel.close();
-        }
-    }
-
-    @Test
-    public void testUrlParsingIPv4Address() {
-        WebSocketChannel channel = new WebSocketChannel("ws://127.0.0.1:9000/path", false);
-        try {
-            Assert.assertFalse(channel.isConnected());
-        } finally {
-            channel.close();
-        }
-    }
-
-    @Test
-    public void testUrlParsingIPv6Address() {
-        WebSocketChannel channel = new WebSocketChannel("ws://[::1]:9000/path", false);
-        try {
-            Assert.assertFalse(channel.isConnected());
-        } finally {
-            channel.close();
         }
     }
 
     @Test
     public void testUrlParsingDefaultWsPort() {
-        WebSocketChannel channel = new WebSocketChannel("ws://localhost/path", false);
-        try {
+        try (WebSocketChannel channel = new WebSocketChannel("ws://localhost/path", false)) {
             Assert.assertFalse(channel.isConnected());
-        } finally {
-            channel.close();
         }
     }
 
     @Test
     public void testUrlParsingDefaultWssPort() {
-        WebSocketChannel channel = new WebSocketChannel("wss://localhost/path", false);
-        try {
+        try (WebSocketChannel channel = new WebSocketChannel("wss://localhost/path", false)) {
             Assert.assertFalse(channel.isConnected());
-        } finally {
-            channel.close();
-        }
-    }
-
-    @Test
-    public void testUrlParsingHostOnly() {
-        WebSocketChannel channel = new WebSocketChannel("localhost:9000", false);
-        try {
-            Assert.assertFalse(channel.isConnected());
-        } finally {
-            channel.close();
         }
     }
 
     // ==================== State Transition Tests ====================
 
     @Test
-    public void testIsConnectedInitiallyFalse() {
-        WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/path", false);
-        try {
+    public void testUrlParsingEmptyPath() {
+        try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000", false)) {
             Assert.assertFalse(channel.isConnected());
-        } finally {
-            channel.close();
         }
     }
 
     @Test
-    public void testIsConnectedAfterCloseFalse() {
-        WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/path", false);
-        channel.close();
-        Assert.assertFalse(channel.isConnected());
-    }
-
-    @Test
-    public void testSendPingBeforeConnectThrows() {
-        WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/path", false);
-        try {
-            channel.sendPing();
-            Assert.fail("Expected LineSenderException");
-        } catch (LineSenderException e) {
-            Assert.assertTrue(e.getMessage().contains("not connected"));
-        } finally {
-            channel.close();
+    public void testUrlParsingHostOnly() {
+        try (WebSocketChannel channel = new WebSocketChannel("localhost:9000", false)) {
+            Assert.assertFalse(channel.isConnected());
         }
     }
 
     @Test
-    public void testReceiveBeforeConnectThrows() {
-        WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/path", false);
-        try {
-            channel.receiveFrame(null, 100);
-            Assert.fail("Expected LineSenderException");
-        } catch (LineSenderException e) {
-            Assert.assertTrue(e.getMessage().contains("not connected"));
-        } finally {
-            channel.close();
+    public void testUrlParsingIPv4Address() {
+        try (WebSocketChannel channel = new WebSocketChannel("ws://127.0.0.1:9000/path", false)) {
+            Assert.assertFalse(channel.isConnected());
         }
     }
 
     @Test
-    public void testConnectAfterCloseThrows() {
-        WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/path", false);
-        channel.close();
-        try {
-            channel.connect();
-            Assert.fail("Expected LineSenderException");
-        } catch (LineSenderException e) {
-            Assert.assertTrue(e.getMessage().contains("closed"));
+    public void testUrlParsingIPv6Address() {
+        try (WebSocketChannel channel = new WebSocketChannel("ws://[::1]:9000/path", false)) {
+            Assert.assertFalse(channel.isConnected());
+        }
+    }
+
+    @Test
+    public void testUrlParsingNoPath() {
+        try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000", false)) {
+            Assert.assertFalse(channel.isConnected());
         }
     }
 
     // ==================== Timeout Configuration Tests ====================
 
     @Test
-    public void testSetConnectTimeoutReturnsThis() {
-        WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/path", false);
-        try {
-            WebSocketChannel result = channel.setConnectTimeout(5000);
-            Assert.assertSame(channel, result);
-        } finally {
-            channel.close();
-        }
-    }
-
-    @Test
-    public void testSetReadTimeoutReturnsThis() {
-        WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/path", false);
-        try {
-            WebSocketChannel result = channel.setReadTimeout(5000);
-            Assert.assertSame(channel, result);
-        } finally {
-            channel.close();
-        }
-    }
-
-    @Test
-    public void testChainedTimeoutConfiguration() {
-        WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/path", false);
-        try {
-            channel.setConnectTimeout(5000).setReadTimeout(10000);
+    public void testUrlParsingNoPort() {
+        try (WebSocketChannel channel = new WebSocketChannel("ws://localhost/path", false)) {
             Assert.assertFalse(channel.isConnected());
-        } finally {
-            channel.close();
+        }
+    }
+
+    @Test
+    public void testUrlParsingRootPath() {
+        try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/", false)) {
+            Assert.assertFalse(channel.isConnected());
+        }
+    }
+
+    @Test
+    public void testUrlParsingWithQueryParams() {
+        try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/path?key=value&foo=bar", false)) {
+            Assert.assertFalse(channel.isConnected());
         }
     }
 
     // ==================== TLS Configuration Tests ====================
 
     @Test
-    public void testTlsEnabledViaConstructor() {
-        WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/path", true);
-        try {
+    public void testUrlParsingWsScheme() {
+        try (WebSocketChannel channel = new WebSocketChannel("ws://localhost:9000/write/v4", false)) {
             Assert.assertFalse(channel.isConnected());
-        } finally {
-            channel.close();
         }
     }
 
     @Test
-    public void testTlsValidationDisabled() {
-        WebSocketChannel channel = new WebSocketChannel("wss://localhost:9000/path", true, false);
-        try {
+    public void testUrlParsingWssScheme() {
+        try (WebSocketChannel channel = new WebSocketChannel("wss://localhost:443/write/v4", false)) {
             Assert.assertFalse(channel.isConnected());
-        } finally {
-            channel.close();
         }
     }
 
     @Test
     public void testWssSchemeOverridesTlsParameter() {
         // wss:// scheme should enable TLS regardless of the parameter
-        WebSocketChannel channel = new WebSocketChannel("wss://localhost:443/path", false);
-        try {
+        try (WebSocketChannel channel = new WebSocketChannel("wss://localhost:443/path", false)) {
             Assert.assertFalse(channel.isConnected());
-        } finally {
-            channel.close();
         }
     }
 }

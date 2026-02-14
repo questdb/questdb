@@ -268,37 +268,28 @@ public class IlpV4WebSocketSenderTest {
 
     @Test
     public void testBufferViewNotSupported() {
-        IlpV4WebSocketSender sender = createUnconnectedSender();
-        try {
+        try (IlpV4WebSocketSender sender = createUnconnectedSender()) {
             sender.bufferView();
             Assert.fail("Expected LineSenderException");
         } catch (LineSenderException e) {
             Assert.assertTrue(e.getMessage().contains("not supported"));
-        } finally {
-            sender.close();
         }
     }
 
     @Test
     public void testGorillaEnabledByDefault() {
-        IlpV4WebSocketSender sender = createUnconnectedSender();
-        try {
+        try (IlpV4WebSocketSender sender = createUnconnectedSender()) {
             Assert.assertTrue(sender.isGorillaEnabled());
-        } finally {
-            sender.close();
         }
     }
 
     @Test
     public void testSetGorillaEnabled() {
-        IlpV4WebSocketSender sender = createUnconnectedSender();
-        try {
+        try (IlpV4WebSocketSender sender = createUnconnectedSender()) {
             sender.setGorillaEnabled(false);
             Assert.assertFalse(sender.isGorillaEnabled());
             sender.setGorillaEnabled(true);
             Assert.assertTrue(sender.isGorillaEnabled());
-        } finally {
-            sender.close();
         }
     }
 
@@ -330,21 +321,16 @@ public class IlpV4WebSocketSenderTest {
 
     @Test
     public void testNullArrayReturnsThis() {
-        IlpV4WebSocketSender sender = createUnconnectedSender();
-        try {
+        try (IlpV4WebSocketSender sender = createUnconnectedSender()) {
             // Null arrays should be no-ops and return sender
             Assert.assertSame(sender, sender.doubleArray("x", (double[]) null));
             Assert.assertSame(sender, sender.longArray("x", (long[]) null));
-        } finally {
-            sender.close();
         }
     }
 
     @Test
     public void testSealAndSwapRollsBackOnEnqueueFailure() throws Exception {
-        IlpV4WebSocketSender sender = createUnconnectedAsyncSender();
-        ThrowingOnceWebSocketSendQueue queue = new ThrowingOnceWebSocketSendQueue();
-        try {
+        try (IlpV4WebSocketSender sender = createUnconnectedAsyncSender(); ThrowingOnceWebSocketSendQueue queue = new ThrowingOnceWebSocketSendQueue()) {
             setSendQueue(sender, queue);
 
             MicrobatchBuffer originalActive = getActiveBuffer(sender);
@@ -367,9 +353,6 @@ public class IlpV4WebSocketSenderTest {
             // Retry should be possible on the same sender instance.
             invokeSealAndSwapBuffer(sender);
             Assert.assertNotSame(originalActive, getActiveBuffer(sender));
-        } finally {
-            sender.close();
-            queue.close();
         }
     }
 
