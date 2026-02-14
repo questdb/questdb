@@ -25,7 +25,7 @@
 package io.questdb.test.client;
 
 import io.questdb.client.Sender;
-import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;

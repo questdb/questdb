@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.line.websocket;
 
-import io.questdb.cutlass.ilpv4.client.GlobalSymbolDictionary;
+import io.questdb.client.cutlass.ilpv4.client.GlobalSymbolDictionary;
 import org.junit.Test;
 
 import static org.junit.Assert.*;

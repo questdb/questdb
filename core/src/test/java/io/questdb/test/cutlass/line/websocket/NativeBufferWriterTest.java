@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.line.websocket;
 
-import io.questdb.cutlass.ilpv4.client.NativeBufferWriter;
+import io.questdb.client.cutlass.ilpv4.client.NativeBufferWriter;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;

@@ -26,8 +26,8 @@ package io.questdb.test.cutlass.line.websocket;
 
 import io.questdb.PropertyKey;
 import io.questdb.client.Sender;
-import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.ilpv4.client.IlpV4WebSocketSender;
+import io.questdb.client.cutlass.line.LineSenderException;
+import io.questdb.client.cutlass.ilpv4.client.IlpV4WebSocketSender;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -1816,7 +1816,7 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 try (IlpV4WebSocketSender sender = createSender(httpPort)) {
-                    io.questdb.std.Decimal64 value = new io.questdb.std.Decimal64(12345, 2); // 123.45
+                    io.questdb.client.std.Decimal64 value = new io.questdb.client.std.Decimal64(12345, 2); // 123.45
                     sender.table("ws_test_decimal64")
                             .decimalColumn("price", value)
                             .at(1000000000L, ChronoUnit.MICROS);
@@ -1838,7 +1838,7 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 try (IlpV4WebSocketSender sender = createSender(httpPort)) {
-                    io.questdb.std.Decimal128 value = new io.questdb.std.Decimal128(0, 12345678901234L, 2); // 123456789012.34
+                    io.questdb.client.std.Decimal128 value = new io.questdb.client.std.Decimal128(0, 12345678901234L, 2); // 123456789012.34
                     sender.table("ws_test_decimal128")
                             .decimalColumn("amount", value)
                             .at(1000000000L, ChronoUnit.MICROS);
@@ -1860,7 +1860,7 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 try (IlpV4WebSocketSender sender = createSender(httpPort)) {
-                    io.questdb.std.Decimal256 value = io.questdb.std.Decimal256.fromLong(123456789L, 4);
+                    io.questdb.client.std.Decimal256 value = io.questdb.client.std.Decimal256.fromLong(123456789L, 4);
                     sender.table("ws_test_decimal256")
                             .decimalColumn("big_value", value)
                             .at(1000000000L, ChronoUnit.MICROS);
@@ -1904,9 +1904,9 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
 
                 try (IlpV4WebSocketSender sender = createSender(httpPort)) {
                     // Same scale for all values in the column
-                    io.questdb.std.Decimal64 v1 = new io.questdb.std.Decimal64(100, 2); // 1.00
-                    io.questdb.std.Decimal64 v2 = new io.questdb.std.Decimal64(200, 2); // 2.00
-                    io.questdb.std.Decimal64 v3 = new io.questdb.std.Decimal64(300, 2); // 3.00
+                    io.questdb.client.std.Decimal64 v1 = new io.questdb.client.std.Decimal64(100, 2); // 1.00
+                    io.questdb.client.std.Decimal64 v2 = new io.questdb.client.std.Decimal64(200, 2); // 2.00
+                    io.questdb.client.std.Decimal64 v3 = new io.questdb.client.std.Decimal64(300, 2); // 3.00
 
                     sender.table("ws_test_decimal_multi")
                             .decimalColumn("price", v1)
@@ -1935,7 +1935,7 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 try (IlpV4WebSocketSender sender = createSender(httpPort)) {
-                    io.questdb.std.Decimal64 negative = new io.questdb.std.Decimal64(-5000, 2); // -50.00
+                    io.questdb.client.std.Decimal64 negative = new io.questdb.client.std.Decimal64(-5000, 2); // -50.00
                     sender.table("ws_test_decimal_negative")
                             .decimalColumn("loss", negative)
                             .at(1000000000L, ChronoUnit.MICROS);
@@ -1957,7 +1957,7 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 try (IlpV4WebSocketSender sender = createSender(httpPort)) {
-                    io.questdb.std.Decimal64 zero = new io.questdb.std.Decimal64(0, 2); // 0.00
+                    io.questdb.client.std.Decimal64 zero = new io.questdb.client.std.Decimal64(0, 2); // 0.00
                     sender.table("ws_test_decimal_zero")
                             .decimalColumn("balance", zero)
                             .at(1000000000L, ChronoUnit.MICROS);
@@ -1979,7 +1979,7 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 try (IlpV4WebSocketSender sender = createSender(httpPort)) {
-                    io.questdb.std.Decimal64 price = new io.questdb.std.Decimal64(9999, 2); // 99.99
+                    io.questdb.client.std.Decimal64 price = new io.questdb.client.std.Decimal64(9999, 2); // 99.99
                     sender.table("ws_test_decimal_mixed")
                             .symbol("product", "Widget")
                             .longColumn("quantity", 10)
@@ -2007,7 +2007,7 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
                     // Null decimals should be skipped without error
                     sender.table("ws_test_decimal_null")
                             .symbol("name", "test")
-                            .decimalColumn("value", (io.questdb.std.Decimal64) null)
+                            .decimalColumn("value", (io.questdb.client.std.Decimal64) null)
                             .at(1000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
@@ -2029,13 +2029,13 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
 
                 try (IlpV4WebSocketSender sender = createSender(httpPort)) {
                     // First value with scale 2
-                    io.questdb.std.Decimal64 v1 = new io.questdb.std.Decimal64(100, 2);
+                    io.questdb.client.std.Decimal64 v1 = new io.questdb.client.std.Decimal64(100, 2);
                     sender.table("ws_test_decimal_scale_mismatch")
                             .decimalColumn("price", v1)
                             .at(1000000000L, ChronoUnit.MICROS);
 
                     // Second value with scale 4 - should throw
-                    io.questdb.std.Decimal64 v2 = new io.questdb.std.Decimal64(10000, 4);
+                    io.questdb.client.std.Decimal64 v2 = new io.questdb.client.std.Decimal64(10000, 4);
                     try {
                         sender.table("ws_test_decimal_scale_mismatch")
                                 .decimalColumn("price", v2)
@@ -2813,8 +2813,8 @@ public class IlpV4WebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 try (IlpV4WebSocketSender sender = createSender(httpPort)) {
-                    io.questdb.std.Decimal64 price1 = new io.questdb.std.Decimal64(15099, 2);
-                    io.questdb.std.Decimal64 price2 = new io.questdb.std.Decimal64(28005, 2);
+                    io.questdb.client.std.Decimal64 price1 = new io.questdb.client.std.Decimal64(15099, 2);
+                    io.questdb.client.std.Decimal64 price2 = new io.questdb.client.std.Decimal64(28005, 2);
 
                     // Batch 1
                     sender.table("ws_delta_complex")

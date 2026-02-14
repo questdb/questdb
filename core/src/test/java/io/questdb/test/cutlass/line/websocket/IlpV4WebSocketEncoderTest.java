@@ -26,11 +26,11 @@ package io.questdb.test.cutlass.line.websocket;
 
 import io.questdb.cutlass.ilpv4.protocol.IlpV4GorillaDecoder;
 import io.questdb.cutlass.ilpv4.protocol.IlpV4GorillaEncoder;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4TableBuffer;
+import io.questdb.client.cutlass.ilpv4.protocol.IlpV4TableBuffer;
 import io.questdb.cutlass.ilpv4.protocol.IlpV4TimestampDecoder;
-import io.questdb.cutlass.ilpv4.client.GlobalSymbolDictionary;
-import io.questdb.cutlass.ilpv4.client.IlpBufferWriter;
-import io.questdb.cutlass.ilpv4.client.IlpV4WebSocketEncoder;
+import io.questdb.client.cutlass.ilpv4.client.GlobalSymbolDictionary;
+import io.questdb.client.cutlass.ilpv4.client.IlpBufferWriter;
+import io.questdb.client.cutlass.ilpv4.client.IlpV4WebSocketEncoder;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
@@ -433,7 +433,7 @@ public class IlpV4WebSocketEncoderTest {
             IlpV4TableBuffer buffer = new IlpV4TableBuffer("test_table");
 
             IlpV4TableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("price", TYPE_DECIMAL64, false);
-            col.addDecimal64(io.questdb.std.Decimal64.fromLong(12345L, 2)); // 123.45
+            col.addDecimal64(io.questdb.client.std.Decimal64.fromLong(12345L, 2)); // 123.45
             buffer.nextRow();
 
             int size = encoder.encode(buffer, false);
@@ -447,13 +447,13 @@ public class IlpV4WebSocketEncoderTest {
             IlpV4TableBuffer buffer = new IlpV4TableBuffer("test_table");
 
             IlpV4TableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("price", TYPE_DECIMAL64, false);
-            col.addDecimal64(io.questdb.std.Decimal64.fromLong(12345L, 2)); // 123.45
+            col.addDecimal64(io.questdb.client.std.Decimal64.fromLong(12345L, 2)); // 123.45
             buffer.nextRow();
 
-            col.addDecimal64(io.questdb.std.Decimal64.fromLong(67890L, 2)); // 678.90
+            col.addDecimal64(io.questdb.client.std.Decimal64.fromLong(67890L, 2)); // 678.90
             buffer.nextRow();
 
-            col.addDecimal64(io.questdb.std.Decimal64.fromLong(11111L, 2)); // 111.11
+            col.addDecimal64(io.questdb.client.std.Decimal64.fromLong(11111L, 2)); // 111.11
             buffer.nextRow();
 
             int size = encoder.encode(buffer, false);
@@ -468,7 +468,7 @@ public class IlpV4WebSocketEncoderTest {
             IlpV4TableBuffer buffer = new IlpV4TableBuffer("test_table");
 
             IlpV4TableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("amount", TYPE_DECIMAL128, false);
-            col.addDecimal128(io.questdb.std.Decimal128.fromLong(123456789012345L, 4));
+            col.addDecimal128(io.questdb.client.std.Decimal128.fromLong(123456789012345L, 4));
             buffer.nextRow();
 
             int size = encoder.encode(buffer, false);
@@ -482,7 +482,7 @@ public class IlpV4WebSocketEncoderTest {
             IlpV4TableBuffer buffer = new IlpV4TableBuffer("test_table");
 
             IlpV4TableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("bignum", TYPE_DECIMAL256, false);
-            col.addDecimal256(io.questdb.std.Decimal256.fromLong(Long.MAX_VALUE, 6));
+            col.addDecimal256(io.questdb.client.std.Decimal256.fromLong(Long.MAX_VALUE, 6));
             buffer.nextRow();
 
             int size = encoder.encode(buffer, false);

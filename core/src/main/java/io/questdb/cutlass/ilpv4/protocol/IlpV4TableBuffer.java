@@ -24,10 +24,6 @@
 
 package io.questdb.cutlass.ilpv4.protocol;
 
-import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.array.ArrayBufferAppender;
-import io.questdb.cutlass.line.array.DoubleArray;
-import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -725,7 +721,7 @@ public class IlpV4TableBuffer {
          * All values in a decimal column must share the same scale.
          *
          * @param value the Decimal64 value to add
-         * @throws LineSenderException if the scale doesn't match previous values
+         * @throws IllegalArgumentException if the scale doesn't match previous values
          */
         public void addDecimal64(Decimal64 value) {
             if (value == null || value.isNull()) {
@@ -743,7 +739,7 @@ public class IlpV4TableBuffer {
          * All values in a decimal column must share the same scale.
          *
          * @param value the Decimal128 value to add
-         * @throws LineSenderException if the scale doesn't match previous values
+         * @throws IllegalArgumentException if the scale doesn't match previous values
          */
         public void addDecimal128(Decimal128 value) {
             if (value == null || value.isNull()) {
@@ -763,7 +759,7 @@ public class IlpV4TableBuffer {
          * All values in a decimal column must share the same scale.
          *
          * @param value the Decimal256 value to add
-         * @throws LineSenderException if the scale doesn't match previous values
+         * @throws IllegalArgumentException if the scale doesn't match previous values
          */
         public void addDecimal256(Decimal256 value) {
             if (value == null || value.isNull()) {
@@ -785,13 +781,13 @@ public class IlpV4TableBuffer {
          * If this is the first value, sets the column scale.
          *
          * @param scale the scale of the value being added
-         * @throws LineSenderException if the scale doesn't match
+         * @throws IllegalArgumentException if the scale doesn't match
          */
         private void validateAndSetScale(byte scale) {
             if (decimalScale == -1) {
                 decimalScale = scale;
             } else if (decimalScale != scale) {
-                throw new LineSenderException(
+                throw new IllegalArgumentException(
                         "decimal scale mismatch in column '" + name + "': expected " +
                                 decimalScale + " but got " + scale +
                                 ". All values in a decimal column must have the same scale."
@@ -821,7 +817,7 @@ public class IlpV4TableBuffer {
 
         /**
          * Adds a 2D double array.
-         * @throws LineSenderException if the array is jagged (irregular shape)
+         * @throws IllegalArgumentException if the array is jagged (irregular shape)
          */
         public void addDoubleArray(double[][] values) {
             if (values == null) {
@@ -833,7 +829,7 @@ public class IlpV4TableBuffer {
             // Validate rectangular shape
             for (int i = 1; i < dim0; i++) {
                 if (values[i].length != dim1) {
-                    throw new LineSenderException("irregular array shape");
+                    throw new IllegalArgumentException("irregular array shape");
                 }
             }
             ensureArrayCapacity(2, dim0 * dim1);
@@ -851,7 +847,7 @@ public class IlpV4TableBuffer {
 
         /**
          * Adds a 3D double array.
-         * @throws LineSenderException if the array is jagged (irregular shape)
+         * @throws IllegalArgumentException if the array is jagged (irregular shape)
          */
         public void addDoubleArray(double[][][] values) {
             if (values == null) {
@@ -864,11 +860,11 @@ public class IlpV4TableBuffer {
             // Validate rectangular shape
             for (int i = 0; i < dim0; i++) {
                 if (values[i].length != dim1) {
-                    throw new LineSenderException("irregular array shape");
+                    throw new IllegalArgumentException("irregular array shape");
                 }
                 for (int j = 0; j < dim1; j++) {
                     if (values[i][j].length != dim2) {
-                        throw new LineSenderException("irregular array shape");
+                        throw new IllegalArgumentException("irregular array shape");
                     }
                 }
             }
@@ -883,31 +879,6 @@ public class IlpV4TableBuffer {
                         doubleArrayData[arrayDataOffset++] = v;
                     }
                 }
-            }
-            valueCount++;
-            size++;
-        }
-
-        /**
-         * Adds a DoubleArray (N-dimensional wrapper).
-         * Uses a capturing approach to extract shape and data.
-         */
-        public void addDoubleArray(DoubleArray array) {
-            if (array == null) {
-                addNull();
-                return;
-            }
-            // Use a capturing ArrayBufferAppender to extract the data
-            ArrayCapture capture = new ArrayCapture();
-            array.appendToBufPtr(capture);
-
-            ensureArrayCapacity(capture.nDims, capture.doubleDataOffset);
-            arrayDims[valueCount] = capture.nDims;
-            for (int i = 0; i < capture.nDims; i++) {
-                arrayShapes[arrayShapeOffset++] = capture.shape[i];
-            }
-            for (int i = 0; i < capture.doubleDataOffset; i++) {
-                doubleArrayData[arrayDataOffset++] = capture.doubleData[i];
             }
             valueCount++;
             size++;
@@ -933,7 +904,7 @@ public class IlpV4TableBuffer {
 
         /**
          * Adds a 2D long array.
-         * @throws LineSenderException if the array is jagged (irregular shape)
+         * @throws IllegalArgumentException if the array is jagged (irregular shape)
          */
         public void addLongArray(long[][] values) {
             if (values == null) {
@@ -945,7 +916,7 @@ public class IlpV4TableBuffer {
             // Validate rectangular shape
             for (int i = 1; i < dim0; i++) {
                 if (values[i].length != dim1) {
-                    throw new LineSenderException("irregular array shape");
+                    throw new IllegalArgumentException("irregular array shape");
                 }
             }
             ensureArrayCapacity(2, dim0 * dim1);
@@ -963,7 +934,7 @@ public class IlpV4TableBuffer {
 
         /**
          * Adds a 3D long array.
-         * @throws LineSenderException if the array is jagged (irregular shape)
+         * @throws IllegalArgumentException if the array is jagged (irregular shape)
          */
         public void addLongArray(long[][][] values) {
             if (values == null) {
@@ -976,11 +947,11 @@ public class IlpV4TableBuffer {
             // Validate rectangular shape
             for (int i = 0; i < dim0; i++) {
                 if (values[i].length != dim1) {
-                    throw new LineSenderException("irregular array shape");
+                    throw new IllegalArgumentException("irregular array shape");
                 }
                 for (int j = 0; j < dim1; j++) {
                     if (values[i][j].length != dim2) {
-                        throw new LineSenderException("irregular array shape");
+                        throw new IllegalArgumentException("irregular array shape");
                     }
                 }
             }
@@ -995,31 +966,6 @@ public class IlpV4TableBuffer {
                         longArrayData[arrayDataOffset++] = v;
                     }
                 }
-            }
-            valueCount++;
-            size++;
-        }
-
-        /**
-         * Adds a LongArray (N-dimensional wrapper).
-         * Uses a capturing approach to extract shape and data.
-         */
-        public void addLongArray(LongArray array) {
-            if (array == null) {
-                addNull();
-                return;
-            }
-            // Use a capturing ArrayBufferAppender to extract the data
-            ArrayCapture capture = new ArrayCapture();
-            array.appendToBufPtr(capture);
-
-            ensureArrayCapacity(capture.nDims, capture.longDataOffset);
-            arrayDims[valueCount] = capture.nDims;
-            for (int i = 0; i < capture.nDims; i++) {
-                arrayShapes[arrayShapeOffset++] = capture.shape[i];
-            }
-            for (int i = 0; i < capture.longDataOffset; i++) {
-                longArrayData[arrayDataOffset++] = capture.longData[i];
             }
             valueCount++;
             size++;
@@ -1352,73 +1298,4 @@ public class IlpV4TableBuffer {
         }
     }
 
-    /**
-     * Helper class to capture array data from DoubleArray/LongArray.appendToBufPtr().
-     * This implements ArrayBufferAppender to intercept the serialization and extract
-     * shape and data into Java arrays for storage in ColumnBuffer.
-     */
-    private static class ArrayCapture implements ArrayBufferAppender {
-        byte nDims;
-        int[] shape = new int[32]; // Max 32 dimensions
-        int shapeIndex;
-        double[] doubleData;
-        int doubleDataOffset;
-        long[] longData;
-        int longDataOffset;
-
-        @Override
-        public void putByte(byte b) {
-            if (shapeIndex == 0) {
-                // First byte is nDims
-                nDims = b;
-            }
-        }
-
-        @Override
-        public void putInt(int value) {
-            // Shape dimensions
-            if (shapeIndex < nDims) {
-                shape[shapeIndex++] = value;
-                // Once we have all dimensions, compute total elements and allocate data array
-                if (shapeIndex == nDims) {
-                    int totalElements = 1;
-                    for (int i = 0; i < nDims; i++) {
-                        totalElements *= shape[i];
-                    }
-                    // Allocate both - only one will be used
-                    doubleData = new double[totalElements];
-                    longData = new long[totalElements];
-                }
-            }
-        }
-
-        @Override
-        public void putDouble(double value) {
-            if (doubleData != null && doubleDataOffset < doubleData.length) {
-                doubleData[doubleDataOffset++] = value;
-            }
-        }
-
-        @Override
-        public void putLong(long value) {
-            if (longData != null && longDataOffset < longData.length) {
-                longData[longDataOffset++] = value;
-            }
-        }
-
-        @Override
-        public void putBlockOfBytes(long from, long len) {
-            // This is the bulk data from the array
-            // The AbstractArray uses this to copy raw bytes
-            // We need to figure out if it's doubles or longs based on context
-            // For now, assume doubles (8 bytes each) since DoubleArray uses this
-            int count = (int) (len / 8);
-            if (doubleData == null) {
-                doubleData = new double[count];
-            }
-            for (int i = 0; i < count; i++) {
-                doubleData[doubleDataOffset++] = Unsafe.getUnsafe().getDouble(from + i * 8L);
-            }
-        }
-    }
 }

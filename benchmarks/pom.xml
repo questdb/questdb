@@ -114,7 +114,7 @@
         <uberjar.name>benchmarks</uberjar.name>
 
         <!-- Java ILP client version - override with -Dquestdb.client.version=1.0.1-SNAPSHOT for local dev -->
-        <questdb.client.version>1.0.1</questdb.client.version>
+        <questdb.client.version>1.0.2-SNAPSHOT</questdb.client.version>
     </properties>
 
     <build>
@@ -216,7 +216,7 @@
         <profile>
             <id>local-client</id>
             <properties>
-                <questdb.client.version>1.0.1-SNAPSHOT</questdb.client.version>
+                <questdb.client.version>1.0.2-SNAPSHOT</questdb.client.version>
             </properties>
         </profile>
         <profile>

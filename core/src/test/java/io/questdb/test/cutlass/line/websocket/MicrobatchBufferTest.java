@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.line.websocket;
 
-import io.questdb.cutlass.ilpv4.client.MicrobatchBuffer;
+import io.questdb.client.cutlass.ilpv4.client.MicrobatchBuffer;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;

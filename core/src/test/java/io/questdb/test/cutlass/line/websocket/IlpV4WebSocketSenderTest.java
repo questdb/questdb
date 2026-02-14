@@ -24,13 +24,13 @@
 
 package io.questdb.test.cutlass.line.websocket;
 
-import io.questdb.DefaultHttpClientConfiguration;
-import io.questdb.cutlass.http.client.WebSocketClient;
-import io.questdb.cutlass.ilpv4.client.MicrobatchBuffer;
-import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.ilpv4.client.IlpV4WebSocketSender;
-import io.questdb.cutlass.ilpv4.client.WebSocketSendQueue;
-import io.questdb.network.PlainSocketFactory;
+import io.questdb.client.DefaultHttpClientConfiguration;
+import io.questdb.client.cutlass.http.client.WebSocketClient;
+import io.questdb.client.cutlass.ilpv4.client.MicrobatchBuffer;
+import io.questdb.client.cutlass.line.LineSenderException;
+import io.questdb.client.cutlass.ilpv4.client.IlpV4WebSocketSender;
+import io.questdb.client.cutlass.ilpv4.client.WebSocketSendQueue;
+import io.questdb.client.network.PlainSocketFactory;
 import org.junit.Assert;
 import org.junit.Test;
 

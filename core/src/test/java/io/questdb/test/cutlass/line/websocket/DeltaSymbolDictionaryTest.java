@@ -25,9 +25,10 @@
 package io.questdb.test.cutlass.line.websocket;
 
 import io.questdb.cutlass.ilpv4.protocol.*;
-import io.questdb.cutlass.ilpv4.client.GlobalSymbolDictionary;
-import io.questdb.cutlass.ilpv4.client.IlpBufferWriter;
-import io.questdb.cutlass.ilpv4.client.IlpV4WebSocketEncoder;
+import io.questdb.client.cutlass.ilpv4.protocol.IlpV4TableBuffer;
+import io.questdb.client.cutlass.ilpv4.client.GlobalSymbolDictionary;
+import io.questdb.client.cutlass.ilpv4.client.IlpBufferWriter;
+import io.questdb.client.cutlass.ilpv4.client.IlpV4WebSocketEncoder;
 import io.questdb.cutlass.ilpv4.server.IlpV4StreamingDecoder;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
