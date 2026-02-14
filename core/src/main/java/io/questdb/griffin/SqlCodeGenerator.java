@@ -789,6 +789,65 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
+    private static void buildHorizonColumnMappings(
+            RecordMetadata innerMetadata,
+            CharSequence masterAlias,
+            RecordMetadata masterMetadata,
+            CharSequence horizonAlias,
+            CharSequence slaveAlias,
+            RecordMetadata slaveMetadata,
+            int[] columnSources,
+            int[] columnIndices
+    ) throws SqlException {
+        for (int i = 0, n = innerMetadata.getColumnCount(); i < n; i++) {
+            final CharSequence fullName = innerMetadata.getColumnName(i);
+
+            // Parse "tableAlias.columnName" format
+            int dotIndex = Chars.indexOf(fullName, '.');
+            if (dotIndex > 0) {
+                CharSequence tableAlias = fullName.subSequence(0, dotIndex);
+                CharSequence columnName = fullName.subSequence(dotIndex + 1, fullName.length());
+                if (masterAlias != null && Chars.equalsIgnoreCase(tableAlias, masterAlias)) {
+                    columnSources[i] = HorizonJoinRecord.SOURCE_MASTER;
+                    columnIndices[i] = masterMetadata.getColumnIndexQuiet(columnName);
+                    continue;
+                }
+                if (Chars.equalsIgnoreCase(tableAlias, horizonAlias)) {
+                    columnSources[i] = HorizonJoinRecord.SOURCE_SEQUENCE;
+                    // offset column is 0, timestamp column is 1
+                    columnIndices[i] = Chars.equalsIgnoreCase(columnName, "offset") ? 0 : 1;
+                    continue;
+                }
+                if (slaveAlias != null && Chars.equalsIgnoreCase(tableAlias, slaveAlias)) {
+                    columnSources[i] = HorizonJoinRecord.SOURCE_SLAVE;
+                    columnIndices[i] = slaveMetadata.getColumnIndexQuiet(columnName);
+                    continue;
+                }
+                throw SqlException.$(0, "failed to resolve table.column: ").put(fullName);
+            }
+            // No alias prefix - try matching by name in priority order
+            // Horizon columns first (offset, timestamp)
+            if (Chars.equalsIgnoreCase(fullName, "offset")) {
+                columnSources[i] = HorizonJoinRecord.SOURCE_SEQUENCE;
+                columnIndices[i] = 0;
+                continue;
+            }
+            int idx = slaveMetadata.getColumnIndexQuiet(fullName);
+            if (idx >= 0) {
+                columnSources[i] = HorizonJoinRecord.SOURCE_SLAVE;
+                columnIndices[i] = idx;
+                continue;
+            }
+            idx = masterMetadata.getColumnIndexQuiet(fullName);
+            if (idx >= 0) {
+                columnSources[i] = HorizonJoinRecord.SOURCE_MASTER;
+                columnIndices[i] = idx;
+                continue;
+            }
+            throw SqlException.$(0, "failed to resolve column: ").put(fullName);
+        }
+    }
+
     private static void coerceRuntimeConstantType(Function func, int type, SqlExecutionContext context, CharSequence message, int pos) throws SqlException {
         if (isUndefined(func.getType())) {
             func.assignType(type, context.getBindVariableService());
@@ -3395,54 +3454,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final int baseColumnCount = innerMetadata.getColumnCount();
             final int[] columnSources = new int[baseColumnCount];
             final int[] columnIndices = new int[baseColumnCount];
-
-            for (int i = 0; i < baseColumnCount; i++) {
-                final CharSequence fullName = innerMetadata.getColumnName(i);
-
-                // Parse "tableAlias.columnName" format
-                int dotIndex = Chars.indexOf(fullName, '.');
-                if (dotIndex > 0) {
-                    CharSequence tableAlias = fullName.subSequence(0, dotIndex);
-                    CharSequence columnName = fullName.subSequence(dotIndex + 1, fullName.length());
-                    if (masterAlias != null && Chars.equalsIgnoreCase(tableAlias, masterAlias)) {
-                        columnSources[i] = HorizonJoinRecord.SOURCE_MASTER;
-                        columnIndices[i] = masterMetadata.getColumnIndexQuiet(columnName);
-                        continue;
-                    }
-                    if (Chars.equalsIgnoreCase(tableAlias, horizonAlias)) {
-                        columnSources[i] = HorizonJoinRecord.SOURCE_SEQUENCE;
-                        // offset column is 0, timestamp column is 1
-                        columnIndices[i] = Chars.equalsIgnoreCase(columnName, "offset") ? 0 : 1;
-                        continue;
-                    }
-                    if (slaveAlias != null && Chars.equalsIgnoreCase(tableAlias, slaveAlias)) {
-                        columnSources[i] = HorizonJoinRecord.SOURCE_SLAVE;
-                        columnIndices[i] = slaveMetadata.getColumnIndexQuiet(columnName);
-                        continue;
-                    }
-                    throw SqlException.$(0, "failed to resolve table.column: ").put(fullName);
-                }
-                // No alias prefix - try matching by name in priority order
-                // Horizon columns first (offset, timestamp)
-                if (Chars.equalsIgnoreCase(fullName, "offset")) {
-                    columnSources[i] = HorizonJoinRecord.SOURCE_SEQUENCE;
-                    columnIndices[i] = 0;
-                    continue;
-                }
-                int idx = slaveMetadata.getColumnIndexQuiet(fullName);
-                if (idx >= 0) {
-                    columnSources[i] = HorizonJoinRecord.SOURCE_SLAVE;
-                    columnIndices[i] = idx;
-                    continue;
-                }
-                idx = masterMetadata.getColumnIndexQuiet(fullName);
-                if (idx >= 0) {
-                    columnSources[i] = HorizonJoinRecord.SOURCE_MASTER;
-                    columnIndices[i] = idx;
-                    continue;
-                }
-                throw SqlException.$(0, "failed to resolve column: ").put(fullName);
-            }
+            buildHorizonColumnMappings(
+                    innerMetadata,
+                    masterAlias,
+                    masterMetadata,
+                    horizonAlias,
+                    slaveAlias,
+                    slaveMetadata,
+                    columnSources,
+                    columnIndices
+            );
 
             // Save GROUP BY column filter before ASOF join processing overwrites it
             final ListColumnFilter groupByColumnFilter = listColumnFilterA.copy();
