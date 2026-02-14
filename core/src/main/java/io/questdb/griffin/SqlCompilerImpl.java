@@ -1862,6 +1862,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(lexer.lastTokenPosition(), "'symbol capacity', 'add index' or 'drop index' expected");
                 }
             } else if (isSetKeyword(tok)) {
+                securityContext.authorizeMatViewAlter(matViewToken);
                 tok = expectToken(lexer, "'ttl' or 'refresh'");
                 if (isTtlKeyword(tok)) {
                     final int ttlValuePos = lexer.getPosition();

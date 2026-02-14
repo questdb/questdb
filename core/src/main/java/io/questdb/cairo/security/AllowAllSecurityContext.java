@@ -123,6 +123,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeMatViewAlter(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeMatViewCreate() {
     }
 
