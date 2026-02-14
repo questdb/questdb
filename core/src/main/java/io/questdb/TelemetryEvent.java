@@ -61,6 +61,7 @@ public final class TelemetryEvent {
     public static final short VIEW_DROP = 211;
     public static final short WAL_APPLY_RESUME = 108;
     public static final short WAL_APPLY_SUSPEND = 107;
+    public static final short WAL_TXN_COMMITTED = 109;
     public static final short WAL_TXN_APPLY_START = 103;
     public static final short WAL_TXN_DATA_APPLIED = 105;
     public static final short WAL_TXN_SQL_APPLIED = 106;

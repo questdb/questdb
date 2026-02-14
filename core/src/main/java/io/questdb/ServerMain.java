@@ -134,6 +134,7 @@ public class ServerMain implements Closeable {
 
     public static void main(String[] args) {
         try {
+            //noinspection resource
             new ServerMain(args).start(true);
         } catch (Bootstrap.BootstrapException e) {
             if (e.isSilentStacktrace()) {
@@ -375,9 +376,7 @@ public class ServerMain implements Closeable {
                     if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
                         final TelemetryJob telemetryJob = new TelemetryJob(engine);
                         freeOnExit(telemetryJob);
-                        if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
-                            sharedPoolWrite.assign(telemetryJob);
-                        }
+                        sharedPoolWrite.assign(telemetryJob);
                     }
 
                 } catch (Throwable thr) {

@@ -82,11 +82,11 @@ public class WalTelemetryTest extends AbstractCairoTest {
 
             CharSequence sysPrefix = configuration.getSystemTableNamePrefix();
             assertSql("""
-                    created\tevent\ttableId\twalId\tseqTxn\trowCount\tphysicalRowCount\tlatency
-                    1970-01-01T00:00:00.004000Z\t103\t5\t1\t1\t-1\t-1\t2.0
-                    1970-01-01T00:00:00.004000Z\t105\t5\t1\t1\t5\t5\t0.0
-                    1970-01-01T00:00:00.004000Z\t103\t5\t1\t2\t-1\t-1\t1.0
-                    1970-01-01T00:00:00.004000Z\t105\t5\t1\t2\t1\t1\t0.0
+                    created\tevent\ttableId\twalId\tseqTxn\trowCount\tphysicalRowCount\tlatency\tminTimestamp\tmaxTimestamp
+                    1970-01-01T00:00:00.004000Z\t103\t5\t1\t1\t-1\t-1\t2.0\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:04.000000Z
+                    1970-01-01T00:00:00.004000Z\t105\t5\t1\t1\t5\t5\t0.0\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:04.000000Z
+                    1970-01-01T00:00:00.004000Z\t103\t5\t1\t2\t-1\t-1\t1.0\t2022-02-24T01:00:00.000000Z\t2022-02-24T01:00:00.000000Z
+                    1970-01-01T00:00:00.004000Z\t105\t5\t1\t2\t1\t1\t0.0\t2022-02-24T01:00:00.000000Z\t2022-02-24T01:00:00.000000Z
                     """, sysPrefix + TelemetryWalTask.TABLE_NAME);
 
             assertSql("""
