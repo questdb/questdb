@@ -1126,7 +1126,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                             writeSymbolAsString.set(i);
                         }
                     }
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString, configuration);
+                    RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString);
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
 
@@ -1814,7 +1814,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                             writeSymbolAsString.set(i);
                         }
                     }
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString, configuration);
+                    RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString);
 
                     final int keyColumnOffset = map.getValueColumnCount();
 
@@ -2021,7 +2021,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                             writeSymbolAsString.set(i);
                         }
                     }
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString, configuration);
+                    RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString);
 
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
@@ -2093,7 +2093,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                                 N, 0.9f, 1
                         )
                 ) {
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), listColumnFilter, configuration);
+                    RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, reader.getMetadata(), listColumnFilter);
 
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();

@@ -29,7 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MicrosTimestampDriver;
-import io.questdb.cairo.MillsTimestampDriver;
+import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DoubleArrayParser;
@@ -938,7 +938,7 @@ public class SqlUtil {
 
     @SuppressWarnings("unused")
     public static long implicitCastStrAsDate(CharSequence value) {
-        return MillsTimestampDriver.INSTANCE.implicitCast(value, ColumnType.STRING);
+        return MillisTimestampDriver.INSTANCE.implicitCast(value, ColumnType.STRING);
     }
 
     public static double implicitCastStrAsDouble(CharSequence value) {
@@ -1121,7 +1121,7 @@ public class SqlUtil {
     }
 
     public static long implicitCastVarcharAsDate(Utf8Sequence value) {
-        return MillsTimestampDriver.INSTANCE.implicitCastVarchar(value);
+        return MillisTimestampDriver.INSTANCE.implicitCastVarchar(value);
     }
 
     public static double implicitCastVarcharAsDouble(Utf8Sequence value) {

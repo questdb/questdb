@@ -136,13 +136,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String DB_DIRECTORY = "db";
     public static final int MIN_TCP_ILP_BUF_SIZE = AuthUtils.CHALLENGE_LEN + 1;
     public static final String TMP_DIRECTORY = "tmp";
+    static final String SECRET_FILE_ENV_VAR_SUFFIX = "_FILE";
+    static final String SECRET_FILE_PROPERTY_SUFFIX = ".file";
     private static final String ILP_PROTO_SUPPORT_VERSIONS = "[1,2,3]";
     private static final String ILP_PROTO_SUPPORT_VERSIONS_NAME = "line.proto.support.versions";
     private static final String ILP_PROTO_TRANSPORTS = "ilp.proto.transports";
     private static final String RELEASE_TYPE = "release.type";
     private static final String RELEASE_VERSION = "release.version";
-    static final String SECRET_FILE_PROPERTY_SUFFIX = ".file";
-    static final String SECRET_FILE_ENV_VAR_SUFFIX = "_FILE";
     private static final int SECRET_FILE_MAX_SIZE = 65536; // 64KB max for secret files
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
     protected final byte httpHealthCheckAuthType;
@@ -438,6 +438,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlHashJoinLightValuePageSize;
     private final int sqlHashJoinValueMaxPages;
     private final int sqlHashJoinValuePageSize;
+    private final int sqlHorizonJoinMaxOffsets;
     private final long sqlInsertModelBatchSize;
     private final int sqlInsertModelPoolCapacity;
     private final int sqlIntervalIncrementalMergeThreshold;
@@ -469,6 +470,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelFilterEnabled;
     private final double sqlParallelFilterPreTouchThreshold;
     private final boolean sqlParallelGroupByEnabled;
+    private final boolean sqlParallelHorizonJoinEnabled;
     private final boolean sqlParallelReadParquetEnabled;
     private final boolean sqlParallelTopKEnabled;
     private final boolean sqlParallelWindowJoinEnabled;
@@ -978,17 +980,17 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuWalApplyWorkers = 2;
+        int cpuExportWorkers = 1;
         int cpuSpare = 0;
-        int exportWorker = 1;
 
         if (cpuAvailable > 32) {
             cpuWalApplyWorkers = 4;
+            cpuExportWorkers = 4;
             cpuSpare = 2;
-            exportWorker = 4;
         } else if (cpuAvailable > 16) {
             cpuWalApplyWorkers = 3;
+            cpuExportWorkers = 2;
             cpuSpare = 1;
-            exportWorker = 2;
         } else if (cpuAvailable > 8) {
             cpuWalApplyWorkers = 3;
         }
@@ -1440,7 +1442,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.viewCompilerWorkerHaltOnError = getBoolean(properties, env, PropertyKey.VIEW_COMPILER_WORKER_HALT_ON_ERROR, false);
 
             // Export pool configuration
-            this.exportWorkerCount = getInt(properties, env, PropertyKey.EXPORT_WORKER_COUNT, exportWorker);
+            this.exportWorkerCount = getInt(properties, env, PropertyKey.EXPORT_WORKER_COUNT, cpuExportWorkers);
             this.exportWorkerAffinity = getAffinity(properties, env, PropertyKey.EXPORT_WORKER_AFFINITY, exportWorkerCount);
             this.exportWorkerHaltOnError = getBoolean(properties, env, PropertyKey.EXPORT_WORKER_HALT_ON_ERROR, false);
             this.exportWorkerNapThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_NAP_THRESHOLD, 7_000);
@@ -1839,20 +1841,21 @@ public class PropServerConfiguration implements ServerConfiguration {
             // Legacy shared pool, it used to be a single shared pool for all the tasks.
             // Now it's split into 3: IO, Query and Write
             // But the old props are the defaults for the new shared pools, read them.
-            int sharedWorkerCountSett = getInt(properties, env, PropertyKey.SHARED_WORKER_COUNT, Math.max(2, cpuAvailable - cpuSpare));
-            boolean sharedWorkerHaltOnError = getBoolean(properties, env, PropertyKey.SHARED_WORKER_HALT_ON_ERROR, false);
-            long sharedWorkerYieldThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_YIELD_THRESHOLD, 10);
-            long sharedWorkerNapThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_NAP_THRESHOLD, 7_000);
-            long sharedWorkerSleepThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_SLEEP_THRESHOLD, 10_000);
-            long sharedWorkerSleepTimeout = getMillis(properties, env, PropertyKey.SHARED_WORKER_SLEEP_TIMEOUT, 10);
+            final int sharedWorkerCount = getInt(properties, env, PropertyKey.SHARED_WORKER_COUNT, Math.max(2, cpuAvailable - cpuSpare));
+            final boolean sharedWorkerHaltOnError = getBoolean(properties, env, PropertyKey.SHARED_WORKER_HALT_ON_ERROR, false);
+            final long sharedWorkerYieldThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_YIELD_THRESHOLD, 10);
+            final long sharedWorkerNapThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_NAP_THRESHOLD, 7_000);
+            final long sharedWorkerSleepThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_SLEEP_THRESHOLD, 10_000);
+            final long sharedWorkerSleepTimeout = getMillis(properties, env, PropertyKey.SHARED_WORKER_SLEEP_TIMEOUT, 10);
 
             // IO will be slightly higher priority than query and write pools to make the server more responsive
-            int networkPoolWorkerCount = configureSharedThreadPool(
-                    properties, env,
-                    this.sharedWorkerPoolNetworkConfiguration,
+            final int networkPoolWorkerCount = configureSharedThreadPool(
+                    properties,
+                    env,
+                    sharedWorkerPoolNetworkConfiguration,
                     PropertyKey.SHARED_NETWORK_WORKER_COUNT,
                     PropertyKey.SHARED_NETWORK_WORKER_AFFINITY,
-                    sharedWorkerCountSett,
+                    sharedWorkerCount,
                     Thread.NORM_PRIORITY + 1,
                     sharedWorkerHaltOnError,
                     sharedWorkerYieldThreshold,
@@ -1861,12 +1864,13 @@ public class PropServerConfiguration implements ServerConfiguration {
                     sharedWorkerSleepTimeout
             );
 
-            int queryWorkers = configureSharedThreadPool(
-                    properties, env,
-                    this.sharedWorkerPoolQueryConfiguration,
+            final int queryWorkers = configureSharedThreadPool(
+                    properties,
+                    env,
+                    sharedWorkerPoolQueryConfiguration,
                     PropertyKey.SHARED_QUERY_WORKER_COUNT,
                     PropertyKey.SHARED_QUERY_WORKER_AFFINITY,
-                    sharedWorkerCountSett,
+                    sharedWorkerCount,
                     Thread.NORM_PRIORITY,
                     sharedWorkerHaltOnError,
                     sharedWorkerYieldThreshold,
@@ -1875,12 +1879,13 @@ public class PropServerConfiguration implements ServerConfiguration {
                     sharedWorkerSleepTimeout
             );
 
-            int writeWorkers = configureSharedThreadPool(
-                    properties, env,
-                    this.sharedWorkerPoolWriteConfiguration,
+            final int writeWorkers = configureSharedThreadPool(
+                    properties,
+                    env,
+                    sharedWorkerPoolWriteConfiguration,
                     PropertyKey.SHARED_WRITE_WORKER_COUNT,
                     PropertyKey.SHARED_WRITE_WORKER_AFFINITY,
-                    sharedWorkerCountSett,
+                    sharedWorkerCount,
                     Thread.NORM_PRIORITY - 1,
                     sharedWorkerHaltOnError,
                     sharedWorkerYieldThreshold,
@@ -1925,10 +1930,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             final boolean defaultParallelSqlEnabled = queryWorkers > 0;
             this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelTopKEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED, defaultParallelSqlEnabled);
+            this.sqlHorizonJoinMaxOffsets = getInt(properties, env, PropertyKey.CAIRO_SQL_HORIZON_JOIN_MAX_OFFSETS, 10_000);
+            this.sqlParallelHorizonJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelWindowJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelReadParquetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, defaultParallelSqlEnabled);
-            if (!sqlParallelFilterEnabled && !sqlParallelGroupByEnabled && !sqlParallelReadParquetEnabled && !sqlParallelTopKEnabled && !sqlParallelWindowJoinEnabled) {
+            if (!sqlParallelFilterEnabled && !sqlParallelGroupByEnabled && !sqlParallelHorizonJoinEnabled
+                    && !sqlParallelReadParquetEnabled && !sqlParallelTopKEnabled && !sqlParallelWindowJoinEnabled) {
                 // All type of parallel queries are disabled. Don't start the query thread pool
                 sharedWorkerPoolQueryConfiguration.sharedWorkerCount = 0;
             }
@@ -2527,99 +2535,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         return result;
     }
 
-    /**
-     * Reads a secret value from a file. The file content is read as UTF-8 and trimmed.
-     * This is useful for Kubernetes deployments where secrets are mounted as files.
-     *
-     * @param filePath the path to the secret file
-     * @return the trimmed file content
-     * @throws CairoException if the file is too large or cannot be read
-     */
-    protected String readSecretFromFile(String filePath) {
-        // Minimal path hardening to prevent accidental misconfigurations
-        // /dev/ - prevents reading devices, FIFOs (can cause hangs)
-        // /proc/, /sys/ - blocks common info-disclosure paths
-        // .. - rejects obvious path traversal
-        if (filePath.contains("..") ||
-                filePath.startsWith("/dev/") ||
-                filePath.startsWith("/proc/") ||
-                filePath.startsWith("/sys/")) {
-            throw CairoException.critical(0)
-                    .put("secret file path not allowed [path=").put(filePath).put(']');
-        }
-
-        long fd = -1;
-        long address = 0;
-        long size = 0;
-        try (Path path = new Path()) {
-            path.of(filePath);
-            // Reject directories (symlinks to directories are also rejected)
-            if (filesFacade.isDirOrSoftLinkDir(path.$())) {
-                throw CairoException.critical(0)
-                        .put("secret file path is a directory [path=").put(filePath).put(']');
-            }
-            fd = filesFacade.openRO(path.$());
-            if (fd < 0) {
-                throw CairoException.critical(filesFacade.errno())
-                        .put("cannot open secret file [path=").put(filePath).put(']');
-            }
-
-            // Retry loop to handle race condition where file is modified between
-            // getting size and reading content
-            final int maxRetries = 3;
-            for (int attempt = 0; attempt < maxRetries; attempt++) {
-                // Free previous allocation if retrying
-                if (address != 0) {
-                    Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
-                    address = 0;
-                }
-
-                size = filesFacade.length(fd);
-                if (size < 0) {
-                    throw CairoException.critical(filesFacade.errno())
-                            .put("cannot get size of secret file [path=").put(filePath).put(']');
-                }
-                if (size > SECRET_FILE_MAX_SIZE) {
-                    throw CairoException.critical(0)
-                            .put("secret file is too large [path=").put(filePath)
-                            .put(", size=").put(size)
-                            .put(", maxSize=").put(SECRET_FILE_MAX_SIZE).put(']');
-                }
-                if (size == 0) {
-                    return "";
-                }
-
-                address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
-                long bytesRead = filesFacade.read(fd, address, size, 0);
-
-                if (bytesRead == size) {
-                    // Successful read - verify size hasn't changed
-                    long newSize = filesFacade.length(fd);
-                    if (newSize == size) {
-                        return Utf8s.stringFromUtf8Bytes(address, address + size).trim();
-                    }
-                    // Size changed during read, retry
-                    log.info().$("secret file size changed during read, retrying [attempt=").$(attempt + 1).I$();
-                } else {
-                    // Partial read, retry
-                    log.info().$("secret file partial read, retrying [expected=").$(size)
-                            .$(", read=").$(bytesRead).$(", attempt=").$(attempt + 1).I$();
-                }
-            }
-
-            throw CairoException.critical(0)
-                    .put("cannot read secret file after retries [path=").put(filePath)
-                    .put(", retries=").put(maxRetries).put(']');
-        } finally {
-            if (address != 0) {
-                Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
-            }
-            if (fd >= 0) {
-                filesFacade.close(fd);
-            }
-        }
-    }
-
     protected void getUrls(
             Properties properties,
             @Nullable Map<String, String> env,
@@ -2733,6 +2648,99 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         parser.onReady(ipv4, port);
+    }
+
+    /**
+     * Reads a secret value from a file. The file content is read as UTF-8 and trimmed.
+     * This is useful for Kubernetes deployments where secrets are mounted as files.
+     *
+     * @param filePath the path to the secret file
+     * @return the trimmed file content
+     * @throws CairoException if the file is too large or cannot be read
+     */
+    protected String readSecretFromFile(String filePath) {
+        // Minimal path hardening to prevent accidental misconfigurations
+        // /dev/ - prevents reading devices, FIFOs (can cause hangs)
+        // /proc/, /sys/ - blocks common info-disclosure paths
+        // .. - rejects obvious path traversal
+        if (filePath.contains("..") ||
+                filePath.startsWith("/dev/") ||
+                filePath.startsWith("/proc/") ||
+                filePath.startsWith("/sys/")) {
+            throw CairoException.critical(0)
+                    .put("secret file path not allowed [path=").put(filePath).put(']');
+        }
+
+        long fd = -1;
+        long address = 0;
+        long size = 0;
+        try (Path path = new Path()) {
+            path.of(filePath);
+            // Reject directories (symlinks to directories are also rejected)
+            if (filesFacade.isDirOrSoftLinkDir(path.$())) {
+                throw CairoException.critical(0)
+                        .put("secret file path is a directory [path=").put(filePath).put(']');
+            }
+            fd = filesFacade.openRO(path.$());
+            if (fd < 0) {
+                throw CairoException.critical(filesFacade.errno())
+                        .put("cannot open secret file [path=").put(filePath).put(']');
+            }
+
+            // Retry loop to handle race condition where file is modified between
+            // getting size and reading content
+            final int maxRetries = 3;
+            for (int attempt = 0; attempt < maxRetries; attempt++) {
+                // Free previous allocation if retrying
+                if (address != 0) {
+                    Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+                    address = 0;
+                }
+
+                size = filesFacade.length(fd);
+                if (size < 0) {
+                    throw CairoException.critical(filesFacade.errno())
+                            .put("cannot get size of secret file [path=").put(filePath).put(']');
+                }
+                if (size > SECRET_FILE_MAX_SIZE) {
+                    throw CairoException.critical(0)
+                            .put("secret file is too large [path=").put(filePath)
+                            .put(", size=").put(size)
+                            .put(", maxSize=").put(SECRET_FILE_MAX_SIZE).put(']');
+                }
+                if (size == 0) {
+                    return "";
+                }
+
+                address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+                long bytesRead = filesFacade.read(fd, address, size, 0);
+
+                if (bytesRead == size) {
+                    // Successful read - verify size hasn't changed
+                    long newSize = filesFacade.length(fd);
+                    if (newSize == size) {
+                        return Utf8s.stringFromUtf8Bytes(address, address + size).trim();
+                    }
+                    // Size changed during read, retry
+                    log.info().$("secret file size changed during read, retrying [attempt=").$(attempt + 1).I$();
+                } else {
+                    // Partial read, retry
+                    log.info().$("secret file partial read, retrying [expected=").$(size)
+                            .$(", read=").$(bytesRead).$(", attempt=").$(attempt + 1).I$();
+                }
+            }
+
+            throw CairoException.critical(0)
+                    .put("cannot read secret file after retries [path=").put(filePath)
+                    .put(", retries=").put(maxRetries).put(']');
+        } finally {
+            if (address != 0) {
+                Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+            }
+            if (fd >= 0) {
+                filesFacade.close(fd);
+            }
+        }
     }
 
     @FunctionalInterface
@@ -4047,6 +4055,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlHorizonJoinMaxOffsets() {
+            return sqlHorizonJoinMaxOffsets;
+        }
+
+        @Override
         public int getSqlIntervalIncrementalMergeThreshold() {
             return sqlIntervalIncrementalMergeThreshold;
         }
@@ -4609,6 +4622,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlParallelGroupByEnabled() {
             return sqlParallelGroupByEnabled;
+        }
+
+        @Override
+        public boolean isSqlParallelHorizonJoinEnabled() {
+            return sqlParallelHorizonJoinEnabled;
         }
 
         @Override

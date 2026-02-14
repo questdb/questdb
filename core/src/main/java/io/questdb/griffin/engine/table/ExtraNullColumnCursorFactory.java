@@ -454,6 +454,12 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public void recordAt(Record record, int frameIndex, long rowIndex) {
+            record = ((ExtraNullColumnRecord) record).getBaseRecord();
+            baseCursor.recordAt(record, frameIndex, rowIndex);
+        }
+
+        @Override
         public void recordAtRowIndex(Record record, long rowIndex) {
             record = ((ExtraNullColumnRecord) record).getBaseRecord();
             baseCursor.recordAtRowIndex(record, rowIndex);

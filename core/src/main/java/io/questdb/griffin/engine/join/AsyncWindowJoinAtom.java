@@ -55,6 +55,7 @@ import io.questdb.griffin.engine.table.SelectivityStats;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -525,9 +526,10 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
             SymbolTableSource masterSymbolTableSource,
             TablePageFrameCursor pageFrameCursor,
             PageFrameAddressCache frameAddressCache,
-            IntList framePartitionIndexes,
+            DirectIntList framePartitionIndexes,
             LongList frameRowCounts,
             LongList partitionTimestamps,
+            LongList partitionCeilings,
             int frameCount
     ) throws SqlException {
         ownerSlaveTimeFrameCursor.of(
@@ -536,6 +538,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
                 framePartitionIndexes,
                 frameRowCounts,
                 partitionTimestamps,
+                partitionCeilings,
                 frameCount
         );
         ownerSlaveTimeFrameHelper.of(ownerSlaveTimeFrameCursor);
@@ -547,6 +550,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
                     framePartitionIndexes,
                     frameRowCounts,
                     partitionTimestamps,
+                    partitionCeilings,
                     frameCount
             );
             perWorkerSlaveTimeFrameHelpers.getQuick(i).of(workerCursor);

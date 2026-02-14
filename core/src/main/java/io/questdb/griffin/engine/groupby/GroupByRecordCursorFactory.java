@@ -81,7 +81,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.keyFunctions = keyFunctions;
             this.recordFunctions = recordFunctions;
             // sink will be storing record columns to map key
-            this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, keyFunctions, null, configuration);
+            this.mapSink = RecordSinkFactory.getInstance(configuration, asm, base.getMetadata(), listColumnFilter, keyFunctions, null);
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             this.cursor = new GroupByRecordCursor(configuration, recordFunctions, groupByFunctions, updater, keyTypes, valueTypes);
         } catch (Throwable e) {

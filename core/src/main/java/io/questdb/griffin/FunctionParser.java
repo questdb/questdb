@@ -27,7 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.MillsTimestampDriver;
+import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.sql.BindVariableService;
@@ -549,7 +549,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private static long parseDate(CharSequence str, int position) throws SqlException {
         try {
-            return MillsTimestampDriver.floor(str);
+            return MillisTimestampDriver.floor(str);
         } catch (NumericException e) {
             throw SqlException.invalidDate(str, position);
         }

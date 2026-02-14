@@ -27,7 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.MillsTimestampDriver;
+import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.OperatorExpression;
@@ -414,18 +414,18 @@ public class SqlUtilTest {
 
     @Test
     public void testParseStrDate() {
-        Assert.assertEquals(Numbers.LONG_NULL, MillsTimestampDriver.INSTANCE.implicitCast(null));
-        Assert.assertEquals("2022-11-20T10:30:55.123Z", Dates.toString(MillsTimestampDriver.INSTANCE.implicitCast("2022-11-20T10:30:55.123Z")));
-        Assert.assertEquals("2022-11-20T10:30:55.000Z", Dates.toString(MillsTimestampDriver.INSTANCE.implicitCast("2022-11-20 10:30:55Z")));
-        Assert.assertEquals("2022-11-20T00:00:00.000Z", Dates.toString(MillsTimestampDriver.INSTANCE.implicitCast("2022-11-20 Z")));
-        Assert.assertEquals("2022-11-20T00:00:00.000Z", Dates.toString(MillsTimestampDriver.INSTANCE.implicitCast("2022-11-20")));
-        Assert.assertEquals("2022-11-20T10:30:55.123Z", Dates.toString(MillsTimestampDriver.INSTANCE.implicitCast("2022-11-20 10:30:55.123Z")));
-        Assert.assertEquals("1970-01-01T00:00:00.200Z", Dates.toString(MillsTimestampDriver.INSTANCE.implicitCast("200")));
-        Assert.assertEquals("1969-12-31T23:59:59.100Z", Dates.toString(MillsTimestampDriver.INSTANCE.implicitCast("-900")));
+        Assert.assertEquals(Numbers.LONG_NULL, MillisTimestampDriver.INSTANCE.implicitCast(null));
+        Assert.assertEquals("2022-11-20T10:30:55.123Z", Dates.toString(MillisTimestampDriver.INSTANCE.implicitCast("2022-11-20T10:30:55.123Z")));
+        Assert.assertEquals("2022-11-20T10:30:55.000Z", Dates.toString(MillisTimestampDriver.INSTANCE.implicitCast("2022-11-20 10:30:55Z")));
+        Assert.assertEquals("2022-11-20T00:00:00.000Z", Dates.toString(MillisTimestampDriver.INSTANCE.implicitCast("2022-11-20 Z")));
+        Assert.assertEquals("2022-11-20T00:00:00.000Z", Dates.toString(MillisTimestampDriver.INSTANCE.implicitCast("2022-11-20")));
+        Assert.assertEquals("2022-11-20T10:30:55.123Z", Dates.toString(MillisTimestampDriver.INSTANCE.implicitCast("2022-11-20 10:30:55.123Z")));
+        Assert.assertEquals("1970-01-01T00:00:00.200Z", Dates.toString(MillisTimestampDriver.INSTANCE.implicitCast("200")));
+        Assert.assertEquals("1969-12-31T23:59:59.100Z", Dates.toString(MillisTimestampDriver.INSTANCE.implicitCast("-900")));
 
         // not a number
         try {
-            MillsTimestampDriver.INSTANCE.implicitCast("hello");
+            MillisTimestampDriver.INSTANCE.implicitCast("hello");
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("inconvertible value: `hello` [STRING -> DATE]", e.getFlyweightMessage());

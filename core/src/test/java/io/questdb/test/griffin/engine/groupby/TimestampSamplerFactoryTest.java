@@ -59,13 +59,59 @@ public class TimestampSamplerFactoryTest {
 
     @Test
     public void testFindIntervalEndIndex() throws SqlException {
-        assertFindIntervalEndIndexFailure(1, "missing interval", null, 1);
-        assertFindIntervalEndIndexFailure(1_002, "expected interval qualifier", "45", 1000);
-        assertFindIntervalEndIndexFailure(42, "expected interval qualifier", "", 42);
-        assertFindIntervalEndIndexFailure(50, "expected single letter qualifier", "1bar", 49);
-        assertFindIntervalEndIndexFailure(100, "negative interval is not allowed", "-", 100);
+        // Valid cases - positive values
+        Assert.assertEquals(1, TimestampSamplerFactory.findIntervalEndIndex("5s", 0));
+        Assert.assertEquals(2, TimestampSamplerFactory.findIntervalEndIndex("10m", 0));
+        Assert.assertEquals(3, TimestampSamplerFactory.findIntervalEndIndex("100h", 0));
 
-        Assert.assertEquals(0, TimestampSamplerFactory.findIntervalEndIndex("m", 11, "sample"));
+        // Valid cases - zero values with unit
+        Assert.assertEquals(1, TimestampSamplerFactory.findIntervalEndIndex("0s", 0));
+        Assert.assertEquals(2, TimestampSamplerFactory.findIntervalEndIndex("00m", 0));
+
+        // Valid cases - unitless zero (returns -1 sentinel)
+        Assert.assertEquals(-1, TimestampSamplerFactory.findIntervalEndIndex("0", 0));
+        Assert.assertEquals(-1, TimestampSamplerFactory.findIntervalEndIndex("+0", 0));
+        Assert.assertEquals(-1, TimestampSamplerFactory.findIntervalEndIndex("-0", 0));
+
+        // Valid cases - negative values
+        Assert.assertEquals(2, TimestampSamplerFactory.findIntervalEndIndex("-5s", 0));
+        Assert.assertEquals(3, TimestampSamplerFactory.findIntervalEndIndex("-10m", 0));
+        Assert.assertEquals(4, TimestampSamplerFactory.findIntervalEndIndex("-100h", 0));
+        Assert.assertEquals(2, TimestampSamplerFactory.findIntervalEndIndex("-0s", 0));
+
+        // Valid cases - explicit positive sign
+        Assert.assertEquals(2, TimestampSamplerFactory.findIntervalEndIndex("+5s", 0));
+        Assert.assertEquals(3, TimestampSamplerFactory.findIntervalEndIndex("+10m", 0));
+
+        // Error cases - missing units on non-zero values
+        assertFindIntervalEndIndexFailure(1, "missing interval", null, 1);
+        assertFindIntervalEndIndexFailure(42, "expected interval qualifier", "", 42);
+        assertFindIntervalEndIndexFailure(1001, "expected interval qualifier", "1", 1000);
+        assertFindIntervalEndIndexFailure(1002, "expected interval qualifier", "45", 1000);
+        assertFindIntervalEndIndexFailure(1002, "expected interval qualifier", "-1", 1000);
+        assertFindIntervalEndIndexFailure(1003, "expected interval qualifier", "-45", 1000);
+        assertFindIntervalEndIndexFailure(1002, "expected interval qualifier", "+1", 1000);
+        assertFindIntervalEndIndexFailure(1003, "expected interval qualifier", "+45", 1000);
+        // multi-zero without unit still requires a qualifier
+        assertFindIntervalEndIndexFailure(1002, "expected interval qualifier", "00", 1000);
+        // other error cases
+        assertFindIntervalEndIndexFailure(50, "expected single letter qualifier", "1bar", 49);
+        assertFindIntervalEndIndexFailure(51, "expected single letter qualifier", "-1bar", 49);
+        assertFindIntervalEndIndexFailure(100, "expected interval qualifier", "-", 100);
+        assertFindIntervalEndIndexFailure(100, "expected interval qualifier", "+", 100);
+        assertFindIntervalEndIndexFailure(100, "expected numeric value", "s", 100);
+        assertFindIntervalEndIndexFailure(100, "expected numeric value", "-s", 100);
+    }
+
+    @Test
+    public void testFindPositiveIntervalEndIndex() throws SqlException {
+        assertFindPositiveIntervalEndIndexFailure(1, "missing interval", null, 1);
+        assertFindPositiveIntervalEndIndexFailure(1_002, "expected interval qualifier", "45", 1000);
+        assertFindPositiveIntervalEndIndexFailure(42, "expected interval qualifier", "", 42);
+        assertFindPositiveIntervalEndIndexFailure(50, "expected single letter qualifier", "1bar", 49);
+        assertFindPositiveIntervalEndIndexFailure(100, "negative interval is not allowed", "-", 100);
+
+        Assert.assertEquals(0, TimestampSamplerFactory.findPositiveIntervalEndIndex("m", 11, "sample"));
     }
 
     @Test
@@ -164,17 +210,48 @@ public class TimestampSamplerFactoryTest {
 
     @Test
     public void testParseInterval() throws SqlException {
-        Assert.assertEquals(1, TimestampSamplerFactory.parseInterval("1m", 1, 0, "sample", Numbers.INT_NULL, ' '));
+        // Positive values
+        Assert.assertEquals(1, TimestampSamplerFactory.parseInterval("1m", 1, 0));
+        Assert.assertEquals(10, TimestampSamplerFactory.parseInterval("10s", 2, 0));
+        Assert.assertEquals(100, TimestampSamplerFactory.parseInterval("100h", 3, 0));
+
+        // Zero values
+        Assert.assertEquals(0, TimestampSamplerFactory.parseInterval("0s", 1, 0));
+        Assert.assertEquals(0, TimestampSamplerFactory.parseInterval("00m", 2, 0));
+
+        // Negative values
+        Assert.assertEquals(-5, TimestampSamplerFactory.parseInterval("-5s", 2, 0));
+        Assert.assertEquals(-10, TimestampSamplerFactory.parseInterval("-10m", 3, 0));
+        Assert.assertEquals(-100, TimestampSamplerFactory.parseInterval("-100h", 4, 0));
+        Assert.assertEquals(0, TimestampSamplerFactory.parseInterval("-0s", 2, 0));
+
+        // Explicit positive sign
+        Assert.assertEquals(5, TimestampSamplerFactory.parseInterval("+5s", 2, 0));
+        Assert.assertEquals(10, TimestampSamplerFactory.parseInterval("+10m", 3, 0));
+
+        // Error case - invalid numeric
+        try {
+            TimestampSamplerFactory.parseInterval("xm", 1, 0);
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(0, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid interval value");
+        }
+    }
+
+    @Test
+    public void testParsePositiveInterval() throws SqlException {
+        Assert.assertEquals(1, TimestampSamplerFactory.parsePositiveInterval("1m", 1, 0, "sample", Numbers.INT_NULL, ' '));
 
         try {
-            TimestampSamplerFactory.parseInterval("0m", 1, 0, "sample", Numbers.INT_NULL, ' ');
+            TimestampSamplerFactory.parsePositiveInterval("0m", 1, 0, "sample", Numbers.INT_NULL, ' ');
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
             TestUtils.assertContains(e.getFlyweightMessage(), "zero is not a valid sample value");
         }
 
         try {
-            TimestampSamplerFactory.parseInterval("fm", 1, 0, "sample", Numbers.INT_NULL, ' ');
+            TimestampSamplerFactory.parsePositiveInterval("fm", 1, 0, "sample", Numbers.INT_NULL, ' ');
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
             TestUtils.assertContains(e.getFlyweightMessage(), "invalid sample value");
@@ -217,9 +294,19 @@ public class TimestampSamplerFactoryTest {
         assertFailure(132, "unsupported interval qualifier", "21K", 130);
     }
 
-    private static void assertFindIntervalEndIndexFailure(int expectedPosition, CharSequence expectedMessage, CharSequence sampleBy, int position) {
+    private static void assertFindIntervalEndIndexFailure(int expectedPosition, CharSequence expectedMessage, CharSequence interval, int position) {
         try {
-            TimestampSamplerFactory.findIntervalEndIndex(sampleBy, position, "sample");
+            TimestampSamplerFactory.findIntervalEndIndex(interval, position);
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(expectedPosition, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+        }
+    }
+
+    private static void assertFindPositiveIntervalEndIndexFailure(int expectedPosition, CharSequence expectedMessage, CharSequence sampleBy, int position) {
+        try {
+            TimestampSamplerFactory.findPositiveIntervalEndIndex(sampleBy, position, "sample");
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(expectedPosition, e.getPosition());

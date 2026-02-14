@@ -942,6 +942,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlHorizonJoinMaxOffsets() {
+        return getDelegate().getSqlHorizonJoinMaxOffsets();
+    }
+
+    @Override
     public int getSqlJitBindVarsMemoryMaxPages() {
         return getDelegate().getSqlJitBindVarsMemoryMaxPages();
     }
@@ -1514,6 +1519,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelTopKEnabled() {
         return getDelegate().isSqlParallelTopKEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelHorizonJoinEnabled() {
+        return getDelegate().isSqlParallelHorizonJoinEnabled();
     }
 
     @Override

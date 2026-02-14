@@ -106,8 +106,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
     public AsyncWindowJoinRecordCursorFactory(
             @NotNull CairoEngine engine,
-            @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
+            @Transient @NotNull BytecodeAssembler asm,
             @NotNull MessageBus messageBus,
             @NotNull JoinRecordMetadata joinMetadata,
             @NotNull RecordMetadata outMetadata,
@@ -464,7 +464,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         }
                         slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
                         // don't forget to switch the record to the new frame
-                        slaveTimeFrameHelper.recordAt(Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0));
+                        slaveTimeFrameHelper.recordAt(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     }
                 }
             }
@@ -588,7 +588,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         }
                         slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
                         // don't forget to switch the record to the new frame
-                        slaveTimeFrameHelper.recordAt(Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0));
+                        slaveTimeFrameHelper.recordAt(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     }
                 }
             }
@@ -1204,7 +1204,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                             }
                             slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
                             // don't forget to switch the record to the new frame
-                            slaveTimeFrameHelper.recordAt(Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0));
+                            slaveTimeFrameHelper.recordAt(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                         }
                     }
                 }
@@ -1360,7 +1360,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                             }
                             slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
                             // don't forget to switch the record to the new frame
-                            slaveTimeFrameHelper.recordAt(Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0));
+                            slaveTimeFrameHelper.recordAt(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                         }
                     }
                 }
@@ -1810,7 +1810,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             slaveTimeFrameHelper.restoreBookmark(prevailingFrameIndex, 0);
             do {
                 // actual row index doesn't matter here due to the later recordAtRowIndex() call
-                slaveTimeFrameHelper.recordAt(Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0));
+                slaveTimeFrameHelper.recordAt(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
 
                 long rowLo = slaveTimeFrameHelper.getTimeFrameRowLo();
                 long rowHi = slaveTimeFrameHelper.getTimeFrameRowHi();

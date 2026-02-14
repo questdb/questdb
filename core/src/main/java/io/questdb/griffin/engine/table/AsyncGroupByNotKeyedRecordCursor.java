@@ -53,9 +53,9 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
     private final VirtualRecord recordA;
     private int frameLimit;
     private PageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
+    private boolean isExhausted;
     private boolean isOpen;
     private boolean isValueBuilt;
-    private int recordsRemaining = 1;
 
     public AsyncGroupByNotKeyedRecordCursor(ObjList<GroupByFunction> groupByFunctions) {
         this.groupByFunctions = groupByFunctions;
@@ -65,9 +65,9 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-        if (recordsRemaining > 0) {
-            counter.add(recordsRemaining);
-            recordsRemaining = 0;
+        if (!isExhausted) {
+            counter.inc();
+            isExhausted = true;
         }
     }
 
@@ -105,10 +105,14 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public boolean hasNext() {
+        if (isExhausted) {
+            return false;
+        }
         if (!isValueBuilt) {
             buildValue();
         }
-        return recordsRemaining-- > 0;
+        isExhausted = true;
+        return true;
     }
 
     @Override
@@ -128,7 +132,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public void toTop() {
-        recordsRemaining = 1;
+        isExhausted = false;
         GroupByUtils.toTop(groupByFunctions);
         if (frameSequence != null) {
             frameSequence.getAtom().toTop();
@@ -176,8 +180,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
             } while (frameIndex < frameLimit);
         } catch (Throwable e) {
             LOG.error().$("group by error [ex=").$(e).I$();
-            if (e instanceof CairoException) {
-                CairoException ce = (CairoException) e;
+            if (e instanceof CairoException ce) {
                 if (ce.isInterruption()) {
                     throwTimeoutException();
                 } else {

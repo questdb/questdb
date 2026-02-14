@@ -102,122 +102,124 @@ public class RecordSinkFactory {
     }
 
     public static RecordSink getInstance(
-            BytecodeAssembler asm,
+            @NotNull CairoConfiguration configuration,
+            @NotNull BytecodeAssembler asm,
             ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
-            @Nullable BitSet writeSymbolAsString,
-            CairoConfiguration configuration
+            @Nullable BitSet writeSymbolAsString
     ) {
         return getInstance(
-                asm,
-                columnTypes,
-                columnFilter,
-                null,
-                null,
-                writeSymbolAsString,
-                null,
-                null,
-                configuration
-        );
-    }
-
-    public static RecordSink getInstance(
-            BytecodeAssembler asm,
-            ColumnTypes columnTypes,
-            @Transient @NotNull ColumnFilter columnFilter,
-            @Nullable BitSet writeSymbolAsString,
-            @Nullable BitSet writeStringAsVarchar,
-            @Nullable BitSet writeTimestampAsNanos,
-            CairoConfiguration configuration
-    ) {
-        return getInstance(
-                asm,
-                columnTypes,
-                columnFilter,
-                null,
-                null,
-                writeSymbolAsString,
-                writeStringAsVarchar,
-                writeTimestampAsNanos,
-                configuration);
-    }
-
-    public static RecordSink getInstance(
-            BytecodeAssembler asm,
-            ColumnTypes columnTypes,
-            @Transient @NotNull ColumnFilter columnFilter,
-            @Nullable ObjList<Function> keyFunctions,
-            @Nullable BitSet writeSymbolAsString,
-            CairoConfiguration configuration
-    ) {
-        return getInstance(
-                asm,
-                columnTypes,
-                columnFilter,
-                keyFunctions,
-                null,
-                writeSymbolAsString,
-                null,
-                null,
-                configuration
-        );
-    }
-
-    public static RecordSink getInstance(
-            BytecodeAssembler asm,
-            ColumnTypes columnTypes,
-            @Transient @NotNull ColumnFilter columnFilter,
-            @Nullable ObjList<Function> keyFunctions,
-            @Transient @Nullable IntList skewIndex,
-            @Nullable BitSet writeSymbolAsString,
-            @Nullable BitSet writeStringAsVarchar,
-            CairoConfiguration configuration
-    ) {
-        return getInstance(
-                asm,
-                columnTypes,
-                columnFilter,
-                keyFunctions,
-                skewIndex,
-                writeSymbolAsString,
-                writeStringAsVarchar,
-                null,
-                configuration
-        );
-    }
-
-    public static RecordSink getInstance(
-            BytecodeAssembler asm,
-            ColumnTypes columnTypes,
-            @Transient @NotNull ColumnFilter columnFilter,
-            @Nullable ObjList<Function> keyFunctions,
-            @Transient @Nullable IntList skewIndex,
-            @Nullable BitSet writeSymbolAsString,
-            @Nullable BitSet writeStringAsVarchar,
-            @Nullable BitSet writeTimestampAsNanos,
-            CairoConfiguration configuration
-    ) {
-        return getInstance(
-                asm,
-                columnTypes,
-                columnFilter,
-                keyFunctions,
-                skewIndex,
-                writeSymbolAsString,
-                writeStringAsVarchar,
-                writeTimestampAsNanos,
                 configuration,
+                asm,
+                columnTypes,
+                columnFilter,
+                null,
+                null,
+                writeSymbolAsString,
+                null,
+                null
+        );
+    }
+
+    public static RecordSink getInstance(
+            @NotNull CairoConfiguration configuration,
+            @NotNull BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar,
+            @Nullable BitSet writeTimestampAsNanos
+    ) {
+        return getInstance(
+                configuration,
+                asm,
+                columnTypes,
+                columnFilter,
+                null,
+                null,
+                writeSymbolAsString,
+                writeStringAsVarchar,
+                writeTimestampAsNanos
+        );
+    }
+
+    public static RecordSink getInstance(
+            @NotNull CairoConfiguration configuration,
+            @NotNull BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Nullable BitSet writeSymbolAsString
+    ) {
+        return getInstance(
+                configuration,
+                asm,
+                columnTypes,
+                columnFilter,
+                keyFunctions,
+                null,
+                writeSymbolAsString,
+                null,
+                null
+        );
+    }
+
+    public static RecordSink getInstance(
+            @NotNull CairoConfiguration configuration,
+            @NotNull BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Transient @Nullable IntList skewIndex,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar
+    ) {
+        return getInstance(
+                configuration,
+                asm,
+                columnTypes,
+                columnFilter,
+                keyFunctions,
+                skewIndex,
+                writeSymbolAsString,
+                writeStringAsVarchar,
+                null
+        );
+    }
+
+    public static RecordSink getInstance(
+            @NotNull CairoConfiguration configuration,
+            @NotNull BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Transient @Nullable IntList skewIndex,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar,
+            @Nullable BitSet writeTimestampAsNanos
+    ) {
+        return getInstance(
+                configuration,
+                asm,
+                columnTypes,
+                columnFilter,
+                keyFunctions,
+                skewIndex,
+                writeSymbolAsString,
+                writeStringAsVarchar,
+                writeTimestampAsNanos,
                 DEFAULT_METHOD_SIZE_LIMIT
         );
     }
 
     public static RecordSink getInstance(
-            BytecodeAssembler asm,
+            @NotNull CairoConfiguration configuration,
+            @NotNull BytecodeAssembler asm,
             ColumnTypes columnTypes,
-            @Transient @NotNull ColumnFilter columnFilter,
-            CairoConfiguration configuration
+            @Transient @NotNull ColumnFilter columnFilter
     ) {
         return getInstance(
+                configuration,
                 asm,
                 columnTypes,
                 columnFilter,
@@ -225,8 +227,7 @@ public class RecordSinkFactory {
                 null,
                 null,
                 null,
-                null,
-                configuration
+                null
         );
     }
 
@@ -244,7 +245,8 @@ public class RecordSinkFactory {
      * @param methodSizeLimit bytecode size limit per method (default 8000), for testing
      */
     public static RecordSink getInstance(
-            BytecodeAssembler asm,
+            @NotNull CairoConfiguration configuration,
+            @NotNull BytecodeAssembler asm,
             ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
             @Nullable ObjList<Function> keyFunctions,
@@ -252,11 +254,11 @@ public class RecordSinkFactory {
             @Nullable BitSet writeSymbolAsString,
             @Nullable BitSet writeStringAsVarchar,
             @Nullable BitSet writeTimestampAsNanos,
-            CairoConfiguration configuration,
             int methodSizeLimit
     ) {
         // Phase 1: Get the class (or null for looping)
         Class<RecordSink> clazz = getInstanceClass(
+                configuration,
                 asm,
                 columnTypes,
                 columnFilter,
@@ -265,7 +267,6 @@ public class RecordSinkFactory {
                 writeSymbolAsString,
                 writeStringAsVarchar,
                 writeTimestampAsNanos,
-                configuration,
                 methodSizeLimit
         );
 
@@ -287,20 +288,27 @@ public class RecordSinkFactory {
      */
     @Nullable
     public static Class<RecordSink> getInstanceClass(
-            BytecodeAssembler asm,
+            @NotNull CairoConfiguration configuration,
+            @NotNull BytecodeAssembler asm,
             ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
             @Nullable ObjList<Function> keyFunctions,
             @Transient @Nullable IntList skewIndex,
             @Nullable BitSet writeSymbolAsString,
             @Nullable BitSet writeStringAsVarchar,
-            @Nullable BitSet writeTimestampAsNanos,
-            CairoConfiguration configuration
+            @Nullable BitSet writeTimestampAsNanos
     ) {
         return getInstanceClass(
-                asm, columnTypes, columnFilter, keyFunctions, skewIndex,
-                writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos,
-                configuration, DEFAULT_METHOD_SIZE_LIMIT
+                configuration,
+                asm,
+                columnTypes,
+                columnFilter,
+                keyFunctions,
+                skewIndex,
+                writeSymbolAsString,
+                writeStringAsVarchar,
+                writeTimestampAsNanos,
+                DEFAULT_METHOD_SIZE_LIMIT
         );
     }
 
@@ -309,10 +317,11 @@ public class RecordSinkFactory {
      * Does not support chunking or looping fallback.
      * Used when creating per-worker sinks for parallel GROUP BY.
      *
-     * @deprecated Use {@link #getInstanceClass(BytecodeAssembler, ColumnTypes, ColumnFilter, ObjList, IntList, BitSet, BitSet, BitSet, CairoConfiguration)} instead.
+     * @deprecated Use {@link #getInstanceClass(CairoConfiguration, BytecodeAssembler, ColumnTypes, ColumnFilter, ObjList, IntList, BitSet, BitSet, BitSet, int)}
+     * instead.
      */
     public static Class<RecordSink> getInstanceClass(
-            BytecodeAssembler asm,
+            @NotNull BytecodeAssembler asm,
             @Transient ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
             @Transient @Nullable ObjList<Function> keyFunctions,
@@ -343,7 +352,8 @@ public class RecordSinkFactory {
      */
     @Nullable
     public static Class<RecordSink> getInstanceClass(
-            BytecodeAssembler asm,
+            @NotNull CairoConfiguration configuration,
+            @NotNull BytecodeAssembler asm,
             ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
             @Nullable ObjList<Function> keyFunctions,
@@ -351,7 +361,6 @@ public class RecordSinkFactory {
             @Nullable BitSet writeSymbolAsString,
             @Nullable BitSet writeStringAsVarchar,
             @Nullable BitSet writeTimestampAsNanos,
-            CairoConfiguration configuration,
             int methodSizeLimit
     ) {
         int copierType = configuration.getCopierType();
@@ -1482,7 +1491,7 @@ public class RecordSinkFactory {
     }
 
     private static Class<RecordSink> getSingleInstanceClass(
-            BytecodeAssembler asm,
+            @NotNull BytecodeAssembler asm,
             @Transient ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
             @Transient @Nullable ObjList<Function> keyFunctions,

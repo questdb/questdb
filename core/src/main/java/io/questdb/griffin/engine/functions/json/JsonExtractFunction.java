@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.functions.json;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.MillsTimestampDriver;
+import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
@@ -158,7 +158,7 @@ public class JsonExtractFunction implements Function {
             case SimdJsonType.STRING:
                 assert stateA.destUtf8Sink != null;
                 try {
-                    return MillsTimestampDriver.INSTANCE.implicitCastVarchar(stateA.destUtf8Sink);
+                    return MillisTimestampDriver.INSTANCE.implicitCastVarchar(stateA.destUtf8Sink);
                 } catch (ImplicitCastException e) {
                     return Numbers.LONG_NULL;
                 }

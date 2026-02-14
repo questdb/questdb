@@ -573,6 +573,8 @@ public interface CairoConfiguration {
 
     int getSqlHashJoinValuePageSize();
 
+    int getSqlHorizonJoinMaxOffsets();
+
     int getSqlJitBindVarsMemoryMaxPages();
 
     int getSqlJitBindVarsMemoryPageSize();
@@ -846,6 +848,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelReadParquetEnabled();
 
     boolean isSqlParallelTopKEnabled();
+
+    boolean isSqlParallelHorizonJoinEnabled();
 
     boolean isSqlParallelWindowJoinEnabled();
 

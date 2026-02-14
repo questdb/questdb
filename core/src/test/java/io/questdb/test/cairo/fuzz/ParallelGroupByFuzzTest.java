@@ -456,6 +456,36 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelDecimal128KeyGroupBy() throws Exception {
+        testParallelDecimalKeyGroupBy(
+                "SELECT d128, avg(d64) FROM tab ORDER BY d128 LIMIT 5",
+                """
+                        d128\tavg
+                        0.000\t10.00
+                        1.000\t10.90
+                        2.000\t11.90
+                        3.000\t12.90
+                        4.000\t13.90
+                        """
+        );
+    }
+
+    @Test
+    public void testParallelDecimal256KeyGroupBy() throws Exception {
+        testParallelDecimalKeyGroupBy(
+                "SELECT d256, avg(d64) FROM tab ORDER BY d256 LIMIT 5",
+                """
+                        d256\tavg
+                        0.000000\t10.00
+                        1.000000\t10.75
+                        2.000000\t11.75
+                        3.000000\t12.75
+                        4.000000\t13.75
+                        """
+        );
+    }
+
+    @Test
     public void testParallelDecimalKeyGroupBy() throws Exception {
         testParallelDecimalKeyGroupBy(
                 "SELECT key, " +
@@ -1910,7 +1940,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                     assertQueries(engine, sqlExecutionContext, sink, query, expected);
                                 }
                             } catch (Throwable th) {
-                                th.printStackTrace();
+                                th.printStackTrace(System.out);
                                 errors.put(threadId, th);
                             } finally {
                                 haltLatch.countDown();
@@ -2974,7 +3004,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                     assertQueries(engine, sqlExecutionContext, sink, query, expected);
                                 }
                             } catch (Throwable th) {
-                                th.printStackTrace();
+                                th.printStackTrace(System.out);
                                 errors.put(threadId, th);
                             } finally {
                                 haltLatch.countDown();
@@ -3040,7 +3070,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                             } catch (NullPointerException npe) {
                                 // NPE is expected
                             } catch (Throwable th) {
-                                th.printStackTrace();
+                                th.printStackTrace(System.out);
                                 errors.put(threadId, th);
                             } finally {
                                 haltLatch.countDown();
