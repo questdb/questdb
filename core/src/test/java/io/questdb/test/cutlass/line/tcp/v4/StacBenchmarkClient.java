@@ -56,14 +56,14 @@ import java.util.concurrent.TimeUnit;
  * <ul>
  *   <li>ilp-tcp: Old ILP text protocol over TCP (port 9009)</li>
  *   <li>ilp-http: Old ILP text protocol over HTTP (port 9000)</li>
- *   <li>ilpv4-websocket: New ILPv4 binary protocol over WebSocket (port 9000)</li>
+ *   <li>qwp-websocket: New QWP binary protocol over WebSocket (port 9000)</li>
  * </ul>
  */
 public class StacBenchmarkClient {
 
     private static final String PROTOCOL_ILP_TCP = "ilp-tcp";
     private static final String PROTOCOL_ILP_HTTP = "ilp-http";
-    private static final String PROTOCOL_ILPV4_WEBSOCKET = "ilpv4-websocket";
+    private static final String PROTOCOL_QWP_WEBSOCKET = "qwp-websocket";
 
     private static final String DEFAULT_HOST = "localhost";
     private static final int DEFAULT_ROWS = 80_000_000;
@@ -95,7 +95,7 @@ public class StacBenchmarkClient {
     private static final float[] BASE_PRICES = generateBasePrices(SYMBOL_COUNT);
 
     public static void main(String[] args) {
-        String protocol = PROTOCOL_ILPV4_WEBSOCKET;
+        String protocol = PROTOCOL_QWP_WEBSOCKET;
         String host = DEFAULT_HOST;
         int port = -1;
         int totalRows = DEFAULT_ROWS;
@@ -185,7 +185,7 @@ public class StacBenchmarkClient {
         System.out.println("Usage: StacBenchmarkClient [options]");
         System.out.println();
         System.out.println("Options:");
-        System.out.println("  --protocol=PROTOCOL      Protocol to use (default: ilpv4-websocket)");
+        System.out.println("  --protocol=PROTOCOL      Protocol to use (default: qwp-websocket)");
         System.out.println("  --host=HOST              Server host (default: localhost)");
         System.out.println("  --port=PORT              Server port (default: 9009 for TCP, 9000 for HTTP/WebSocket)");
         System.out.println("  --table=TABLE            Table name (default: q)");
@@ -203,7 +203,7 @@ public class StacBenchmarkClient {
         System.out.println("Protocols:");
         System.out.println("  ilp-tcp          Old ILP text protocol over TCP (default port: 9009)");
         System.out.println("  ilp-http         Old ILP text protocol over HTTP (default port: 9000)");
-        System.out.println("  ilpv4-websocket  New ILPv4 binary protocol over WebSocket (default port: 9000)");
+        System.out.println("  qwp-websocket    New QWP binary protocol over WebSocket (default port: 9000)");
         System.out.println();
         System.out.println("Table schema (must be pre-created):");
         System.out.println("  CREATE TABLE q (");
@@ -214,7 +214,7 @@ public class StacBenchmarkClient {
 
     private static int getDefaultPort(String protocol) {
         return switch (protocol) {
-            case PROTOCOL_ILP_HTTP, PROTOCOL_ILPV4_WEBSOCKET -> 9000;
+            case PROTOCOL_ILP_HTTP, PROTOCOL_QWP_WEBSOCKET -> 9000;
             default -> 9009;
         };
     }
@@ -318,7 +318,7 @@ public class StacBenchmarkClient {
                     .port(port)
                     .autoFlushRows(batchSize)
                     .build();
-            case PROTOCOL_ILPV4_WEBSOCKET -> {
+            case PROTOCOL_QWP_WEBSOCKET -> {
                 Sender.LineSenderBuilder b = Sender.builder(Sender.Transport.WEBSOCKET)
                         .address(host)
                         .port(port)
@@ -331,7 +331,7 @@ public class StacBenchmarkClient {
                 yield b.build();
             }
             default -> throw new IllegalArgumentException("Unknown protocol: " + protocol +
-                    ". Use one of: ilp-tcp, ilp-http, ilpv4-websocket");
+                    ". Use one of: ilp-tcp, ilp-http, qwp-websocket");
         };
     }
 

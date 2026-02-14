@@ -24,14 +24,14 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cutlass.ilpv4.protocol.IlpV4ArrayColumnCursor;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4BooleanColumnCursor;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4DecimalColumnCursor;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4GeoHashColumnCursor;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4ParseException;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4StringColumnCursor;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4SymbolColumnCursor;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4TimestampColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpBooleanColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpDecimalColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpGeoHashColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpParseException;
+import io.questdb.cutlass.qwp.protocol.QwpStringColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpSymbolColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpTimestampColumnCursor;
 import io.questdb.cutlass.line.tcp.ConnectionSymbolCache;
 
 /**
@@ -137,7 +137,7 @@ public interface ColumnarRowAppender {
      * @param cursor      the string column cursor
      * @param rowCount    total number of rows
      */
-    void putCharColumn(int columnIndex, IlpV4StringColumnCursor cursor, int rowCount);
+    void putCharColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount);
 
     /**
      * Writes a VARCHAR column.
@@ -149,7 +149,7 @@ public interface ColumnarRowAppender {
      * @param cursor      the string column cursor
      * @param rowCount    total number of rows
      */
-    void putVarcharColumn(int columnIndex, IlpV4StringColumnCursor cursor, int rowCount);
+    void putVarcharColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount);
 
     /**
      * Writes a STRING column.
@@ -161,7 +161,7 @@ public interface ColumnarRowAppender {
      * @param cursor      the string column cursor
      * @param rowCount    total number of rows
      */
-    void putStringColumn(int columnIndex, IlpV4StringColumnCursor cursor, int rowCount);
+    void putStringColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount);
 
     /**
      * Writes a SYMBOL column.
@@ -174,7 +174,7 @@ public interface ColumnarRowAppender {
      * @param rowCount    total number of rows
      * @return true if all symbols were written successfully, false if resolution failed
      */
-    boolean putSymbolColumn(int columnIndex, IlpV4SymbolColumnCursor cursor, int rowCount);
+    boolean putSymbolColumn(int columnIndex, QwpSymbolColumnCursor cursor, int rowCount);
 
     /**
      * Writes a SYMBOL column with optional caching support.
@@ -198,7 +198,7 @@ public interface ColumnarRowAppender {
      * @param initialSymbolCount committed symbol count for stability check
      * @return true if all symbols written successfully
      */
-    boolean putSymbolColumn(int columnIndex, IlpV4SymbolColumnCursor cursor, int rowCount,
+    boolean putSymbolColumn(int columnIndex, QwpSymbolColumnCursor cursor, int rowCount,
                             ConnectionSymbolCache symbolCache, long tableId, int initialSymbolCount);
 
     /**
@@ -210,7 +210,7 @@ public interface ColumnarRowAppender {
      * @param cursor      the boolean column cursor
      * @param rowCount    total number of rows
      */
-    void putBooleanColumn(int columnIndex, IlpV4BooleanColumnCursor cursor, int rowCount);
+    void putBooleanColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount);
 
     /**
      * Marks a column as all-null for the current batch.
@@ -240,11 +240,11 @@ public interface ColumnarRowAppender {
      * @param columnType   the target QuestDB column type
      * @param isDesignated whether this is the designated timestamp column
      * @param startRowId   starting row ID (needed for designated timestamps)
-     * @throws IlpV4ParseException if cursor iteration fails
+     * @throws QwpParseException if cursor iteration fails
      */
-    void putTimestampColumnWithConversion(int columnIndex, IlpV4TimestampColumnCursor cursor,
+    void putTimestampColumnWithConversion(int columnIndex, QwpTimestampColumnCursor cursor,
                                           int rowCount, byte ilpType, int columnType,
-                                          boolean isDesignated, long startRowId) throws IlpV4ParseException;
+                                          boolean isDesignated, long startRowId) throws QwpParseException;
 
     /**
      * Writes a GeoHash column.
@@ -256,10 +256,10 @@ public interface ColumnarRowAppender {
      * @param cursor      the GeoHash column cursor
      * @param rowCount    total number of rows
      * @param columnType  the target QuestDB column type (GEOBYTE, GEOSHORT, GEOINT, or GEOLONG)
-     * @throws IlpV4ParseException if cursor iteration fails
+     * @throws QwpParseException if cursor iteration fails
      */
-    void putGeoHashColumn(int columnIndex, IlpV4GeoHashColumnCursor cursor,
-                          int rowCount, int columnType) throws IlpV4ParseException;
+    void putGeoHashColumn(int columnIndex, QwpGeoHashColumnCursor cursor,
+                          int rowCount, int columnType) throws QwpParseException;
 
     /**
      * Writes a DECIMAL64 column with optional scale conversion.
@@ -270,10 +270,10 @@ public interface ColumnarRowAppender {
      * @param cursor      the decimal column cursor
      * @param rowCount    total number of rows
      * @param columnType  the target QuestDB column type (includes scale metadata)
-     * @throws IlpV4ParseException if cursor iteration fails
+     * @throws QwpParseException if cursor iteration fails
      */
-    void putDecimal64Column(int columnIndex, IlpV4DecimalColumnCursor cursor,
-                            int rowCount, int columnType) throws IlpV4ParseException;
+    void putDecimal64Column(int columnIndex, QwpDecimalColumnCursor cursor,
+                            int rowCount, int columnType) throws QwpParseException;
 
     /**
      * Writes a DECIMAL128 column with optional scale conversion.
@@ -284,10 +284,10 @@ public interface ColumnarRowAppender {
      * @param cursor      the decimal column cursor
      * @param rowCount    total number of rows
      * @param columnType  the target QuestDB column type (includes scale metadata)
-     * @throws IlpV4ParseException if cursor iteration fails
+     * @throws QwpParseException if cursor iteration fails
      */
-    void putDecimal128Column(int columnIndex, IlpV4DecimalColumnCursor cursor,
-                             int rowCount, int columnType) throws IlpV4ParseException;
+    void putDecimal128Column(int columnIndex, QwpDecimalColumnCursor cursor,
+                             int rowCount, int columnType) throws QwpParseException;
 
     /**
      * Writes a DECIMAL256 column with optional scale conversion.
@@ -298,10 +298,10 @@ public interface ColumnarRowAppender {
      * @param cursor      the decimal column cursor
      * @param rowCount    total number of rows
      * @param columnType  the target QuestDB column type (includes scale metadata)
-     * @throws IlpV4ParseException if cursor iteration fails
+     * @throws QwpParseException if cursor iteration fails
      */
-    void putDecimal256Column(int columnIndex, IlpV4DecimalColumnCursor cursor,
-                             int rowCount, int columnType) throws IlpV4ParseException;
+    void putDecimal256Column(int columnIndex, QwpDecimalColumnCursor cursor,
+                             int rowCount, int columnType) throws QwpParseException;
 
     /**
      * Writes an array column (double or long arrays, 1-N dimensions).
@@ -313,10 +313,10 @@ public interface ColumnarRowAppender {
      * @param cursor      the array column cursor
      * @param rowCount    total number of rows
      * @param columnType  the target QuestDB column type (encoded array type)
-     * @throws IlpV4ParseException if cursor iteration fails
+     * @throws QwpParseException if cursor iteration fails
      */
-    void putArrayColumn(int columnIndex, IlpV4ArrayColumnCursor cursor,
-                        int rowCount, int columnType) throws IlpV4ParseException;
+    void putArrayColumn(int columnIndex, QwpArrayColumnCursor cursor,
+                        int rowCount, int columnType) throws QwpParseException;
 
     /**
      * Completes the columnar write operation.

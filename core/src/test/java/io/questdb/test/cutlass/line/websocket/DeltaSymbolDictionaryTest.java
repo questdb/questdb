@@ -24,19 +24,19 @@
 
 package io.questdb.test.cutlass.line.websocket;
 
-import io.questdb.cutlass.ilpv4.protocol.*;
-import io.questdb.client.cutlass.ilpv4.protocol.IlpV4TableBuffer;
-import io.questdb.client.cutlass.ilpv4.client.GlobalSymbolDictionary;
-import io.questdb.client.cutlass.ilpv4.client.IlpBufferWriter;
-import io.questdb.client.cutlass.ilpv4.client.IlpV4WebSocketEncoder;
-import io.questdb.cutlass.ilpv4.server.IlpV4StreamingDecoder;
+import io.questdb.cutlass.qwp.protocol.*;
+import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
+import io.questdb.client.cutlass.qwp.client.GlobalSymbolDictionary;
+import io.questdb.client.cutlass.qwp.client.QwpBufferWriter;
+import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
+import io.questdb.cutlass.qwp.server.QwpStreamingDecoder;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.cutlass.ilpv4.protocol.IlpV4Constants.*;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
 
 /**
  * Comprehensive tests for delta symbol dictionary encoding and decoding.
@@ -76,15 +76,15 @@ public class DeltaSymbolDictionaryTest {
 
     @Test
     public void testMultipleTables_encodedInSameBatch() {
-        try (IlpV4WebSocketEncoder encoder = new IlpV4WebSocketEncoder()) {
+        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
             GlobalSymbolDictionary globalDict = new GlobalSymbolDictionary();
 
             // Create two tables
-            IlpV4TableBuffer table1 = new IlpV4TableBuffer("trades");
-            IlpV4TableBuffer table2 = new IlpV4TableBuffer("quotes");
+            QwpTableBuffer table1 = new QwpTableBuffer("trades");
+            QwpTableBuffer table2 = new QwpTableBuffer("quotes");
 
             // Table 1: ticker column
-            IlpV4TableBuffer.ColumnBuffer col1 = table1.getOrCreateColumn("ticker", TYPE_SYMBOL, false);
+            QwpTableBuffer.ColumnBuffer col1 = table1.getOrCreateColumn("ticker", TYPE_SYMBOL, false);
             int aaplId = globalDict.getOrAddSymbol("AAPL");
             int googId = globalDict.getOrAddSymbol("GOOG");
             col1.addSymbolWithGlobalId("AAPL", aaplId);
@@ -93,7 +93,7 @@ public class DeltaSymbolDictionaryTest {
             table1.nextRow();
 
             // Table 2: symbol column (different name, but shares dictionary)
-            IlpV4TableBuffer.ColumnBuffer col2 = table2.getOrCreateColumn("symbol", TYPE_SYMBOL, false);
+            QwpTableBuffer.ColumnBuffer col2 = table2.getOrCreateColumn("symbol", TYPE_SYMBOL, false);
             int msftId = globalDict.getOrAddSymbol("MSFT");
             col2.addSymbolWithGlobalId("AAPL", aaplId);  // Reuse AAPL
             table2.nextRow();
@@ -108,7 +108,7 @@ public class DeltaSymbolDictionaryTest {
             Assert.assertTrue(size > 0);
 
             // Verify delta section contains all 3 symbols
-            IlpBufferWriter buf = encoder.getBuffer();
+            QwpBufferWriter buf = encoder.getBuffer();
             long ptr = buf.getBufferPtr();
 
             byte flags = Unsafe.getUnsafe().getByte(ptr + HEADER_OFFSET_FLAGS);
@@ -125,20 +125,20 @@ public class DeltaSymbolDictionaryTest {
     public void testMultipleTables_multipleSymbolColumns() {
         GlobalSymbolDictionary globalDict = new GlobalSymbolDictionary();
 
-        IlpV4TableBuffer table = new IlpV4TableBuffer("market_data");
+        QwpTableBuffer table = new QwpTableBuffer("market_data");
 
         // Column 1: exchange
-        IlpV4TableBuffer.ColumnBuffer exchangeCol = table.getOrCreateColumn("exchange", TYPE_SYMBOL, false);
+        QwpTableBuffer.ColumnBuffer exchangeCol = table.getOrCreateColumn("exchange", TYPE_SYMBOL, false);
         int nyseId = globalDict.getOrAddSymbol("NYSE");
         int nasdaqId = globalDict.getOrAddSymbol("NASDAQ");
 
         // Column 2: currency
-        IlpV4TableBuffer.ColumnBuffer currencyCol = table.getOrCreateColumn("currency", TYPE_SYMBOL, false);
+        QwpTableBuffer.ColumnBuffer currencyCol = table.getOrCreateColumn("currency", TYPE_SYMBOL, false);
         int usdId = globalDict.getOrAddSymbol("USD");
         int eurId = globalDict.getOrAddSymbol("EUR");
 
         // Column 3: ticker
-        IlpV4TableBuffer.ColumnBuffer tickerCol = table.getOrCreateColumn("ticker", TYPE_SYMBOL, false);
+        QwpTableBuffer.ColumnBuffer tickerCol = table.getOrCreateColumn("ticker", TYPE_SYMBOL, false);
         int aaplId = globalDict.getOrAddSymbol("AAPL");
 
         // Add row with all three columns
@@ -202,15 +202,15 @@ public class DeltaSymbolDictionaryTest {
     }
 
     @Test
-    public void testMultipleBatches_encodeAndDecode() throws IlpV4ParseException {
-        try (IlpV4WebSocketEncoder encoder = new IlpV4WebSocketEncoder()) {
+    public void testMultipleBatches_encodeAndDecode() throws QwpParseException {
+        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
             GlobalSymbolDictionary clientDict = new GlobalSymbolDictionary();
             ObjList<String> serverDict = new ObjList<>();
             int maxSentSymbolId = -1;
 
             // === Batch 1 ===
-            IlpV4TableBuffer batch1 = new IlpV4TableBuffer("test");
-            IlpV4TableBuffer.ColumnBuffer col1 = batch1.getOrCreateColumn("sym", TYPE_SYMBOL, false);
+            QwpTableBuffer batch1 = new QwpTableBuffer("test");
+            QwpTableBuffer.ColumnBuffer col1 = batch1.getOrCreateColumn("sym", TYPE_SYMBOL, false);
 
             int aaplId = clientDict.getOrAddSymbol("AAPL");
             int googId = clientDict.getOrAddSymbol("GOOG");
@@ -225,7 +225,7 @@ public class DeltaSymbolDictionaryTest {
             maxSentSymbolId = batch1MaxId;
 
             // Decode on server side
-            IlpBufferWriter buf1 = encoder.getBuffer();
+            QwpBufferWriter buf1 = encoder.getBuffer();
             decodeAndAccumulateDict(buf1.getBufferPtr(), size1, serverDict);
 
             // Verify server dictionary
@@ -234,8 +234,8 @@ public class DeltaSymbolDictionaryTest {
             Assert.assertEquals("GOOG", serverDict.get(1));
 
             // === Batch 2 ===
-            IlpV4TableBuffer batch2 = new IlpV4TableBuffer("test");
-            IlpV4TableBuffer.ColumnBuffer col2 = batch2.getOrCreateColumn("sym", TYPE_SYMBOL, false);
+            QwpTableBuffer batch2 = new QwpTableBuffer("test");
+            QwpTableBuffer.ColumnBuffer col2 = batch2.getOrCreateColumn("sym", TYPE_SYMBOL, false);
 
             int msftId = clientDict.getOrAddSymbol("MSFT");
             col2.addSymbolWithGlobalId("AAPL", aaplId);  // Existing
@@ -249,7 +249,7 @@ public class DeltaSymbolDictionaryTest {
             maxSentSymbolId = batch2MaxId;
 
             // Decode batch 2
-            IlpBufferWriter buf2 = encoder.getBuffer();
+            QwpBufferWriter buf2 = encoder.getBuffer();
             decodeAndAccumulateDict(buf2.getBufferPtr(), size2, serverDict);
 
             // Server dictionary should now have 3 symbols
@@ -304,7 +304,7 @@ public class DeltaSymbolDictionaryTest {
 
     @Test
     public void testReconnection_fullDeltaAfterReconnect() {
-        try (IlpV4WebSocketEncoder encoder = new IlpV4WebSocketEncoder()) {
+        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
             GlobalSymbolDictionary clientDict = new GlobalSymbolDictionary();
 
             // First connection: add symbols
@@ -318,8 +318,8 @@ public class DeltaSymbolDictionaryTest {
             maxSentSymbolId = -1;
 
             // Create new batch using existing symbols
-            IlpV4TableBuffer batch = new IlpV4TableBuffer("test");
-            IlpV4TableBuffer.ColumnBuffer col = batch.getOrCreateColumn("sym", TYPE_SYMBOL, false);
+            QwpTableBuffer batch = new QwpTableBuffer("test");
+            QwpTableBuffer.ColumnBuffer col = batch.getOrCreateColumn("sym", TYPE_SYMBOL, false);
             col.addSymbolWithGlobalId("AAPL", aaplId);
             batch.nextRow();
 
@@ -328,7 +328,7 @@ public class DeltaSymbolDictionaryTest {
             Assert.assertTrue(size > 0);
 
             // Verify deltaStart is 0
-            IlpBufferWriter buf = encoder.getBuffer();
+            QwpBufferWriter buf = encoder.getBuffer();
             long pos = buf.getBufferPtr() + HEADER_SIZE;
             int deltaStart = readVarint(pos);
             Assert.assertEquals(0, deltaStart);
@@ -346,7 +346,7 @@ public class DeltaSymbolDictionaryTest {
         int maxSentSymbolId = 0;
 
         // Empty batch (no rows, no symbols used)
-        IlpV4TableBuffer emptyBatch = new IlpV4TableBuffer("test");
+        QwpTableBuffer emptyBatch = new QwpTableBuffer("test");
         Assert.assertEquals(0, emptyBatch.getRowCount());
 
         // Delta should still work (deltaCount = 0)
@@ -358,12 +358,12 @@ public class DeltaSymbolDictionaryTest {
 
     @Test
     public void testEdgeCase_batchWithNoSymbols() {
-        try (IlpV4WebSocketEncoder encoder = new IlpV4WebSocketEncoder()) {
+        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
             GlobalSymbolDictionary globalDict = new GlobalSymbolDictionary();
 
             // Table with only non-symbol columns
-            IlpV4TableBuffer batch = new IlpV4TableBuffer("metrics");
-            IlpV4TableBuffer.ColumnBuffer valueCol = batch.getOrCreateColumn("value", TYPE_LONG, false);
+            QwpTableBuffer batch = new QwpTableBuffer("metrics");
+            QwpTableBuffer.ColumnBuffer valueCol = batch.getOrCreateColumn("value", TYPE_LONG, false);
             valueCol.addLong(100L);
             batch.nextRow();
 
@@ -375,7 +375,7 @@ public class DeltaSymbolDictionaryTest {
             Assert.assertTrue(size > 0);
 
             // Verify flag is set
-            IlpBufferWriter buf = encoder.getBuffer();
+            QwpBufferWriter buf = encoder.getBuffer();
             byte flags = Unsafe.getUnsafe().getByte(buf.getBufferPtr() + HEADER_OFFSET_FLAGS);
             Assert.assertTrue((flags & FLAG_DELTA_SYMBOL_DICT) != 0);
         }
@@ -385,8 +385,8 @@ public class DeltaSymbolDictionaryTest {
     public void testEdgeCase_nullSymbolValues() {
         GlobalSymbolDictionary globalDict = new GlobalSymbolDictionary();
 
-        IlpV4TableBuffer batch = new IlpV4TableBuffer("test");
-        IlpV4TableBuffer.ColumnBuffer col = batch.getOrCreateColumn("sym", TYPE_SYMBOL, true);  // nullable
+        QwpTableBuffer batch = new QwpTableBuffer("test");
+        QwpTableBuffer.ColumnBuffer col = batch.getOrCreateColumn("sym", TYPE_SYMBOL, true);  // nullable
 
         int aaplId = globalDict.getOrAddSymbol("AAPL");
         col.addSymbolWithGlobalId("AAPL", aaplId);
@@ -457,8 +457,8 @@ public class DeltaSymbolDictionaryTest {
     public void testEdgeCase_duplicateSymbolsInBatch() {
         GlobalSymbolDictionary globalDict = new GlobalSymbolDictionary();
 
-        IlpV4TableBuffer batch = new IlpV4TableBuffer("test");
-        IlpV4TableBuffer.ColumnBuffer col = batch.getOrCreateColumn("sym", TYPE_SYMBOL, false);
+        QwpTableBuffer batch = new QwpTableBuffer("test");
+        QwpTableBuffer.ColumnBuffer col = batch.getOrCreateColumn("sym", TYPE_SYMBOL, false);
 
         // Same symbol used multiple times
         int aaplId = globalDict.getOrAddSymbol("AAPL");
@@ -556,7 +556,7 @@ public class DeltaSymbolDictionaryTest {
     }
 
     @Test
-    public void testServerSide_symbolCursorDeltaMode() throws IlpV4ParseException {
+    public void testServerSide_symbolCursorDeltaMode() throws QwpParseException {
         ObjList<String> serverDict = new ObjList<>();
         serverDict.add("AAPL");
         serverDict.add("GOOG");
@@ -574,7 +574,7 @@ public class DeltaSymbolDictionaryTest {
             // Index 1 (varint)
             Unsafe.getUnsafe().putByte(dataAddr + offset++, (byte) 1);
 
-            IlpV4SymbolColumnCursor cursor = new IlpV4SymbolColumnCursor();
+            QwpSymbolColumnCursor cursor = new QwpSymbolColumnCursor();
             int consumed = cursor.of(dataAddr, offset, 2, false, 0, 0, serverDict);
 
             // Advance and verify
@@ -595,14 +595,14 @@ public class DeltaSymbolDictionaryTest {
     // ==================== Round-Trip Tests ====================
 
     @Test
-    public void testRoundTrip_singleBatch() throws IlpV4ParseException {
-        try (IlpV4WebSocketEncoder encoder = new IlpV4WebSocketEncoder()) {
+    public void testRoundTrip_singleBatch() throws QwpParseException {
+        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
             GlobalSymbolDictionary clientDict = new GlobalSymbolDictionary();
             ObjList<String> serverDict = new ObjList<>();
 
             // Create batch
-            IlpV4TableBuffer batch = new IlpV4TableBuffer("test");
-            IlpV4TableBuffer.ColumnBuffer col = batch.getOrCreateColumn("ticker", TYPE_SYMBOL, false);
+            QwpTableBuffer batch = new QwpTableBuffer("test");
+            QwpTableBuffer.ColumnBuffer col = batch.getOrCreateColumn("ticker", TYPE_SYMBOL, false);
 
             int aaplId = clientDict.getOrAddSymbol("AAPL");
             int googId = clientDict.getOrAddSymbol("GOOG");
@@ -616,9 +616,9 @@ public class DeltaSymbolDictionaryTest {
             int size = encoder.encodeWithDeltaDict(batch, clientDict, -1, 1, false);
 
             // Decode
-            IlpBufferWriter buf = encoder.getBuffer();
-            IlpV4StreamingDecoder decoder = new IlpV4StreamingDecoder();
-            IlpV4MessageCursor cursor = decoder.decode(buf.getBufferPtr(), size, serverDict);
+            QwpBufferWriter buf = encoder.getBuffer();
+            QwpStreamingDecoder decoder = new QwpStreamingDecoder();
+            QwpMessageCursor cursor = decoder.decode(buf.getBufferPtr(), size, serverDict);
 
             // Verify delta was accumulated
             Assert.assertEquals(2, serverDict.size());
@@ -631,16 +631,16 @@ public class DeltaSymbolDictionaryTest {
     }
 
     @Test
-    public void testRoundTrip_multipleBatches() throws IlpV4ParseException {
-        try (IlpV4WebSocketEncoder encoder = new IlpV4WebSocketEncoder()) {
+    public void testRoundTrip_multipleBatches() throws QwpParseException {
+        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
             GlobalSymbolDictionary clientDict = new GlobalSymbolDictionary();
             ObjList<String> serverDict = new ObjList<>();
-            IlpV4StreamingDecoder decoder = new IlpV4StreamingDecoder();
+            QwpStreamingDecoder decoder = new QwpStreamingDecoder();
             int maxSentSymbolId = -1;
 
             // === Batch 1 ===
-            IlpV4TableBuffer batch1 = new IlpV4TableBuffer("test");
-            IlpV4TableBuffer.ColumnBuffer col1 = batch1.getOrCreateColumn("sym", TYPE_SYMBOL, false);
+            QwpTableBuffer batch1 = new QwpTableBuffer("test");
+            QwpTableBuffer.ColumnBuffer col1 = batch1.getOrCreateColumn("sym", TYPE_SYMBOL, false);
 
             int aaplId = clientDict.getOrAddSymbol("AAPL");
             col1.addSymbolWithGlobalId("AAPL", aaplId);
@@ -653,8 +653,8 @@ public class DeltaSymbolDictionaryTest {
             Assert.assertEquals(1, serverDict.size());
 
             // === Batch 2 ===
-            IlpV4TableBuffer batch2 = new IlpV4TableBuffer("test");
-            IlpV4TableBuffer.ColumnBuffer col2 = batch2.getOrCreateColumn("sym", TYPE_SYMBOL, false);
+            QwpTableBuffer batch2 = new QwpTableBuffer("test");
+            QwpTableBuffer.ColumnBuffer col2 = batch2.getOrCreateColumn("sym", TYPE_SYMBOL, false);
 
             int googId = clientDict.getOrAddSymbol("GOOG");
             int msftId = clientDict.getOrAddSymbol("MSFT");
@@ -695,7 +695,7 @@ public class DeltaSymbolDictionaryTest {
         }
     }
 
-    private void decodeAndAccumulateDict(long ptr, int size, ObjList<String> serverDict) throws IlpV4ParseException {
+    private void decodeAndAccumulateDict(long ptr, int size, ObjList<String> serverDict) throws QwpParseException {
         // Parse header
         byte flags = Unsafe.getUnsafe().getByte(ptr + HEADER_OFFSET_FLAGS);
         if ((flags & FLAG_DELTA_SYMBOL_DICT) == 0) {

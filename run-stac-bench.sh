@@ -24,7 +24,7 @@
 #   ./run-stac-bench.sh server-lock [options]  - Profile server lock contention
 #
 # Options (passed to client):
-#   --protocol=PROTOCOL      Protocol: ilp-tcp, ilp-http, ilpv4-websocket
+#   --protocol=PROTOCOL      Protocol: ilp-tcp, ilp-http, qwp-websocket
 #   --host=HOST              Server host (default: localhost)
 #   --port=PORT              Server port
 #   --table=TABLE            Table name (default: q)
@@ -87,7 +87,7 @@ get_protocol_from_args() {
             return
         fi
     done
-    echo "ilpv4-websocket"
+    echo "qwp-websocket"
 }
 
 get_table_from_args() {
@@ -506,7 +506,7 @@ case "$1" in
         echo "Make sure QuestDB server is running!"
         echo ""
 
-        for protocol in ilp-tcp ilp-http ilpv4-websocket; do
+        for protocol in ilp-tcp ilp-http qwp-websocket; do
             echo "=========================================="
             echo "Testing: $protocol"
             echo "=========================================="
@@ -541,7 +541,7 @@ case "$1" in
         echo ""
         echo "Options:"
         echo "  --debug                  Enable debug logging"
-        echo "  --protocol=PROTOCOL      Protocol: ilp-tcp, ilp-http, ilpv4-websocket (default: ilpv4-websocket)"
+        echo "  --protocol=PROTOCOL      Protocol: ilp-tcp, ilp-http, qwp-websocket (default: qwp-websocket)"
         echo "  --host=HOST              Server host (default: localhost)"
         echo "  --port=PORT              Server port (default: 9009 for TCP, 9000 for HTTP/WebSocket)"
         echo "  --table=TABLE            Table name (default: q)"
@@ -572,7 +572,7 @@ case "$1" in
         echo "  Terminal 2: $0 client --rows=10000000"
         echo ""
         echo "Examples:"
-        echo "  $0 client --protocol=ilpv4-websocket --rows=80000000 --batch=10000"
+        echo "  $0 client --protocol=qwp-websocket --rows=80000000 --batch=10000"
         echo "  $0 client --protocol=ilp-tcp --rows=10000000"
         echo "  $0 cpu --rows=80000000 --warmup=1000000"
         echo "  $0 server-cpu --rows=80000000 --warmup=1000000"

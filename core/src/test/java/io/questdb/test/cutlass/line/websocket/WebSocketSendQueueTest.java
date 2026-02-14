@@ -27,9 +27,9 @@ package io.questdb.test.cutlass.line.websocket;
 import io.questdb.client.DefaultHttpClientConfiguration;
 import io.questdb.client.cutlass.http.client.WebSocketClient;
 import io.questdb.client.cutlass.http.client.WebSocketFrameHandler;
-import io.questdb.client.cutlass.ilpv4.client.InFlightWindow;
-import io.questdb.client.cutlass.ilpv4.client.MicrobatchBuffer;
-import io.questdb.client.cutlass.ilpv4.client.WebSocketSendQueue;
+import io.questdb.client.cutlass.qwp.client.InFlightWindow;
+import io.questdb.client.cutlass.qwp.client.MicrobatchBuffer;
+import io.questdb.client.cutlass.qwp.client.WebSocketSendQueue;
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.network.PlainSocketFactory;
 import io.questdb.std.MemoryTag;
@@ -41,9 +41,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.Assert.*;
 
 public class WebSocketSendQueueTest {
 
@@ -108,7 +106,7 @@ public class WebSocketSendQueueTest {
 
             assertTrue(started.await(1, TimeUnit.SECONDS));
             Thread.sleep(100);
-            assertTrue("Second enqueue should still be waiting", finished.getCount() == 1);
+            assertEquals("Second enqueue should still be waiting", 1, finished.getCount());
 
             // Free space so I/O thread can poll pending slot.
             window.acknowledgeUpTo(0);
@@ -212,7 +210,7 @@ public class WebSocketSendQueueTest {
             while (queue.getLastError() == null && System.currentTimeMillis() < deadline) {
                 Thread.sleep(5);
             }
-            assertTrue("Expected queue error after receive failure", queue.getLastError() != null);
+            assertNotNull("Expected queue error after receive failure", queue.getLastError());
 
             try {
                 queue.flush();

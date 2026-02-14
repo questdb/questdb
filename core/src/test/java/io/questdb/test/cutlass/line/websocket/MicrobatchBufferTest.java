@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.line.websocket;
 
-import io.questdb.client.cutlass.ilpv4.client.MicrobatchBuffer;
+import io.questdb.client.cutlass.qwp.client.MicrobatchBuffer;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
@@ -69,7 +69,7 @@ public class MicrobatchBufferTest {
     @Test(expected = IllegalArgumentException.class)
     public void testConstructionWithZeroCapacity() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (MicrobatchBuffer buffer = new MicrobatchBuffer(0)) {
+            try (MicrobatchBuffer ignored = new MicrobatchBuffer(0)) {
                 Assert.fail("Should have thrown");
             }
         });
@@ -78,7 +78,7 @@ public class MicrobatchBufferTest {
     @Test(expected = IllegalArgumentException.class)
     public void testConstructionWithNegativeCapacity() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (MicrobatchBuffer buffer = new MicrobatchBuffer(-1)) {
+            try (MicrobatchBuffer ignored = new MicrobatchBuffer(-1)) {
                 Assert.fail("Should have thrown");
             }
         });

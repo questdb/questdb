@@ -21,7 +21,7 @@
 #   ./run-alloc-test.sh server-lock [options]  - Profile server lock contention
 #
 # Options (passed to client):
-#   --protocol=PROTOCOL      Protocol: ilp-tcp, ilp-http, ilpv4-websocket
+#   --protocol=PROTOCOL      Protocol: ilp-tcp, ilp-http, qwp-websocket
 #   --host=HOST              Server host (default: localhost)
 #   --port=PORT              Server port
 #   --rows=N                 Total rows to send
@@ -81,7 +81,7 @@ get_protocol_from_args() {
             return
         fi
     done
-    echo "ilpv4-websocket"  # default
+    echo "qwp-websocket"  # default
 }
 
 # Find QuestDB server PID by checking port 9000
@@ -154,7 +154,7 @@ case "$1" in
 
         echo "Running ILP test client..."
         java -cp "$MAIN_JAR:$TEST_JAR" $DEBUG_FLAG \
-             io.questdb.test.cutlass.line.tcp.v4.IlpV4AllocationTestClient \
+             io.questdb.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "${CLIENT_ARGS[@]}"
         ;;
 
@@ -178,7 +178,7 @@ case "$1" in
         echo ""
         java -agentpath:"$ASYNC_PROFILER_HOME/lib/libasyncProfiler.so=start,event=alloc,alloc=1k,file=$PROFILE_OUTPUT,collapsed" \
              -cp "$MAIN_JAR:$TEST_JAR" \
-             io.questdb.test.cutlass.line.tcp.v4.IlpV4AllocationTestClient \
+             io.questdb.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@"
         echo ""
         echo "Profile saved to: $PROFILE_OUTPUT"
@@ -207,7 +207,7 @@ case "$1" in
         echo ""
         java -agentpath:"$ASYNC_PROFILER_HOME/lib/libasyncProfiler.so=start,event=cpu,file=$PROFILE_OUTPUT,jfr" \
              -cp "$MAIN_JAR:$TEST_JAR" \
-             io.questdb.test.cutlass.line.tcp.v4.IlpV4AllocationTestClient \
+             io.questdb.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@"
         echo ""
         echo "CPU profile saved to: $PROFILE_OUTPUT"
@@ -237,7 +237,7 @@ case "$1" in
         echo ""
         java -agentpath:"$ASYNC_PROFILER_HOME/lib/libasyncProfiler.so=start,event=wall,file=$PROFILE_OUTPUT,jfr" \
              -cp "$MAIN_JAR:$TEST_JAR" \
-             io.questdb.test.cutlass.line.tcp.v4.IlpV4AllocationTestClient \
+             io.questdb.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@"
         echo ""
         echo "Wall-clock profile saved to: $PROFILE_OUTPUT"
@@ -267,7 +267,7 @@ case "$1" in
         echo ""
         java -agentpath:"$ASYNC_PROFILER_HOME/lib/libasyncProfiler.so=start,event=lock,file=$PROFILE_OUTPUT,jfr" \
              -cp "$MAIN_JAR:$TEST_JAR" \
-             io.questdb.test.cutlass.line.tcp.v4.IlpV4AllocationTestClient \
+             io.questdb.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@"
         echo ""
         echo "Lock contention profile saved to: $PROFILE_OUTPUT"
@@ -302,7 +302,7 @@ case "$1" in
         # Run client test
         echo "Running client test..."
         java -cp "$MAIN_JAR:$TEST_JAR" \
-             io.questdb.test.cutlass.line.tcp.v4.IlpV4AllocationTestClient \
+             io.questdb.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@" || true  # Don't fail if client errors
 
         # Stop profiler (file is written automatically)
@@ -342,7 +342,7 @@ case "$1" in
         # Run client test
         echo "Running client test..."
         java -cp "$MAIN_JAR:$TEST_JAR" \
-             io.questdb.test.cutlass.line.tcp.v4.IlpV4AllocationTestClient \
+             io.questdb.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@" || true  # Don't fail if client errors
 
         # Stop profiler (file is written automatically)
@@ -381,7 +381,7 @@ case "$1" in
         # Run client test
         echo "Running client test..."
         java -cp "$MAIN_JAR:$TEST_JAR" \
-             io.questdb.test.cutlass.line.tcp.v4.IlpV4AllocationTestClient \
+             io.questdb.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@" || true  # Don't fail if client errors
 
         # Stop profiler (file is written automatically)
@@ -421,7 +421,7 @@ case "$1" in
         # Run client test
         echo "Running client test..."
         java -cp "$MAIN_JAR:$TEST_JAR" \
-             io.questdb.test.cutlass.line.tcp.v4.IlpV4AllocationTestClient \
+             io.questdb.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@" || true  # Don't fail if client errors
 
         # Stop profiler (file is written automatically)
@@ -445,7 +445,7 @@ case "$1" in
         echo ""
         java -XX:StartFlightRecording=filename="$JFR_OUTPUT",settings=profile \
              -cp "$MAIN_JAR:$TEST_JAR" \
-             io.questdb.test.cutlass.line.tcp.v4.IlpV4AllocationTestClient \
+             io.questdb.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@"
         echo ""
         echo "JFR recording saved to: $JFR_OUTPUT"
@@ -461,12 +461,12 @@ case "$1" in
         echo "Make sure QuestDB server is running!"
         echo ""
 
-        for protocol in ilp-tcp ilp-http ilpv4-websocket; do
+        for protocol in ilp-tcp ilp-http qwp-websocket; do
             echo "=========================================="
             echo "Testing: $protocol"
             echo "=========================================="
             java -cp "$MAIN_JAR:$TEST_JAR" \
-                 io.questdb.test.cutlass.line.tcp.v4.IlpV4AllocationTestClient \
+                 io.questdb.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
                  --protocol="$protocol" "$@"
             echo ""
         done
@@ -495,7 +495,7 @@ case "$1" in
         echo ""
         echo "Options:"
         echo "  --debug                  Enable debug logging"
-        echo "  --protocol=PROTOCOL      Protocol: ilp-tcp, ilp-http, ilpv4-websocket (default: ilpv4-websocket)"
+        echo "  --protocol=PROTOCOL      Protocol: ilp-tcp, ilp-http, qwp-websocket (default: qwp-websocket)"
         echo "  --host=HOST              Server host (default: localhost)"
         echo "  --port=PORT              Server port (default: 9009 for TCP, 9000 for HTTP/WebSocket)"
         echo "  --rows=N                 Total rows to send (default: 80000000)"
@@ -510,13 +510,13 @@ case "$1" in
         echo ""
         echo "Examples:"
         echo "  Terminal 1: $0 server"
-        echo "  Terminal 2: $0 client --protocol=ilpv4-websocket --rows=1000000 --batch=5000"
-        echo "  Terminal 2: $0 client --protocol=ilpv4-websocket --rows=100000 --no-warmup"
+        echo "  Terminal 2: $0 client --protocol=qwp-websocket --rows=1000000 --batch=5000"
+        echo "  Terminal 2: $0 client --protocol=qwp-websocket --rows=100000 --no-warmup"
         echo "  Terminal 2: $0 profile --rows=100000000 --warmup=1000000  # client allocation profiling"
         echo "  Terminal 2: $0 cpu --rows=100000000 --warmup=1000000      # client CPU hotspots"
         echo "  Terminal 2: $0 wall --rows=100000000 --warmup=1000000     # client I/O and blocking"
         echo "  Terminal 2: $0 lock --rows=100000000 --warmup=1000000     # client lock contention"
-        echo "  Terminal 2: $0 jfr --protocol=ilpv4-websocket --rows=10000000"
+        echo "  Terminal 2: $0 jfr --protocol=qwp-websocket --rows=10000000"
         echo "  Terminal 2: $0 compare --rows=1000000 --batch=10000"
         echo ""
         echo "Server-side profiling examples:"

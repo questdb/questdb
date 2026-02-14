@@ -33,15 +33,15 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.wal.ColumnarRowAppender;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4BooleanColumnCursor;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4Constants;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4FixedWidthColumnCursor;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4NullBitmap;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4ParseException;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4StringColumnCursor;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4SymbolColumnCursor;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4TimestampColumnCursor;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4Varint;
+import io.questdb.cutlass.qwp.protocol.QwpBooleanColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.protocol.QwpFixedWidthColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpNullBitmap;
+import io.questdb.cutlass.qwp.protocol.QwpParseException;
+import io.questdb.cutlass.qwp.protocol.QwpStringColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpSymbolColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpTimestampColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
@@ -504,12 +504,12 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             // Values: [NULL, 100, 200, 300, 400]
             int valueCount = 4;
             long valuesAddr = Unsafe.malloc((long) valueCount * 4, MemoryTag.NATIVE_DEFAULT);
-            int bitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             long nullBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_DEFAULT);
             try {
                 // Set up null bitmap: row 0 is null
-                IlpV4NullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
-                IlpV4NullBitmap.setNull(nullBitmapAddr, 0);
+                QwpNullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
+                QwpNullBitmap.setNull(nullBitmapAddr, 0);
 
                 // Values are packed (no gap for null)
                 Unsafe.getUnsafe().putInt(valuesAddr, 100);
@@ -577,11 +577,11 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             // Values: [100, 200, 300, 400, NULL]
             int valueCount = 4;
             long valuesAddr = Unsafe.malloc((long) valueCount * 4, MemoryTag.NATIVE_DEFAULT);
-            int bitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             long nullBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                IlpV4NullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
-                IlpV4NullBitmap.setNull(nullBitmapAddr, 4);
+                QwpNullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
+                QwpNullBitmap.setNull(nullBitmapAddr, 4);
 
                 Unsafe.getUnsafe().putInt(valuesAddr, 100);
                 Unsafe.getUnsafe().putInt(valuesAddr + 4, 200);
@@ -639,13 +639,13 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             // Pattern: [NULL, 100, NULL, 200, NULL, 300]
             int valueCount = 3;
             long valuesAddr = Unsafe.malloc((long) valueCount * 4, MemoryTag.NATIVE_DEFAULT);
-            int bitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             long nullBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                IlpV4NullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
-                IlpV4NullBitmap.setNull(nullBitmapAddr, 0);
-                IlpV4NullBitmap.setNull(nullBitmapAddr, 2);
-                IlpV4NullBitmap.setNull(nullBitmapAddr, 4);
+                QwpNullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
+                QwpNullBitmap.setNull(nullBitmapAddr, 0);
+                QwpNullBitmap.setNull(nullBitmapAddr, 2);
+                QwpNullBitmap.setNull(nullBitmapAddr, 4);
 
                 Unsafe.getUnsafe().putInt(valuesAddr, 100);
                 Unsafe.getUnsafe().putInt(valuesAddr + 4, 200);
@@ -701,10 +701,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int rowCount = 5;
             int valueCount = 0;
             long valuesAddr = 0; // No values
-            int bitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             long nullBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                IlpV4NullBitmap.fillAllNull(nullBitmapAddr, rowCount);
+                QwpNullBitmap.fillAllNull(nullBitmapAddr, rowCount);
 
                 long baseTimestamp = 1000000000L;
                 long[] timestamps = new long[rowCount];
@@ -755,12 +755,12 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             // Pattern: [1.5, NULL, 3.5, NULL]
             int valueCount = 2;
             long valuesAddr = Unsafe.malloc((long) valueCount * 8, MemoryTag.NATIVE_DEFAULT);
-            int bitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             long nullBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                IlpV4NullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
-                IlpV4NullBitmap.setNull(nullBitmapAddr, 1);
-                IlpV4NullBitmap.setNull(nullBitmapAddr, 3);
+                QwpNullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
+                QwpNullBitmap.setNull(nullBitmapAddr, 1);
+                QwpNullBitmap.setNull(nullBitmapAddr, 3);
 
                 Unsafe.getUnsafe().putDouble(valuesAddr, 1.5);
                 Unsafe.getUnsafe().putDouble(valuesAddr + 8, 3.5);
@@ -822,11 +822,11 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             // Pattern: [1000, NULL, 3000, 4000]
             int valueCount = 3;
             long valuesAddr = Unsafe.malloc((long) valueCount * 8, MemoryTag.NATIVE_DEFAULT);
-            int bitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             long nullBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                IlpV4NullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
-                IlpV4NullBitmap.setNull(nullBitmapAddr, 1);
+                QwpNullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
+                QwpNullBitmap.setNull(nullBitmapAddr, 1);
 
                 Unsafe.getUnsafe().putLong(valuesAddr, 1000L);
                 Unsafe.getUnsafe().putLong(valuesAddr + 8, 3000L);
@@ -1121,12 +1121,12 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int valueCount = 3; // Only 3 non-null values
             // Values: [NULL, 42, NULL, 100, -50]
             long valuesAddr = Unsafe.malloc((long) valueCount * 8, MemoryTag.NATIVE_DEFAULT);
-            int bitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             long nullBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                IlpV4NullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
-                IlpV4NullBitmap.setNull(nullBitmapAddr, 0);
-                IlpV4NullBitmap.setNull(nullBitmapAddr, 2);
+                QwpNullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
+                QwpNullBitmap.setNull(nullBitmapAddr, 0);
+                QwpNullBitmap.setNull(nullBitmapAddr, 2);
 
                 // Packed values (no gaps for nulls)
                 Unsafe.getUnsafe().putLong(valuesAddr, 42L);
@@ -1247,12 +1247,12 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int valueCount = 2;
             // Values: [NULL, 1234, NULL, -5678]
             long valuesAddr = Unsafe.malloc((long) valueCount * 8, MemoryTag.NATIVE_DEFAULT);
-            int bitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             long nullBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                IlpV4NullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
-                IlpV4NullBitmap.setNull(nullBitmapAddr, 0);
-                IlpV4NullBitmap.setNull(nullBitmapAddr, 2);
+                QwpNullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
+                QwpNullBitmap.setNull(nullBitmapAddr, 0);
+                QwpNullBitmap.setNull(nullBitmapAddr, 2);
 
                 Unsafe.getUnsafe().putLong(valuesAddr, 1234L);
                 Unsafe.getUnsafe().putLong(valuesAddr + 8, -5678L);
@@ -1369,12 +1369,12 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int valueCount = 2;
             // Values: [NULL, 999, NULL, -888]
             long valuesAddr = Unsafe.malloc((long) valueCount * 8, MemoryTag.NATIVE_DEFAULT);
-            int bitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             long nullBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                IlpV4NullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
-                IlpV4NullBitmap.setNull(nullBitmapAddr, 0);
-                IlpV4NullBitmap.setNull(nullBitmapAddr, 2);
+                QwpNullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
+                QwpNullBitmap.setNull(nullBitmapAddr, 0);
+                QwpNullBitmap.setNull(nullBitmapAddr, 2);
 
                 Unsafe.getUnsafe().putLong(valuesAddr, 999L);
                 Unsafe.getUnsafe().putLong(valuesAddr + 8, -888L);
@@ -1492,12 +1492,12 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int valueCount = 2;
             // Values: [NULL, 1.5, NULL, -2.5]
             long valuesAddr = Unsafe.malloc((long) valueCount * 8, MemoryTag.NATIVE_DEFAULT);
-            int bitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             long nullBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                IlpV4NullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
-                IlpV4NullBitmap.setNull(nullBitmapAddr, 0);
-                IlpV4NullBitmap.setNull(nullBitmapAddr, 2);
+                QwpNullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
+                QwpNullBitmap.setNull(nullBitmapAddr, 0);
+                QwpNullBitmap.setNull(nullBitmapAddr, 2);
 
                 Unsafe.getUnsafe().putDouble(valuesAddr, 1.5);
                 Unsafe.getUnsafe().putDouble(valuesAddr + 8, -2.5);
@@ -1662,12 +1662,12 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 long baseTimestamp = 1640000000000000L;
                 long[] timestampValues = {baseTimestamp, baseTimestamp + 2000000L, baseTimestamp + 3000000L};
 
-                int bitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
+                int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
                 long nullBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_DEFAULT);
                 long tsAddr = Unsafe.malloc((long) valueCount * 8, MemoryTag.NATIVE_DEFAULT);
                 try {
-                    IlpV4NullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
-                    IlpV4NullBitmap.setNull(nullBitmapAddr, 1);
+                    QwpNullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
+                    QwpNullBitmap.setNull(nullBitmapAddr, 1);
 
                     for (int i = 0; i < valueCount; i++) {
                         Unsafe.getUnsafe().putLong(tsAddr + (long) i * 8, timestampValues[i]);
@@ -3236,13 +3236,13 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             String walNameColumnar;
             int valueCount = 3;
             long valuesAddr = Unsafe.malloc((long) valueCount * 4, MemoryTag.NATIVE_DEFAULT);
-            int bitmapSize = IlpV4NullBitmap.sizeInBytes(rowCount);
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             long nullBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                IlpV4NullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
-                IlpV4NullBitmap.setNull(nullBitmapAddr, 0);
-                IlpV4NullBitmap.setNull(nullBitmapAddr, 2);
-                IlpV4NullBitmap.setNull(nullBitmapAddr, 4);
+                QwpNullBitmap.fillNoneNull(nullBitmapAddr, rowCount);
+                QwpNullBitmap.setNull(nullBitmapAddr, 0);
+                QwpNullBitmap.setNull(nullBitmapAddr, 2);
+                QwpNullBitmap.setNull(nullBitmapAddr, 4);
 
                 Unsafe.getUnsafe().putInt(valuesAddr, 100);
                 Unsafe.getUnsafe().putInt(valuesAddr + 4, 200);
@@ -3406,14 +3406,14 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     // ==================== Wire Format Builder Classes ====================
 
     /**
-     * Helper to build wire format for IlpV4StringColumnCursor.
+     * Helper to build wire format for QwpStringColumnCursor.
      * Wire format:
      * - [null bitmap if nullable]: ceil(rowCount/8) bytes
      * - [offset array]: (valueCount+1) * 4 bytes, uint32 little-endian
      * - [string data]: concatenated UTF-8 bytes
      */
     private static class StringColumnWireFormat implements AutoCloseable {
-        final IlpV4StringColumnCursor cursor = new IlpV4StringColumnCursor();
+        final QwpStringColumnCursor cursor = new QwpStringColumnCursor();
         long dataAddress;
         int dataLength;
         long nameAddress;
@@ -3437,7 +3437,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int valueCount = rowCount - nullCount;
 
             // Calculate sizes
-            int bitmapSize = nullable ? IlpV4NullBitmap.sizeInBytes(rowCount) : 0;
+            int bitmapSize = nullable ? QwpNullBitmap.sizeInBytes(rowCount) : 0;
             int offsetArraySize = (valueCount + 1) * 4;
 
             int totalStringLen = 0;
@@ -3453,10 +3453,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             // Write null bitmap
             int offset = 0;
             if (nullable) {
-                IlpV4NullBitmap.fillNoneNull(dataAddress, rowCount);
+                QwpNullBitmap.fillNoneNull(dataAddress, rowCount);
                 for (int i = 0; i < rowCount; i++) {
                     if (values[i] == null) {
-                        IlpV4NullBitmap.setNull(dataAddress, i);
+                        QwpNullBitmap.setNull(dataAddress, i);
                     }
                 }
                 offset = bitmapSize;
@@ -3500,7 +3500,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     /**
-     * Helper to build wire format for IlpV4SymbolColumnCursor.
+     * Helper to build wire format for QwpSymbolColumnCursor.
      * Wire format:
      * - [null bitmap if nullable]: ceil(rowCount/8) bytes
      * - [dictionary size]: varint
@@ -3508,13 +3508,13 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
      * - [indices]: varint per non-null value, references dictionary entry
      */
     private static class SymbolColumnWireFormat implements AutoCloseable {
-        final IlpV4SymbolColumnCursor cursor = new IlpV4SymbolColumnCursor();
+        final QwpSymbolColumnCursor cursor = new QwpSymbolColumnCursor();
         long dataAddress;
         int dataLength;
         long nameAddress;
         int nameLength;
 
-        SymbolColumnWireFormat(String[] values, boolean nullable) throws IlpV4ParseException {
+        SymbolColumnWireFormat(String[] values, boolean nullable) throws QwpParseException {
             int rowCount = values.length;
 
             // Build dictionary
@@ -3541,20 +3541,20 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dictionarySize = dictList.size();
 
             // Calculate sizes
-            int bitmapSize = nullable ? IlpV4NullBitmap.sizeInBytes(rowCount) : 0;
+            int bitmapSize = nullable ? QwpNullBitmap.sizeInBytes(rowCount) : 0;
 
             // Calculate dictionary size in bytes
-            int dictBytes = IlpV4Varint.encodedLength(dictionarySize);
+            int dictBytes = QwpVarint.encodedLength(dictionarySize);
             for (String s : dictList) {
                 byte[] utf8 = s.getBytes(StandardCharsets.UTF_8);
-                dictBytes += IlpV4Varint.encodedLength(utf8.length) + utf8.length;
+                dictBytes += QwpVarint.encodedLength(utf8.length) + utf8.length;
             }
 
             // Calculate indices size
             int indicesBytes = 0;
             for (int i = 0; i < rowCount; i++) {
                 if (indices[i] >= 0) {
-                    indicesBytes += IlpV4Varint.encodedLength(indices[i]);
+                    indicesBytes += QwpVarint.encodedLength(indices[i]);
                 }
             }
 
@@ -3564,10 +3564,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             // Write null bitmap
             int offset = 0;
             if (nullable) {
-                IlpV4NullBitmap.fillNoneNull(dataAddress, rowCount);
+                QwpNullBitmap.fillNoneNull(dataAddress, rowCount);
                 for (int i = 0; i < rowCount; i++) {
                     if (values[i] == null) {
-                        IlpV4NullBitmap.setNull(dataAddress, i);
+                        QwpNullBitmap.setNull(dataAddress, i);
                     }
                 }
                 offset = bitmapSize;
@@ -3575,10 +3575,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             // Write dictionary
             long addr = dataAddress + offset;
-            addr = IlpV4Varint.encode(addr, dictionarySize);
+            addr = QwpVarint.encode(addr, dictionarySize);
             for (String s : dictList) {
                 byte[] utf8 = s.getBytes(StandardCharsets.UTF_8);
-                addr = IlpV4Varint.encode(addr, utf8.length);
+                addr = QwpVarint.encode(addr, utf8.length);
                 for (byte b : utf8) {
                     Unsafe.getUnsafe().putByte(addr++, b);
                 }
@@ -3587,7 +3587,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             // Write indices
             for (int i = 0; i < rowCount; i++) {
                 if (indices[i] >= 0) {
-                    addr = IlpV4Varint.encode(addr, indices[i]);
+                    addr = QwpVarint.encode(addr, indices[i]);
                 }
             }
 
@@ -3611,13 +3611,13 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     /**
-     * Helper to build wire format for IlpV4BooleanColumnCursor.
+     * Helper to build wire format for QwpBooleanColumnCursor.
      * Wire format:
      * - [null bitmap if nullable]: ceil(rowCount/8) bytes
      * - [value bitmap]: ceil(valueCount/8) bytes, bit[i]=1 means true
      */
     private static class BooleanColumnWireFormat implements AutoCloseable {
-        final IlpV4BooleanColumnCursor cursor = new IlpV4BooleanColumnCursor();
+        final QwpBooleanColumnCursor cursor = new QwpBooleanColumnCursor();
         long dataAddress;
         int dataLength;
         long nameAddress;
@@ -3636,7 +3636,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int valueCount = rowCount - nullCount;
 
             // Calculate sizes
-            int bitmapSize = nullable ? IlpV4NullBitmap.sizeInBytes(rowCount) : 0;
+            int bitmapSize = nullable ? QwpNullBitmap.sizeInBytes(rowCount) : 0;
             int valueBitmapSize = (valueCount + 7) / 8;
 
             dataLength = bitmapSize + valueBitmapSize;
@@ -3651,7 +3651,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             if (nullable) {
                 for (int i = 0; i < rowCount; i++) {
                     if (values[i] == null) {
-                        IlpV4NullBitmap.setNull(dataAddress, i);
+                        QwpNullBitmap.setNull(dataAddress, i);
                     }
                 }
             }
@@ -3699,7 +3699,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     @Test
     public void testGorillaEncodedTimestamp_DoesNotSupportDirectAccess() throws Exception {
         assertMemoryLeak(() -> {
-            IlpV4TimestampColumnCursor tsCursor = new IlpV4TimestampColumnCursor();
+            QwpTimestampColumnCursor tsCursor = new QwpTimestampColumnCursor();
 
             long[] timestamps = {1000000L, 1001000L};
 
@@ -3725,7 +3725,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 // Initialize cursor with gorillaEnabled=true
-                tsCursor.of(dataAddress, dataLength, 2, IlpV4Constants.TYPE_TIMESTAMP,
+                tsCursor.of(dataAddress, dataLength, 2, QwpConstants.TYPE_TIMESTAMP,
                         false, nameAddress, nameBytes.length, true);
 
                 // Verify Gorilla encoding is detected
@@ -3753,7 +3753,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     @Test
     public void testUuidLittleEndianWireFormat() throws Exception {
         assertMemoryLeak(() -> {
-            IlpV4FixedWidthColumnCursor cursor = new IlpV4FixedWidthColumnCursor();
+            QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
 
             // Test UUID: 550e8400-e29b-41d4-a716-446655440000
             // hi = 0x550e8400e29b41d4, lo = 0xa716446655440000
@@ -3778,7 +3778,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 // Initialize cursor
-                cursor.of(dataAddress, dataLength, 1, IlpV4Constants.TYPE_UUID,
+                cursor.of(dataAddress, dataLength, 1, QwpConstants.TYPE_UUID,
                         false, nameAddress, nameBytes.length);
 
                 // Read and verify
@@ -3805,7 +3805,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     @Test
     public void testLong256LittleEndianWireFormat() throws Exception {
         assertMemoryLeak(() -> {
-            IlpV4FixedWidthColumnCursor cursor = new IlpV4FixedWidthColumnCursor();
+            QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
 
             // Test LONG256 value
             long expected0 = 0x1111111111111111L; // least significant
@@ -3833,7 +3833,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 // Initialize cursor
-                cursor.of(dataAddress, dataLength, 1, IlpV4Constants.TYPE_LONG256,
+                cursor.of(dataAddress, dataLength, 1, QwpConstants.TYPE_LONG256,
                         false, nameAddress, nameBytes.length);
 
                 // Read and verify

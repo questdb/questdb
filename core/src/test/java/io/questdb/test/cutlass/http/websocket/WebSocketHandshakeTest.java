@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.http.websocket;
 
-import io.questdb.cutlass.ilpv4.websocket.WebSocketHandshake;
+import io.questdb.cutlass.qwp.websocket.WebSocketHandshake;
 import io.questdb.std.str.Utf8String;
 import org.junit.Assert;
 import org.junit.Test;
@@ -212,11 +212,13 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
             String responseStr = new String(response, StandardCharsets.US_ASCII);
 
             // Verify full response
-            String expected = "HTTP/1.1 101 Switching Protocols\r\n" +
-                    "Upgrade: websocket\r\n" +
-                    "Connection: Upgrade\r\n" +
-                    "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n" +
-                    "\r\n";
+            String expected = """
+                    HTTP/1.1 101 Switching Protocols\r
+                    Upgrade: websocket\r
+                    Connection: Upgrade\r
+                    Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r
+                    \r
+                    """;
             Assert.assertEquals(expected, responseStr);
         } finally {
             freeBuffer(buf, 256);
@@ -441,7 +443,7 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
         long buf = allocateBuffer(512);
         try {
             String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
-            String protocol = "ilpv4";
+            String protocol = "qwp";
             int written = WebSocketHandshake.writeResponseWithProtocol(buf, acceptKey, protocol);
 
             byte[] response = readBytes(buf, written);
@@ -493,7 +495,7 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     @Test
     public void testResponseSizeWithProtocol() {
         String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
-        String protocol = "ilpv4";
+        String protocol = "qwp";
         int expectedSize = WebSocketHandshake.responseSizeWithProtocol(acceptKey, protocol);
 
         long buf = allocateBuffer(512);
@@ -596,7 +598,7 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
         long buf = allocateBuffer(512);
         try {
             String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
-            String protocol = "ilp.v4.streaming"; // Protocol with dots
+            String protocol = "qwp.streaming"; // Protocol with dots
             int written = WebSocketHandshake.writeResponseWithProtocol(buf, acceptKey, protocol);
 
             byte[] response = readBytes(buf, written);

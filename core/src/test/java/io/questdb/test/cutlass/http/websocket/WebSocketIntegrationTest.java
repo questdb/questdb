@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.http.websocket;
 
-import io.questdb.cutlass.ilpv4.websocket.WebSocketCloseCode;
+import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import org.junit.After;
@@ -41,7 +41,6 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -513,26 +512,6 @@ public class WebSocketIntegrationTest extends AbstractWebSocketTest {
                         }).start();
                     }
 
-                    @Override
-                    public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
-                        webSocket.request(1);
-                        return null;
-                    }
-
-                    @Override
-                    public CompletionStage<?> onBinary(WebSocket webSocket, ByteBuffer data, boolean last) {
-                        webSocket.request(1);
-                        return null;
-                    }
-
-                    @Override
-                    public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
-                        return null;
-                    }
-
-                    @Override
-                    public void onError(WebSocket webSocket, Throwable error) {
-                    }
                 };
 
                 WebSocket ws = httpClient.newWebSocketBuilder()
@@ -588,20 +567,6 @@ public class WebSocketIntegrationTest extends AbstractWebSocketTest {
                 return null;
             }
 
-            @Override
-            public CompletionStage<?> onBinary(WebSocket webSocket, ByteBuffer data, boolean last) {
-                webSocket.request(1);
-                return null;
-            }
-
-            @Override
-            public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
-                return null;
-            }
-
-            @Override
-            public void onError(WebSocket webSocket, Throwable error) {
-            }
         };
 
         WebSocket ws = httpClient.newWebSocketBuilder()
@@ -778,18 +743,6 @@ public class WebSocketIntegrationTest extends AbstractWebSocketTest {
             }
 
             @Override
-            public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
-                webSocket.request(1);
-                return null;
-            }
-
-            @Override
-            public CompletionStage<?> onBinary(WebSocket webSocket, ByteBuffer data, boolean last) {
-                webSocket.request(1);
-                return null;
-            }
-
-            @Override
             public CompletionStage<?> onPong(WebSocket webSocket, ByteBuffer message) {
                 pongCount.incrementAndGet();
                 pongLatch.countDown();
@@ -797,14 +750,6 @@ public class WebSocketIntegrationTest extends AbstractWebSocketTest {
                 return null;
             }
 
-            @Override
-            public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
-                return null;
-            }
-
-            @Override
-            public void onError(WebSocket webSocket, Throwable error) {
-            }
         };
 
         WebSocket ws = httpClient.newWebSocketBuilder()
@@ -861,20 +806,6 @@ public class WebSocketIntegrationTest extends AbstractWebSocketTest {
                         return null;
                     }
 
-                    @Override
-                    public CompletionStage<?> onBinary(WebSocket webSocket, ByteBuffer data, boolean last) {
-                        webSocket.request(1);
-                        return null;
-                    }
-
-                    @Override
-                    public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
-                        return null;
-                    }
-
-                    @Override
-                    public void onError(WebSocket webSocket, Throwable error) {
-                    }
                 };
 
                 WebSocket ws = httpClient.newWebSocketBuilder()
@@ -961,18 +892,6 @@ public class WebSocketIntegrationTest extends AbstractWebSocketTest {
             }
 
             @Override
-            public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
-                webSocket.request(1);
-                return null;
-            }
-
-            @Override
-            public CompletionStage<?> onBinary(WebSocket webSocket, ByteBuffer data, boolean last) {
-                webSocket.request(1);
-                return null;
-            }
-
-            @Override
             public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
                 closeLatch.countDown();
                 return null;
@@ -1002,12 +921,6 @@ public class WebSocketIntegrationTest extends AbstractWebSocketTest {
             public void onOpen(WebSocket webSocket) {
                 connectLatch.countDown();
                 webSocket.request(1);
-            }
-
-            @Override
-            public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
-                webSocket.request(1);
-                return null;
             }
 
             @Override
@@ -1041,9 +954,6 @@ public class WebSocketIntegrationTest extends AbstractWebSocketTest {
                 return null;
             }
 
-            @Override
-            public void onError(WebSocket webSocket, Throwable error) {
-            }
         };
 
         return httpClient.newWebSocketBuilder()
@@ -1079,20 +989,11 @@ public class WebSocketIntegrationTest extends AbstractWebSocketTest {
             }
 
             @Override
-            public CompletionStage<?> onBinary(WebSocket webSocket, ByteBuffer data, boolean last) {
-                webSocket.request(1);
-                return null;
-            }
-
-            @Override
             public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
                 closeLatch.countDown();
                 return null;
             }
 
-            @Override
-            public void onError(WebSocket webSocket, Throwable error) {
-            }
         };
 
         return httpClient.newWebSocketBuilder()
@@ -1114,18 +1015,6 @@ public class WebSocketIntegrationTest extends AbstractWebSocketTest {
             }
 
             @Override
-            public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
-                webSocket.request(1);
-                return null;
-            }
-
-            @Override
-            public CompletionStage<?> onBinary(WebSocket webSocket, ByteBuffer data, boolean last) {
-                webSocket.request(1);
-                return null;
-            }
-
-            @Override
             public CompletionStage<?> onPong(WebSocket webSocket, ByteBuffer message) {
                 // Copy the buffer since it may be reused
                 ByteBuffer copy = ByteBuffer.allocate(message.remaining());
@@ -1143,9 +1032,6 @@ public class WebSocketIntegrationTest extends AbstractWebSocketTest {
                 return null;
             }
 
-            @Override
-            public void onError(WebSocket webSocket, Throwable error) {
-            }
         };
 
         return httpClient.newWebSocketBuilder()
@@ -1167,18 +1053,6 @@ public class WebSocketIntegrationTest extends AbstractWebSocketTest {
             }
 
             @Override
-            public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
-                webSocket.request(1);
-                return null;
-            }
-
-            @Override
-            public CompletionStage<?> onBinary(WebSocket webSocket, ByteBuffer data, boolean last) {
-                webSocket.request(1);
-                return null;
-            }
-
-            @Override
             public CompletionStage<?> onPing(WebSocket webSocket, ByteBuffer message) {
                 // JDK WebSocket automatically responds with pong
                 ByteBuffer copy = ByteBuffer.allocate(message.remaining());
@@ -1196,9 +1070,6 @@ public class WebSocketIntegrationTest extends AbstractWebSocketTest {
                 return null;
             }
 
-            @Override
-            public void onError(WebSocket webSocket, Throwable error) {
-            }
         };
 
         return httpClient.newWebSocketBuilder()
@@ -1220,18 +1091,6 @@ public class WebSocketIntegrationTest extends AbstractWebSocketTest {
             }
 
             @Override
-            public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
-                webSocket.request(1);
-                return null;
-            }
-
-            @Override
-            public CompletionStage<?> onBinary(WebSocket webSocket, ByteBuffer data, boolean last) {
-                webSocket.request(1);
-                return null;
-            }
-
-            @Override
             public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
                 closeCode.set(statusCode);
                 closeReason.set(reason);
@@ -1239,9 +1098,6 @@ public class WebSocketIntegrationTest extends AbstractWebSocketTest {
                 return null;
             }
 
-            @Override
-            public void onError(WebSocket webSocket, Throwable error) {
-            }
         };
 
         return httpClient.newWebSocketBuilder()
@@ -1284,10 +1140,6 @@ public class WebSocketIntegrationTest extends AbstractWebSocketTest {
             if (connectLatch != null) {
                 connectLatch.countDown();
             }
-        }
-
-        @Override
-        public void onDisconnect(TestWebSocketServer.ClientHandler client) {
         }
 
         @Override

@@ -24,9 +24,9 @@
 
 package io.questdb.test.cutlass.http.websocket;
 
-import io.questdb.cutlass.ilpv4.server.WebSocketConnectionContext;
-import io.questdb.cutlass.ilpv4.websocket.WebSocketCloseCode;
-import io.questdb.cutlass.ilpv4.websocket.WebSocketProcessor;
+import io.questdb.cutlass.qwp.server.WebSocketConnectionContext;
+import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
+import io.questdb.cutlass.qwp.websocket.WebSocketProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.QuietCloseable;

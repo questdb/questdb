@@ -34,21 +34,21 @@ import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryMA;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4ArrayColumnCursor;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4BooleanColumnCursor;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4DecimalColumnCursor;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4GeoHashColumnCursor;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4NullBitmap;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4ParseException;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4StringColumnCursor;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4SymbolColumnCursor;
-import io.questdb.cutlass.ilpv4.protocol.IlpV4TimestampColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpBooleanColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpDecimalColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpGeoHashColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpNullBitmap;
+import io.questdb.cutlass.qwp.protocol.QwpParseException;
+import io.questdb.cutlass.qwp.protocol.QwpStringColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpSymbolColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpTimestampColumnCursor;
 import io.questdb.cutlass.line.tcp.ClientSymbolCache;
 import io.questdb.cutlass.line.tcp.ConnectionSymbolCache;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
-import static io.questdb.cutlass.ilpv4.protocol.IlpV4Constants.TYPE_TIMESTAMP_NANOS;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_TIMESTAMP_NANOS;
 import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
@@ -112,7 +112,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             // Slow path: expand sparse to dense, inserting null sentinels
             int valueIdx = 0;
             for (int row = 0; row < rowCount; row++) {
-                if (IlpV4NullBitmap.isNull(nullBitmapAddress, row)) {
+                if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
                     writeNullSentinel(dataMem, columnType);
                 } else {
                     // Copy value from packed array
@@ -138,7 +138,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BYTE:
                 for (int row = 0; row < rowCount; row++) {
-                    if (hasNulls && IlpV4NullBitmap.isNull(nullBitmapAddress, row)) {
+                    if (hasNulls && QwpNullBitmap.isNull(nullBitmapAddress, row)) {
                         dataMem.putByte((byte) 0);
                     } else {
                         dataMem.putByte((byte) Unsafe.getUnsafe().getLong(valuesAddress + (long) valueIdx * sourceValueSize));
@@ -148,7 +148,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 break;
             case ColumnType.SHORT:
                 for (int row = 0; row < rowCount; row++) {
-                    if (hasNulls && IlpV4NullBitmap.isNull(nullBitmapAddress, row)) {
+                    if (hasNulls && QwpNullBitmap.isNull(nullBitmapAddress, row)) {
                         dataMem.putShort((short) 0);
                     } else {
                         dataMem.putShort((short) Unsafe.getUnsafe().getLong(valuesAddress + (long) valueIdx * sourceValueSize));
@@ -158,7 +158,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 break;
             case ColumnType.INT:
                 for (int row = 0; row < rowCount; row++) {
-                    if (hasNulls && IlpV4NullBitmap.isNull(nullBitmapAddress, row)) {
+                    if (hasNulls && QwpNullBitmap.isNull(nullBitmapAddress, row)) {
                         dataMem.putInt(Numbers.INT_NULL);
                     } else {
                         dataMem.putInt((int) Unsafe.getUnsafe().getLong(valuesAddress + (long) valueIdx * sourceValueSize));
@@ -168,7 +168,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 break;
             case ColumnType.FLOAT:
                 for (int row = 0; row < rowCount; row++) {
-                    if (hasNulls && IlpV4NullBitmap.isNull(nullBitmapAddress, row)) {
+                    if (hasNulls && QwpNullBitmap.isNull(nullBitmapAddress, row)) {
                         dataMem.putFloat(Float.NaN);
                     } else {
                         dataMem.putFloat((float) Unsafe.getUnsafe().getDouble(valuesAddress + (long) valueIdx * sourceValueSize));
@@ -198,7 +198,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             int valueIdx = 0;
             for (int row = 0; row < rowCount; row++) {
                 long timestamp;
-                if (nullBitmapAddress != 0 && IlpV4NullBitmap.isNull(nullBitmapAddress, row)) {
+                if (nullBitmapAddress != 0 && QwpNullBitmap.isNull(nullBitmapAddress, row)) {
                     timestamp = Numbers.LONG_NULL;
                 } else {
                     timestamp = Unsafe.getUnsafe().getLong(valuesAddress + (long) valueIdx * 8);
@@ -213,7 +213,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             } else {
                 int valueIdx = 0;
                 for (int row = 0; row < rowCount; row++) {
-                    if (IlpV4NullBitmap.isNull(nullBitmapAddress, row)) {
+                    if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
                         dataMem.putLong(Numbers.LONG_NULL);
                     } else {
                         dataMem.putLong(Unsafe.getUnsafe().getLong(valuesAddress + (long) valueIdx * 8));
@@ -227,7 +227,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putCharColumn(int columnIndex, IlpV4StringColumnCursor cursor, int rowCount) {
+    public void putCharColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
@@ -256,7 +256,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     }
                 }
             }
-        } catch (IlpV4ParseException e) {
+        } catch (QwpParseException e) {
             throw new RuntimeException("Failed to parse CHAR column", e);
         }
 
@@ -264,7 +264,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putVarcharColumn(int columnIndex, IlpV4StringColumnCursor cursor, int rowCount) {
+    public void putVarcharColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
@@ -281,7 +281,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     VarcharTypeDriver.appendValue(auxMem, dataMem, value);
                 }
             }
-        } catch (IlpV4ParseException e) {
+        } catch (QwpParseException e) {
             throw new RuntimeException("Failed to parse VARCHAR column", e);
         }
 
@@ -289,7 +289,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putStringColumn(int columnIndex, IlpV4StringColumnCursor cursor, int rowCount) {
+    public void putStringColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
@@ -308,7 +308,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     StringTypeDriver.appendValue(auxMem, dataMem, value);
                 }
             }
-        } catch (IlpV4ParseException e) {
+        } catch (QwpParseException e) {
             throw new RuntimeException("Failed to parse STRING column", e);
         }
 
@@ -316,12 +316,12 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public boolean putSymbolColumn(int columnIndex, IlpV4SymbolColumnCursor cursor, int rowCount) {
+    public boolean putSymbolColumn(int columnIndex, QwpSymbolColumnCursor cursor, int rowCount) {
         return putSymbolColumn(columnIndex, cursor, rowCount, null, 0, 0);
     }
 
     @Override
-    public boolean putSymbolColumn(int columnIndex, IlpV4SymbolColumnCursor cursor, int rowCount,
+    public boolean putSymbolColumn(int columnIndex, QwpSymbolColumnCursor cursor, int rowCount,
                                    ConnectionSymbolCache symbolCache, long tableId, int initialSymbolCount) {
         checkInColumnarWrite();
 
@@ -384,7 +384,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     columnCache.put(clientSymbolId, symbolKey);
                 }
             }
-        } catch (IlpV4ParseException e) {
+        } catch (QwpParseException e) {
             throw new RuntimeException("Failed to parse SYMBOL column", e);
         }
 
@@ -393,7 +393,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putBooleanColumn(int columnIndex, IlpV4BooleanColumnCursor cursor, int rowCount) {
+    public void putBooleanColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
@@ -406,7 +406,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 // Null booleans are also stored as 0
                 dataMem.putByte(cursor.isNull() ? (byte) 0 : (cursor.getValue() ? (byte) 1 : (byte) 0));
             }
-        } catch (IlpV4ParseException e) {
+        } catch (QwpParseException e) {
             throw new RuntimeException("Failed to parse BOOLEAN column", e);
         }
 
@@ -428,9 +428,9 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putTimestampColumnWithConversion(int columnIndex, IlpV4TimestampColumnCursor cursor,
+    public void putTimestampColumnWithConversion(int columnIndex, QwpTimestampColumnCursor cursor,
                                                   int rowCount, byte ilpType, int columnType,
-                                                  boolean isDesignated, long startRowId) throws IlpV4ParseException {
+                                                  boolean isDesignated, long startRowId) throws QwpParseException {
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
@@ -474,8 +474,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putGeoHashColumn(int columnIndex, IlpV4GeoHashColumnCursor cursor,
-                                  int rowCount, int columnType) throws IlpV4ParseException {
+    public void putGeoHashColumn(int columnIndex, QwpGeoHashColumnCursor cursor,
+                                  int rowCount, int columnType) throws QwpParseException {
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
@@ -528,8 +528,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putDecimal64Column(int columnIndex, IlpV4DecimalColumnCursor cursor,
-                                    int rowCount, int columnType) throws IlpV4ParseException {
+    public void putDecimal64Column(int columnIndex, QwpDecimalColumnCursor cursor,
+                                    int rowCount, int columnType) throws QwpParseException {
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
@@ -558,8 +558,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putDecimal128Column(int columnIndex, IlpV4DecimalColumnCursor cursor,
-                                     int rowCount, int columnType) throws IlpV4ParseException {
+    public void putDecimal128Column(int columnIndex, QwpDecimalColumnCursor cursor,
+                                     int rowCount, int columnType) throws QwpParseException {
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
@@ -588,8 +588,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putDecimal256Column(int columnIndex, IlpV4DecimalColumnCursor cursor,
-                                     int rowCount, int columnType) throws IlpV4ParseException {
+    public void putDecimal256Column(int columnIndex, QwpDecimalColumnCursor cursor,
+                                     int rowCount, int columnType) throws QwpParseException {
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
@@ -629,8 +629,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putArrayColumn(int columnIndex, IlpV4ArrayColumnCursor cursor,
-                                int rowCount, int columnType) throws IlpV4ParseException {
+    public void putArrayColumn(int columnIndex, QwpArrayColumnCursor cursor,
+                                int rowCount, int columnType) throws QwpParseException {
         checkInColumnarWrite();
 
         MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
