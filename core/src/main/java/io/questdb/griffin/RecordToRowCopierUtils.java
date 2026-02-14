@@ -603,6 +603,8 @@ public class RecordToRowCopierUtils {
         int implicitCastVarcharAsTimestamp = asm.poolInterfaceMethod(TimestampDriver.class, "implicitCastVarchar", "(Lio/questdb/std/str/Utf8Sequence;)J");
         int transferVarcharToDateCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToDateCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;)V");
         int transferStrToVarcharCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferStrToVarcharCol", "(Lio/questdb/cairo/TableWriter$Row;ILjava/lang/CharSequence;)V");
+        int transferLongToVarcharCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferLongToVarcharCol", "(Lio/questdb/cairo/TableWriter$Row;IJ)V");
+        int transferLongToStrCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferLongToStrCol", "(Lio/questdb/cairo/TableWriter$Row;IJ)V");
         int getTimestampDriverRef = asm.poolMethod(ColumnType.class, "getTimestampDriver", "(I)Lio/questdb/cairo/TimestampDriver;");
         int validateArrayDimensionsAndTransferColString = asm.poolMethod(RecordToRowCopierUtils.class, "validateArrayDimensionsAndTransferCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/cairo/arr/DoubleArrayParser;Ljava/lang/CharSequence;I)V");
         int validateArrayDimensionsAndTransferColVarchar = asm.poolMethod(RecordToRowCopierUtils.class, "validateArrayDimensionsAndTransferCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/cairo/arr/DoubleArrayParser;Lio/questdb/std/str/Utf8Sequence;I)V");
@@ -846,6 +848,16 @@ public class RecordToRowCopierUtils {
                             case ColumnType.DOUBLE:
                                 asm.invokeStatic(implicitCastLongAsDouble);
                                 asm.invokeInterface(wPutDouble, 3);
+                                break;
+                            case ColumnType.VARCHAR:
+                                // Delegate to static helper: transferLongToVarcharCol(row, col, longValue)
+                                // Stack: [rowWriter, toColumnIndex, long] → []
+                                asm.invokeStatic(transferLongToVarcharCol);
+                                break;
+                            case ColumnType.STRING:
+                                // Delegate to static helper: transferLongToStrCol(row, col, longValue)
+                                // Stack: [rowWriter, toColumnIndex, long] → []
+                                asm.invokeStatic(transferLongToStrCol);
                                 break;
                             default:
                                 if (ColumnType.isDecimalType(toColumnTypeTag)) {
@@ -1746,6 +1758,10 @@ public class RecordToRowCopierUtils {
         int implicitCastVarcharAsTimestamp = asm.poolInterfaceMethod(TimestampDriver.class, "implicitCastVarchar", "(Lio/questdb/std/str/Utf8Sequence;)J");
         int transferVarcharToDateCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToDateCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;)V");
         int transferStrToVarcharCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferStrToVarcharCol", "(Lio/questdb/cairo/TableWriter$Row;ILjava/lang/CharSequence;)V");
+        // Pool entries for LONG → VARCHAR/STRING conversion helpers (used in case
+        // ColumnType.LONG switch)
+        int transferLongToVarcharCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferLongToVarcharCol", "(Lio/questdb/cairo/TableWriter$Row;IJ)V");
+        int transferLongToStrCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferLongToStrCol", "(Lio/questdb/cairo/TableWriter$Row;IJ)V");
         int getTimestampDriverRef = asm.poolMethod(ColumnType.class, "getTimestampDriver", "(I)Lio/questdb/cairo/TimestampDriver;");
         int validateArrayDimensionsAndTransferColString = asm.poolMethod(RecordToRowCopierUtils.class, "validateArrayDimensionsAndTransferCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/cairo/arr/DoubleArrayParser;Ljava/lang/CharSequence;I)V");
         int validateArrayDimensionsAndTransferColVarchar = asm.poolMethod(RecordToRowCopierUtils.class, "validateArrayDimensionsAndTransferCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/cairo/arr/DoubleArrayParser;Lio/questdb/std/str/Utf8Sequence;I)V");
@@ -2003,6 +2019,16 @@ public class RecordToRowCopierUtils {
                         case ColumnType.DOUBLE:
                             asm.invokeStatic(implicitCastLongAsDouble);
                             asm.invokeInterface(wPutDouble, 3);
+                            break;
+                        case ColumnType.VARCHAR:
+                            // Delegate to static helper: transferLongToVarcharCol(row, col, longValue)
+                            // Stack: [rowWriter, toColumnIndex, long] → []
+                            asm.invokeStatic(transferLongToVarcharCol);
+                            break;
+                        case ColumnType.STRING:
+                            // Delegate to static helper: transferLongToStrCol(row, col, longValue)
+                            // Stack: [rowWriter, toColumnIndex, long] → []
+                            asm.invokeStatic(transferLongToStrCol);
                             break;
                         default:
                             if (ColumnType.isDecimalType(toColumnTypeTag)) {
@@ -2943,5 +2969,29 @@ public class RecordToRowCopierUtils {
             }
         }
         return true;
+    }
+
+    @SuppressWarnings("unused")
+    // Called from dynamically generated bytecode to convert LONG → VARCHAR
+    public static void transferLongToVarcharCol(TableWriter.Row row, int column, long value) {
+        if (value != Long.MIN_VALUE) {
+            Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
+            sink.put(value);
+            row.putVarchar(column, sink);
+        } else {
+            row.putVarchar(column, null);
+        }
+    }
+
+    @SuppressWarnings("unused")
+    // Called from dynamically generated bytecode to convert LONG → STRING
+    public static void transferLongToStrCol(TableWriter.Row row, int column, long value) {
+        if (value != Long.MIN_VALUE) {
+            StringSink sink = Misc.getThreadLocalSink();
+            sink.put(value);
+            row.putStr(column, sink);
+        } else {
+            row.putStr(column, null);
+        }
     }
 }
