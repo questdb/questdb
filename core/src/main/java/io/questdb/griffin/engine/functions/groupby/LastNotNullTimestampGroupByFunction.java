@@ -38,7 +38,9 @@ public class LastNotNullTimestampGroupByFunction extends FirstTimestampGroupByFu
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (arg.getTimestamp(record) != Numbers.LONG_NULL) {
-            computeFirst(mapValue, record, rowId);
+            if (mapValue.getTimestamp(valueIndex + 1) == Numbers.LONG_NULL || rowId > mapValue.getLong(valueIndex)) {
+                computeFirst(mapValue, record, rowId);
+            }
         }
     }
 

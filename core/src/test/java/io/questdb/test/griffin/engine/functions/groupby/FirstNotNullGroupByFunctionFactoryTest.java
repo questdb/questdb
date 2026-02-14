@@ -24,7 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.mp.WorkerPool;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import java.util.UUID;
@@ -156,5 +159,122 @@ public class FirstNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "     first_not_null(a14) a14 " +
                         "from tab"
         );
+    }
+
+    @Test
+    public void testMergeWithNullDestValue() throws Exception {
+        // Regression test for a bug in FirstNotNull*GroupByFunction.merge().
+        // When parallel GROUP BY processes partitions across workers:
+        //   - Worker A processes partition 1 (earlier rows, all nulls for a key):
+        //     computeFirst() stores a valid rowId with null value
+        //   - Worker B processes partition 2 (later rows, non-null values):
+        //     stores a higher rowId with a valid value
+        //   - Merge B into A: srcRowId > destRowId and destRowId != LONG_NULL,
+        //     so merge() incorrectly discards the non-null value.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        execute(
+                                compiler,
+                                """
+                                        CREATE TABLE tab (
+                                            key SYMBOL,
+                                            a_char CHAR,
+                                            a_date DATE,
+                                            a_double DOUBLE,
+                                            a_float FLOAT,
+                                            a_int INT,
+                                            a_long LONG,
+                                            a_sym SYMBOL,
+                                            a_ts TIMESTAMP,
+                                            a_uuid UUID,
+                                            a_str STRING,
+                                            a_varchar VARCHAR,
+                                            ts TIMESTAMP
+                                        ) TIMESTAMP(ts) PARTITION BY DAY""",
+                                sqlExecutionContext
+                        );
+
+                        // Partition 1 (day 1): 1000 rows with key='k1', all value columns null.
+                        // computeFirst() stores a valid rowId with null values.
+                        execute(
+                                compiler,
+                                """
+                                        INSERT INTO tab
+                                        SELECT 'k1',
+                                            NULL::CHAR,
+                                            NULL::DATE,
+                                            NULL::DOUBLE,
+                                            NULL::FLOAT,
+                                            NULL::INT,
+                                            NULL::LONG,
+                                            NULL::SYMBOL,
+                                            NULL::TIMESTAMP,
+                                            NULL::UUID,
+                                            NULL::STRING,
+                                            NULL::VARCHAR,
+                                            timestamp_sequence('1970-01-01', 1_000_000) ts
+                                        FROM long_sequence(1000)""",
+                                sqlExecutionContext
+                        );
+
+                        // Partition 2 (day 2): 1000 rows with key='k1', non-null values.
+                        execute(
+                                compiler,
+                                """
+                                        INSERT INTO tab
+                                        SELECT 'k1',
+                                            'A',
+                                            to_date('2024-01-01', 'yyyy-MM-dd'),
+                                            3.14,
+                                            2.72::FLOAT,
+                                            42,
+                                            123456789,
+                                            'sym_val',
+                                            to_timestamp('2024-01-01T12:00:00.000000', 'yyyy-MM-ddTHH:mm:ss.SSSUUU'),
+                                            'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+                                            'hello',
+                                            'world'::VARCHAR,
+                                            timestamp_sequence('1970-01-02', 1_000_000) ts
+                                        FROM long_sequence(1000)""",
+                                sqlExecutionContext
+                        );
+
+                        String query = """
+                                SELECT key,
+                                    first_not_null(a_char) a_char,
+                                    first_not_null(a_date) a_date,
+                                    first_not_null(a_double) a_double,
+                                    first_not_null(a_float) a_float,
+                                    first_not_null(a_int) a_int,
+                                    first_not_null(a_long) a_long,
+                                    first_not_null(a_sym) a_sym,
+                                    first_not_null(a_ts) a_ts,
+                                    first_not_null(a_uuid) a_uuid,
+                                    first_not_null(a_str) a_str,
+                                    first_not_null(a_varchar) a_varchar
+                                FROM tab""";
+
+                        // Run with single-threaded GROUP BY (correct baseline).
+                        sqlExecutionContext.setParallelGroupByEnabled(false);
+                        try {
+                            TestUtils.printSql(engine, sqlExecutionContext, query, sink);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(true);
+                        }
+
+                        // Run with parallel GROUP BY (exercises merge).
+                        sqlExecutionContext.setParallelGroupByEnabled(true);
+                        StringSink parallelSink = new StringSink();
+                        TestUtils.printSql(engine, sqlExecutionContext, query, parallelSink);
+
+                        TestUtils.assertEquals(sink, parallelSink);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 }

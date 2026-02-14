@@ -99,7 +99,7 @@ public class FirstNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
             long srcRowId = srcValue.getLong(valueIndex);
             long destRowId = destValue.getLong(valueIndex);
             // srcRowId is non-null at this point since we know that the value is non-null
-            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || destValue.getIPv4(valueIndex + 1) == Numbers.IPv4_NULL) {
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putInt(valueIndex + 1, srcVal);
             }

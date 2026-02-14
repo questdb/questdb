@@ -53,8 +53,12 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (Numbers.isNull(mapValue.getDouble(valueIndex + 1))) {
-            computeFirst(mapValue, record, rowId);
+        double val = arg.getDouble(record);
+        if (Numbers.isFinite(val)) {
+            if (Numbers.isNull(mapValue.getDouble(valueIndex + 1)) || rowId < mapValue.getLong(valueIndex)) {
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putDouble(valueIndex + 1, val);
+            }
         }
     }
 
@@ -70,7 +74,7 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
             long srcRowId = srcValue.getLong(valueIndex);
             long destRowId = destValue.getLong(valueIndex);
             // srcRowId is non-null at this point since we know that the value is non-null
-            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || Numbers.isNull(destValue.getDouble(valueIndex + 1))) {
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putDouble(valueIndex + 1, srcVal);
             }

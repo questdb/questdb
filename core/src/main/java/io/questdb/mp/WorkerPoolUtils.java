@@ -35,6 +35,7 @@ import io.questdb.cairo.O3OpenColumnJob;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
+import io.questdb.cairo.sql.async.UnorderedPageFrameReduceJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.GroupByLongTopKJob;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
@@ -88,6 +89,10 @@ public class WorkerPoolUtils {
                 );
                 sharedPoolQuery.assign(i, pageFrameReduceJob);
                 sharedPoolQuery.freeOnExit(pageFrameReduceJob);
+
+                final UnorderedPageFrameReduceJob unorderedJob = new UnorderedPageFrameReduceJob(cairoEngine, messageBus);
+                sharedPoolQuery.assign(i, unorderedJob);
+                sharedPoolQuery.freeOnExit(unorderedJob);
             }
         }
     }

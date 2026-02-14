@@ -170,6 +170,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoPageFrameReduceQueueCapacity;
     private final int cairoPageFrameReduceRowIdListCapacity;
     private final int cairoPageFrameReduceShardCount;
+    private final int cairoUnorderedPageFrameReduceQueueCapacity;
     private final boolean cairoResourcePoolTracingEnabled;
     private final int cairoSQLCopyIdSupplier;
     private final boolean cairoSqlColumnAliasExpressionEnabled;
@@ -1918,6 +1919,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoPageFrameReduceColumnListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY, 16));
             final int defaultReduceShardCount = queryWorkers > 0 ? Math.min(queryWorkers, 4) : 0;
             this.cairoPageFrameReduceShardCount = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, defaultReduceShardCount);
+            this.cairoUnorderedPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_UNORDERED_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4096));
             this.sqlParallelFilterPreTouchThreshold = getDouble(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD, "0.05");
             this.sqlParallelFilterDispatchLimit = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, Math.min(queryWorkers, 32));
             this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 32);
@@ -4344,6 +4346,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getTxnScoreboardEntryCount() {
             return sqlTxnScoreboardEntryCount;
+        }
+
+        @Override
+        public int getUnorderedPageFrameReduceQueueCapacity() {
+            return cairoUnorderedPageFrameReduceQueueCapacity;
         }
 
         @Override

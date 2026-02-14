@@ -31,17 +31,17 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.async.PageFrameReduceTask;
-import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
-import io.questdb.cairo.sql.async.PageFrameReducer;
-import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.cairo.sql.async.UnorderedPageFrameReducer;
+import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -52,7 +52,6 @@ import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import io.questdb.jit.CompiledFilter;
-import io.questdb.mp.SCSequence;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
@@ -63,19 +62,16 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
-import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
-import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
 /**
  * ORDER BY + LIMIT (top K) parallel execution.
  */
 public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
-    private static final PageFrameReducer FILTER_AND_FIND_TOP_K = AsyncTopKRecordCursorFactory::filterAndFindTopK;
-    private static final PageFrameReducer FIND_TOP_K = AsyncTopKRecordCursorFactory::findTopK;
+    private static final UnorderedPageFrameReducer FILTER_AND_FIND_TOP_K = AsyncTopKRecordCursorFactory::filterAndFindTopK;
+    private static final UnorderedPageFrameReducer FIND_TOP_K = AsyncTopKRecordCursorFactory::findTopK;
     private final RecordCursorFactory base;
-    private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncTopKRecordCursor cursor;
-    private final PageFrameSequence<AsyncTopKAtom> frameSequence;
+    private final UnorderedPageFrameSequence<AsyncTopKAtom> frameSequence;
     private final long lo;
     private final ListColumnFilter orderByFilter;
     private final int workerCount;
@@ -86,7 +82,6 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             @NotNull MessageBus messageBus,
             @NotNull RecordMetadata metadata,
             @NotNull RecordCursorFactory base,
-            @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @Nullable Function filter,
             @Nullable IntHashSet filterUsedColumnIndexes,
             @Nullable ObjList<Function> perWorkerFilters,
@@ -117,15 +112,13 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
                     lo,
                     workerCount
             );
-            this.frameSequence = new PageFrameSequence<>(
+            this.frameSequence = new UnorderedPageFrameSequence<>(
                     engine,
                     configuration,
                     messageBus,
                     atom,
                     filter != null ? FILTER_AND_FIND_TOP_K : FIND_TOP_K,
-                    reduceTaskFactory,
-                    workerCount,
-                    PageFrameReduceTask.TYPE_TOP_K
+                    workerCount
             );
             this.cursor = new AsyncTopKRecordCursor();
             this.orderByFilter = orderByFilter;
@@ -138,11 +131,6 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public PageFrameSequence<AsyncTopKAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
-        return frameSequence.of(base, executionContext, collectSubSeq, order);
-    }
-
-    @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
     }
@@ -150,7 +138,8 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final int order = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
-        cursor.of(execute(executionContext, collectSubSeq, order));
+        frameSequence.of(base, executionContext, order);
+        cursor.of(frameSequence);
         return cursor;
     }
 
@@ -190,55 +179,65 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public boolean usesCompiledFilter() {
-        return frameSequence.getAtom().getCompiledFilter() != null;
+        return frameSequence.getAtom().getFilterContext().getCompiledFilter() != null;
     }
 
     private static void filterAndFindTopK(
             int workerId,
             @NotNull PageFrameMemoryRecord record,
-            @NotNull PageFrameReduceTask task,
+            int frameIndex,
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
-            @Nullable PageFrameSequence<?> stealingFrameSequence
+            @NotNull UnorderedPageFrameSequence<?> frameSequence,
+            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
     ) {
-        final PageFrameSequence<AsyncTopKAtom> frameSequence = task.getFrameSequence(AsyncTopKAtom.class);
-
-        final DirectLongList rows = task.getFilteredRows();
-        rows.clear();
-
-        final long frameRowCount = task.getFrameRowCount();
+        @SuppressWarnings("unchecked") final AsyncTopKAtom atom = ((UnorderedPageFrameSequence<AsyncTopKAtom>) frameSequence).getAtom();
+        final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
         assert frameRowCount > 0;
-        final AsyncTopKAtom atom = frameSequence.getAtom();
 
-        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == frameSequence;
+        final boolean owner = stealingFrameSequence == frameSequence;
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final PageFrameMemoryPool frameMemoryPool = atom.getMemoryPool(slotId);
+        final AsyncFilterContext fCtx = atom.getFilterContext();
+        final PageFrameMemoryPool frameMemoryPool = fCtx.getMemoryPool(slotId);
         final PageFrameMemoryRecord recordB = atom.getRecordB(slotId);
-        final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
+        final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
+        final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
+        final boolean useLateMaterialization = fCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
         final PageFrameMemory frameMemory;
         if (useLateMaterialization) {
-            frameMemory = frameMemoryPool.navigateTo(task.getFrameIndex(), atom.getFilterUsedColumnIndexes());
+            frameMemory = frameMemoryPool.navigateTo(frameIndex, fCtx.getFilterUsedColumnIndexes());
         } else {
-            frameMemory = frameMemoryPool.navigateTo(task.getFrameIndex());
+            frameMemory = frameMemoryPool.navigateTo(frameIndex);
         }
 
         record.init(frameMemory);
+        final DirectLongList rows = fCtx.getFilteredRows(slotId);
+        rows.clear();
         final LimitedSizeLongTreeChain chain = atom.getTreeChain(slotId);
         final RecordComparator comparator = atom.getComparator(slotId);
-        final CompiledFilter compiledFilter = atom.getCompiledFilter();
-        final Function filter = atom.getFilter(slotId);
+        final CompiledFilter compiledFilter = fCtx.getCompiledFilter();
+        final Function filter = fCtx.getFilter(slotId);
         try {
             if (compiledFilter == null || frameMemory.hasColumnTops()) {
                 // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
-                applyFilter(filter, rows, record, frameRowCount);
+                AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
             } else {
-                applyCompiledFilter(frameMemory, compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
+                AsyncFilterUtils.applyCompiledFilter(
+                        compiledFilter,
+                        fCtx.getBindVarMemory(),
+                        fCtx.getBindVarFunctions(),
+                        frameMemory,
+                        addressCache,
+                        fCtx.getDataAddresses(slotId),
+                        fCtx.getAuxAddresses(slotId),
+                        rows,
+                        frameRowCount
+                );
             }
             if (isParquetFrame) {
-                atom.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
+                fCtx.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
             }
 
-            if (useLateMaterialization && frameMemory.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
+            if (useLateMaterialization && frameMemory.populateRemainingColumns(fCtx.getFilterUsedColumnIndexes(), rows, true)) {
                 record.init(frameMemory);
             }
 
@@ -262,19 +261,21 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     private static void findTopK(
             int workerId,
             @NotNull PageFrameMemoryRecord record,
-            @NotNull PageFrameReduceTask task,
+            int frameIndex,
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
-            @Nullable PageFrameSequence<?> stealingFrameSequence
+            @NotNull UnorderedPageFrameSequence<?> frameSequence,
+            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
     ) {
-        final long frameRowCount = task.getFrameRowCount();
+        final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
         assert frameRowCount > 0;
-        final AsyncTopKAtom atom = task.getFrameSequence(AsyncTopKAtom.class).getAtom();
+        @SuppressWarnings("unchecked") final AsyncTopKAtom atom = ((UnorderedPageFrameSequence<AsyncTopKAtom>) frameSequence).getAtom();
 
-        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
+        final boolean owner = stealingFrameSequence == frameSequence;
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final PageFrameMemoryPool frameMemoryPool = atom.getMemoryPool(slotId);
+        final AsyncFilterContext fCtx = atom.getFilterContext();
+        final PageFrameMemoryPool frameMemoryPool = fCtx.getMemoryPool(slotId);
         final PageFrameMemoryRecord recordB = atom.getRecordB(slotId);
-        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(task.getFrameIndex());
+        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
         record.init(frameMemory);
         final LimitedSizeLongTreeChain chain = atom.getTreeChain(slotId);
         final RecordComparator comparator = atom.getComparator(slotId);

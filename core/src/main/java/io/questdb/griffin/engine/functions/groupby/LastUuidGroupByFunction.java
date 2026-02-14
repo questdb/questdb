@@ -37,7 +37,9 @@ public final class LastUuidGroupByFunction extends FirstUuidGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        computeFirst(mapValue, record, rowId);
+        if (rowId > mapValue.getLong(valueIndex)) {
+            computeFirst(mapValue, record, rowId);
+        }
     }
 
     @Override
