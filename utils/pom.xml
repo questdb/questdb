@@ -143,9 +143,6 @@
     <profiles>
         <profile>
             <id>local-client</id>
-            <properties>
-                <questdb.client.version>1.0.2-SNAPSHOT</questdb.client.version>
-            </properties>
         </profile>
         <profile>
             <id>java17+</id>
