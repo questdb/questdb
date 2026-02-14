@@ -1,0 +1,527 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.recovery;
+
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableUtils;
+import io.questdb.std.Decimals;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+
+import java.nio.charset.StandardCharsets;
+
+/**
+ * Reads and formats a single column value for display. Supports all QuestDB
+ * column types: fixed-size types are read directly from the {@code .d} file;
+ * var-size types (varchar, string, binary, array) use the {@code .i} (aux)
+ * file to locate data in the {@code .d} file.
+ *
+ * <p>The {@code withAuxAndData} helper manages the open/read/close lifecycle
+ * for the aux and data file pair shared by all var-size readers.
+ */
+public class ColumnValueReader {
+    static final int MAX_DISPLAY_BYTES = 8192;
+    private final FilesFacade ff;
+
+    public ColumnValueReader(FilesFacade ff) {
+        this.ff = ff;
+    }
+
+    public String readValue(
+            CharSequence tableDir,
+            String partitionDirName,
+            String columnName,
+            long columnNameTxn,
+            int columnType,
+            long rowNo,
+            long effectiveRows
+    ) {
+        if (rowNo < 0 || rowNo >= effectiveRows) {
+            return "ERROR: row out of range [0, " + effectiveRows + ")";
+        }
+
+        short tag = ColumnType.tagOf(columnType);
+        if (ColumnType.isVarSize(columnType)) {
+            return switch (tag) {
+                case ColumnType.VARCHAR -> readVarchar(tableDir, partitionDirName, columnName, columnNameTxn, rowNo);
+                case ColumnType.STRING -> readString(tableDir, partitionDirName, columnName, columnNameTxn, rowNo);
+                case ColumnType.BINARY -> readBinary(tableDir, partitionDirName, columnName, columnNameTxn, rowNo);
+                default -> readArray(tableDir, partitionDirName, columnName, columnNameTxn, rowNo);
+            };
+        }
+        return readFixedSize(tableDir, partitionDirName, columnName, columnNameTxn, columnType, tag, rowNo);
+    }
+
+    private String readArray(CharSequence tableDir, String partitionDirName, String columnName, long columnNameTxn, long rowNo) {
+        return withAuxAndData(tableDir, partitionDirName, columnName, columnNameTxn, 16, rowNo * 16, (auxBuf, auxFd, dataFd) -> {
+            long rawOffset = Unsafe.getUnsafe().getLong(auxBuf);
+            long offset = rawOffset & ((1L << 48) - 1);
+            int size = Unsafe.getUnsafe().getInt(auxBuf + Long.BYTES);
+
+            if (size == 0) {
+                return "null";
+            }
+            if (size < 0) {
+                return "ERROR: invalid array size " + size;
+            }
+
+            int displaySize = Math.min(size, 128);
+            long dataBuf = Unsafe.malloc(displaySize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                long dataRead = ff.read(dataFd, dataBuf, displaySize, offset);
+                if (dataRead < displaySize) {
+                    return "ERROR: read failed at data offset " + offset;
+                }
+                StringBuilder sb = new StringBuilder();
+                hexDump(dataBuf, displaySize, sb);
+                if (size > displaySize) {
+                    sb.append("... (").append(size).append(" bytes total)");
+                }
+                return sb.toString();
+            } finally {
+                Unsafe.free(dataBuf, displaySize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    private String readBinary(CharSequence tableDir, String partitionDirName, String columnName, long columnNameTxn, long rowNo) {
+        return withAuxAndData(tableDir, partitionDirName, columnName, columnNameTxn, 16, rowNo * 8, (auxBuf, auxFd, dataFd) -> {
+            long dataOffset = Unsafe.getUnsafe().getLong(auxBuf);
+
+            // read length prefix (8 bytes)
+            long lenBuf = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+            try {
+                long lenRead = ff.read(dataFd, lenBuf, 8, dataOffset);
+                if (lenRead < 8) {
+                    return "ERROR: read failed at data offset " + dataOffset;
+                }
+                long blobLen = Unsafe.getUnsafe().getLong(lenBuf);
+                if (blobLen == -1) {
+                    return "null";
+                }
+                if (blobLen < 0) {
+                    return "ERROR: invalid binary length " + blobLen;
+                }
+
+                int displaySize = (int) Math.min(blobLen, 64);
+                long dataBuf = Unsafe.malloc(displaySize, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    long dataRead = ff.read(dataFd, dataBuf, displaySize, dataOffset + 8);
+                    if (dataRead < displaySize) {
+                        return "ERROR: read failed at data offset " + (dataOffset + 8);
+                    }
+                    StringBuilder sb = new StringBuilder();
+                    hexDump(dataBuf, displaySize, sb);
+                    if (blobLen > 64) {
+                        sb.append("... (").append(blobLen).append(" bytes total)");
+                    }
+                    return sb.toString();
+                } finally {
+                    Unsafe.free(dataBuf, displaySize, MemoryTag.NATIVE_DEFAULT);
+                }
+            } finally {
+                Unsafe.free(lenBuf, 8, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    private String readFixedSize(
+            CharSequence tableDir,
+            String partitionDirName,
+            String columnName,
+            long columnNameTxn,
+            int columnType,
+            short tag,
+            long rowNo
+    ) {
+        int size = ColumnType.sizeOf(columnType);
+        if (size <= 0) {
+            return "ERROR: unsupported fixed-size type (size=" + size + ")";
+        }
+
+        try (Path path = new Path()) {
+            path.of(tableDir).slash().concat(partitionDirName).slash();
+            TableUtils.dFile(path, columnName, columnNameTxn);
+            long fd = ff.openRO(path.$());
+            if (fd < 0) {
+                return "ERROR: data file missing";
+            }
+
+            long scratch = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+            try {
+                long offset = rowNo * size;
+                long bytesRead = ff.read(fd, scratch, size, offset);
+                if (bytesRead < size) {
+                    return "ERROR: read failed at offset " + offset;
+                }
+                return formatFixedValue(scratch, tag, size, columnType);
+            } finally {
+                Unsafe.free(scratch, size, MemoryTag.NATIVE_DEFAULT);
+                ff.close(fd);
+            }
+        }
+    }
+
+    private String readString(CharSequence tableDir, String partitionDirName, String columnName, long columnNameTxn, long rowNo) {
+        return withAuxAndData(tableDir, partitionDirName, columnName, columnNameTxn, 16, rowNo * 8, (auxBuf, auxFd, dataFd) -> {
+            long startOffset = Unsafe.getUnsafe().getLong(auxBuf);
+
+            // read length prefix (4 bytes)
+            long lenBuf = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
+            try {
+                long lenRead = ff.read(dataFd, lenBuf, 4, startOffset);
+                if (lenRead < 4) {
+                    return "ERROR: read failed at data offset " + startOffset;
+                }
+                int strLen = Unsafe.getUnsafe().getInt(lenBuf);
+                if (strLen == -1) {
+                    return "null";
+                }
+                if (strLen < 0) {
+                    return "ERROR: invalid string length " + strLen;
+                }
+
+                // string data is UTF-16, strLen chars = strLen * 2 bytes
+                int displayChars = Math.min(strLen, MAX_DISPLAY_BYTES / 2);
+                long dataBytes = (long) displayChars * 2;
+                long dataBuf = Unsafe.malloc(dataBytes, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    long dataRead = ff.read(dataFd, dataBuf, dataBytes, startOffset + 4);
+                    if (dataRead < dataBytes) {
+                        return "ERROR: read failed at data offset " + (startOffset + 4);
+                    }
+                    char[] chars = new char[displayChars];
+                    for (int i = 0; i < displayChars; i++) {
+                        chars[i] = Unsafe.getUnsafe().getChar(dataBuf + (long) i * 2);
+                    }
+                    String result = new String(chars);
+                    if (strLen > displayChars) {
+                        return result + "... (" + strLen + " chars total)";
+                    }
+                    return result;
+                } finally {
+                    Unsafe.free(dataBuf, dataBytes, MemoryTag.NATIVE_DEFAULT);
+                }
+            } finally {
+                Unsafe.free(lenBuf, 4, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    private String readVarchar(CharSequence tableDir, String partitionDirName, String columnName, long columnNameTxn, long rowNo) {
+        return withAuxAndData(tableDir, partitionDirName, columnName, columnNameTxn, 16, rowNo * 16, (auxBuf, auxFd, dataFd) -> {
+            int header = Unsafe.getUnsafe().getInt(auxBuf);
+
+            // NULL: bit 2 set
+            if ((header & 4) != 0) {
+                return "null";
+            }
+
+            // INLINED: bit 0 set
+            if ((header & 1) != 0) {
+                int length = (header >>> 4) & 0x0F;
+                if (length == 0) {
+                    return "";
+                }
+                byte[] bytes = new byte[length];
+                for (int i = 0; i < length; i++) {
+                    bytes[i] = Unsafe.getUnsafe().getByte(auxBuf + 1 + i);
+                }
+                try {
+                    return new String(bytes, StandardCharsets.UTF_8);
+                } catch (Exception e) {
+                    StringBuilder sb = new StringBuilder();
+                    hexDump(auxBuf + 1, length, sb);
+                    return sb.toString();
+                }
+            }
+
+            // Non-inlined
+            int size = (header >>> 4) & 0x0FFFFFFF;
+            long dataOffsetRaw = Unsafe.getUnsafe().getLong(auxBuf + Long.BYTES);
+            long dataOffset = dataOffsetRaw >>> 16;
+
+            int displaySize = Math.min(size, MAX_DISPLAY_BYTES);
+            long dataBuf = Unsafe.malloc(displaySize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                long dataRead = ff.read(dataFd, dataBuf, displaySize, dataOffset);
+                if (dataRead < displaySize) {
+                    return "ERROR: read failed at data offset " + dataOffset;
+                }
+                byte[] bytes = new byte[displaySize];
+                for (int i = 0; i < displaySize; i++) {
+                    bytes[i] = Unsafe.getUnsafe().getByte(dataBuf + i);
+                }
+                try {
+                    String result = new String(bytes, StandardCharsets.UTF_8);
+                    if (size > displaySize) {
+                        return result + "... (" + size + " bytes total)";
+                    }
+                    return result;
+                } catch (Exception e) {
+                    StringBuilder sb = new StringBuilder();
+                    hexDump(dataBuf, displaySize, sb);
+                    if (size > displaySize) {
+                        sb.append("... (").append(size).append(" bytes total)");
+                    }
+                    return sb.toString();
+                }
+            } finally {
+                Unsafe.free(dataBuf, displaySize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    private String withAuxAndData(
+            CharSequence tableDir,
+            String partitionDirName,
+            String columnName,
+            long columnNameTxn,
+            int auxReadSize,
+            long auxOffset,
+            VarSizeReader reader
+    ) {
+        try (Path path = new Path()) {
+            path.of(tableDir).slash().concat(partitionDirName).slash();
+            int pathLen = path.size();
+
+            // open .i (aux) file
+            path.trimTo(pathLen);
+            TableUtils.iFile(path, columnName, columnNameTxn);
+            long auxFd = ff.openRO(path.$());
+            if (auxFd < 0) {
+                return "ERROR: aux file missing";
+            }
+
+            long auxBuf = Unsafe.malloc(auxReadSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                long bytesRead = ff.read(auxFd, auxBuf, auxReadSize, auxOffset);
+                if (bytesRead < auxReadSize) {
+                    return "ERROR: read failed at aux offset " + auxOffset;
+                }
+
+                // open .d (data) file
+                path.trimTo(pathLen);
+                TableUtils.dFile(path, columnName, columnNameTxn);
+                long dataFd = ff.openRO(path.$());
+                if (dataFd < 0) {
+                    return "ERROR: data file missing";
+                }
+
+                try {
+                    return reader.read(auxBuf, auxFd, dataFd);
+                } finally {
+                    ff.close(dataFd);
+                }
+            } finally {
+                Unsafe.free(auxBuf, auxReadSize, MemoryTag.NATIVE_DEFAULT);
+                ff.close(auxFd);
+            }
+        }
+    }
+
+    private static String formatFixedValue(long addr, short tag, int size, int columnType) {
+        return switch (tag) {
+            case ColumnType.BOOLEAN -> {
+                byte v = Unsafe.getUnsafe().getByte(addr);
+                yield v == -1 ? "null" : v != 0 ? "true" : "false";
+            }
+            case ColumnType.BYTE -> Byte.toString(Unsafe.getUnsafe().getByte(addr));
+            case ColumnType.SHORT -> Short.toString(Unsafe.getUnsafe().getShort(addr));
+            case ColumnType.CHAR -> {
+                char c = Unsafe.getUnsafe().getChar(addr);
+                yield c == 0 ? "null" : Character.toString(c);
+            }
+            case ColumnType.INT -> {
+                int v = Unsafe.getUnsafe().getInt(addr);
+                yield v == Integer.MIN_VALUE ? "null" : Integer.toString(v);
+            }
+            case ColumnType.LONG -> {
+                long v = Unsafe.getUnsafe().getLong(addr);
+                yield v == Long.MIN_VALUE ? "null" : Long.toString(v);
+            }
+            case ColumnType.FLOAT -> {
+                float v = Unsafe.getUnsafe().getFloat(addr);
+                yield Float.isNaN(v) ? "null" : Float.toString(v);
+            }
+            case ColumnType.DOUBLE -> {
+                double v = Unsafe.getUnsafe().getDouble(addr);
+                yield Double.isNaN(v) ? "null" : Double.toString(v);
+            }
+            case ColumnType.DATE -> {
+                long v = Unsafe.getUnsafe().getLong(addr);
+                if (v == Long.MIN_VALUE) {
+                    yield "null";
+                }
+                StringSink sink = new StringSink();
+                MicrosFormatUtils.appendDateTime(sink, v * 1000);
+                yield sink.toString();
+            }
+            case ColumnType.TIMESTAMP -> {
+                long v = Unsafe.getUnsafe().getLong(addr);
+                if (v == Long.MIN_VALUE) {
+                    yield "null";
+                }
+                StringSink sink = new StringSink();
+                MicrosFormatUtils.appendDateTime(sink, v);
+                yield sink.toString();
+            }
+            case ColumnType.SYMBOL -> {
+                int v = Unsafe.getUnsafe().getInt(addr);
+                yield v == Integer.MIN_VALUE ? "null" : "symbol#" + v;
+            }
+            case ColumnType.UUID -> {
+                long lo = Unsafe.getUnsafe().getLong(addr);
+                long hi = Unsafe.getUnsafe().getLong(addr + 8);
+                if (lo == Long.MIN_VALUE && hi == Long.MIN_VALUE) {
+                    yield "null";
+                }
+                yield formatUuid(lo, hi);
+            }
+            case ColumnType.IPv4 -> {
+                int v = Unsafe.getUnsafe().getInt(addr);
+                if (v == Numbers.IPv4_NULL) {
+                    yield "null";
+                }
+                StringSink sink = new StringSink();
+                Numbers.intToIPv4Sink(sink, v);
+                yield sink.toString();
+            }
+            case ColumnType.DECIMAL8 -> {
+                byte v = Unsafe.getUnsafe().getByte(addr);
+                if (v == Decimals.DECIMAL8_NULL) {
+                    yield "null";
+                }
+                StringSink sink = new StringSink();
+                Decimals.append(v, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                yield sink.toString();
+            }
+            case ColumnType.DECIMAL16 -> {
+                short v = Unsafe.getUnsafe().getShort(addr);
+                if (v == Decimals.DECIMAL16_NULL) {
+                    yield "null";
+                }
+                StringSink sink = new StringSink();
+                Decimals.append(v, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                yield sink.toString();
+            }
+            case ColumnType.DECIMAL32 -> {
+                int v = Unsafe.getUnsafe().getInt(addr);
+                if (v == Decimals.DECIMAL32_NULL) {
+                    yield "null";
+                }
+                StringSink sink = new StringSink();
+                Decimals.append(v, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                yield sink.toString();
+            }
+            case ColumnType.DECIMAL64 -> {
+                long v = Unsafe.getUnsafe().getLong(addr);
+                StringSink sink = new StringSink();
+                Decimals.append(v, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                yield sink.toString();
+            }
+            case ColumnType.DECIMAL128 -> {
+                long hi = Unsafe.getUnsafe().getLong(addr);
+                long lo = Unsafe.getUnsafe().getLong(addr + Long.BYTES);
+                StringSink sink = new StringSink();
+                Decimals.append(hi, lo, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                yield sink.toString();
+            }
+            case ColumnType.DECIMAL256 -> {
+                long hh = Unsafe.getUnsafe().getLong(addr);
+                long hl = Unsafe.getUnsafe().getLong(addr + Long.BYTES);
+                long lh = Unsafe.getUnsafe().getLong(addr + 2L * Long.BYTES);
+                long ll = Unsafe.getUnsafe().getLong(addr + 3L * Long.BYTES);
+                StringSink sink = new StringSink();
+                Decimals.append(hh, hl, lh, ll, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
+                yield sink.toString();
+            }
+            case ColumnType.LONG256 -> {
+                long l0 = Unsafe.getUnsafe().getLong(addr);
+                long l1 = Unsafe.getUnsafe().getLong(addr + 8);
+                long l2 = Unsafe.getUnsafe().getLong(addr + 16);
+                long l3 = Unsafe.getUnsafe().getLong(addr + 24);
+                if (l0 == Long.MIN_VALUE && l1 == Long.MIN_VALUE && l2 == Long.MIN_VALUE && l3 == Long.MIN_VALUE) {
+                    yield "null";
+                }
+                yield "0x" + Long.toHexString(l3) + Long.toHexString(l2) + Long.toHexString(l1) + Long.toHexString(l0);
+            }
+            case ColumnType.LONG128 -> {
+                long lo = Unsafe.getUnsafe().getLong(addr);
+                long hi = Unsafe.getUnsafe().getLong(addr + 8);
+                if (lo == Long.MIN_VALUE && hi == Long.MIN_VALUE) {
+                    yield "null";
+                }
+                yield "0x" + Long.toHexString(hi) + Long.toHexString(lo);
+            }
+            case ColumnType.GEOBYTE -> Byte.toString(Unsafe.getUnsafe().getByte(addr));
+            case ColumnType.GEOSHORT -> Short.toString(Unsafe.getUnsafe().getShort(addr));
+            case ColumnType.GEOINT -> Integer.toString(Unsafe.getUnsafe().getInt(addr));
+            case ColumnType.GEOLONG -> Long.toString(Unsafe.getUnsafe().getLong(addr));
+            default -> {
+                // unknown fixed-size: hex dump
+                StringBuilder sb = new StringBuilder();
+                hexDump(addr, size, sb);
+                yield sb.toString();
+            }
+        };
+    }
+
+    private static String formatUuid(long lo, long hi) {
+        // UUID is stored as two longs: lo (bytes 0-7) and hi (bytes 8-15)
+        // Standard UUID format: 8-4-4-4-12 hex digits
+        return String.format(
+                "%08x-%04x-%04x-%04x-%012x",
+                (hi >>> 32) & 0xFFFFFFFFL,
+                (hi >>> 16) & 0xFFFFL,
+                hi & 0xFFFFL,
+                (lo >>> 48) & 0xFFFFL,
+                lo & 0xFFFFFFFFFFFFL
+        );
+    }
+
+    private static void hexDump(long addr, int length, StringBuilder sb) {
+        for (int i = 0; i < length; i++) {
+            if (i > 0 && i % 16 == 0) {
+                sb.append('\n');
+            } else if (i > 0) {
+                sb.append(' ');
+            }
+            int b = Unsafe.getUnsafe().getByte(addr + i) & 0xFF;
+            sb.append(Character.forDigit(b >> 4, 16));
+            sb.append(Character.forDigit(b & 0xF, 16));
+        }
+    }
+
+    @FunctionalInterface
+    private interface VarSizeReader {
+        String read(long auxBuf, long auxFd, long dataFd);
+    }
+}

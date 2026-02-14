@@ -83,13 +83,14 @@ case $QDB_OS in
 esac
 
 function usage {
-    echo "Usage: $0 start|status|stop [-f] [-n] [-p] [-d path] [-t tag] [-- agent-params]"
+    echo "Usage: $0 start|status|stop|recover [-f] [-n] [-p] [-d path] [-t tag] [-- agent-params]"
     echo "       $0 profile [-t tag] -- [profiler-args]"
     echo ""
     echo "Commands:"
     echo "  start    Start QuestDB server"
     echo "  status   Check if QuestDB is running"
     echo "  stop     Stop QuestDB server"
+    echo "  recover  Start offline recovery mode"
     echo "  profile  Profile a running QuestDB instance with async-profiler"
     echo ""
     echo "Options:"
@@ -98,6 +99,7 @@ function usage {
     echo "  -p    Enable async profiler at startup - continuous profiling"
     echo "  -d    Set QuestDB root directory"
     echo "  -t    Set process tag for identification"
+    echo "  --no-color  Disable ANSI color output (recover command)"
     echo ""
     echo "Profiling modes:"
     echo "  1. Attach to running instance (profile command):"
@@ -111,6 +113,36 @@ function usage {
     echo "     Example: $0 start -p -- start,event=cpu,file=/tmp/profile.jfr,interval=10ms"
     echo
     exit 55
+}
+
+function recover {
+    export_java
+
+    JAVA_LIB="$BASE/questdb.jar"
+    RECOVERY_MAIN="io.questdb/io.questdb.RecoveryMain"
+
+    LIB_DIR_CANDIDATE="$BASE/../lib"
+    if [ -d "$LIB_DIR_CANDIDATE" ]; then
+        if command -v realpath >/dev/null 2>&1; then
+            LIB_DIR=$(realpath "$LIB_DIR_CANDIDATE")
+        else
+            LIB_DIR=$(cd "$LIB_DIR_CANDIDATE" && pwd)
+        fi
+
+        if [ -r "$LIB_DIR" ]; then
+            LIB_DIR_PROP="-Dquestdb.libs.dir=${LIB_DIR}"
+        else
+            echo "Warning: Library directory '${LIB_DIR}' found, but it is not readable." >&2
+        fi
+    fi
+
+    JAVA_OPTS="
+    ${LIB_DIR_PROP}
+    -ea -Dnoebug
+    ${JVM_PREPEND}
+    "
+
+    ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${RECOVERY_MAIN} -d ${QDB_ROOT} ${QDB_NO_COLOR}
 }
 
 function export_pid {
@@ -192,6 +224,7 @@ function export_args {
     export QDB_OVERWRITE_PUBLIC=""
     export QDB_DISABLE_HUP_HANDLER=""
     export QDB_CONTAINER_MODE=""
+    export QDB_NO_COLOR=""
     export QDB_PROFILING_ENABLED=""
     export QDB_ROOT=${QDB_DEFAULT_ROOT}
 
@@ -207,6 +240,9 @@ function export_args {
                 ;;
             -c)
                 export QDB_CONTAINER_MODE="-c"
+                ;;
+            --no-color)
+                export QDB_NO_COLOR="--no-color"
                 ;;
             -p)
                 export QDB_PROFILING_ENABLED="true"
@@ -544,6 +580,9 @@ if [[ $# -gt 0 ]]; then
         # Process normal start arguments
         export_args "${START_ARGS[@]}"
         start
+    elif [[ "${command}" = "recover" ]]; then
+        export_args $@
+        recover
     else
         # Normal argument parsing for other commands
         export_args $@
