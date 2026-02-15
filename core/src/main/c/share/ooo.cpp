@@ -27,6 +27,7 @@
 #include "util.h"
 #include "simd.h"
 #include "ooo_dispatch.h"
+#include "utf8.h"
 #include <algorithm>
 #include "ooo_radix.h"
 
@@ -1834,6 +1835,18 @@ Java_io_questdb_std_Vect_sortArrayColumn(JNIEnv *env, jclass cl, jlong mergedTim
         }
     }
     return __JLONG_REINTERPRET_CAST__(jlong, offset);
+}
+
+DECLARE_DISPATCHER(varchar_utf8_length_sum);
+JNIEXPORT void JNICALL Java_io_questdb_std_Vect_varcharUtf8LengthSum(
+        JNIEnv *e, jclass cl, jlong auxAddr, jlong dataAddr, jlong rowCount, jlong outSumAddr, jlong outCountAddr) {
+    varchar_utf8_length_sum(
+            reinterpret_cast<const char *>(auxAddr),
+            reinterpret_cast<const char *>(dataAddr),
+            rowCount,
+            reinterpret_cast<double *>(outSumAddr),
+            reinterpret_cast<int64_t *>(outCountAddr)
+    );
 }
 
 }

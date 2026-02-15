@@ -447,6 +447,11 @@ public final class Vect {
             long tgtAuxAdd
     );
 
+    // Single-pass SUM(length(varchar)) + COUNT(non-null) for a page frame.
+    // Accumulates into outSumAddr and outCountAddr (int64_t pointers).
+    // Uses SIMD counting and software prefetching for non-ASCII data.
+    public static native void varcharUtf8LengthSum(long auxAddr, long dataAddr, long rowCount, long outSumAddr, long outCountAddr);
+
     public static native double sumDouble(long pDouble, long count);
 
     // returns sum of the elements; also stores non-null count to pCount address

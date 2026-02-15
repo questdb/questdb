@@ -901,6 +901,32 @@ public final class Utf8s {
     }
 
     /**
+     * Counts the number of UTF-8 code points in a byte sequence stored at
+     * the given native memory address. This avoids the overhead of Utf8Sequence
+     * interface dispatch (longAt/byteAt) by reading directly from memory.
+     * The caller must ensure that addr..addr+size is a valid readable range.
+     *
+     * @param addr start address of the UTF-8 byte sequence
+     * @param size byte length of the sequence
+     * @return number of Unicode code points
+     */
+    public static int codepointCount(long addr, int size) {
+        int continuationByteCount = 0;
+        int i = 0;
+        for (; i <= size - Long.BYTES; i += Long.BYTES) {
+            long c = Unsafe.getUnsafe().getLong(addr + i);
+            long x = c & 0x8080808080808080L;
+            long y = ~c << 1;
+            continuationByteCount += Long.bitCount(x & y);
+        }
+        for (; i < size; i++) {
+            int c = Unsafe.getUnsafe().getByte(addr + i);
+            continuationByteCount += ((c & 0x80) & (~c << 1)) >>> 7;
+        }
+        return size - continuationByteCount;
+    }
+
+    /**
      * Strictly less than (&lt;) comparison of two UTF8 sequences in lexicographical
      * order. For example, for:
      * l = aaaaa

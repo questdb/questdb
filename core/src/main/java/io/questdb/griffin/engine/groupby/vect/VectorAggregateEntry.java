@@ -81,11 +81,10 @@ public class VectorAggregateEntry implements Mutable {
             // query. This might change if we introduce something like `first(string)`. When this happens we will
             // need to rethink our way of computing size for the count. This would be either type checking column
             // 0 and working out size differently or finding any fixed-size column and using that.
-            final long valueAddress = valueColIndex > -1 ? frameMemory.getPageAddress(valueColIndex) : 0;
-
             // Zero keyAddress means non-keyed aggregation or column top.
             final long keyAddress = keyColIndex > -1 ? frameMemory.getPageAddress(keyColIndex) : 0;
             if (pRosti != null && keyAddress != 0) {
+                final long valueAddress = valueColIndex > -1 ? frameMemory.getPageAddress(valueColIndex) : 0;
                 final long oldSize = Rosti.getAllocMemory(pRosti[slot]);
                 if (!func.aggregate(pRosti[slot], keyAddress, valueAddress, frameRowCount)) {
                     if (oomCounter != null) {
@@ -96,7 +95,7 @@ public class VectorAggregateEntry implements Mutable {
                     raf.updateMemoryUsage(pRosti[slot], oldSize);
                 }
             } else {
-                func.aggregate(valueAddress, frameRowCount, slot);
+                func.aggregate(frameMemory, frameRowCount, slot);
             }
         } finally {
             perWorkerLocks.releaseSlot(slot);

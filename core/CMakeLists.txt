@@ -41,6 +41,7 @@ set(
         src/main/c/share/vec_agg.cpp
         src/main/c/share/ooo_dispatch.cpp
         src/main/c/share/geohash_dispatch.cpp
+        src/main/c/share/utf8.cpp
 )
 
 set(
@@ -52,6 +53,7 @@ set(
         src/main/c/share/vec_int_key_agg.cpp
         src/main/c/share/ooo_dispatch.cpp
         src/main/c/share/geohash_dispatch.cpp
+        src/main/c/share/utf8.cpp
 )
 
 set(
@@ -244,6 +246,7 @@ if (ARCH_AARCH64)
             src/main/c/share/vec_agg_vanilla.cpp
             src/main/c/share/ooo_dispatch_vanilla.cpp
             src/main/c/share/geohash_dispatch_vanilla.cpp
+            src/main/c/share/utf8.cpp
     )
 
     add_library(questdb-aarch64 OBJECT ${AARCH64_FILES})

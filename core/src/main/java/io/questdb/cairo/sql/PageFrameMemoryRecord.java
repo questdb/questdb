@@ -524,6 +524,19 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return TableUtils.NULL_LEN; // Column top.
     }
 
+    @Override
+    public int getVarcharUtf8Length(int columnIndex) {
+        final long auxPageAddress = auxPageAddresses.get(columnOffset + columnIndex);
+        if (auxPageAddress != 0) {
+            return VarcharTypeDriver.getUtf8Length(
+                    auxPageAddress,
+                    pageAddresses.get(columnOffset + columnIndex),
+                    rowIndex
+            );
+        }
+        return TableUtils.NULL_LEN; // Column top.
+    }
+
     // Note: this method doesn't break caching in PageFrameMemoryPool
     // as the method assumes that the record can't be used once
     // the frame memory is switched to another frame.

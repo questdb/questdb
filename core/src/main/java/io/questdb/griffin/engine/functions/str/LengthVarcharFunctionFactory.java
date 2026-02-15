@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.columns.VarcharColumn;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -51,7 +52,36 @@ public class LengthVarcharFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.getQuick(0));
+        Function arg = args.getQuick(0);
+        if (arg instanceof VarcharColumn varcharColumn) {
+            return new ColumnFunc(varcharColumn, varcharColumn.getColumnIndex());
+        }
+        return new Func(arg);
+    }
+
+    private static class ColumnFunc extends IntFunction implements UnaryFunction {
+        private final Function arg;
+        private final int columnIndex;
+
+        public ColumnFunc(Function arg, int columnIndex) {
+            this.arg = arg;
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            return rec.getVarcharUtf8Length(columnIndex);
+        }
+
+        @Override
+        public String getName() {
+            return "length";
+        }
     }
 
     private static class Func extends IntFunction implements UnaryFunction {

@@ -36,6 +36,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -512,6 +513,18 @@ public interface Record {
      */
     default int getVarcharSize(int col) {
         throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the UTF-8 code point count of a varchar column by index.
+     * For ASCII strings, this equals the byte size and can be resolved
+     * from the aux vector alone, without touching the data vector.
+     *
+     * @param col numeric index of the column
+     * @return code point count or {@link TableUtils#NULL_LEN} in case of NULL
+     */
+    default int getVarcharUtf8Length(int col) {
+        return Utf8s.length(getVarcharA(col));
     }
 
     @FunctionalInterface

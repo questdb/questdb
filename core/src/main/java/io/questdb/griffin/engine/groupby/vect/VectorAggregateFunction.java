@@ -26,17 +26,34 @@ package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.Mutable;
 
 public interface VectorAggregateFunction extends Function, Mutable {
 
     /**
+     * Non-keyed aggregation with access to the full page frame memory.
+     * Implementations that need multiple memory regions (e.g. varchar aux + data)
+     * should override this method. The default resolves the data page address
+     * for {@link #getColumnIndex()} and delegates to {@link #aggregate(long, long, int)}.
+     *
+     * @param memory        page frame memory providing access to data and aux pages
+     * @param frameRowCount row count in the frame
+     * @param workerId      worker id (slot index for per-worker accumulators)
+     */
+    default void aggregate(PageFrameMemory memory, long frameRowCount, int workerId) {
+        final int col = getColumnIndex();
+        final long address = col > -1 ? memory.getPageAddress(col) : 0;
+        aggregate(address, frameRowCount, workerId);
+    }
+
+    /**
      * Non-keyed aggregation that doesn't use rosti.
      * Used either for truly non-keyed aggregation or when key is null in page frame due to column tops.
      *
-     * @param address       address
-     * @param frameRowCount row count int the frame; this is provided to "count" functions
+     * @param address       address of the data page for the column
+     * @param frameRowCount row count in the frame; this is provided to "count" functions
      * @param workerId      worker id
      */
     void aggregate(long address, long frameRowCount, int workerId);

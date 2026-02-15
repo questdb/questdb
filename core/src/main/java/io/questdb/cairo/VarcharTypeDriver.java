@@ -41,6 +41,7 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -241,6 +242,42 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     public static int getSingleMemValueByteCount(@Nullable Utf8Sequence value) {
         return value != null ? Integer.BYTES + value.size() : Integer.BYTES;
+    }
+
+    /**
+     * Returns the UTF-8 code point count of a VARCHAR value, using an aux-only
+     * fast path for ASCII strings (no data vector access needed).
+     * For non-ASCII strings, scans bytes directly from memory using SWAR,
+     * avoiding Utf8SplitString construction and interface dispatch overhead.
+     *
+     * @param auxAddr  base address of the auxiliary vector
+     * @param dataAddr base address of the data vector
+     * @param rowNum   the row number to read
+     * @return code point count or {@link TableUtils#NULL_LEN} in case of NULL
+     */
+    public static int getUtf8Length(long auxAddr, long dataAddr, long rowNum) {
+        long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
+        int raw = Unsafe.getUnsafe().getInt(auxEntry);
+        assert raw != 0;
+        if (hasNullFlag(raw)) {
+            return TableUtils.NULL_LEN;
+        }
+        int size;
+        long stringAddr;
+        if (hasInlinedFlag(raw)) {
+            size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
+            if (hasAsciiFlag(raw)) {
+                return size;
+            }
+            stringAddr = auxEntry + FULLY_INLINED_STRING_OFFSET;
+        } else {
+            size = (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK;
+            if (hasAsciiFlag(raw)) {
+                return size;
+            }
+            stringAddr = dataAddr + getDataOffset(auxEntry);
+        }
+        return Utf8s.codepointCount(stringAddr, size);
     }
 
     /**

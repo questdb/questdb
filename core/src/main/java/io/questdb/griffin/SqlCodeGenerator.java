@@ -190,6 +190,7 @@ import io.questdb.griffin.engine.groupby.vect.AvgShortVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.CountDoubleVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.CountIntVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.CountLongVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.AvgVarcharLengthVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.CountVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.GroupByNotKeyedVectorRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
@@ -360,6 +361,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_NANO_HOUR_INT = 2;
     public static final int GKK_VANILLA_INT = 0;
     public static final boolean[] joinsRequiringTimestamp = new boolean[JOIN_MAX + 1];
+    private static final VectorAggregateFunctionConstructor AVG_VARCHAR_LENGTH_CONSTRUCTOR = (keyKind, columnIndex, timestampIndex, workerCount) -> new AvgVarcharLengthVectorAggregateFunction(columnIndex);
     private static final VectorAggregateFunctionConstructor COUNT_CONSTRUCTOR = (keyKind, columnIndex, timestampIndex, workerCount) -> new CountVectorAggregateFunction(keyKind);
     private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = SqlCodeGenerator::createFullFatAsOfJoin;
     private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = SqlCodeGenerator::createFullFatLtJoin;
@@ -953,6 +955,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return viewExpr != null ? viewExpr.position : 0;
     }
 
+    private static boolean isAvgLengthVarchar(ExpressionNode ast, RecordMetadata metadata) {
+        // Match avg(length(varchar_column))
+        if (ast.type == FUNCTION
+                && ast.paramCount == 1
+                && Chars.equalsIgnoreCase(ast.token, "avg")
+                && ast.rhs != null
+                && ast.rhs.type == FUNCTION
+                && ast.rhs.paramCount == 1
+                && Chars.equalsIgnoreCase(ast.rhs.token, "length")
+                && ast.rhs.rhs != null
+                && ast.rhs.rhs.type == LITERAL) {
+            int columnIndex = metadata.getColumnIndexQuiet(ast.rhs.rhs.token);
+            return columnIndex >= 0 && isVarchar(metadata.getColumnType(columnIndex));
+        }
+        return false;
+    }
+
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
         return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equalsIgnoreCase(ast.token, name) && ast.rhs.type == LITERAL;
     }
@@ -1058,6 +1077,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);
             return avgConstructors.get(metadata.getColumnType(columnIndex));
+        } else if (isAvgLengthVarchar(ast, metadata)) {
+            columnIndex = metadata.getColumnIndex(ast.rhs.rhs.token);
+            tempVecConstructorArgIndexes.add(columnIndex);
+            return AVG_VARCHAR_LENGTH_CONSTRUCTOR;
         } else if (isSingleColumnFunction(ast, "min")) {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);
