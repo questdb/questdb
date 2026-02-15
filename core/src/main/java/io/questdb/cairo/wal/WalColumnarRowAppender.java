@@ -931,107 +931,29 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     @Override
     public void putDecimal64Column(int columnIndex, QwpDecimalColumnCursor cursor,
                                     int rowCount, int columnType) throws QwpParseException {
-        checkInColumnarWrite();
-
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        int wireScale = cursor.getScale() & 0xFF;
-        int columnScale = ColumnType.getDecimalScale(columnType);
-        boolean needsRescale = (wireScale != columnScale);
-
-        cursor.resetRowPosition();
-        for (int row = 0; row < rowCount; row++) {
-            cursor.advanceRow();
-
-            if (cursor.isNull()) {
-                dataMem.putLong(Decimals.DECIMAL64_NULL);
-            } else if (needsRescale) {
-                Decimal256 decimal = Misc.getThreadLocalDecimal256();
-                decimal.ofRaw(cursor.getDecimal64());
-                decimal.setScale(wireScale);
-                decimal.rescale(columnScale);
-                dataMem.putLong(decimal.getLl());  // DECIMAL64 uses lowest 64 bits
-            } else {
-                dataMem.putLong(cursor.getDecimal64());
-            }
-        }
-
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        putDecimalToDecimalColumn(columnIndex, cursor, rowCount, columnType);
     }
 
     @Override
     public void putDecimal128Column(int columnIndex, QwpDecimalColumnCursor cursor,
                                      int rowCount, int columnType) throws QwpParseException {
-        checkInColumnarWrite();
-
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        int wireScale = cursor.getScale() & 0xFF;
-        int columnScale = ColumnType.getDecimalScale(columnType);
-        boolean needsRescale = (wireScale != columnScale);
-
-        cursor.resetRowPosition();
-        for (int row = 0; row < rowCount; row++) {
-            cursor.advanceRow();
-
-            if (cursor.isNull()) {
-                dataMem.putDecimal128(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
-            } else if (needsRescale) {
-                Decimal256 decimal = Misc.getThreadLocalDecimal256();
-                decimal.ofRaw(cursor.getDecimal128Hi(), cursor.getDecimal128Lo());
-                decimal.setScale(wireScale);
-                decimal.rescale(columnScale);
-                dataMem.putDecimal128(decimal.getLh(), decimal.getLl());  // DECIMAL128 uses lower 128 bits (lh, ll)
-            } else {
-                dataMem.putDecimal128(cursor.getDecimal128Hi(), cursor.getDecimal128Lo());
-            }
-        }
-
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        putDecimalToDecimalColumn(columnIndex, cursor, rowCount, columnType);
     }
 
     @Override
     public void putDecimal256Column(int columnIndex, QwpDecimalColumnCursor cursor,
                                      int rowCount, int columnType) throws QwpParseException {
-        checkInColumnarWrite();
-
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        int wireScale = cursor.getScale() & 0xFF;
-        int columnScale = ColumnType.getDecimalScale(columnType);
-        boolean needsRescale = (wireScale != columnScale);
-
-        cursor.resetRowPosition();
-        for (int row = 0; row < rowCount; row++) {
-            cursor.advanceRow();
-
-            if (cursor.isNull()) {
-                dataMem.putDecimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
-                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL);
-            } else if (needsRescale) {
-                Decimal256 decimal = Misc.getThreadLocalDecimal256();
-                decimal.ofRaw(
-                        cursor.getDecimal256Hh(),
-                        cursor.getDecimal256Hl(),
-                        cursor.getDecimal256Lh(),
-                        cursor.getDecimal256Ll()
-                );
-                decimal.setScale(wireScale);
-                decimal.rescale(columnScale);
-                dataMem.putDecimal256(decimal.getHh(), decimal.getHl(), decimal.getLh(), decimal.getLl());
-            } else {
-                dataMem.putDecimal256(
-                        cursor.getDecimal256Hh(),
-                        cursor.getDecimal256Hl(),
-                        cursor.getDecimal256Lh(),
-                        cursor.getDecimal256Ll()
-                );
-            }
-        }
-
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        putDecimalToDecimalColumn(columnIndex, cursor, rowCount, columnType);
     }
 
     @Override
     public void putDecimalToSmallDecimalColumn(int columnIndex, QwpDecimalColumnCursor cursor,
                                                 int rowCount, int columnType) throws QwpParseException {
+        putDecimalToDecimalColumn(columnIndex, cursor, rowCount, columnType);
+    }
+
+    private void putDecimalToDecimalColumn(int columnIndex, QwpDecimalColumnCursor cursor,
+                                            int rowCount, int columnType) throws QwpParseException {
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
@@ -1050,17 +972,66 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 loadDecimalFromCursor(decimal, cursor, wireType);
                 decimal.setScale(wireScale);
                 decimal.rescale(columnScale);
-                switch (ColumnType.tagOf(columnType)) {
-                    case ColumnType.DECIMAL8 -> dataMem.putByte((byte) decimal.getLl());
-                    case ColumnType.DECIMAL16 -> dataMem.putShort((short) decimal.getLl());
-                    case ColumnType.DECIMAL32 -> dataMem.putInt((int) decimal.getLl());
-                    default -> throw new UnsupportedOperationException(
-                            "Unsupported small decimal type: " + ColumnType.nameOf(columnType));
-                }
+                writeDecimalValue(dataMem, decimal, columnType, columnIndex);
             }
         }
 
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    private void writeDecimalValue(MemoryMA dataMem, Decimal256 decimal, int columnType, int columnIndex) {
+        long ll = decimal.getLl();
+        long lh = decimal.getLh();
+        long hl = decimal.getHl();
+        long hh = decimal.getHh();
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.DECIMAL8 -> {
+                long sign = (ll < 0) ? -1L : 0L;
+                if ((ll != (byte) ll) || lh != sign || hl != sign || hh != sign) {
+                    throwDecimalOverflow(decimal, columnType, columnIndex);
+                }
+                dataMem.putByte((byte) ll);
+            }
+            case ColumnType.DECIMAL16 -> {
+                long sign = (ll < 0) ? -1L : 0L;
+                if ((ll != (short) ll) || lh != sign || hl != sign || hh != sign) {
+                    throwDecimalOverflow(decimal, columnType, columnIndex);
+                }
+                dataMem.putShort((short) ll);
+            }
+            case ColumnType.DECIMAL32 -> {
+                long sign = (ll < 0) ? -1L : 0L;
+                if ((ll != (int) ll) || lh != sign || hl != sign || hh != sign) {
+                    throwDecimalOverflow(decimal, columnType, columnIndex);
+                }
+                dataMem.putInt((int) ll);
+            }
+            case ColumnType.DECIMAL64 -> {
+                long sign = (ll < 0) ? -1L : 0L;
+                if (lh != sign || hl != sign || hh != sign) {
+                    throwDecimalOverflow(decimal, columnType, columnIndex);
+                }
+                dataMem.putLong(ll);
+            }
+            case ColumnType.DECIMAL128 -> {
+                long sign = (lh < 0) ? -1L : 0L;
+                if (hl != sign || hh != sign) {
+                    throwDecimalOverflow(decimal, columnType, columnIndex);
+                }
+                dataMem.putDecimal128(lh, ll);
+            }
+            case ColumnType.DECIMAL256 -> dataMem.putDecimal256(hh, hl, lh, ll);
+            default -> throw new UnsupportedOperationException(
+                    "Unsupported decimal type: " + ColumnType.nameOf(columnType));
+        }
+    }
+
+    private void throwDecimalOverflow(Decimal256 decimal, int columnType, int columnIndex) {
+        throw CairoException.nonCritical()
+                .put("decimal value overflows ")
+                .put(ColumnType.nameOf(columnType))
+                .put(" [column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                .put(']');
     }
 
     @Override
