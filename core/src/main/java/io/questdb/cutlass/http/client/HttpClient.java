@@ -27,7 +27,6 @@ package io.questdb.cutlass.http.client;
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParser;
 import io.questdb.cutlass.http.HttpKeywords;
-import io.questdb.cutlass.line.array.ArrayBufferAppender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOOperation;
@@ -230,6 +229,7 @@ public abstract class HttpClient implements QuietCloseable {
 
     protected abstract void setupIoWait();
 
+    @SuppressWarnings("unused")
     private static class BinarySequenceAdapter implements BinarySequence, Mutable {
         private final Utf8StringSink baseSink = new Utf8StringSink();
 
@@ -306,6 +306,7 @@ public abstract class HttpClient implements QuietCloseable {
             return putAscii("PUT ");
         }
 
+        @SuppressWarnings("unused")
         public Request authBasic(CharSequence username, CharSequence password) {
             beforeHeader();
             putAsciiInternal("Authorization: Basic ");
@@ -322,6 +323,7 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        @SuppressWarnings("unused")
         public Request authToken(CharSequence username, CharSequence token) {
             beforeHeader();
             putAsciiInternal("Authorization: Bearer ");
@@ -333,6 +335,7 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        @SuppressWarnings("unused")
         public int getContentLength() {
             if (contentStart > -1) {
                 return (int) (ptr - contentStart);
@@ -341,6 +344,7 @@ public abstract class HttpClient implements QuietCloseable {
             }
         }
 
+        @SuppressWarnings("unused")
         public long getContentStart() {
             return contentStart;
         }
@@ -568,6 +572,7 @@ public abstract class HttpClient implements QuietCloseable {
             sendHeaderAndContent(maxContentLen, timeout);
         }
 
+        @SuppressWarnings("unused")
         public Request setCookie(CharSequence name, CharSequence value) {
             beforeHeader();
             put(HEADER_COOKIE).putAscii(": ").put(name);
@@ -587,6 +592,7 @@ public abstract class HttpClient implements QuietCloseable {
             return ss.toString();
         }
 
+        @SuppressWarnings("unused")
         public void trimContentToLen(int contentLen) {
             ptr = contentStart + contentLen;
         }

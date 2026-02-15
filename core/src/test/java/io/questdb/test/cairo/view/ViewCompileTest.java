@@ -50,6 +50,16 @@ public class ViewCompileTest extends ViewInvalidationTest {
     }
 
     @Test
+    public void testCompileViewInQuotes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE VIEW " + VIEW1 + " AS (SELECT 42 AS col)");
+
+            execute("COMPILE VIEW '" + VIEW1 + "'");
+            execute("COMPILE VIEW \"" + VIEW1 + "\"");
+        });
+    }
+
+    @Test
     public void testCompileViewSyntax() throws Exception {
         assertMemoryLeak(() -> {
             assertException("compile view", 12, "view name expected");

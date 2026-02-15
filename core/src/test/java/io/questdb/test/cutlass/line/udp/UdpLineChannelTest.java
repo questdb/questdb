@@ -24,12 +24,12 @@
 
 package io.questdb.test.cutlass.line.udp;
 
-import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.udp.UdpLineChannel;
+import io.questdb.client.cutlass.line.LineSenderException;
+import io.questdb.client.cutlass.line.udp.UdpLineChannel;
+import io.questdb.client.network.NetworkFacade;
+import io.questdb.client.network.NetworkFacadeImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -39,19 +39,22 @@ import static org.junit.Assert.fail;
 public class UdpLineChannelTest {
     private static final NetworkFacade FAILS_SET_SET_TTL_NET_FACADE = new NetworkFacadeImpl() {
         @Override
-        public int setMulticastTtl(long fd, int ttl) {
+        @SuppressWarnings("unused")
+        public int setMulticastTtl(int fd, int ttl) {
             return -1;
         }
     };
     private static final NetworkFacade FAILS_TO_SET_MULTICAST_IFACE_NET_FACADE = new NetworkFacadeImpl() {
         @Override
-        public int setMulticastInterface(long fd, int ipv4Address) {
+        @SuppressWarnings("unused")
+        public int setMulticastInterface(int fd, int ipv4Address) {
             return -1;
         }
     };
     private static final NetworkFacade FD_EXHAUSTED_NET_FACADE = new NetworkFacadeImpl() {
         @Override
-        public long socketUdp() {
+        @SuppressWarnings("unused")
+        public int socketUdp() {
             return -1;
         }
     };
