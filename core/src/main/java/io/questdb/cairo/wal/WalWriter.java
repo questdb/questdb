@@ -146,13 +146,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private long lastMatViewRefreshTimestamp = WAL_DEFAULT_LAST_REFRESH_TIMESTAMP;
     private long lastReplaceRangeHiTs = 0;
     private long lastReplaceRangeLowTs = 0;
-    private long lastTxnMaxTimestamp = -1;
+    private long lastTxnMaxTimestamp = Long.MIN_VALUE;
     private byte lastTxnType = WalTxnType.DATA;
     private long segmentRowCount = -1;
     private long totalSegmentsRowCount;
     private long totalSegmentsSize;
     private TxReader txReader;
-    private long txnMaxTimestamp = -1;
+    private long txnMaxTimestamp = Long.MIN_VALUE;
     private long txnMinTimestamp = Long.MAX_VALUE;
     private boolean txnOutOfOrder = false;
 
@@ -500,7 +500,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 setAppendPosition(currentTxnStartRowNum);
                 segmentRowCount = currentTxnStartRowNum;
                 txnMinTimestamp = Long.MAX_VALUE;
-                txnMaxTimestamp = -1;
+                txnMaxTimestamp = Long.MIN_VALUE;
                 txnOutOfOrder = false;
             }
         } catch (Throwable th) {
@@ -903,7 +903,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     recentWriteTracker.recordWalWrite(
                             tableToken,
                             seqTxn,
-                            lastTxnMaxTimestamp == -1 ? Numbers.LONG_NULL : lastTxnMaxTimestamp,
+                            lastTxnMaxTimestamp == Long.MIN_VALUE ? Numbers.LONG_NULL : lastTxnMaxTimestamp,
                             txnRowCount
                     );
                 }
@@ -1427,7 +1427,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         txnMinTimestamp = Long.MAX_VALUE;
         // Store the max timestamp before resetting for tracking purposes
         lastTxnMaxTimestamp = txnMaxTimestamp;
-        txnMaxTimestamp = -1;
+        txnMaxTimestamp = Long.MIN_VALUE;
         txnOutOfOrder = false;
         resetSymbolMaps();
     }

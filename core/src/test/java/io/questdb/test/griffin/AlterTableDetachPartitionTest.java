@@ -2503,7 +2503,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             assertFailure(
                     "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
-                    "cannot read min, max timestamp from the"
+                    "could not read long"
             );
         });
     }

@@ -397,26 +397,26 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // - This is last partition that is empty.
             // pure OOO data copy into new partition
 
-            if (!last) {
-                try {
-                    LOG.debug().$("would create [path=").$(path.slash$()).I$();
-                    TableUtils.setPathForNativePartition(
-                            path.trimTo(pathToTable.size()),
-                            tableWriter.getMetadata().getTimestampType(),
-                            partitionBy,
-                            partitionTimestamp,
-                            txn - 1
-                    );
-                    createDirsOrFail(ff, path, tableWriter.getConfiguration().getMkDirMode());
-                } catch (Throwable e) {
-                    LOG.error().$("process new partition error [table=").$(tableWriter.getTableToken())
-                            .$(", e=").$(e)
-                            .I$();
-                    tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
-                    tableWriter.o3ClockDownPartitionUpdateCount();
-                    tableWriter.o3CountDownDoneLatch();
-                    throw e;
-                }
+            // Always create the partition directory for new partitions, including the "last" one.
+            // This ensures the directory exists when finishO3Commit calls openPartition.
+            try {
+                LOG.debug().$("would create [path=").$(path.slash$()).I$();
+                TableUtils.setPathForNativePartition(
+                        path.trimTo(pathToTable.size()),
+                        tableWriter.getMetadata().getTimestampType(),
+                        partitionBy,
+                        partitionTimestamp,
+                        txn - 1
+                );
+                createDirsOrFail(ff, path, tableWriter.getConfiguration().getMkDirMode());
+            } catch (Throwable e) {
+                LOG.error().$("process new partition error [table=").$(tableWriter.getTableToken())
+                        .$(", e=").$(e)
+                        .I$();
+                tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
+                tableWriter.o3ClockDownPartitionUpdateCount();
+                tableWriter.o3CountDownDoneLatch();
+                throw e;
             }
 
             assert oldPartitionSize == 0;

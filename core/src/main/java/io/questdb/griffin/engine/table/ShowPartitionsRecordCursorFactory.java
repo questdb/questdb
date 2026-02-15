@@ -50,9 +50,11 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -147,6 +149,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private final StringSink partitionName = new StringSink();
         private final PartitionsRecord partitionRecord = new PartitionsRecord();
         private final StringSink partitionSizeSink = new StringSink();
+        private long tempMem8b = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         private TableReaderMetadata detachedMetaReader;
         private TxReader detachedTxReader;
         private int dynamicPartitionIndex = -1;
@@ -178,6 +181,9 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             partitionRecord.close();
             tableReader = Misc.free(tableReader);
             partitionSizeSink.clear();
+            if (tempMem8b != 0) {
+                tempMem8b = Unsafe.free(tempMem8b, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
         }
 
         @Override
@@ -214,6 +220,9 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             if (tableReader != null) {//
                 // this call is idempotent
                 return this;
+            }
+            if (tempMem8b == 0) {
+                tempMem8b = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             }
             tsColName = null;
             tableReader = executionContext.getReader(tableToken);
@@ -341,8 +350,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     try {
                         fd = TableUtils.openRO(ff, path.$(), LOG);
                         long lastOffset = (numRows - 1) * Long.BYTES; // timestamp size
-                        minTimestamp = ff.readNonNegativeLong(fd, 0);
-                        maxTimestamp = ff.readNonNegativeLong(fd, lastOffset);
+                        minTimestamp = TableUtils.readLongOrFail(ff, fd, 0, tempMem8b, path.$());
+                        maxTimestamp = TableUtils.readLongOrFail(ff, fd, lastOffset, tempMem8b, path.$());
                     } catch (CairoException e) {
                         dynamicPartitionIndex = Numbers.INT_NULL;
                         LOG.error().$("no file found for designated timestamp column [path=").$(path).I$();

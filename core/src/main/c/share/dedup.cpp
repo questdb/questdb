@@ -90,7 +90,8 @@ int64_t merge_dedup_long_index_int_keys(
             index_pos++;
         } else {
             // index_ts == src_ts
-            const uint64_t conflict_ts = src[src_pos];
+            // Cast to int64_t for proper signed timestamp comparison
+            const int64_t conflict_ts = static_cast<int64_t>(src[src_pos]);
             const index_t *conflict_index_start = &index[index_pos];
 
             // Find end of the conflict in index
@@ -148,13 +149,14 @@ inline int64_t dedup_sorted_timestamp_index(const IndexT *index_in, int64_t coun
     // std::unique_copy takes first record but here we want last
     if (count > 0) {
         int64_t copyTo = 0;
-        uint64_t lastTimestamp = index_in[0].ts;
+        int64_t lastTimestamp = index_in[0].ts;
         for (int64_t i = 1; i < count; i++) {
-            if (index_in[i].ts > lastTimestamp) {
+            int64_t currentTs = index_in[i].ts;
+            if (currentTs > lastTimestamp) {
                 index_out[copyTo] = index_in[i - 1];
                 copyTo++;
-                lastTimestamp = index_in[i].ts;
-            } else if (index_in[i].ts < lastTimestamp) {
+                lastTimestamp = currentTs;
+            } else if (currentTs < lastTimestamp) {
                 return error_not_sorted;
             }
         }
@@ -182,13 +184,18 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
     int64_t ts_index = 0;
 
     for (int64_t i = 1; i < count; i++) {
-        if (index_src[i].ts > index_src[ts_index].ts) {
+        // Extract timestamps to local variables to ensure correct signed comparison.
+        // Direct comparison of templated struct members can have unexpected behavior
+        // due to operator overloading or type coercion.
+        int64_t ts_i = index_src[i].ts;
+        int64_t ts_prev = index_src[ts_index].ts;
+        if (ts_i > ts_prev) {
             if (i > ts_index + 1) {
                 dup_start = dup_start > -1 ? dup_start : ts_index;
                 dup_end = i;
             }
             ts_index = i;
-        } else if (index_src[i].ts < index_src[ts_index].ts) {
+        } else if (ts_i < ts_prev) {
             return error_not_sorted;
         }
     }
@@ -211,10 +218,13 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
     for (int64_t i = dup_start + 1; i < dup_end; i++) {
         auto l = merge_result[last].i;
         auto r = merge_result[i].i;
-        if (merge_result[i].ts > merge_result[last].ts || diff_l(l, r) != 0) {
+        // Extract timestamps to local variables for reliable comparison
+        int64_t ts_curr = merge_result[i].ts;
+        int64_t ts_last = merge_result[last].ts;
+        if (ts_curr > ts_last || diff_l(l, r) != 0) {
             index_dest[copy_to++] = merge_result[i - 1];
             last = i;
-        } else if (merge_result[i].ts != merge_result[last].ts) {
+        } else if (ts_curr != ts_last) {
             return error_not_sorted;
         }
     }
@@ -900,7 +910,8 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexAsc(
             index_pos++;
         } else {
             // index_ts == src_ts
-            const uint64_t conflict_ts = src[src_pos];
+            // Cast to int64_t for proper signed timestamp comparison
+            const int64_t conflict_ts = static_cast<int64_t>(src[src_pos]);
             while (index_pos <= index_hi_inc && index[index_pos].ts == conflict_ts) {
                 index_pos++;
             }

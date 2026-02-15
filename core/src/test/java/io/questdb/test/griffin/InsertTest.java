@@ -1700,7 +1700,8 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertTimestampNSOverflowException() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (t1 timestamp_ns) timestamp(t1) partition by day;");
-            assertException("insert into tab values ('2300-01-03T00:00:00.000001123')", 24, "timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
+            // Year 2300 exceeds max nanosecond timestamp year (2261), so parsing fails
+            assertException("insert into tab values ('2300-01-03T00:00:00.000001123')", 0, "inconvertible value");
         });
     }
 
