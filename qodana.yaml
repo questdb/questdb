@@ -19,6 +19,7 @@ exclude:
       - core/src/main/java/io/questdb/std/ConcurrentHashMap.java
       - core/src/main/java/io/questdb/std/ConcurrentIntHashMap.java
       - core/src/main/java/io/questdb/std/ConcurrentLongHashMap.java
+      - java-questdb-client
   # Benchmark code patterns - intentional for measurement
   - name: MismatchedArrayReadWrite
     paths:
