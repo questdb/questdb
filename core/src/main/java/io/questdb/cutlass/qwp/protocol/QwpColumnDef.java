@@ -25,7 +25,7 @@
 package io.questdb.cutlass.qwp.protocol;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_BOOLEAN;
-import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_DECIMAL256;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_CHAR;
 
 /**
  * Represents a column definition in an ILP v4 schema.
@@ -124,9 +124,9 @@ public final class QwpColumnDef {
      * @throws QwpParseException if type code is invalid
      */
     public void validate() throws QwpParseException {
-        // Valid type codes: TYPE_BOOLEAN (0x01) through TYPE_DECIMAL256 (0x15)
-        // This includes all basic types, arrays, and decimals
-        boolean valid = (typeCode >= TYPE_BOOLEAN && typeCode <= TYPE_DECIMAL256);
+        // Valid type codes: TYPE_BOOLEAN (0x01) through TYPE_CHAR (0x16)
+        // This includes all basic types, arrays, decimals, and char
+        boolean valid = (typeCode >= TYPE_BOOLEAN && typeCode <= TYPE_CHAR);
         if (!valid) {
             throw QwpParseException.create(
                     QwpParseException.ErrorCode.INVALID_COLUMN_TYPE,

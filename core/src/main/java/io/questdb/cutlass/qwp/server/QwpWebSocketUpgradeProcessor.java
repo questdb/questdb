@@ -340,9 +340,15 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 LOG.debug().$("WebSocket message committed [fd=").$(context.getFd())
                         .$(", seq=").$(seq).I$();
             } else {
-                LOG.error().$("WebSocket message processing failed [fd=").$(context.getFd()).I$();
-                responseStatus = STATUS_WRITE_ERROR;
-                errorMessage = "Processing failed";
+                errorMessage = state.getErrorText();
+                LOG.error().$("WebSocket message processing failed [fd=").$(context.getFd())
+                        .$(", error=").$(errorMessage).I$();
+                responseStatus = switch (state.getStatus()) {
+                    case PARSE_ERROR -> STATUS_PARSE_ERROR;
+                    case SECURITY_ERROR -> STATUS_SECURITY_ERROR;
+                    case INTERNAL_ERROR -> STATUS_INTERNAL_ERROR;
+                    default -> STATUS_WRITE_ERROR;
+                };
             }
         } catch (Throwable e) {
             LOG.error().$("WebSocket ILP processing error [fd=").$(context.getFd())

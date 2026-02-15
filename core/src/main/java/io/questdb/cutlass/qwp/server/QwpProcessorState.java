@@ -326,6 +326,14 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         return currentStatus == Status.OK;
     }
 
+    public String getErrorText() {
+        return error.toString();
+    }
+
+    public Status getStatus() {
+        return currentStatus;
+    }
+
     public int getHttpResponseCode() {
         return currentStatus.responseCode;
     }

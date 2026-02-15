@@ -112,6 +112,83 @@ public interface ColumnarRowAppender {
                                  int columnType);
 
     /**
+     * Writes a fixed-width integer column to a STRING column.
+     * <p>
+     * Reads integer values from the cursor and converts them to their string representation.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the fixed-width column cursor
+     * @param rowCount    total number of rows
+     */
+    void putFixedToStringColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount);
+
+    /**
+     * Writes a fixed-width integer column to a VARCHAR column.
+     * <p>
+     * Reads integer values from the cursor and converts them to their string representation.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the fixed-width column cursor
+     * @param rowCount    total number of rows
+     */
+    void putFixedToVarcharColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount);
+
+    /**
+     * Writes a fixed-width float/double column to any DECIMAL column with scale conversion.
+     * <p>
+     * Reads floating-point values from the cursor via getDouble() and converts to
+     * the target decimal type using Decimal256.fromDouble().
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the fixed-width column cursor (FLOAT or DOUBLE wire type)
+     * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type (includes scale metadata)
+     */
+    void putFloatToDecimalColumn(int columnIndex, QwpFixedWidthColumnCursor cursor,
+                                  int rowCount, int columnType);
+
+    /**
+     * Writes a fixed-width float/double column to a numeric column with value conversion.
+     * <p>
+     * Handles float→integer (with whole-number and range check),
+     * float widening (FLOAT→DOUBLE), and float narrowing (DOUBLE→FLOAT).
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the fixed-width column cursor (FLOAT or DOUBLE wire type)
+     * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type
+     */
+    void putFloatToNumericColumn(int columnIndex, QwpFixedWidthColumnCursor cursor,
+                                  int rowCount, int columnType);
+
+    /**
+     * Writes a fixed-width float/double column to a STRING column.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the fixed-width column cursor (FLOAT or DOUBLE wire type)
+     * @param rowCount    total number of rows
+     */
+    void putFloatToStringColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount);
+
+    /**
+     * Writes a fixed-width float/double column to a SYMBOL column.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the fixed-width column cursor (FLOAT or DOUBLE wire type)
+     * @param rowCount    total number of rows
+     */
+    void putFloatToSymbolColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount);
+
+    /**
+     * Writes a fixed-width float/double column to a VARCHAR column.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the fixed-width column cursor (FLOAT or DOUBLE wire type)
+     * @param rowCount    total number of rows
+     */
+    void putFloatToVarcharColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount);
+
+    /**
      * Writes a fixed-width integer column to a DECIMAL128 column with scale conversion.
      * <p>
      * Reads integer values from the cursor, treats them as unscaled decimals with scale=0,
@@ -166,6 +243,18 @@ public interface ColumnarRowAppender {
      */
     void putFixedToSmallDecimalColumn(int columnIndex, QwpFixedWidthColumnCursor cursor,
                                       int rowCount, int columnType);
+
+    /**
+     * Writes a fixed-width integer column to a SYMBOL column.
+     * <p>
+     * Converts the integer value to its string representation and resolves it
+     * as a symbol value through the symbol table.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the fixed-width column cursor
+     * @param rowCount    total number of rows
+     */
+    void putFixedToSymbolColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount);
 
     /**
      * Writes the designated timestamp column.
@@ -317,6 +406,20 @@ public interface ColumnarRowAppender {
      */
     void putGeoHashColumn(int columnIndex, QwpGeoHashColumnCursor cursor,
                           int rowCount, int columnType) throws QwpParseException;
+
+    /**
+     * Writes a fixed-width integer column to a numeric column with value conversion.
+     * <p>
+     * Handles integer→integer widening (e.g., INT→LONG) and integer→float/double
+     * cross-family coercion. Values are read via getLong() and cast to the target type.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the fixed-width column cursor
+     * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type
+     */
+    void putIntegerToNumericColumn(int columnIndex, QwpFixedWidthColumnCursor cursor,
+                                    int rowCount, int columnType);
 
     /**
      * Writes a DECIMAL64 column with optional scale conversion.

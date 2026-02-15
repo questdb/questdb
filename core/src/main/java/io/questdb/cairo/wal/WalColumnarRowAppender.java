@@ -24,6 +24,10 @@
 
 package io.questdb.cairo.wal;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.StringTypeDriver;
@@ -57,6 +61,7 @@ import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 
 /**
@@ -182,9 +187,174 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 break;
             default:
                 throw new UnsupportedOperationException(
-                        "Narrowing not supported for column type: " + ColumnType.nameOf(columnType));
+                        "type coercion to " + ColumnType.nameOf(columnType) + " is not supported");
         }
 
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putFloatToDecimalColumn(int columnIndex, QwpFixedWidthColumnCursor cursor,
+                                         int rowCount, int columnType) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        int columnScale = ColumnType.getDecimalScale(columnType);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    writeNullSentinel(dataMem, columnType);
+                } else {
+                    double value = cursor.getDouble();
+                    BigDecimal bd = BigDecimal.valueOf(value);
+                    try {
+                        bd = bd.setScale(columnScale, RoundingMode.UNNECESSARY);
+                    } catch (ArithmeticException e) {
+                        throw CairoException.nonCritical()
+                                .put("double value ").put(value)
+                                .put(" loses precision when converted to ")
+                                .put(ColumnType.nameOf(columnType))
+                                .put(" [column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                                .put(", scale=").put(columnScale)
+                                .put(']');
+                    }
+                    Decimal256 decimal = Decimal256.fromBigDecimal(bd);
+                    switch (ColumnType.tagOf(columnType)) {
+                        case ColumnType.DECIMAL8 -> dataMem.putByte((byte) decimal.getLl());
+                        case ColumnType.DECIMAL16 -> dataMem.putShort((short) decimal.getLl());
+                        case ColumnType.DECIMAL32 -> dataMem.putInt((int) decimal.getLl());
+                        case ColumnType.DECIMAL64 -> dataMem.putLong(decimal.getLl());
+                        case ColumnType.DECIMAL128 -> dataMem.putDecimal128(decimal.getLh(), decimal.getLl());
+                        case ColumnType.DECIMAL256 -> dataMem.putDecimal256(decimal.getHh(), decimal.getHl(),
+                                decimal.getLh(), decimal.getLl());
+                        default -> throw new UnsupportedOperationException(
+                                "Unsupported decimal type: " + ColumnType.nameOf(columnType));
+                    }
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert float column to decimal", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putFloatToNumericColumn(int columnIndex, QwpFixedWidthColumnCursor cursor,
+                                         int rowCount, int columnType) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    writeNullSentinel(dataMem, columnType);
+                } else {
+                    double value = cursor.getDouble();
+                    switch (ColumnType.tagOf(columnType)) {
+                        case ColumnType.BYTE -> {
+                            long longValue = checkDoubleToInteger(value, columnIndex, columnType);
+                            checkIntegerRange(longValue, Byte.MIN_VALUE, Byte.MAX_VALUE, columnIndex, columnType);
+                            dataMem.putByte((byte) longValue);
+                        }
+                        case ColumnType.SHORT -> {
+                            long longValue = checkDoubleToInteger(value, columnIndex, columnType);
+                            checkIntegerRange(longValue, Short.MIN_VALUE, Short.MAX_VALUE, columnIndex, columnType);
+                            dataMem.putShort((short) longValue);
+                        }
+                        case ColumnType.INT -> {
+                            long longValue = checkDoubleToInteger(value, columnIndex, columnType);
+                            checkIntegerRange(longValue, Integer.MIN_VALUE, Integer.MAX_VALUE, columnIndex, columnType);
+                            dataMem.putInt((int) longValue);
+                        }
+                        case ColumnType.LONG -> {
+                            long longValue = checkDoubleToInteger(value, columnIndex, columnType);
+                            dataMem.putLong(longValue);
+                        }
+                        case ColumnType.FLOAT -> dataMem.putFloat((float) value);
+                        case ColumnType.DOUBLE -> dataMem.putDouble(value);
+                        default -> throw new UnsupportedOperationException(
+                                "Unsupported target type: " + ColumnType.nameOf(columnType));
+                    }
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert float column to " + ColumnType.nameOf(columnType), e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putFloatToStringColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    StringTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
+                } else {
+                    StringTypeDriver.appendValue(auxMem, dataMem, Double.toString(cursor.getDouble()));
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert float column to STRING", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putFloatToSymbolColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        SymbolMapReader symbolMapReader = walWriter.getSymbolMapReader(columnIndex);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    dataMem.putInt(SymbolTable.VALUE_IS_NULL);
+                } else {
+                    String symbolValue = Double.toString(cursor.getDouble());
+                    int symbolKey = walWriter.resolveSymbol(columnIndex, symbolValue, symbolMapReader);
+                    dataMem.putInt(symbolKey);
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert float column to SYMBOL", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putFloatToVarcharColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, null);
+                } else {
+                    Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
+                    sink.clear();
+                    sink.put(Double.toString(cursor.getDouble()));
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, sink);
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert float column to VARCHAR", e);
+        }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
@@ -299,6 +469,118 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             }
         } catch (QwpParseException e) {
             throw new RuntimeException("Failed to convert fixed column to small decimal", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putFixedToSymbolColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        SymbolMapReader symbolMapReader = walWriter.getSymbolMapReader(columnIndex);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    dataMem.putInt(SymbolTable.VALUE_IS_NULL);
+                } else {
+                    String symbolValue = Long.toString(cursor.getLong());
+                    int symbolKey = walWriter.resolveSymbol(columnIndex, symbolValue, symbolMapReader);
+                    dataMem.putInt(symbolKey);
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert integer column to SYMBOL", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putFixedToStringColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    StringTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
+                } else {
+                    StringTypeDriver.appendValue(auxMem, dataMem, Long.toString(cursor.getLong()));
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert integer column to STRING", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putFixedToVarcharColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, null);
+                } else {
+                    Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
+                    sink.clear();
+                    Numbers.append(sink, cursor.getLong());
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, sink);
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert integer column to VARCHAR", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putIntegerToNumericColumn(int columnIndex, QwpFixedWidthColumnCursor cursor,
+                                           int rowCount, int columnType) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    writeNullSentinel(dataMem, columnType);
+                } else {
+                    long value = cursor.getLong();
+                    switch (ColumnType.tagOf(columnType)) {
+                        case ColumnType.BYTE -> {
+                            checkIntegerRange(value, Byte.MIN_VALUE, Byte.MAX_VALUE, columnIndex, columnType);
+                            dataMem.putByte((byte) value);
+                        }
+                        case ColumnType.SHORT -> {
+                            checkIntegerRange(value, Short.MIN_VALUE, Short.MAX_VALUE, columnIndex, columnType);
+                            dataMem.putShort((short) value);
+                        }
+                        case ColumnType.INT -> {
+                            checkIntegerRange(value, Integer.MIN_VALUE, Integer.MAX_VALUE, columnIndex, columnType);
+                            dataMem.putInt((int) value);
+                        }
+                        case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP -> dataMem.putLong(value);
+                        case ColumnType.FLOAT -> dataMem.putFloat((float) value);
+                        case ColumnType.DOUBLE -> dataMem.putDouble((double) value);
+                        default -> throw new UnsupportedOperationException(
+                                "Unsupported target type: " + ColumnType.nameOf(columnType));
+                    }
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert integer column to " + ColumnType.nameOf(columnType), e);
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
@@ -872,6 +1154,31 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     private void checkInColumnarWrite() {
         if (!inColumnarWrite) {
             throw new IllegalStateException("Not in columnar write mode. Call beginColumnarWrite() first.");
+        }
+    }
+
+    private long checkDoubleToInteger(double value, int columnIndex, int columnType) {
+        long longValue = (long) value;
+        if ((double) longValue != value) {
+            throw CairoException.nonCritical()
+                    .put("double value ").put(value)
+                    .put(" loses precision when converted to ")
+                    .put(ColumnType.nameOf(columnType))
+                    .put(" [column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                    .put(']');
+        }
+        return longValue;
+    }
+
+    private void checkIntegerRange(long value, long min, long max, int columnIndex, int columnType) {
+        if (value < min || value > max) {
+            throw CairoException.nonCritical()
+                    .put("integer value ").put(value)
+                    .put(" out of range for ").put(ColumnType.nameOf(columnType))
+                    .put(" [column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                    .put(", min=").put(min)
+                    .put(", max=").put(max)
+                    .put(']');
         }
     }
 
