@@ -424,9 +424,23 @@ public class QwpWalAppender implements QuietCloseable {
                         }
                         break;
 
+                    case ColumnType.DECIMAL8:
+                    case ColumnType.DECIMAL16:
+                    case ColumnType.DECIMAL32:
+                        if (cursor instanceof QwpDecimalColumnCursor decCursor) {
+                            appender.putDecimalToSmallDecimalColumn(columnIndex, decCursor, rowCount, columnType);
+                        } else if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor) {
+                            appender.putFixedToSmallDecimalColumn(columnIndex, fixedCursor, rowCount, columnType);
+                        } else {
+                            throw typeMismatchException(ilpType, columnType, tableBlock, col);
+                        }
+                        break;
+
                     case ColumnType.DECIMAL64:
                         if (cursor instanceof QwpDecimalColumnCursor decCursor) {
                             appender.putDecimal64Column(columnIndex, decCursor, rowCount, columnType);
+                        } else if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor) {
+                            appender.putFixedToDecimal64Column(columnIndex, fixedCursor, rowCount, columnType);
                         } else {
                             throw typeMismatchException(ilpType, columnType, tableBlock, col);
                         }
@@ -435,6 +449,8 @@ public class QwpWalAppender implements QuietCloseable {
                     case ColumnType.DECIMAL128:
                         if (cursor instanceof QwpDecimalColumnCursor decCursor) {
                             appender.putDecimal128Column(columnIndex, decCursor, rowCount, columnType);
+                        } else if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor) {
+                            appender.putFixedToDecimal128Column(columnIndex, fixedCursor, rowCount, columnType);
                         } else {
                             throw typeMismatchException(ilpType, columnType, tableBlock, col);
                         }
@@ -443,6 +459,8 @@ public class QwpWalAppender implements QuietCloseable {
                     case ColumnType.DECIMAL256:
                         if (cursor instanceof QwpDecimalColumnCursor decCursor) {
                             appender.putDecimal256Column(columnIndex, decCursor, rowCount, columnType);
+                        } else if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor) {
+                            appender.putFixedToDecimal256Column(columnIndex, fixedCursor, rowCount, columnType);
                         } else {
                             throw typeMismatchException(ilpType, columnType, tableBlock, col);
                         }

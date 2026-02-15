@@ -37,6 +37,7 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpBooleanColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpDecimalColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpFixedWidthColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpGeoHashColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpNullBitmap;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
@@ -48,6 +49,9 @@ import io.questdb.cutlass.line.tcp.ConnectionSymbolCache;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_DECIMAL128;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_DECIMAL256;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_DECIMAL64;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_TIMESTAMP_NANOS;
 import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
@@ -181,6 +185,121 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                         "Narrowing not supported for column type: " + ColumnType.nameOf(columnType));
         }
 
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putFixedToDecimal128Column(int columnIndex, QwpFixedWidthColumnCursor cursor,
+                                            int rowCount, int columnType) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        int columnScale = ColumnType.getDecimalScale(columnType);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    dataMem.putDecimal128(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
+                } else {
+                    Decimal256 decimal = Misc.getThreadLocalDecimal256();
+                    decimal.ofRaw(cursor.getLong());
+                    decimal.setScale(0);
+                    decimal.rescale(columnScale);
+                    dataMem.putDecimal128(decimal.getLh(), decimal.getLl());
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert fixed column to DECIMAL128", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putFixedToDecimal256Column(int columnIndex, QwpFixedWidthColumnCursor cursor,
+                                            int rowCount, int columnType) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        int columnScale = ColumnType.getDecimalScale(columnType);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    dataMem.putDecimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                            Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL);
+                } else {
+                    Decimal256 decimal = Misc.getThreadLocalDecimal256();
+                    decimal.ofRaw(cursor.getLong());
+                    decimal.setScale(0);
+                    decimal.rescale(columnScale);
+                    dataMem.putDecimal256(decimal.getHh(), decimal.getHl(), decimal.getLh(), decimal.getLl());
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert fixed column to DECIMAL256", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putFixedToDecimal64Column(int columnIndex, QwpFixedWidthColumnCursor cursor,
+                                           int rowCount, int columnType) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        int columnScale = ColumnType.getDecimalScale(columnType);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    dataMem.putLong(Decimals.DECIMAL64_NULL);
+                } else {
+                    Decimal256 decimal = Misc.getThreadLocalDecimal256();
+                    decimal.ofRaw(cursor.getLong());
+                    decimal.setScale(0);
+                    decimal.rescale(columnScale);
+                    dataMem.putLong(decimal.getLl());
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert fixed column to DECIMAL64", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putFixedToSmallDecimalColumn(int columnIndex, QwpFixedWidthColumnCursor cursor,
+                                              int rowCount, int columnType) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        int columnScale = ColumnType.getDecimalScale(columnType);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    writeNullSentinel(dataMem, columnType);
+                } else {
+                    Decimal256 decimal = Misc.getThreadLocalDecimal256();
+                    decimal.ofRaw(cursor.getLong());
+                    decimal.setScale(0);
+                    decimal.rescale(columnScale);
+                    switch (ColumnType.tagOf(columnType)) {
+                        case ColumnType.DECIMAL8 -> dataMem.putByte((byte) decimal.getLl());
+                        case ColumnType.DECIMAL16 -> dataMem.putShort((short) decimal.getLl());
+                        case ColumnType.DECIMAL32 -> dataMem.putInt((int) decimal.getLl());
+                        default -> throw new UnsupportedOperationException(
+                                "Unsupported small decimal type: " + ColumnType.nameOf(columnType));
+                    }
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert fixed column to small decimal", e);
+        }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
@@ -629,6 +748,40 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
+    public void putDecimalToSmallDecimalColumn(int columnIndex, QwpDecimalColumnCursor cursor,
+                                                int rowCount, int columnType) throws QwpParseException {
+        checkInColumnarWrite();
+
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        int wireScale = cursor.getScale() & 0xFF;
+        int columnScale = ColumnType.getDecimalScale(columnType);
+        byte wireType = cursor.getTypeCode();
+
+        cursor.resetRowPosition();
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+
+            if (cursor.isNull()) {
+                writeNullSentinel(dataMem, columnType);
+            } else {
+                Decimal256 decimal = Misc.getThreadLocalDecimal256();
+                loadDecimalFromCursor(decimal, cursor, wireType);
+                decimal.setScale(wireScale);
+                decimal.rescale(columnScale);
+                switch (ColumnType.tagOf(columnType)) {
+                    case ColumnType.DECIMAL8 -> dataMem.putByte((byte) decimal.getLl());
+                    case ColumnType.DECIMAL16 -> dataMem.putShort((short) decimal.getLl());
+                    case ColumnType.DECIMAL32 -> dataMem.putInt((int) decimal.getLl());
+                    default -> throw new UnsupportedOperationException(
+                            "Unsupported small decimal type: " + ColumnType.nameOf(columnType));
+                }
+            }
+        }
+
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
     public void putArrayColumn(int columnIndex, QwpArrayColumnCursor cursor,
                                 int rowCount, int columnType) throws QwpParseException {
         checkInColumnarWrite();
@@ -702,6 +855,18 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
 
         inColumnarWrite = false;
         pendingRowCount = 0;
+    }
+
+    private static void loadDecimalFromCursor(Decimal256 decimal, QwpDecimalColumnCursor cursor, byte wireType) {
+        switch (wireType) {
+            case TYPE_DECIMAL64 -> decimal.ofRaw(cursor.getDecimal64());
+            case TYPE_DECIMAL128 -> decimal.ofRaw(cursor.getDecimal128Hi(), cursor.getDecimal128Lo());
+            case TYPE_DECIMAL256 -> decimal.ofRaw(
+                    cursor.getDecimal256Hh(), cursor.getDecimal256Hl(),
+                    cursor.getDecimal256Lh(), cursor.getDecimal256Ll()
+            );
+            default -> throw new UnsupportedOperationException("Unknown decimal wire type: " + wireType);
+        }
     }
 
     private void checkInColumnarWrite() {

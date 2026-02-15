@@ -27,6 +27,7 @@ package io.questdb.cairo.wal;
 import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpBooleanColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpDecimalColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpFixedWidthColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpGeoHashColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpStringColumnCursor;
@@ -109,6 +110,62 @@ public interface ColumnarRowAppender {
     void putFixedColumnNarrowing(int columnIndex, long valuesAddress, int valueCount,
                                  int sourceValueSize, long nullBitmapAddress, int rowCount,
                                  int columnType);
+
+    /**
+     * Writes a fixed-width integer column to a DECIMAL128 column with scale conversion.
+     * <p>
+     * Reads integer values from the cursor, treats them as unscaled decimals with scale=0,
+     * and rescales to the target column's scale.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the fixed-width column cursor
+     * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type (includes scale metadata)
+     */
+    void putFixedToDecimal128Column(int columnIndex, QwpFixedWidthColumnCursor cursor,
+                                    int rowCount, int columnType);
+
+    /**
+     * Writes a fixed-width integer column to a DECIMAL256 column with scale conversion.
+     * <p>
+     * Reads integer values from the cursor, treats them as unscaled decimals with scale=0,
+     * and rescales to the target column's scale.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the fixed-width column cursor
+     * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type (includes scale metadata)
+     */
+    void putFixedToDecimal256Column(int columnIndex, QwpFixedWidthColumnCursor cursor,
+                                    int rowCount, int columnType);
+
+    /**
+     * Writes a fixed-width integer column to a DECIMAL64 column with scale conversion.
+     * <p>
+     * Reads integer values from the cursor, treats them as unscaled decimals with scale=0,
+     * and rescales to the target column's scale.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the fixed-width column cursor
+     * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type (includes scale metadata)
+     */
+    void putFixedToDecimal64Column(int columnIndex, QwpFixedWidthColumnCursor cursor,
+                                   int rowCount, int columnType);
+
+    /**
+     * Writes a fixed-width integer column to a DECIMAL8, DECIMAL16, or DECIMAL32 column.
+     * <p>
+     * Reads integer values from the cursor, treats them as unscaled decimals with scale=0,
+     * rescales to the target column's scale, and writes the narrowed result.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the fixed-width column cursor
+     * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type (includes scale metadata)
+     */
+    void putFixedToSmallDecimalColumn(int columnIndex, QwpFixedWidthColumnCursor cursor,
+                                      int rowCount, int columnType);
 
     /**
      * Writes the designated timestamp column.
@@ -302,6 +359,21 @@ public interface ColumnarRowAppender {
      */
     void putDecimal256Column(int columnIndex, QwpDecimalColumnCursor cursor,
                              int rowCount, int columnType) throws QwpParseException;
+
+    /**
+     * Writes a wire DECIMAL64/128/256 column to a DECIMAL8, DECIMAL16, or DECIMAL32 column.
+     * <p>
+     * Loads the wire decimal value into Decimal256, rescales to the target column's scale,
+     * and writes the narrowed result.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the decimal column cursor
+     * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type (includes scale metadata)
+     * @throws QwpParseException if cursor iteration fails
+     */
+    void putDecimalToSmallDecimalColumn(int columnIndex, QwpDecimalColumnCursor cursor,
+                                        int rowCount, int columnType) throws QwpParseException;
 
     /**
      * Writes an array column (double or long arrays, 1-N dimensions).
