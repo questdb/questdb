@@ -39,6 +39,7 @@ import io.questdb.cutlass.http.ex.RetryFailedOperationException;
 import io.questdb.cutlass.http.ex.RetryOperationException;
 import io.questdb.cutlass.http.ex.TooFewBytesReceivedException;
 import io.questdb.cutlass.http.processors.RejectProcessor;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.HeartBeatException;
@@ -53,7 +54,6 @@ import io.questdb.network.ServerDisconnectException;
 import io.questdb.network.Socket;
 import io.questdb.network.SocketFactory;
 import io.questdb.network.TlsSessionInitFailedException;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
@@ -74,8 +74,7 @@ import org.jetbrains.annotations.TestOnly;
 import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.cutlass.http.HttpResponseSink.HTTP_TOO_MANY_REQUESTS;
 import static io.questdb.network.IODispatcher.*;
-import static java.net.HttpURLConnection.HTTP_FORBIDDEN;
-import static java.net.HttpURLConnection.HTTP_UNAUTHORIZED;
+import static java.net.HttpURLConnection.*;
 
 public class HttpConnectionContext extends IOContext<HttpConnectionContext> implements Locality, Retry {
     private static final String FALSE = "false";
@@ -959,9 +958,13 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         }
                     }
 
-                    if (processor.requiresAuthentication() && !configureSecurityContext()) {
-                        final byte requiredAuthType = processor.getRequiredAuthType();
-                        processor = rejectProcessor.withAuthenticationType(requiredAuthType).reject(HTTP_UNAUTHORIZED);
+                    try {
+                        if (processor.requiresAuthentication() && !configureSecurityContext()) {
+                            final byte requiredAuthType = processor.getRequiredAuthType();
+                            processor = rejectProcessor.withAuthenticationType(requiredAuthType).reject(HTTP_UNAUTHORIZED);
+                        }
+                    } catch (CairoException e) {
+                        processor = rejectProcessor.reject(HTTP_INTERNAL_ERROR, e.getFlyweightMessage());
                     }
 
                     if (cookiesEnabled) {
