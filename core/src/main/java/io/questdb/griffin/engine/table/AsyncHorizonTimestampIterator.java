@@ -150,7 +150,7 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
         this.masterRowCount = frameRowCount;
         this.isFiltered = false;
         this.filteredRows = null;
-        this.tupleCount = frameRowCount * offsets.size();
+        this.tupleCount = Math.multiplyExact(frameRowCount, offsets.size());
         this.currentIndex = 0;
         initHeap(frameRowCount > 0 ? frameRowLo : -1, frameRowCount > 0);
     }
@@ -168,7 +168,7 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
         this.masterRowCount = filteredRows.size();
         this.filteredRows = filteredRows;
         this.isFiltered = true;
-        this.tupleCount = filteredRows.size() * offsets.size();
+        this.tupleCount = Math.multiplyExact(filteredRows.size(), offsets.size());
         this.currentIndex = 0;
         initHeap(filteredRows.size() > 0 ? filteredRows.get(0) : -1, filteredRows.size() > 0);
     }
