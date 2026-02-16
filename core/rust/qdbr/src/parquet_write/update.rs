@@ -23,6 +23,7 @@
  ******************************************************************************/
 use crate::allocator::QdbAllocator;
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetErrorReason, ParquetResult};
+use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
 use crate::parquet_write::file::{create_row_group, WriteOptions};
 use crate::parquet_write::schema::{to_encodings, Partition};
 use parquet2::compression::CompressionOptions;
@@ -31,6 +32,7 @@ use parquet2::read::read_metadata_with_size;
 use parquet2::write;
 use parquet2::write::{ParquetFile, Version};
 use std::fs::File;
+use std::io::{Read as _, Seek, SeekFrom};
 
 #[repr(C)]
 pub struct ParquetUpdater {
@@ -41,6 +43,8 @@ pub struct ParquetUpdater {
     data_page_size: Option<usize>,
     raw_array_encoding: bool,
     file_metadata: FileMetaData,
+    accumulated_unused_bytes: u64,
+    old_footer_size: u64,
 }
 
 impl ParquetUpdater {
@@ -66,6 +70,30 @@ impl ParquetUpdater {
 
         let metadata = read_metadata_with_size(&mut reader, file_size)?;
         let file_metadata = metadata.clone();
+
+        // Read existing unused_bytes from QDB metadata (defaults to 0 for old files).
+        let accumulated_unused_bytes = metadata
+            .key_value_metadata
+            .as_ref()
+            .and_then(|kvs| {
+                kvs.iter()
+                    .find(|kv| kv.key == QDB_META_KEY)
+                    .and_then(|kv| kv.value.as_ref())
+                    .and_then(|v| QdbMeta::deserialize(v).ok())
+            })
+            .map(|m| m.unused_bytes)
+            .unwrap_or(0);
+
+        // Compute old footer size from the file's last 8 bytes: metadata_len (4 bytes) + magic (4 bytes).
+        // The footer = thrift metadata + 4-byte metadata_len + 4-byte magic.
+        let old_footer_size = {
+            let mut footer_buf = [0u8; 8];
+            reader.seek(SeekFrom::End(-8))?;
+            reader.read_exact(&mut footer_buf)?;
+            let metadata_len = u32::from_le_bytes(footer_buf[0..4].try_into().unwrap()) as u64;
+            metadata_len + 8 // metadata_len bytes for the thrift metadata + 8 bytes for the footer
+        };
+
         let version = from(metadata.version);
         let created_by = metadata.created_by.clone();
         let schema = metadata.schema_descr.clone();
@@ -88,6 +116,8 @@ impl ParquetUpdater {
             row_group_size,
             data_page_size,
             file_metadata,
+            accumulated_unused_bytes,
+            old_footer_size,
         })
     }
 
@@ -96,6 +126,23 @@ impl ParquetUpdater {
         partition: &Partition,
         row_group_id: i16,
     ) -> ParquetResult<()> {
+        // Track the old row group's bytes that will become dead space.
+        let rg_idx = row_group_id as usize;
+        if rg_idx < self.file_metadata.row_groups.len() {
+            let old_rg = &self.file_metadata.row_groups[rg_idx];
+            // Compressed column data size.
+            self.accumulated_unused_bytes += old_rg.compressed_size() as u64;
+            // Column index and offset index sizes per column.
+            for col in old_rg.columns() {
+                if let Some(len) = col.column_index_length() {
+                    self.accumulated_unused_bytes += len as u64;
+                }
+                if let Some(len) = col.offset_index_length() {
+                    self.accumulated_unused_bytes += len as u64;
+                }
+            }
+        }
+
         let options = self.row_group_options();
         let row_group = create_row_group(
             partition,
@@ -147,7 +194,34 @@ impl ParquetUpdater {
     }
 
     pub fn end(&mut self, key_value_metadata: Option<Vec<KeyValue>>) -> ParquetResult<u64> {
-        self.parquet_file.end(key_value_metadata).map_err(|s| {
+        // The old footer is now dead space.
+        self.accumulated_unused_bytes += self.old_footer_size;
+
+        // Build updated QDB metadata with unused_bytes and pass it as KV metadata.
+        let mut qdb_meta = self
+            .file_metadata
+            .key_value_metadata
+            .as_ref()
+            .and_then(|kvs| {
+                kvs.iter()
+                    .find(|kv| kv.key == QDB_META_KEY)
+                    .and_then(|kv| kv.value.as_ref())
+                    .and_then(|v| QdbMeta::deserialize(v).ok())
+            })
+            .unwrap_or_else(|| QdbMeta::new(0));
+
+        qdb_meta.unused_bytes = self.accumulated_unused_bytes;
+
+        let qdb_meta_json = qdb_meta.serialize()?;
+        let qdb_kv = KeyValue {
+            key: QDB_META_KEY.to_string(),
+            value: Some(qdb_meta_json),
+        };
+
+        let mut kv = key_value_metadata.unwrap_or_default();
+        kv.push(qdb_kv);
+
+        self.parquet_file.end(Some(kv)).map_err(|s| {
             ParquetError::with_descr(
                 ParquetErrorReason::Parquet2(s),
                 "could not update parquet file",

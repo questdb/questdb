@@ -561,8 +561,16 @@ impl<W: Write> ParquetFile<W> {
                 metadata.key_value_metadata = metadata.key_value_metadata.take().map_or(
                     key_value_metadata.clone(),
                     |mut kv| {
-                        if let Some(mut new_kv) = key_value_metadata {
-                            kv.append(&mut new_kv);
+                        if let Some(new_kv) = key_value_metadata {
+                            for new_entry in new_kv {
+                                if let Some(existing) =
+                                    kv.iter_mut().find(|e| e.key == new_entry.key)
+                                {
+                                    *existing = new_entry;
+                                } else {
+                                    kv.push(new_entry);
+                                }
+                            }
                         }
                         Some(kv)
                     },
