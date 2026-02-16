@@ -24,35 +24,29 @@
 
 package io.questdb.test.cutlass.http.line;
 
-import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DefaultDdlListener;
-import io.questdb.cairo.MicrosTimestampDriver;
-import io.questdb.cairo.NanosTimestampDriver;
-import io.questdb.cairo.SecurityContext;
-import io.questdb.cairo.TableToken;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.client.DefaultHttpClientConfiguration;
 import io.questdb.client.Sender;
-import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.array.DoubleArray;
-import io.questdb.cutlass.line.array.LongArray;
-import io.questdb.cutlass.line.http.AbstractLineHttpSender;
-import io.questdb.cutlass.line.http.LineHttpSenderV2;
+import io.questdb.client.cutlass.line.LineSenderException;
+import io.questdb.client.cutlass.line.array.DoubleArray;
+import io.questdb.client.cutlass.line.array.LongArray;
+import io.questdb.client.cutlass.line.http.AbstractLineHttpSender;
+import io.questdb.client.cutlass.line.http.LineHttpSenderV2;
+import io.questdb.client.std.Decimal256;
+import io.questdb.client.std.Numbers;
+import io.questdb.client.std.NumericException;
+import io.questdb.client.std.str.DirectUtf8Sink;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
-import io.questdb.std.Decimal256;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
-import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
@@ -86,6 +80,91 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     public static <T> T createLongArray(int... shape) {
         int[] indices = new int[shape.length];
         return buildNestedArray(ArrayDataType.LONG, shape, 0, indices);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> T buildNestedArray(ArrayDataType dataType, int[] shape, int currentDim, int[] indices) {
+        if (currentDim == shape.length - 1) {
+            Object arr = dataType.createArray(shape[currentDim]);
+            for (int i = 0; i < Array.getLength(arr); i++) {
+                indices[currentDim] = i;
+                dataType.setElement(arr, i, indices);
+            }
+            return (T) arr;
+        } else {
+            Class<?> componentType = dataType.getComponentType(shape.length - currentDim - 1);
+            Object arr = Array.newInstance(componentType, shape[currentDim]);
+            for (int i = 0; i < shape[currentDim]; i++) {
+                indices[currentDim] = i;
+                Object subArr = buildNestedArray(dataType, shape, currentDim + 1, indices);
+                Array.set(arr, i, subArr);
+            }
+            return (T) arr;
+        }
+    }
+
+    private static void flushAndAssertError(Sender sender, String... errors) {
+        try {
+            sender.flush();
+            Assert.fail("Expected exception");
+        } catch (LineSenderException e) {
+            for (String error : errors) {
+                TestUtils.assertContains(e.getMessage(), error);
+            }
+        }
+    }
+
+    private static void sendIlp(String tableName, int count, ServerMain serverMain) throws NumericException {
+        long timestamp = MicrosTimestampDriver.floor("2023-11-27T18:53:24.834Z");
+        int i = 0;
+
+        int port = serverMain.getHttpServerPort();
+        try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                .address("localhost:" + port)
+                .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
+                .autoFlushIntervalMillis(Integer.MAX_VALUE) // flush manually...
+                .build()
+        ) {
+            if (count / 2 > 0) {
+                String tableNameUpper = tableName.toUpperCase();
+                for (; i < count / 2; i++) {
+                    String tn = i % 2 == 0 ? tableName : tableNameUpper;
+                    sender.table(tn)
+                            .symbol("async", "true")
+                            .symbol("location", "santa_monica")
+                            .stringColumn("level", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))
+                            .longColumn("water_level", i)
+                            .at(timestamp, ChronoUnit.MICROS);
+                }
+                sender.flush();
+            }
+
+            for (; i < count; i++) {
+                String tableNameUpper = tableName.toUpperCase();
+                String tn = i % 2 == 0 ? tableName : tableNameUpper;
+                sender.table(tn)
+                        .symbol("async", "true")
+                        .symbol("location", "santa_monica")
+                        .stringColumn("level", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))
+                        .longColumn("water_level", i)
+                        .at(timestamp, ChronoUnit.MICROS);
+            }
+            sender.flush();
+        }
+    }
+
+    private static void putDouble(DirectUtf8Sink sink, double value) {
+        sink.put('=');
+        sink.putAny((byte) 16);
+        long raw = Double.doubleToRawLongBits(value);
+        sink.putAny((byte) (raw & 0xFF));
+        sink.putAny((byte) ((raw >> 8) & 0xFF));
+        sink.putAny((byte) ((raw >> 16) & 0xFF));
+        sink.putAny((byte) ((raw >> 24) & 0xFF));
+        sink.putAny((byte) ((raw >> 32) & 0xFF));
+        sink.putAny((byte) ((raw >> 40) & 0xFF));
+        sink.putAny((byte) ((raw >> 48) & 0xFF));
+        sink.putAny((byte) ((raw >> 56) & 0xFF));
     }
 
     public void assertSql(CairoEngine engine, CharSequence sql, CharSequence expectedResult) throws SqlException {
@@ -712,7 +791,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 int totalCount = 50_000;
                 int autoFlushRows = 1000;
-                try (AbstractLineHttpSender sender = new LineHttpSenderV2("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 127, 0, 1_000, 0, Long.MAX_VALUE)) {
+                try (AbstractLineHttpSender sender = new LineHttpSenderV2("localhost", httpPort, io.questdb.client.DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 127, 0, 1_000, 0, Long.MAX_VALUE)) {
                     for (int i = 0; i < totalCount; i++) {
                         if (i != 0 && i % autoFlushRows == 0) {
                             serverMain.awaitTable("table with space");
@@ -1452,18 +1531,14 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             if (i % 2 == 0) {
                                 Numbers.append(sink, v);
                             } else {
-                                sink.put('=');
-                                sink.putAny((byte) 16);
-                                sink.putDouble(v);
+                                putDouble(sink, v);
                             }
                             double a2 = 2 + i;
                             sink.put(",y=\"ystr\",a1=");
                             if (i % 2 != 0) {
                                 Numbers.append(sink, a2);
                             } else {
-                                sink.put('=');
-                                sink.putAny((byte) 16);
-                                sink.putDouble(a2);
+                                putDouble(sink, a2);
                             }
                             long ts = 100000000002000L + i * 1000;
                             sink.put(" ").put(ts).put('\n');
@@ -3130,77 +3205,6 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 }
             }
         });
-    }
-
-    @SuppressWarnings("unchecked")
-    private static <T> T buildNestedArray(ArrayDataType dataType, int[] shape, int currentDim, int[] indices) {
-        if (currentDim == shape.length - 1) {
-            Object arr = dataType.createArray(shape[currentDim]);
-            for (int i = 0; i < Array.getLength(arr); i++) {
-                indices[currentDim] = i;
-                dataType.setElement(arr, i, indices);
-            }
-            return (T) arr;
-        } else {
-            Class<?> componentType = dataType.getComponentType(shape.length - currentDim - 1);
-            Object arr = Array.newInstance(componentType, shape[currentDim]);
-            for (int i = 0; i < shape[currentDim]; i++) {
-                indices[currentDim] = i;
-                Object subArr = buildNestedArray(dataType, shape, currentDim + 1, indices);
-                Array.set(arr, i, subArr);
-            }
-            return (T) arr;
-        }
-    }
-
-    private static void flushAndAssertError(Sender sender, String... errors) {
-        try {
-            sender.flush();
-            Assert.fail("Expected exception");
-        } catch (LineSenderException e) {
-            for (String error : errors) {
-                TestUtils.assertContains(e.getMessage(), error);
-            }
-        }
-    }
-
-    private static void sendIlp(String tableName, int count, ServerMain serverMain) throws NumericException {
-        long timestamp = MicrosTimestampDriver.floor("2023-11-27T18:53:24.834Z");
-        int i = 0;
-
-        int port = serverMain.getHttpServerPort();
-        try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                .address("localhost:" + port)
-                .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
-                .autoFlushIntervalMillis(Integer.MAX_VALUE) // flush manually...
-                .build()
-        ) {
-            if (count / 2 > 0) {
-                String tableNameUpper = tableName.toUpperCase();
-                for (; i < count / 2; i++) {
-                    String tn = i % 2 == 0 ? tableName : tableNameUpper;
-                    sender.table(tn)
-                            .symbol("async", "true")
-                            .symbol("location", "santa_monica")
-                            .stringColumn("level", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))
-                            .longColumn("water_level", i)
-                            .at(timestamp, ChronoUnit.MICROS);
-                }
-                sender.flush();
-            }
-
-            for (; i < count; i++) {
-                String tableNameUpper = tableName.toUpperCase();
-                String tn = i % 2 == 0 ? tableName : tableNameUpper;
-                sender.table(tn)
-                        .symbol("async", "true")
-                        .symbol("location", "santa_monica")
-                        .stringColumn("level", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))
-                        .longColumn("water_level", i)
-                        .at(timestamp, ChronoUnit.MICROS);
-            }
-            sender.flush();
-        }
     }
 
     private void testCreateTimestampColumns(long timestamp, ChronoUnit unit, int protocolVersion, int[] expectedColumnTypes, String expected) throws Exception {
