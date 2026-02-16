@@ -31,6 +31,7 @@ import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.cairo.wal.seq.TableTransactionLogV2;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
+import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.Rnd;
@@ -79,7 +80,7 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
 
                 path.of(root).concat("v2");
                 ff.mkdir(path.$(), configuration.getMkDirMode());
-                TableTransactionLogV2 v2 = new TableTransactionLogV2(configuration, chunkTransactionCount);
+                TableTransactionLogV2 v2 = new TableTransactionLogV2(configuration, chunkTransactionCount, DefaultWalDirectoryPolicy.INSTANCE);
                 v2.create(path, 65897);
                 v2.open(path);
 

@@ -29,7 +29,14 @@ import io.questdb.std.str.Path;
 public interface WalDirectoryPolicy {
     void initDirectory(Path dirPath);
 
+    default void initSequencerPart(Path seqDirPath, long partId) {
+    }
+
     boolean isInUse(Path path);
+
+    default boolean isSeqPartInUse(Path seqDirPath, int partId) {
+        return false;
+    }
 
     void rollbackDirectory(Path path);
 

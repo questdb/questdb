@@ -99,7 +99,7 @@ public class TableSequencerImpl implements TableSequencer {
                     WAL_INDEX_FILE_NAME,
                     configuration.getIdGenerateBatchStep() < 0 ? 512 : configuration.getIdGenerateBatchStep()
             );
-            tableTransactionLog = new TableTransactionLog(configuration);
+            tableTransactionLog = new TableTransactionLog(configuration, walDirectoryPolicy);
             microClock = configuration.getMicrosecondClock();
             if (tableStruct != null) {
                 schemaLock.writeLock().lock();

@@ -30,6 +30,7 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.MemorySerializer;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -79,13 +80,15 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     private final Path rootPath;
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
     private final MemoryCMARW txnPartMem = Vm.getCMARWInstance();
+    private final WalDirectoryPolicy walDirectoryPolicy;
     private long partId = -1;
     private int partTransactionCount;
 
-    public TableTransactionLogV2(CairoConfiguration configuration, int seqPartTransactionCount) {
+    public TableTransactionLogV2(CairoConfiguration configuration, int seqPartTransactionCount, WalDirectoryPolicy walDirectoryPolicy) {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.partTransactionCount = seqPartTransactionCount;
+        this.walDirectoryPolicy = walDirectoryPolicy;
         rootPath = new Path();
     }
 
@@ -297,6 +300,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             } finally {
                 rootPath.trimTo(size);
             }
+            walDirectoryPolicy.initSequencerPart(rootPath, part);
         }
     }
 

@@ -570,6 +570,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
         void deleteWalDirectory(int walId);
 
+        default boolean isSeqPartInUse(int seqPart) {
+            return false;
+        }
+
         void unlock(int walId);
     }
 
@@ -636,7 +640,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
                     final int seqPart = getSeqPart(walId, maxSegmentLocked); // -1 if not a seq part
                     if (seqPart > -1) {
-                        if (seqPart < currentSeqPart && seqPart != backupLockedPart) {
+                        if (seqPart < currentSeqPart && seqPart != backupLockedPart && !deleter.isSeqPartInUse(seqPart)) {
                             logDebugInfo();
                             deleter.deleteSequencerPart(seqPart);
                         }
@@ -798,6 +802,14 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             Path path = setSeqPartPath(tableToken).put(Files.SEPARATOR).put(seqPart);
             // If error removing, will be retried on next run.
             ff.removeQuiet(path.$());
+        }
+
+        @Override
+        public boolean isSeqPartInUse(int seqPart) {
+            return walDirectoryPolicy.isSeqPartInUse(
+                    path.of(configuration.getDbRoot()).concat(tableToken).concat(WalUtils.SEQ_DIR),
+                    seqPart
+            );
         }
 
         @Override

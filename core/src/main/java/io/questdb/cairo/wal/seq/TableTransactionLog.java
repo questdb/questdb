@@ -50,6 +50,8 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.openSmallFile;
+import io.questdb.cairo.wal.WalDirectoryPolicy;
+
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class TableTransactionLog implements Closeable {
@@ -62,12 +64,14 @@ public class TableTransactionLog implements Closeable {
     private final Utf8StringSink rootPath = new Utf8StringSink();
     private final MemoryCMARW txnMetaMem = Vm.getCMARWInstance();
     private final MemoryCMARW txnMetaMemIndex = Vm.getCMARWInstance();
+    private final WalDirectoryPolicy walDirectoryPolicy;
     private volatile long lastTxn = -1;
     private TableTransactionLogFile txnLogFile;
 
-    TableTransactionLog(CairoConfiguration configuration) {
+    TableTransactionLog(CairoConfiguration configuration, WalDirectoryPolicy walDirectoryPolicy) {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
+        this.walDirectoryPolicy = walDirectoryPolicy;
     }
 
     public static long readMaxStructureVersion(FilesFacade ff, Path path) {
@@ -112,7 +116,7 @@ public class TableTransactionLog implements Closeable {
             assert txnLogFile == null;
             rootPath.put(path);
 
-            txnLogFile = openTxnFile(path, configuration);
+            txnLogFile = openTxnFile(path, configuration, walDirectoryPolicy);
             long maxStructureVersion = txnLogFile.open(path);
 
             openFiles(path);
@@ -153,13 +157,13 @@ public class TableTransactionLog implements Closeable {
         return bypassFdCache ? TableUtils.openRONoCache(ff, path, fileName, LOG) : TableUtils.openRO(ff, path, fileName, LOG);
     }
 
-    private static TableTransactionLogFile openTxnFile(Path path, CairoConfiguration configuration) {
+    private static TableTransactionLogFile openTxnFile(Path path, CairoConfiguration configuration, WalDirectoryPolicy walDirectoryPolicy) {
         int formatVersion = getFormatVersion(path, configuration.getFilesFacade());
         switch (formatVersion) {
             case WAL_SEQUENCER_FORMAT_VERSION_V1:
                 return new TableTransactionLogV1(configuration);
             case WAL_SEQUENCER_FORMAT_VERSION_V2:
-                return new TableTransactionLogV2(configuration, -1);
+                return new TableTransactionLogV2(configuration, -1, walDirectoryPolicy);
             default:
                 throw new UnsupportedOperationException("Unsupported transaction log version: " + formatVersion);
         }
@@ -168,7 +172,7 @@ public class TableTransactionLog implements Closeable {
     private void createTxnLogFileInstance() {
         if (txnLogFile == null) {
             if (configuration.getDefaultSeqPartTxnCount() > 0) {
-                txnLogFile = new TableTransactionLogV2(configuration, configuration.getDefaultSeqPartTxnCount());
+                txnLogFile = new TableTransactionLogV2(configuration, configuration.getDefaultSeqPartTxnCount(), walDirectoryPolicy);
             } else {
                 txnLogFile = new TableTransactionLogV1(configuration);
             }
