@@ -63,6 +63,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeAlterTableAlterSymbolCapacity(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+    }
+
+    @Override
     public void authorizeAlterTableAttachPartition(TableToken tableToken) {
     }
 
@@ -104,6 +108,10 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
+    }
+
+    @Override
+    public void authorizeDatabaseBackup() {
     }
 
     @Override
@@ -167,10 +175,6 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void authorizeSystemAdmin() {
-    }
-
-    @Override
-    public void authorizeDatabaseBackup() {
     }
 
     @Override

@@ -1109,7 +1109,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change symbol capacity");
         }
 
-        securityContext.authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
+        securityContext.authorizeAlterTableAlterSymbolCapacity(tableToken, alterOperationBuilder.getExtraStrInfo());
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
