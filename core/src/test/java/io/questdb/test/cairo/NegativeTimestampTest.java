@@ -194,7 +194,7 @@ public class NegativeTimestampTest extends AbstractCairoTest {
      * This isolates the radix sort behavior from the full DEDUP flow.
      */
     @Test
-    public void testRadixSortABWithNegativeTimestamps() throws Exception {
+    public void testRadixSortABWithNegativeTimestamps() {
         // Test case: LAG has ts=1000000, WAL has ts=-1000000
         // Expected output: sorted as [ts=-1000000, ts=1000000]
 
