@@ -225,8 +225,19 @@ public class HorizonJoinTimeFrameHelper {
                     bestRowIndex = timeFrame.getRowHi() - 1;
                     bookmarkCurrentFrame(0);
                 } else if (scaleTimestamp(timeFrame.getTimestampLo(), slaveTsScale) <= targetTimestamp) {
-                    // Target is within this frame
-                    rowLo = bookmarkedRowIndex;
+                    // Target is within this frame. Validate bookmark: if the row at
+                    // bookmarkedRowIndex has timestamp > target (stale bookmark from a
+                    // previous page frame), fall back to searching from frame start.
+                    if (bookmarkedRowIndex < timeFrame.getRowHi()) {
+                        timeFrameCursor.recordAtRowIndex(record, bookmarkedRowIndex);
+                        if (scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale) <= targetTimestamp) {
+                            rowLo = bookmarkedRowIndex;
+                        } else {
+                            rowLo = timeFrame.getRowLo();
+                        }
+                    } else {
+                        rowLo = timeFrame.getRowLo();
+                    }
                 } else {
                     // Target is before bookmarked frame. Scan backward from the bookmark
                     // to find the frame containing or just before the target. This handles
