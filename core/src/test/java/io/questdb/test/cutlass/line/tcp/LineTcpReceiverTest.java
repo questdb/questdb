@@ -39,12 +39,15 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.line.AbstractLineSender;
-import io.questdb.cutlass.line.AbstractLineTcpSender;
-import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.LineTcpSenderV2;
+import io.questdb.cairo.wal.QdbrWalLocker;
+import io.questdb.cairo.wal.WalLocker;
+import io.questdb.client.cutlass.line.AbstractLineSender;
+import io.questdb.client.cutlass.line.AbstractLineTcpSender;
+import io.questdb.client.cutlass.line.LineSenderException;
+import io.questdb.client.cutlass.line.LineTcpSenderV2;
+import io.questdb.client.cutlass.line.tcp.PlainTcpLineChannel;
+import io.questdb.client.network.NetworkFacadeImpl;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
-import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -53,18 +56,15 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.Net;
-import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -74,6 +74,7 @@ import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -116,12 +117,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         ECPublicKey publicKey = (ECPublicKey) keys.getPublic();
 
         String x = Base64.getUrlEncoder().encodeToString(
-                publicKey.getW().getAffineX().toByteArray()
-        );
+                publicKey.getW().getAffineX().toByteArray());
 
         String y = Base64.getUrlEncoder().encodeToString(
-                publicKey.getW().getAffineY().toByteArray()
-        );
+                publicKey.getW().getAffineY().toByteArray());
 
         System.out.println("x: " + x);
         System.out.println("y: " + y);
@@ -129,9 +128,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         ECPrivateKey privateKey = (ECPrivateKey) keys.getPrivate();
         System.out.println("s: " +
                 Base64.getUrlEncoder().encodeToString(
-                        privateKey.getS().toByteArray()
-                )
-        );
+                        privateKey.getS().toByteArray()));
 
         System.out.printf("%s\tec-p-256-sha256\t%s\t%s%n", AUTH_KEY_ID1, x, y);
     }
@@ -157,15 +154,15 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((receiver) -> {
             String tableName = "up";
 
-            String lineData =
-                    """
-                            up out=1.0 631150000000000000
-                            up out=2.0 631152000000000000
-                            UP out=3.0 631160000000000000
-                            up out=4.0 631170000000000000
-                            """;
+            String lineData = """
+                    up out=1.0 631150000000000000
+                    up out=2.0 631152000000000000
+                    UP out=3.0 631160000000000000
+                    up out=4.0 631170000000000000
+                    """;
 
-            // WAL ILP will create 2 WAL writer, because of different casing. In case of WAL need to wait for 2 writer releases.
+            // WAL ILP will create 2 WAL writer, because of different casing. In case of WAL
+            // need to wait for 2 writer releases.
             CountDownLatch released = new CountDownLatch(walEnabled ? 2 : 1);
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (name != null && Chars.equalsNc(name.getTableName(), tableName)) {
@@ -210,7 +207,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext(receiver -> {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (factoryType == awaitedFactoryType && event == PoolListener.EV_RETURN) {
-                    if (Chars.equalsNc(name.getTableName(), tableName) && name.equals(engine.verifyTableName(tableName))) {
+                    if (Chars.equalsNc(name.getTableName(), tableName)
+                            && name.equals(engine.verifyTableName(tableName))) {
                         dataConsumed.countDown();
                     }
                 }
@@ -258,7 +256,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             final SOCountDownLatch startLatch = new SOCountDownLatch(2);
             final SOCountDownLatch finishLatch = new SOCountDownLatch(2);
             final AtomicInteger errorCount = new AtomicInteger(0);
-            String initialData = tableName + ",location=init_location,symbol=test temperature=20.0 1465839830100000000\n";
+            String initialData = tableName
+                    + ",location=init_location,symbol=test temperature=20.0 1465839830100000000\n";
             send(initialData, tableName);
             mayDrainWalQueue();
 
@@ -391,7 +390,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     """;
             assertTable(expected, tablePartitioned);
 
-            // WAL is not supported on non-partitioned tables, so we create a non-WAL table as a fallback.
+            // WAL is not supported on non-partitioned tables, so we create a non-WAL table
+            // as a fallback.
             Assert.assertFalse(isWalTable(tableNonPartitioned));
             expected = """
                     windspeed\ttimestamp\ttimetocycle
@@ -415,7 +415,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 final int iteration = it;
                 final int maxIds = symbolCount++;
                 send(tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
-                    try (AbstractLineTcpSender sender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    try (AbstractLineTcpSender sender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort,
+                            msgBufferSize)) {
                         for (int i = 0; i < count; i++) {
                             String id = String.valueOf(i % maxIds);
                             sender.metric(tableName)
@@ -474,23 +475,22 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 2);
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
         String weather = "weather";
-        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+        final WalLocker walLocker = new QdbrWalLocker() {
             private int count = 1;
 
             @Override
-            public long openRWNoCache(LPSZ name, int opts) {
-                if (
-                        Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
-                                && Utf8s.containsAscii(name, weather)
-                                && --count == 0
-                ) {
+            public void setWalSegmentMinId(@NotNull TableToken table, int walId, int segmentId) {
+                if (Utf8s.containsAscii(table.getDirNameUtf8(), weather)
+                        && walId == 1
+                        && segmentId == 1
+                        && --count == 0) {
                     dropWeatherTable();
                 }
-                return super.openRWNoCache(name, opts);
+                super.setWalSegmentMinId(table, walId, segmentId);
             }
         };
 
-        runInContext(filesFacade, (receiver) -> {
+        runInContext(walLocker, (receiver) -> {
             String lineData = weather + ",location=us-midwest temperature=82 1465839830100400200\n" +
                     weather + ",location=us-midwest temperature=83 1465839830100500200\n" +
                     weather + ",location=us-eastcoast temperature=81 1465839830101400200\n" +
@@ -499,7 +499,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     weather + ",location=us-westcost,source=sensor1 temp=82 1465839830102500200\n" +
                     "done ok=t\n";
 
-            // Wait for 2 WAL writer, dropped table WAL writer will not be returned to the pool
+            // Wait for 2 WAL writer, dropped table WAL writer will not be returned to the
+            // pool
             sendWaitWalReleaseCount(lineData, 2);
 
             mayDrainWalQueue();
@@ -518,15 +519,14 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testFieldValuesHasEqualsChar() throws Exception {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         maxMeasurementSize = 250;
-        String lineData =
-                """
-                        tab ts_nsec=1111111111111111111i,raw_msg="_________________________________________________________________________________________________________ ____________" 1619509249714000000
-                        tab ts_nsec=2222222222222222222i,raw_msg="_________________________________________________________________________________________________________ ____________" 1619509249714000000
-                        tab ts_nsec=3333333333333333333i,raw_msg="_________________________________________________________________________________________________________ ____________" 1619509249714000000
-                        tab ts_nsec=4444444444444444444i,raw_msg="_________________________________________________________________________________________________________ ____________" 1619509249714000000
-                        tab ts_nsec=5555555555555555555i,raw_msg="_________________________________________________________________________________________________________ ____________" 1619509249714000000
-                        tab ts_nsec=6666666666666666666i,raw_msg="_________________________________________________________________________________________________________ ____________" 1619509249714000000
-                        """;
+        String lineData = """
+                tab ts_nsec=1111111111111111111i,raw_msg="_________________________________________________________________________________________________________ ____________" 1619509249714000000
+                tab ts_nsec=2222222222222222222i,raw_msg="_________________________________________________________________________________________________________ ____________" 1619509249714000000
+                tab ts_nsec=3333333333333333333i,raw_msg="_________________________________________________________________________________________________________ ____________" 1619509249714000000
+                tab ts_nsec=4444444444444444444i,raw_msg="_________________________________________________________________________________________________________ ____________" 1619509249714000000
+                tab ts_nsec=5555555555555555555i,raw_msg="_________________________________________________________________________________________________________ ____________" 1619509249714000000
+                tab ts_nsec=6666666666666666666i,raw_msg="_________________________________________________________________________________________________________ ____________" 1619509249714000000
+                """;
         runInContext((receiver) -> {
             sendLinger(lineData, "tab");
 
@@ -561,12 +561,11 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
         AbstractCairoTest.create(m);
 
-        String lineData =
-                """
-                        weather windspeed=2.0 631150000000000000
-                        weather timetocycle=0.0,windspeed=3.0 631160000000000000
-                        weather windspeed=4.0 631170000000000000
-                        """;
+        String lineData = """
+                weather windspeed=2.0 631150000000000000
+                weather timetocycle=0.0,windspeed=3.0 631160000000000000
+                weather windspeed=4.0 631170000000000000
+                """;
 
         runInContext((receiver) -> {
             sendLinger(lineData, "weather");
@@ -590,13 +589,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testFieldsReducedO3() throws Exception {
-        String lineData =
-                """
-                        weather windspeed=1.0 631152000000000000
-                        weather windspeed=2.0 631150000000000000
-                        weather timetocycle=0.0,windspeed=3.0 631160000000000000
-                        weather windspeed=4.0 631170000000000000
-                        """;
+        String lineData = """
+                weather windspeed=1.0 631152000000000000
+                weather windspeed=2.0 631150000000000000
+                weather timetocycle=0.0,windspeed=3.0 631160000000000000
+                weather windspeed=4.0 631170000000000000
+                """;
 
         runInContext((receiver) -> {
             sendLinger(lineData, "weather");
@@ -618,13 +616,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testFieldsReducedO3VarLen() throws Exception {
-        String lineData =
-                """
-                        weather dir="NA",windspeed=1.0 631152000000000000
-                        weather dir="South",windspeed=2.0 631150000000000000
-                        weather dir="North",windspeed=3.0,timetocycle=0.0 631160000000000000
-                        weather dir="SSW",windspeed=4.0 631170000000000000
-                        """;
+        String lineData = """
+                weather dir="NA",windspeed=1.0 631152000000000000
+                weather dir="South",windspeed=2.0 631150000000000000
+                weather dir="North",windspeed=3.0,timetocycle=0.0 631160000000000000
+                weather dir="SSW",windspeed=4.0 631170000000000000
+                """;
 
         runInContext((receiver) -> {
             sendLinger(lineData, "weather");
@@ -649,7 +646,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         runInContext((receiver) -> {
             send("table", WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (AbstractLineTcpSender lineTcpSender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                try (AbstractLineTcpSender lineTcpSender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"),
+                        bindPort, msgBufferSize)) {
                     lineTcpSender.disableValidation();
                     lineTcpSender
                             .metric("table")
@@ -706,16 +704,55 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testInvalidZeroSignature() throws Exception {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         test(AUTH_KEY_ID1, 768, 100, true, () -> {
-            PlainTcpLineChannel channel = new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, Net.parseIPv4("127.0.0.1"), bindPort, 4096);
+            PlainTcpLineChannel channel = new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE,
+                    Net.parseIPv4("127.0.0.1"), bindPort, 4096);
             AbstractLineTcpSender sender = new LineTcpSenderV2(channel, 4096, 127) {
                 @Override
-                protected byte[] signAndEncode(PrivateKey privateKey, byte[] challengeBytes) {
+                @SuppressWarnings("unused")
+                protected byte[] signAndEncode(PrivateKey unused, byte[] challengeBytes) {
                     byte[] rawSignature = new byte[64];
                     return Base64.getEncoder().encode(rawSignature);
                 }
             };
             sender.authenticate(AUTH_KEY_ID1, null);
             return sender;
+        });
+    }
+
+    @Test
+    public void testMalformedBinaryDecimalDoesNotCrash() throws Exception {
+        // Regression test: fuzzer-generated payload that triggered
+        // ArrayIndexOutOfBoundsException in DecimalBinaryFormatParser.load()
+        // when the len byte was read as signed, causing negative len to skip
+        // the VALUES state while bypassing the len == 0 guard.
+        byte[] crashPayload = hexToBytes(
+                "fc20756f793d3d172bae34343434343434343434346459116b3e34bd5f2026"
+                        + "6f34343d343334343434343434343434343434343434343434343434347f51"
+                        + "3e6355000006343434343434343434340034342c0a"
+        );
+        runInContext(receiver -> {
+            int ipv4address = Net.parseIPv4("127.0.0.1");
+            long sockaddr = Net.sockaddr(ipv4address, bindPort);
+            long fd = Net.socketTcp(true);
+            try {
+                TestUtils.connect(fd, sockaddr);
+                long bufaddr = io.questdb.std.Unsafe.malloc(crashPayload.length, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int n = 0; n < crashPayload.length; n++) {
+                        io.questdb.std.Unsafe.getUnsafe().putByte(bufaddr + n, crashPayload[n]);
+                    }
+                    Net.send(fd, bufaddr, crashPayload.length);
+                } finally {
+                    io.questdb.std.Unsafe.free(bufaddr, crashPayload.length, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                }
+            } finally {
+                Net.close(fd);
+                Net.freeSockAddr(sockaddr);
+            }
+            // Verify the server is still alive by sending a valid ILP message
+            sendLinger("test_alive value=1i 1000000000000\n", "test_alive");
+            mayDrainWalQueue();
+            assertTable("value\ttimestamp\n1\t1970-01-01T00:16:40.000000Z\n", "test_alive");
         });
     }
 
@@ -744,7 +781,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 // after the 252nd column has been added the metadata size will be exactly 16k
                 // adding an extra 2 columns, just in case
                 for (int i = 1; i < numOfColumns; i++) {
-                    sendToSocket(socket, tableName + ",abcdefghijklmnopqrs=x, " + rnd.nextString(13 - (int) Math.log10(i)) + i + "=32 " + i + "\n");
+                    sendToSocket(socket, tableName + ",abcdefghijklmnopqrs=x, "
+                            + rnd.nextString(13 - (int) Math.log10(i)) + i + "=32 " + i + "\n");
                 }
                 finished.await();
             } finally {
@@ -765,7 +803,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         Assume.assumeTrue(ColumnType.isTimestampNano(timestampType.getTimestampType()));
         runInContext((receiver) -> {
             send("table", WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (AbstractLineTcpSender lineTcpSender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                try (AbstractLineTcpSender lineTcpSender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"),
+                        bindPort, msgBufferSize)) {
                     lineTcpSender.disableValidation();
                     lineTcpSender
                             .metric("table")
@@ -808,7 +847,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         autoCreateNewColumns = false;
         runInContext((receiver) -> {
-            // First, create a table and insert a few rows into it, so that we get some existing symbol keys.
+            // First, create a table and insert a few rows into it, so that we get some
+            // existing symbol keys.
             TableModel m = new TableModel(configuration, "up", PartitionBy.MONTH);
             m.timestamp("ts").col("sym", ColumnType.SYMBOL);
             if (walEnabled) {
@@ -816,13 +856,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
             createTable(m);
 
-            String lineData =
-                    """
-                            up out=1.0 631150000000000000
-                            up out=2.0 631152000000000000
-                            up out=3.0 631160000000000000
-                            up out=4.0 631170000000000000
-                            """;
+            String lineData = """
+                    up out=1.0 631150000000000000
+                    up out=2.0 631152000000000000
+                    up out=3.0 631160000000000000
+                    up out=4.0 631170000000000000
+                    """;
             sendLinger(lineData, "up");
 
             mayDrainWalQueue();
@@ -853,27 +892,25 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
         String weather = "weather";
         String meteorology = "meteorology";
-        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+        var walLocker = new QdbrWalLocker() {
             private final AtomicInteger count = new AtomicInteger(1);
 
             @Override
-            public long openRWNoCache(LPSZ name, int opts) {
-                if (
-                        Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
-                                && count.decrementAndGet() == 0
-                ) {
+            public void setWalSegmentMinId(@NotNull TableToken table, int walId, int segmentId) {
+                if (walId == 1 && segmentId == 1 && count.decrementAndGet() == 0) {
                     mayDrainWalQueue();
                     renameTable(weather, meteorology);
                 }
-                return super.openRWNoCache(name, opts);
+                super.setWalSegmentMinId(table, walId, segmentId);
             }
         };
 
-        runInContext(filesFacade, (receiver) -> {
+        runInContext(walLocker, (receiver) -> {
             final String lineData = weather + ",location=west1 temperature=10 1465839830100400200\n" +
                     weather + ",location=west2 temperature=20 1465839830100500200\n" +
                     weather + ",location=east3 temperature=30 1465839830100600200\n" +
-                    weather + ",location=west4,source=sensor1 temp=40 1465839830100700200\n" + // <- this is where the split should happen
+                    weather + ",location=west4,source=sensor1 temp=40 1465839830100700200\n" + // <- this is where the
+                    // split should happen
                     weather + ",location=east5,source=sensor2 temp=50 1465839830100800200\n" +
                     weather + ",location=west6,source=sensor3 temp=60 1465839830100900200\n" +
                     weather + ",location=north,source=sensor4 temp=70 1465839830101000200\n" +
@@ -914,23 +951,20 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
         String weather = "weather";
         String meteorology = "meteorology";
-        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+        var walLocker = new QdbrWalLocker() {
             private int count = 1;
 
             @Override
-            public long openRWNoCache(LPSZ name, int opts) {
-                if (
-                        Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
-                                && Utf8s.containsAscii(name, weather)
-                                && --count == 0
-                ) {
+            public void setWalSegmentMinId(@NotNull TableToken table, int walId, int segmentId) {
+                if (Utf8s.containsAscii(table.getDirNameUtf8(), weather) && walId == 1 && segmentId == 1
+                        && --count == 0) {
                     renameTable(weather, meteorology);
                 }
-                return super.openRWNoCache(name, opts);
+                super.setWalSegmentMinId(table, walId, segmentId);
             }
         };
 
-        runInContext(filesFacade, (receiver) -> {
+        runInContext(walLocker, (receiver) -> {
             String lineData = weather + ",location=west1 temperature=10 1465839830100400200\n" +
                     weather + ",location=west2 temperature=20 1465839830100500200\n" +
                     weather + ",location=east3 temperature=30 1465839830100600200\n" +
@@ -955,8 +989,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         drainWalQueue();
                         assertTable(expected, meteorology);
                     },
-                    15
-            );
+                    15);
 
             // last 2 commits goes to the recreated table
             final String expected2 = """
@@ -971,8 +1004,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         drainWalQueue();
                         assertTable(expected2, weather);
                     },
-                    15
-            );
+                    15);
 
         }, false, 250);
     }
@@ -1130,7 +1162,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         runInContext((receiver) -> {
             send("table", WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (AbstractLineTcpSender lineTcpSender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                try (AbstractLineTcpSender lineTcpSender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"),
+                        bindPort, msgBufferSize)) {
                     lineTcpSender
                             .metric("table")
                             .tag("tag1", "value 1")
@@ -1245,8 +1278,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             "select x as windspeed," +
                             "x*2 as timetocycle, " +
                             "cast(x as timestamp) as ts " +
-                            "from long_sequence(2)) timestamp(ts)"
-            );
+                            "from long_sequence(2)) timestamp(ts)");
 
             try (RecordCursorFactory cursorFactory = select("weather")) {
                 try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
@@ -1261,13 +1293,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 execute("drop table weather");
 
                 runInContext((receiver) -> {
-                    String lineData =
-                            """
-                                    weather windspeed=1.0 631150000000000000
-                                    weather windspeed=2.0 631152000000000000
-                                    weather timetocycle=0.0,windspeed=3.0 631160000000000000
-                                    weather windspeed=4.0 631170000000000000
-                                    """;
+                    String lineData = """
+                            weather windspeed=1.0 631150000000000000
+                            weather windspeed=2.0 631152000000000000
+                            weather timetocycle=0.0,windspeed=3.0 631160000000000000
+                            weather windspeed=4.0 631170000000000000
+                            """;
                     sendLinger(lineData, "weather");
                 });
                 mayDrainWalQueue();
@@ -1295,13 +1326,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             engine.releaseInactive();
             runInContext((receiver) -> {
-                String lineData =
-                        """
-                                test col="1.1.1.1" 631150000000000000
-                                test col="1.1.1.1" 31152000000000000
-                                test col="1.1.1.1" 631160000000000000
-                                test col="1.1.1.1" 631170000000000000
-                                """;
+                String lineData = """
+                        test col="1.1.1.1" 631150000000000000
+                        test col="1.1.1.1" 31152000000000000
+                        test col="1.1.1.1" 631160000000000000
+                        test col="1.1.1.1" 631170000000000000
+                        """;
                 sendLinger(lineData, "test");
             });
             mayDrainWalQueue();
@@ -1331,13 +1361,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             engine.releaseInactive();
             runInContext((receiver) -> {
-                String lineData =
-                        """
-                                test col="12.35.40.11",col="23.44.87.56" 631150000000000000
-                                test col="23.45.09.12",col="32.11.35.67" 31152000000000000
-                                test col="255.255.255.255",col="80.45.86.21" 631160000000000000
-                                test col="34.54.23.89",col="22.54.68.90" 631170000000000000
-                                """;
+                String lineData = """
+                        test col="12.35.40.11",col="23.44.87.56" 631150000000000000
+                        test col="23.45.09.12",col="32.11.35.67" 31152000000000000
+                        test col="255.255.255.255",col="80.45.86.21" 631160000000000000
+                        test col="34.54.23.89",col="22.54.68.90" 631170000000000000
+                        """;
                 sendLinger(lineData, "test");
             });
             mayDrainWalQueue();
@@ -1365,13 +1394,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             engine.releaseInactive();
             runInContext((receiver) -> {
-                String lineData =
-                        """
-                                test col="12.35.40.11",coll="23.44.87.56" 631150000000000000
-                                test col="23.45.09.12",coll="32.11.35.67" 31152000000000000
-                                test col="255.255.255.255",coll="80.45.86.21" 631160000000000000
-                                test col="34.54.23.89",coll="22.54.68.90" 631170000000000000
-                                """;
+                String lineData = """
+                        test col="12.35.40.11",coll="23.44.87.56" 631150000000000000
+                        test col="23.45.09.12",coll="32.11.35.67" 31152000000000000
+                        test col="255.255.255.255",coll="80.45.86.21" 631160000000000000
+                        test col="34.54.23.89",coll="22.54.68.90" 631170000000000000
+                        """;
                 sendLinger(lineData, "test");
             });
             mayDrainWalQueue();
@@ -1403,11 +1431,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             // Check that -1 and -2 are not magic numbers in ILP parsing
             runInContext((receiver) -> {
-                String lineData =
-                        """
-                                test col="255.255.255.254" 631150000000000000
-                                test col="255.255.255.255" 631150000000000000
-                                """;
+                String lineData = """
+                        test col="255.255.255.254" 631150000000000000
+                        test col="255.255.255.255" 631150000000000000
+                        """;
                 sendLinger(lineData, "test");
             });
             mayDrainWalQueue();
@@ -1435,13 +1462,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             engine.releaseInactive();
             runInContext((receiver) -> {
-                String lineData =
-                        """
-                                test col="0.0.0.0" 631150000000000000
-                                test col="0.0.0.0" 31152000000000000
-                                test col="0.0.0.0" 631160000000000000
-                                test col="0.0.0.0" 631170000000000000
-                                """;
+                String lineData = """
+                        test col="0.0.0.0" 631150000000000000
+                        test col="0.0.0.0" 31152000000000000
+                        test col="0.0.0.0" 631160000000000000
+                        test col="0.0.0.0" 631170000000000000
+                        """;
                 sendLinger(lineData, "test");
             });
             mayDrainWalQueue();
@@ -1471,13 +1497,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             engine.releaseInactive();
             runInContext((receiver) -> {
-                String lineData =
-                        """
-                                test col="" 631150000000000000
-                                test col="" 31152000000000000
-                                test col="" 631160000000000000
-                                test col="" 631170000000000000
-                                """;
+                String lineData = """
+                        test col="" 631150000000000000
+                        test col="" 31152000000000000
+                        test col="" 631160000000000000
+                        test col="" 631170000000000000
+                        """;
                 sendLinger(lineData, "test");
             });
             mayDrainWalQueue();
@@ -1504,7 +1529,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((receiver) -> {
             String tableName = "table";
             send(tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (AbstractLineTcpSender lineTcpSender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort, 64)) {
+                try (AbstractLineTcpSender lineTcpSender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"),
+                        bindPort, 64)) {
                     for (int i = 0; i < rowCount; i++) {
                         lineTcpSender
                                 .metric(tableName)
@@ -1530,7 +1556,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((receiver) -> {
             String tableName = "ta ble";
             send(tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (AbstractLineTcpSender lineTcpSender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                try (AbstractLineTcpSender lineTcpSender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"),
+                        bindPort, msgBufferSize)) {
                     lineTcpSender
                             .metric(tableName)
                             .tag("tag1", "value 1")
@@ -1702,27 +1729,25 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testWithColumnAsReservedKeyword() throws Exception {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         runInContext((receiver) -> {
-            String lineData =
-                    """
-                            up out=1.0 631150000000000000
-                            up in=2.0 631152000000000000
-                            up in=3.0 631160000000000000
-                            up in=4.0 631170000000000000
-                            """;
+            String lineData = """
+                    up out=1.0 631150000000000000
+                    up in=2.0 631152000000000000
+                    up in=3.0 631160000000000000
+                    up in=4.0 631170000000000000
+                    """;
             sendLinger(lineData, "up");
 
             mayDrainWalQueue();
             if (walEnabled) {
                 Assert.assertTrue(isWalTable("up"));
             }
-            String expected =
-                    """
-                            out\ttimestamp\tin
-                            1.0\t1989-12-31T23:26:40.000000Z\tnull
-                            null\t1990-01-01T00:00:00.000000Z\t2.0
-                            null\t1990-01-01T02:13:20.000000Z\t3.0
-                            null\t1990-01-01T05:00:00.000000Z\t4.0
-                            """;
+            String expected = """
+                    out\ttimestamp\tin
+                    1.0\t1989-12-31T23:26:40.000000Z\tnull
+                    null\t1990-01-01T00:00:00.000000Z\t2.0
+                    null\t1990-01-01T02:13:20.000000Z\t3.0
+                    null\t1990-01-01T05:00:00.000000Z\t4.0
+                    """;
             assertTable(expected, "up");
         });
     }
@@ -1731,13 +1756,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testWithInvalidColumn() throws Exception {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         runInContext((receiver) -> {
-            String lineData =
-                    """
-                            up out=1.0 631150000000000000
-                            up ..=2.0 631152000000000000
-                            up ..=3.0 631160000000000000
-                            up ..=4.0 631170000000000000
-                            """;
+            String lineData = """
+                    up out=1.0 631150000000000000
+                    up ..=2.0 631152000000000000
+                    up ..=3.0 631160000000000000
+                    up ..=4.0 631170000000000000
+                    """;
             sendLinger(lineData, "up");
 
             mayDrainWalQueue();
@@ -1756,7 +1780,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testWithTcpSender() throws Exception {
         runInContext((receiver) -> {
             send("table", WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (AbstractLineTcpSender lineTcpSender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                try (AbstractLineTcpSender lineTcpSender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"),
+                        bindPort, msgBufferSize)) {
                     lineTcpSender.disableValidation();
                     lineTcpSender
                             .metric("table")
@@ -1873,15 +1898,18 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterInsertNewSymbolsIntoTableWithExistingSymbols() throws Exception {
-        // This test only makes sense to WAL tables since it writes into the table from multiple threads.
+        // This test only makes sense to WAL tables since it writes into the table from
+        // multiple threads.
         Assume.assumeTrue(walEnabled && ColumnType.isTimestampMicro(timestampType.getTimestampType()));
 
-        // Here we make sure that TableUpdateDetails' and WalWriter's symbol caches to not clash with each other.
+        // Here we make sure that TableUpdateDetails' and WalWriter's symbol caches to
+        // not clash with each other.
         final String tableName = "x";
         final int symbols = 1024;
 
         runInContext((receiver) -> {
-            // First, create a table and insert a few rows into it, so that we get some existing symbol keys.
+            // First, create a table and insert a few rows into it, so that we get some
+            // existing symbol keys.
             TableModel m = new TableModel(configuration, tableName, PartitionBy.MONTH);
             m.timestamp("ts").col("sym", ColumnType.SYMBOL).wal();
             AbstractCairoTest.create(m);
@@ -1908,7 +1936,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 doneLatch.countDown();
             }).start();
 
-            // Finally, ingest rows with same symbols, but opposite direction, into the table.
+            // Finally, ingest rows with same symbols, but opposite direction, into the
+            // table.
             final StringBuilder lineData = new StringBuilder();
             for (int i = symbols - 1; i > -1; i--) {
                 lineData.append(tableName)
@@ -1927,8 +1956,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 CharSequenceIntHashMap symbolCounts = new CharSequenceIntHashMap();
                 try (
                         TableReader reader = getReader(tableName);
-                        TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
-                ) {
+                        TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
                     Assert.assertEquals(2 * symbols, cursor.size());
                     Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
@@ -2135,6 +2163,17 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         });
     }
 
+    @SuppressWarnings("SameParameterValue")
+    private static byte[] hexToBytes(String hex) {
+        int len = hex.length();
+        byte[] data = new byte[len / 2];
+        for (int i = 0; i < len; i += 2) {
+            data[i / 2] = (byte) ((Character.digit(hex.charAt(i), 16) << 4)
+                    + Character.digit(hex.charAt(i + 1), 16));
+        }
+        return data;
+    }
+
     private void dropWeatherTable() {
         engine.dropTableOrViewOrMatView(path, engine.verifyTableName("weather"));
     }
@@ -2162,8 +2201,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     private void sendAndWait(
             String lineData,
             CharSequenceObjHashMap<SOUnboundedCountDownLatch> tableIndex,
-            int expectedReleaseCount
-    ) {
+            int expectedReleaseCount) {
         send(lineData, "weather", WAIT_NO_WAIT);
         tableIndex.get("weather").await(expectedReleaseCount);
     }
@@ -2189,7 +2227,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         releaseLatch.await(10 * Micros.SECOND_MICROS * 1000L);
     }
 
-    private void shutdownReceiverWhileSenderIsSendingData(WorkerPool ioPool, WorkerPool writerPool) throws SqlException {
+    private void shutdownReceiverWhileSenderIsSendingData(WorkerPool ioPool, WorkerPool writerPool)
+            throws SqlException {
         String tableName = "tab";
         LineTcpReceiver receiver = new LineTcpReceiver(lineConfiguration, engine, ioPool, writerPool);
 
@@ -2203,7 +2242,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
         final SOCountDownLatch finished = new SOCountDownLatch(1);
 
-        try (AbstractLineTcpSender sender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+        try (AbstractLineTcpSender sender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort,
+                msgBufferSize)) {
             for (int i = 0; i < 1000; i++) {
                 sender.metric(tableName)
                         .field("id", i)
@@ -2223,7 +2263,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         }
                     }
 
-                    if (writerPool != ioPool) (writerPool).halt();
+                    if (writerPool != ioPool)
+                        (writerPool).halt();
 
                     receiver.close();
                 } catch (Throwable e) {
@@ -2235,7 +2276,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             int i = 1000;
             // run until throws exception or will be killed by CI
-            //noinspection InfiniteLoopStatement
+            // noinspection InfiniteLoopStatement
             while (true) {
                 sender.metric(tableName)
                         .field("id", i)
@@ -2245,7 +2286,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 Os.sleep(100);
             }
         } catch (LineSenderException lse) {
-            //expected
+            // expected
         } finally {
             finished.await();
             Path.clearThreadLocals();
@@ -2257,8 +2298,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             PrivateKey authPrivateKey,
             int msgBufferSize,
             final int nRows,
-            boolean expectDisconnect
-    ) throws Exception {
+            boolean expectDisconnect) throws Exception {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         test(authKeyId, msgBufferSize, nRows, expectDisconnect,
                 () -> {
@@ -2267,8 +2307,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         sender.authenticate(authKeyId, authPrivateKey);
                     }
                     return sender;
-                }
-        );
+                });
     }
 
     private void test(
@@ -2276,8 +2315,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             int msgBufferSize,
             final int nRows,
             boolean expectDisconnect,
-            Supplier<AbstractLineSender> senderSupplier
-    ) throws Exception {
+            Supplier<AbstractLineSender> senderSupplier) throws Exception {
         this.authKeyId = authKeyId;
         this.msgBufferSize = msgBufferSize;
         assertMemoryLeak(() -> {
@@ -2303,7 +2341,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             });
 
             minIdleMsBeforeWriterRelease = 100;
-            try (LineTcpReceiver ignored = new LineTcpReceiver(lineConfiguration, engine, sharedWorkerPool, sharedWorkerPool)) {
+            try (LineTcpReceiver ignored = new LineTcpReceiver(lineConfiguration, engine, sharedWorkerPool,
+                    sharedWorkerPool)) {
                 long startEpochMs = System.currentTimeMillis();
                 sharedWorkerPool.start(LOG);
 
@@ -2340,7 +2379,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             sender.$(ts * 1000);
                             sender.flush();
                             if (expectDisconnect) {
-                                // To prevent all data being buffered before the expected disconnect slow sending
+                                // To prevent all data being buffered before the expected disconnect slow
+                                // sending
                                 Os.sleep(100);
                             }
                             ts += rand.nextInt(1000);
@@ -2363,7 +2403,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         nRowsWritten = 0;
                         long timeTakenMs = System.currentTimeMillis() - startEpochMs;
                         if (timeTakenMs > TEST_TIMEOUT_IN_MS) {
-                            LOG.error().$("after ").$(timeTakenMs).$("ms tables only had ").$(nRowsWritten).$(" rows out of ").$(nRows).$();
+                            LOG.error().$("after ").$(timeTakenMs).$("ms tables only had ").$(nRowsWritten)
+                                    .$(" rows out of ").$(nRows).$();
                             break;
                         }
                         Os.pause();
@@ -2372,8 +2413,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             while (true) {
                                 try (
                                         TableReader reader = getReader(tableName);
-                                        TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
-                                ) {
+                                        TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
+                                                .of(reader)) {
                                     while (cursor.hasNext()) {
                                         nRowsWritten++;
                                     }

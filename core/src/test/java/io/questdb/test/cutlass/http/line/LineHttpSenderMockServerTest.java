@@ -28,13 +28,9 @@ import io.questdb.BuildInformationHolder;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.client.Sender;
-import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
-import io.questdb.cutlass.http.HttpConstants;
-import io.questdb.cutlass.http.HttpRequestHandler;
-import io.questdb.cutlass.http.HttpRequestHandlerFactory;
-import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.http.client.HttpClientException;
-import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.client.cutlass.http.client.HttpClientException;
+import io.questdb.client.cutlass.line.LineSenderException;
+import io.questdb.cutlass.http.*;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
@@ -78,6 +74,21 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
             return super.recvRaw(fd, buffer, bufferLen);
         }
     };
+
+    private static Consumer<Sender> errorVerifier(String expectedError) {
+        return sender -> {
+            try {
+                sender.table("test")
+                        .symbol("sym", "bol")
+                        .doubleColumn("x", 1.0)
+                        .atNow();
+                sender.flush();
+                Assert.fail("Exception expected");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), expectedError);
+            }
+        };
+    }
 
     @Before
     public void setUp() {
@@ -643,21 +654,6 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .replyWithContent(401, "", "text/plain");
 
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: HTTP endpoint authentication error [http-status=401]"));
-    }
-
-    private static Consumer<Sender> errorVerifier(String expectedError) {
-        return sender -> {
-            try {
-                sender.table("test")
-                        .symbol("sym", "bol")
-                        .doubleColumn("x", 1.0)
-                        .atNow();
-                sender.flush();
-                Assert.fail("Exception expected");
-            } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), expectedError);
-            }
-        };
     }
 
     @NotNull

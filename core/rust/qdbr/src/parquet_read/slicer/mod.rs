@@ -5,7 +5,7 @@ pub mod rle;
 #[cfg(test)]
 mod tests;
 
-use crate::allocator::{AcVec, AcVecSetLen, AllocFailure};
+use crate::allocator::{AcVec, AllocFailure};
 use crate::parquet::error::{fmt_err, ParquetResult};
 use parquet2::encoding::delta_bitpacked;
 use parquet2::encoding::hybrid_rle::BitmapIter;
@@ -35,22 +35,22 @@ impl ByteSink for SliceSink<'_> {
 }
 
 pub trait Converter<const N: usize> {
-    fn convert<S: ByteSink>(input: &[u8], output: &mut S);
+    fn convert<S: ByteSink>(input: &[u8], output: &mut S) -> ParquetResult<()>;
 }
 
 pub struct DaysToMillisConverter;
 
 impl Converter<8> for DaysToMillisConverter {
     #[inline]
-    fn convert<S: ByteSink>(input: &[u8], output: &mut S) {
+    fn convert<S: ByteSink>(input: &[u8], output: &mut S) -> ParquetResult<()> {
         let days_since_epoch = unsafe { ptr::read_unaligned(input.as_ptr() as *const i32) };
         let date = days_since_epoch as i64 * 24 * 60 * 60 * 1000;
-        let _ = output.extend_from_slice(&date.to_le_bytes());
+        output.extend_from_slice(&date.to_le_bytes())
     }
 }
 
 impl ByteSink for AcVec<u8> {
-    #[inline]
+    #[inline(always)]
     fn extend_from_slice(&mut self, data: &[u8]) -> ParquetResult<()> {
         unsafe {
             let len = self.len();
@@ -95,6 +95,7 @@ impl ByteSink for Vec<u8> {
 pub trait DataPageSlicer {
     fn next(&mut self) -> &[u8];
     fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()>;
+    /// Only called by fixed-size column decoders.
     fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()>;
     fn skip(&mut self, count: usize);
     fn count(&self) -> usize;
@@ -195,11 +196,7 @@ impl<const N: usize> DataPageSlicer for DeltaBinaryPackedSlicer<'_, N> {
                 let bytes = val.to_le_bytes();
                 dest.extend_from_slice(&bytes[..N])
             }
-            Some(Err(_)) => {
-                self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
-                dest.extend_from_slice(&self.error_value)
-            }
-            None => {
+            Some(Err(_)) | None => {
                 self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
                 dest.extend_from_slice(&self.error_value)
             }
@@ -208,16 +205,7 @@ impl<const N: usize> DataPageSlicer for DeltaBinaryPackedSlicer<'_, N> {
 
     fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
         for _ in 0..count {
-            match self.decoder.next() {
-                Some(Ok(val)) => {
-                    let bytes = val.to_le_bytes();
-                    dest.extend_from_slice(&bytes[..N])?;
-                }
-                Some(Err(_)) | None => {
-                    self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
-                    dest.extend_from_slice(&self.error_value)?;
-                }
-            }
+            self.next_into::<S>(dest)?;
         }
         Ok(())
     }
@@ -289,11 +277,14 @@ impl DataPageSlicer for DeltaLengthArraySlicer<'_> {
         Ok(())
     }
 
+    #[inline]
     fn skip(&mut self, count: usize) {
-        for _ in 0..count {
-            self.pos += self.lengths[self.index] as usize;
-            self.index += 1;
-        }
+        let skip_bytes: usize = self.lengths[self.index..self.index + count]
+            .iter()
+            .map(|&len| len as usize)
+            .sum();
+        self.pos += skip_bytes;
+        self.index += count;
     }
 
     fn count(&self) -> usize {
@@ -591,9 +582,7 @@ impl DataPageSlicer for BooleanBitmapSlicer<'_> {
     }
 
     fn skip(&mut self, count: usize) {
-        for _ in 0..count {
-            self.bitmap_iter.next();
-        }
+        self.bitmap_iter.advance(count);
     }
 
     fn count(&self) -> usize {
@@ -628,14 +617,14 @@ impl<const N: usize, T: DataPageSlicer, C: Converter<N>> DataPageSlicer
     #[inline]
     fn next(&mut self) -> &[u8] {
         let slice = self.inner_slicer.next();
-        C::convert(slice, &mut SliceSink(&mut self.buffer));
+        let _ = C::convert(slice, &mut SliceSink(&mut self.buffer));
         &self.buffer
     }
 
     #[inline]
     fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()> {
         let slice = self.inner_slicer.next();
-        C::convert(slice, dest);
+        C::convert(slice, dest)?;
         Ok(())
     }
 

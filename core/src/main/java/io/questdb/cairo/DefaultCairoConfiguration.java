@@ -686,6 +686,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getParquetExportBatchSize() {
+        return 100_000;
+    }
+
+    @Override
     public int getParquetExportCompressionCodec() {
         return ParquetCompression.COMPRESSION_LZ4_RAW;
     }
@@ -1481,7 +1486,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isPartitionEncoderParquetRawArrayEncoding() {
-        return false;
+        return true;
     }
 
     @Override

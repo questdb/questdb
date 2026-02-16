@@ -1189,7 +1189,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     TestUtils.assertSql(
                             engine,
                             sqlExecutionContext,
-                            "select * from tab where preciseTs in '1970-01-01T00:00:00;3m;1d;5' and value IN ('t1', 't3') limit 10",
+                            "select * from tab where preciseTs in '1970-01-01T00:00:00;4m;1d;5' and value IN ('t1', 't3') limit 10",
                             sink,
                             """
                                     ts\tpreciseTs\ttype\tvalue
@@ -1238,7 +1238,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     TestUtils.assertSql(
                             engine,
                             sqlExecutionContext,
-                            "select * from tab where preciseTs in '1970-01-01T00:00:00;3m;1d;5' and value = 't3' limit 10",
+                            "select * from tab where preciseTs in '1970-01-01T00:00:00;4m;1d;5' and value = 't3' limit 10",
                             sink,
                             """
                                     ts\tpreciseTs\ttype\tvalue

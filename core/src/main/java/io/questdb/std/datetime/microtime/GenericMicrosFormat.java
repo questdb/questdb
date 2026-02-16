@@ -468,7 +468,7 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     break;
 
                 case MicrosFormatCompiler.OP_NANOS_GREEDY:
-                    pos += Numbers.decodeHighInt(Numbers.parseIntSafely(in, pos, hi));
+                    pos += Numbers.decodeHighInt(Numbers.parseInt000Greedy(in, pos, hi));
                     break;
 
                 // MILLIS

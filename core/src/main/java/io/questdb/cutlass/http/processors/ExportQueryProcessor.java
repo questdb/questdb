@@ -48,7 +48,6 @@ import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
-import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.parquet.HTTPSerialParquetExporter;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.CompiledQuery;
@@ -70,7 +69,6 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Interval;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -92,7 +90,7 @@ import static io.questdb.cairo.sql.RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
 import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.griffin.model.ExportModel.COPY_FORMAT_PARQUET;
 
-public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable, CopyExportRequestTask.StreamWriteParquetCallBack {
+public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable {
     static final int QUERY_DONE = 1;
     static final int QUERY_METADATA = 2;
     static final int QUERY_PARQUET_EXPORT_DATA = 14;
@@ -114,7 +112,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     // Being asynchronous we may need to be able to return factory to the cache
     // by the same thread that executes the dispatcher.
     private static final LocalValue<ExportQueryProcessorState> LV = new LocalValue<>();
-    private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final MillisecondClock clock;
     private final JsonQueryProcessorConfiguration configuration;
     private final Decimal128 decimal128 = new Decimal128();
@@ -124,10 +121,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     private final int maxSqlRecompileAttempts;
     private final Metrics metrics;
     private final byte requiredAuthType;
-    private final HTTPSerialParquetExporter serialParquetExporter;
-    private final SqlExecutionContextImpl sqlExecutionContext;
-    private HttpConnectionContext currentContext;
-    private long timeout;
+    private final int sharedWorkerCount;
 
     public ExportQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
@@ -136,9 +130,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     ) {
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
-        this.serialParquetExporter = new HTTPSerialParquetExporter(engine);
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, sharedQueryWorkerCount);
-        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
+        this.sharedWorkerCount = sharedQueryWorkerCount;
         this.metrics = engine.getMetrics();
         this.engine = engine;
         maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
@@ -147,7 +139,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
     @Override
     public void close() {
-        Misc.free(circuitBreaker);
     }
 
     public void execute(
@@ -157,7 +148,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         try {
             boolean isExpRequest = isExpUrl(context.getRequestHeader().getUrl());
 
-            circuitBreaker.setTimeout(timeout);
+            NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
+            SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
+            circuitBreaker.setTimeout(state.timeout);
             circuitBreaker.resetTimer();
             state.recordCursorFactory = context.getSelectCache().poll(state.sqlText);
             sqlExecutionContext.with(
@@ -270,21 +263,20 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         }
 
         HttpChunkedResponse response = context.getChunkedResponse();
-        if (parseUrl(response, context.getRequestHeader(), state)) {
+        if (parseUrl(response, context.getRequestHeader(), state, context)) {
             execute(context, state);
         } else {
             readyForNextRequest(context);
         }
     }
 
-    @Override
-    public void onWrite(long dataPtr, long dataLen) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    void writeParquetData(ExportQueryProcessorState state, long dataPtr, long dataLen)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (dataLen <= 0) {
             return;
         }
-        assert currentContext != null;
-        ExportQueryProcessorState state = LV.get(currentContext);
-        HttpChunkedResponse response = currentContext.getChunkedResponse();
+        HttpConnectionContext context = state.getHttpConnectionContext();
+        HttpChunkedResponse response = context.getChunkedResponse();
         if (state.firstParquetWriteCall) {
             state.firstParquetWriteCall = false;
             if (!state.getExportModel().isNoDelay()) {
@@ -309,6 +301,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         ExportQueryProcessorState state = LV.get(context);
         if (state != null) {
             state.pausedQuery = pausedQuery;
+            SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
             state.rnd = sqlExecutionContext.getRandom();
         }
     }
@@ -460,6 +453,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         assert state.copyID == -1;
         CopyExportContext.ExportTaskEntry entry = null;
         try {
+            SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
             var securityContext = context.getSecurityContext();
             var sqlExecutionCircuitBreaker = sqlExecutionContext.getCircuitBreaker();
             var copyExportContext = engine.getCopyExportContext();
@@ -629,13 +623,16 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             CopyExportContext.ExportTaskEntry entry = null;
             boolean cleanup = true;
             try {
+                SqlExecutionContextImpl sqlExecutionContext = state.getHttpConnectionContext().getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
                 var copyExportContext = engine.getCopyExportContext();
                 entry = copyExportContext.getEntry(state.copyID);
+                HTTPSerialParquetExporter exporter = state.getOrCreateSerialParquetExporter(engine);
                 if (state.serialExporterInit) {
-                    serialParquetExporter.of(state.task);
-                    serialParquetExporter.process();
+                    exporter.of(state.task);
+                    exporter.process();
                     return;
                 }
+                state.initWriteCallback(this);
                 int nowTimestampType = sqlExecutionContext.getNowTimestampType();
                 long now = sqlExecutionContext.getNow(nowTimestampType);
                 state.task.of(
@@ -655,13 +652,13 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.descending,
                         state.pageFrameCursor,
                         state.metadata,
-                        this
+                        state.getWriteCallback()
                 );
 
-                serialParquetExporter.of(state.task);
+                exporter.of(state.task);
                 state.task.setUpStreamPartitionParquetExporter();
                 state.serialExporterInit = true;
-                serialParquetExporter.process();
+                exporter.process();
             } catch (PeerIsSlowToReadException e) {
                 cleanup = false;
                 throw e;
@@ -780,9 +777,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         if (state == null) {
             return;
         }
-        currentContext = context;
 
-        // copy random during query resume
+        NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
+        SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
         sqlExecutionContext.with(context.getSecurityContext(), null, state.rnd, context.getFd(), circuitBreaker.of(context.getFd()));
         LOG.debug().$("resume [fd=").$(context.getFd()).I$();
 
@@ -972,7 +969,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     private boolean parseUrl(
             HttpChunkedResponse response,
             HttpRequestHeader request,
-            ExportQueryProcessorState state
+            ExportQueryProcessorState state,
+            HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         // Query text.
         final DirectUtf8Sequence query = request.getUrlParam(URL_PARAM_QUERY);
@@ -1053,21 +1051,35 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             }
         }
 
-        if (exportModel.isParquetFormat()) { // parquet use export timeout
-            timeout = configuration.getExportTimeout();
-        } else { // csv use query timeout
-            timeout = circuitBreaker.getDefaultMaxTime();
+        final long defaultTimeout;
+        // Timeout policy:
+        // - Parquet uses the dedicated export timeout.
+        // - CSV uses the circuit breaker default (query timeout). This keeps the
+        //   historical behavior where CSV is bounded by general query limits,
+        //   at the cost of a format-specific difference. If we later decide to
+        //   unify exports under a single timeout, this is the place to change.
+        if (exportModel.isParquetFormat()) {
+            defaultTimeout = configuration.getExportTimeout();
+        } else {
+            NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
+            defaultTimeout = circuitBreaker.getDefaultMaxTime();
         }
+        state.timeout = defaultTimeout;
 
+        // URL param takes precedence over header
         DirectUtf8Sequence timeoutSeq = request.getUrlParam(URL_PARAM_TIMEOUT);
         if (timeoutSeq != null) {
             try {
-                timeout = Numbers.parseLong(timeoutSeq) * 1000;
-                if (timeout <= 0) {
-                    timeout = configuration.getExportTimeout();
-                }
+                long parsedTimeout = Numbers.parseLong(timeoutSeq) * 1000;
+                state.timeout = parsedTimeout > 0 ? parsedTimeout : defaultTimeout;
             } catch (NumericException ex) {
-                // Skip or stop will have default value.
+                state.timeout = defaultTimeout;
+            }
+        } else {
+            // Check Statement-Timeout header (value is in milliseconds)
+            long statementTimeout = request.getStatementTimeout();
+            if (statementTimeout > 0) {
+                state.timeout = statementTimeout;
             }
         }
 

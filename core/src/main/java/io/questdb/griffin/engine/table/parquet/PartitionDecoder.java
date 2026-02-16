@@ -32,6 +32,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
@@ -103,6 +104,64 @@ public class PartitionDecoder implements QuietCloseable {
                 rowGroupIndex,
                 rowLo,
                 rowHi
+        );
+    }
+
+    public void decodeRowGroupWithRowFilter(
+            RowGroupBuffers rowGroupBuffers,
+            int columnOffset,
+            DirectIntList columns, // contains [parquet_column_index, column_type] pairs
+            int rowGroupIndex,
+            int rowLo, // low row index within the row group, inclusive
+            int rowHi, // high row index within the row group, exclusive
+            DirectLongList filteredRows
+    ) {
+        assert ptr != 0;
+        if (decodeContextPtr == 0) {
+            // lazy init
+            decodeContextPtr = createDecodeContext(fileAddr, fileSize);
+        }
+        decodeRowGroupWithRowFilter(
+                ptr,
+                decodeContextPtr,
+                rowGroupBuffers.ptr(),
+                columnOffset,
+                columns.getAddress(),
+                (int) (columns.size() >>> 1),
+                rowGroupIndex,
+                rowLo,
+                rowHi,
+                filteredRows.getAddress(),
+                filteredRows.size()
+        );
+    }
+
+    public void decodeRowGroupWithRowFilterFillNulls(
+            RowGroupBuffers rowGroupBuffers,
+            int columnOffset,
+            DirectIntList columns, // contains [parquet_column_index, column_type] pairs
+            int rowGroupIndex,
+            int rowLo, // low row index within the row group, inclusive
+            int rowHi, // high row index within the row group, exclusive
+            DirectLongList filteredRows
+    ) {
+        assert ptr != 0;
+        if (decodeContextPtr == 0) {
+            // lazy init
+            decodeContextPtr = createDecodeContext(fileAddr, fileSize);
+        }
+        decodeRowGroupWithRowFilterFillNulls(
+                ptr,
+                decodeContextPtr,
+                rowGroupBuffers.ptr(),
+                columnOffset,
+                columns.getAddress(),
+                (int) (columns.size() >>> 1),
+                rowGroupIndex,
+                rowLo,
+                rowHi,
+                filteredRows.getAddress(),
+                filteredRows.size()
         );
     }
 
@@ -235,6 +294,34 @@ public class PartitionDecoder implements QuietCloseable {
             int rowGroup,
             int rowLo,
             int rowHi
+    ) throws CairoException;
+
+    private static native void decodeRowGroupWithRowFilter(
+            long decoderPtr,
+            long decodeContextPtr,
+            long rowGroupBuffersPtr,
+            int columnOffset,
+            long columnsPtr,
+            int columnCount,
+            int rowGroup,
+            int rowLo,
+            int rowHi,
+            long filteredRowsPtr,
+            long filteredRowsSize
+    ) throws CairoException;
+
+    private static native void decodeRowGroupWithRowFilterFillNulls(
+            long decoderPtr,
+            long decodeContextPtr,
+            long rowGroupBuffersPtr,
+            int columnOffset,
+            long columnsPtr,
+            int columnCount,
+            int rowGroup,
+            int rowLo,
+            int rowHi,
+            long filteredRowsPtr,
+            long filteredRowsSize
     ) throws CairoException;
 
     private static native void destroy(long impl);

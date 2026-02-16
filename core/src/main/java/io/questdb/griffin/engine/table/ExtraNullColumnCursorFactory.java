@@ -334,6 +334,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public void releaseOpenPartitions() {
+            baseCursor.releaseOpenPartitions();
+        }
+
+        @Override
         public long size() {
             return baseCursor.size();
         }
@@ -346,6 +351,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public void toTop() {
             baseCursor.toTop();
+        }
+
+        @Override
+        public void setStreamingMode(boolean enabled) {
+            baseCursor.setStreamingMode(enabled);
         }
     }
 

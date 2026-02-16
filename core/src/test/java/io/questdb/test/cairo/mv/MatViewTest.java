@@ -1868,7 +1868,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             // revalidate the view
-            execute("refresh materialized view price_1h full;)");
+            execute("refresh materialized view price_1h full");
             drainQueues();
             assertQueryNoLeakCheck(
                     """

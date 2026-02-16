@@ -493,6 +493,20 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             this.isOpen = true;
         }
 
+        // Qodana false positive
+        @SuppressWarnings("unused")
+        @Override
+        public void releaseOpenPartitions() {
+            baseCursor.releaseOpenPartitions();
+        }
+
+        // Qodana false positive
+        @SuppressWarnings("unused")
+        @Override
+        public void setStreamingMode(boolean enabled) {
+            baseCursor.setStreamingMode(enabled);
+        }
+
         @Override
         public long size() {
             return baseCursor.size();
