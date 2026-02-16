@@ -935,7 +935,7 @@ public class SqlParser {
         expectTok(lexer, "view");
 
         CharSequence tok = tok(lexer, "view name");
-        final TableToken tt = cairoEngine.getTableTokenIfExists(tok);
+        final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(tok));
         if (tt == null) {
             throw SqlException.viewDoesNotExist(lexer.lastTokenPosition(), tok);
         }
@@ -2628,7 +2628,7 @@ public class SqlParser {
             proposedNested = variableExpr.rhs.queryModel;
         }
 
-        final TableToken tt = cairoEngine.getTableTokenIfExists(tok);
+        final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(tok));
         if (tt != null && tt.isView()) {
             compileViewQuery(model, tt, lexer.lastTokenPosition());
             tok = setModelAliasAndTimestamp(lexer, model);
@@ -3283,7 +3283,7 @@ public class SqlParser {
 
         tok = expectTableNameOrSubQuery(lexer);
 
-        final TableToken tt = cairoEngine.getTableTokenIfExists(tok);
+        final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(tok));
         if (tt != null && tt.isView()) {
             compileViewQuery(joinModel, tt, lexer.lastTokenPosition());
         } else if (Chars.equals(tok, '(')) {
