@@ -3470,7 +3470,8 @@ public class SqlParser {
                 expectTok(lexer, tok, "(");
 
                 // Parse list of offset expressions
-                tok = tok(lexer, "expression");
+                // Use tokIncludingLocalBrace to avoid subQueryMode swallowing ')'
+                tok = tokIncludingLocalBrace(lexer, "expression");
                 if (Chars.equals(tok, ')')) {
                     throw SqlException.$(lexer.lastTokenPosition(), "at least one offset expression expected");
                 }
@@ -3480,7 +3481,7 @@ public class SqlParser {
                     ExpressionNode offsetExpr = expectIntervalLiteral(lexer);
                     context.addListOffset(offsetExpr);
 
-                    tok = tok(lexer, "',' or ')'");
+                    tok = tokIncludingLocalBrace(lexer, "',' or ')'");
                     if (Chars.equals(tok, ')')) {
                         break;
                     }
