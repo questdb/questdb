@@ -10038,8 +10038,7 @@ public class SqlOptimiser implements Mutable {
 
         // Check count matches
         if (groupByColumns.size() != implicitKeyCount) {
-            throw SqlException.$(groupByColumns.getQuick(0).position,
-                            "HORIZON JOIN GROUP BY column count (")
+            throw SqlException.$(groupByColumns.getQuick(0).position, "HORIZON JOIN GROUP BY column count (")
                     .put(groupByColumns.size())
                     .put(") must match non-aggregate SELECT column count (")
                     .put(implicitKeyCount)
