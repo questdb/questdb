@@ -387,7 +387,6 @@ impl<W: Write> ParquetFile<W> {
 
     pub fn write<E>(&mut self, row_group: RowGroupIter<'_, E>) -> std::result::Result<(), E>
     where
-        Error: From<E>,
         E: std::error::Error + From<Error>,
     {
         if self.offset == 0 {
@@ -483,6 +482,36 @@ impl<W: Write> ParquetFile<W> {
         E: std::error::Error + From<Error>,
     {
         self.replace(row_group, None)
+    }
+
+    /// Ensures the PAR1 file header has been written.
+    /// Must be called before computing offsets for raw row group copies.
+    pub fn ensure_started(&mut self) -> Result<()> {
+        if self.offset == 0 {
+            self.start()?;
+        }
+        Ok(())
+    }
+
+    /// Returns the current write offset in the file.
+    pub fn current_offset(&self) -> u64 {
+        self.offset
+    }
+
+    /// Write raw (pre-encoded) row group bytes and register the row group metadata.
+    /// The `row_group` must have all offsets already adjusted for the new file.
+    /// Callers must call `ensure_started()` before computing those offsets,
+    /// otherwise the PAR1 header written here shifts data by 4 bytes.
+    pub fn write_raw_row_group(&mut self, raw_bytes: &[u8], row_group: RowGroup) -> Result<()> {
+        if self.offset == 0 {
+            self.start()?;
+        }
+        self.writer.write_all(raw_bytes)?;
+        self.offset += raw_bytes.len() as u64;
+        self.row_groups.push(row_group);
+        self.page_specs.push(vec![]);
+        self.is_insert.push(false);
+        Ok(())
     }
 
     pub fn end(&mut self, key_value_metadata: Option<Vec<KeyValue>>) -> Result<u64> {

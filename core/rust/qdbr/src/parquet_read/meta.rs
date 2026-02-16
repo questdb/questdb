@@ -139,6 +139,8 @@ impl ParquetDecoder {
             }
         }
 
+        let unused_bytes = qdb_meta.as_ref().map(|m| m.unused_bytes).unwrap_or(0);
+
         // TODO(eugenels): add some validation
         Ok(Self {
             allocator,
@@ -153,6 +155,7 @@ impl ParquetDecoder {
             columns_ptr: columns.as_ptr(),
             columns,
             row_group_sizes_acc,
+            unused_bytes,
         })
     }
 

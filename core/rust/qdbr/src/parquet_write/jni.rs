@@ -18,14 +18,38 @@ use parquet2::metadata::{KeyValue, SortingColumn};
 use parquet2::write::Version;
 
 #[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_copyRowGroup(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *mut ParquetUpdater,
+    rg_index: jshort,
+) {
+    if updater.is_null() {
+        panic!("ParquetUpdater pointer is null");
+    }
+
+    let parquet_updater = unsafe { &mut *updater };
+    match parquet_updater.copy_row_group(rg_index) {
+        Ok(_) => (),
+        Err(mut err) => {
+            err.add_context(format!("could not copy row group {rg_index}"));
+            err.add_context("error in PartitionUpdater.copyRowGroup");
+            err.into_cairo_exception().throw(&mut env)
+        }
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_create(
     mut env: JNIEnv,
     _class: JClass,
     allocator: *const QdbAllocator,
     src_path_len: u32,
     src_path_ptr: *const u8,
-    raw_fd: i32,
-    file_size: u64,
+    reader_fd: i32,
+    read_file_size: u64,
+    writer_fd: i32,
+    write_file_size: u64,
     timestamp_index: jint,
     compression_codec: jlong,
     statistics_enabled: jboolean,
@@ -34,6 +58,17 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     data_page_size: jlong,
 ) -> *mut ParquetUpdater {
     let create = || -> ParquetResult<ParquetUpdater> {
+        // reader_fd and writer_fd must be distinct OS file descriptors.
+        // Both are closed by Rust when ParquetUpdater is dropped.
+        // Passing the same fd would cause a double-close bug.
+        if reader_fd == writer_fd {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "reader_fd and writer_fd must be different file descriptors, got {}",
+                reader_fd
+            ));
+        }
+
         let compression_options =
             compression_from_i64(compression_codec).context("CompressionCodec")?;
         let allocator = unsafe { &*allocator }.clone();
@@ -61,8 +96,10 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 
         ParquetUpdater::new(
             allocator,
-            unsafe { File::from_raw_fd_i32(raw_fd) },
-            file_size,
+            unsafe { File::from_raw_fd_i32(reader_fd) },
+            read_file_size,
+            unsafe { File::from_raw_fd_i32(writer_fd) },
+            write_file_size,
             sorting_columns,
             statistics_enabled,
             raw_array_encoding,

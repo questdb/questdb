@@ -54,6 +54,7 @@ public class PartitionDecoder implements QuietCloseable {
     private static final long ROW_GROUP_COUNT_OFFSET;
     private static final long ROW_GROUP_SIZES_PTR_OFFSET;
     private static final long TIMESTAMP_INDEX_OFFSET;
+    private static final long UNUSED_BYTES_OFFSET;
     private final ObjectPool<DirectString> directStringPool = new ObjectPool<>(DirectString::new, 16);
     private final Metadata metadata = new Metadata();
     private long columnsPtr;
@@ -350,6 +351,8 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native long timestampIndexOffset();
 
+    private static native long unusedBytesOffset();
+
     private void destroy() {
         if (owned && ptr != 0) {
             destroy(ptr);
@@ -457,6 +460,10 @@ public class PartitionDecoder implements QuietCloseable {
             return ~Unsafe.getUnsafe().getInt(ptr + TIMESTAMP_INDEX_OFFSET);
         }
 
+        public long getUnusedBytes() {
+            return Unsafe.getUnsafe().getLong(ptr + UNUSED_BYTES_OFFSET);
+        }
+
         private void init() {
             columnNames.clear();
             directStringPool.clear();
@@ -492,6 +499,7 @@ public class PartitionDecoder implements QuietCloseable {
         ROW_GROUP_SIZES_PTR_OFFSET = rowGroupSizesPtrOffset();
         ROW_GROUP_COUNT_OFFSET = rowGroupCountOffset();
         TIMESTAMP_INDEX_OFFSET = timestampIndexOffset();
+        UNUSED_BYTES_OFFSET = unusedBytesOffset();
         COLUMN_IDS_OFFSET = columnIdsOffset();
     }
 }

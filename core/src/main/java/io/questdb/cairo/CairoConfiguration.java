@@ -461,6 +461,10 @@ public interface CairoConfiguration {
 
     int getPartitionEncoderParquetRowGroupSize();
 
+    long getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
+
+    double getPartitionEncoderParquetO3RewriteUnusedRatio();
+
     int getPartitionEncoderParquetVersion();
 
     long getPartitionO3SplitMinSize();

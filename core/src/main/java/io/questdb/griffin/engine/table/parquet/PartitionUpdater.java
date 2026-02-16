@@ -25,11 +25,6 @@
 package io.questdb.griffin.engine.table.parquet;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableUtils;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
@@ -38,12 +33,9 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 
 public class PartitionUpdater implements QuietCloseable {
-    private static final Log LOG = LogFactory.getLog(PartitionUpdater.class);
-    private final FilesFacade ff;
     private long ptr;
 
-    public PartitionUpdater(FilesFacade ff) {
-        this.ff = ff;
+    public PartitionUpdater() {
     }
 
     @Override
@@ -51,32 +43,9 @@ public class PartitionUpdater implements QuietCloseable {
         destroy();
     }
 
-    public void of(
-            @Transient LPSZ srcPath,
-            int fileOpenOpts,
-            long fileSize,
-            int timestampIndex,
-            long compressionCodec,
-            boolean statisticsEnabled,
-            boolean rawArrayEncoding,
-            long rowGroupSize,
-            long dataPageSize
-    ) {
-        final long allocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
-        destroy();
-        ptr = create(  // throws CairoException on error
-                allocator,
-                srcPath.size(),
-                srcPath.ptr(),
-                Files.detach(TableUtils.openRW(ff, srcPath, LOG, fileOpenOpts)),
-                fileSize,
-                timestampIndex,
-                compressionCodec,
-                statisticsEnabled,
-                rawArrayEncoding,
-                rowGroupSize,
-                dataPageSize
-        );
+    public void copyRowGroup(short rowGroupIndex) {
+        assert ptr != 0;
+        copyRowGroup(ptr, rowGroupIndex);
     }
 
     // call to this method will update file metadata
@@ -110,6 +79,38 @@ public class PartitionUpdater implements QuietCloseable {
         }
     }
 
+    public void of(
+            @Transient LPSZ srcPath,
+            int readerFd,
+            long readFileSize,
+            int writerFd,
+            long writeFileSize,
+            int timestampIndex,
+            long compressionCodec,
+            boolean statisticsEnabled,
+            boolean rawArrayEncoding,
+            long rowGroupSize,
+            long dataPageSize
+    ) {
+        final long allocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
+        destroy();
+        ptr = create(  // throws CairoException on error
+                allocator,
+                srcPath.size(),
+                srcPath.ptr(),
+                readerFd,
+                readFileSize,
+                writerFd,
+                writeFileSize,
+                timestampIndex,
+                compressionCodec,
+                statisticsEnabled,
+                rawArrayEncoding,
+                rowGroupSize,
+                dataPageSize
+        );
+    }
+
     public void sliceRowGroup(short rowGroupIndex, int rowLo, int rowHi) {
         assert ptr != 0;
         sliceRowGroup(ptr, rowGroupIndex, rowLo, rowHi);
@@ -139,12 +140,19 @@ public class PartitionUpdater implements QuietCloseable {
         }
     }
 
+    private static native void copyRowGroup(
+            long impl,
+            short rowGroupIndex
+    ) throws CairoException;
+
     private static native long create(
             long allocator,
             int srcPathLen,
             long srcPathPtr,
-            int fd,
-            long fileSize,
+            int readerFd,
+            long readFileSize,
+            int writerFd,
+            long writeFileSize,
             int timestampIndex,
             long compressionCodec,
             boolean statisticsEnabled,

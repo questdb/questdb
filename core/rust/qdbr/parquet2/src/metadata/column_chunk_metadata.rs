@@ -165,9 +165,19 @@ impl ColumnChunkMetaData {
         &self.metadata().encodings
     }
 
+    /// Returns the column index offset in bytes from the start of the file, if present.
+    pub fn column_index_offset(&self) -> Option<i64> {
+        self.column_chunk.column_index_offset
+    }
+
     /// Returns the column index length in bytes, if present.
     pub fn column_index_length(&self) -> Option<i32> {
         self.column_chunk.column_index_length
+    }
+
+    /// Returns the offset index offset in bytes from the start of the file, if present.
+    pub fn offset_index_offset(&self) -> Option<i64> {
+        self.column_chunk.offset_index_offset
     }
 
     /// Returns the offset index length in bytes, if present.

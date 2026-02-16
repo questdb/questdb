@@ -749,6 +749,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getPartitionEncoderParquetO3RewriteUnusedMaxBytes() {
+        return 1024 * 1024 * 1024L;
+    }
+
+    @Override
+    public double getPartitionEncoderParquetO3RewriteUnusedRatio() {
+        return 0.5;
+    }
+
+    @Override
     public int getPartitionEncoderParquetVersion() {
         return ParquetVersion.PARQUET_VERSION_V1;
     }

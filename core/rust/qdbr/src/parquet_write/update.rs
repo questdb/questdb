@@ -37,6 +37,8 @@ use std::io::{Read as _, Seek, SeekFrom};
 #[repr(C)]
 pub struct ParquetUpdater {
     allocator: QdbAllocator,
+    reader: File,
+    read_file_size: u64,
     parquet_file: ParquetFile<File>,
     compression_options: CompressionOptions,
     row_group_size: Option<usize>,
@@ -45,6 +47,7 @@ pub struct ParquetUpdater {
     file_metadata: FileMetaData,
     accumulated_unused_bytes: u64,
     old_footer_size: u64,
+    is_rewrite: bool,
 }
 
 impl ParquetUpdater {
@@ -52,7 +55,9 @@ impl ParquetUpdater {
     pub fn new(
         allocator: QdbAllocator,
         mut reader: File,
-        file_size: u64,
+        read_file_size: u64,
+        writer: File,
+        write_file_size: u64,
         sorting_columns: Option<Vec<SortingColumn>>,
         write_statistics: bool,
         raw_array_encoding: bool,
@@ -68,48 +73,70 @@ impl ParquetUpdater {
             }
         }
 
-        let metadata = read_metadata_with_size(&mut reader, file_size)?;
+        let metadata = read_metadata_with_size(&mut reader, read_file_size)?;
         let file_metadata = metadata.clone();
 
-        // Read existing unused_bytes from QDB metadata (defaults to 0 for old files).
-        let accumulated_unused_bytes = metadata
-            .key_value_metadata
-            .as_ref()
-            .and_then(|kvs| {
-                kvs.iter()
-                    .find(|kv| kv.key == QDB_META_KEY)
-                    .and_then(|kv| kv.value.as_ref())
-                    .and_then(|v| QdbMeta::deserialize(v).ok())
-            })
-            .map(|m| m.unused_bytes)
-            .unwrap_or(0);
-
-        // Compute old footer size from the file's last 8 bytes: metadata_len (4 bytes) + magic (4 bytes).
-        // The footer = thrift metadata + 4-byte metadata_len + 4-byte magic.
-        let old_footer_size = {
-            let mut footer_buf = [0u8; 8];
-            reader.seek(SeekFrom::End(-8))?;
-            reader.read_exact(&mut footer_buf)?;
-            let metadata_len = u32::from_le_bytes(footer_buf[0..4].try_into().unwrap()) as u64;
-            metadata_len + 8 // metadata_len bytes for the thrift metadata + 8 bytes for the footer
-        };
+        let is_rewrite = write_file_size == 0;
 
         let version = from(metadata.version);
         let created_by = metadata.created_by.clone();
         let schema = metadata.schema_descr.clone();
         let options = write::WriteOptions { write_statistics, version };
-        let parquet_file = ParquetFile::new_updater(
-            reader,
-            file_size,
-            schema,
-            options,
-            created_by,
-            sorting_columns,
-            metadata.into_thrift(),
-        );
+
+        let (parquet_file, accumulated_unused_bytes, old_footer_size) = if is_rewrite {
+            // Rewrite mode: write to a fresh file
+            let pf = ParquetFile::with_sorting_columns(
+                writer,
+                schema,
+                options,
+                created_by,
+                sorting_columns,
+            );
+            (pf, 0u64, 0u64)
+        } else {
+            // Update mode: append to existing file
+            let accumulated_unused_bytes = metadata
+                .key_value_metadata
+                .as_ref()
+                .and_then(|kvs| {
+                    kvs.iter()
+                        .find(|kv| kv.key == QDB_META_KEY)
+                        .and_then(|kv| kv.value.as_ref())
+                        .and_then(|v| QdbMeta::deserialize(v).ok())
+                })
+                .map(|m| m.unused_bytes)
+                .unwrap_or(0);
+
+            // Compute old footer size from the file's last 8 bytes.
+            let old_footer_size = {
+                let mut footer_buf = [0u8; 8];
+                reader.seek(SeekFrom::End(-8))?;
+                reader.read_exact(&mut footer_buf)?;
+                let metadata_len = u32::from_le_bytes(footer_buf[0..4].try_into().unwrap()) as u64;
+                metadata_len + 8
+            };
+
+            // Seek writer to end of file so new data is appended after existing content.
+            // The reader and writer are separate fds; reading metadata only moves the reader cursor.
+            let mut writer = writer;
+            writer.seek(SeekFrom::Start(write_file_size))?;
+
+            let pf = ParquetFile::new_updater(
+                writer,
+                write_file_size,
+                schema,
+                options,
+                created_by,
+                sorting_columns,
+                metadata.into_thrift(),
+            );
+            (pf, accumulated_unused_bytes, old_footer_size)
+        };
 
         Ok(ParquetUpdater {
             allocator,
+            reader,
+            read_file_size,
             parquet_file,
             compression_options,
             raw_array_encoding,
@@ -118,6 +145,7 @@ impl ParquetUpdater {
             file_metadata,
             accumulated_unused_bytes,
             old_footer_size,
+            is_rewrite,
         })
     }
 
@@ -126,23 +154,6 @@ impl ParquetUpdater {
         partition: &Partition,
         row_group_id: i16,
     ) -> ParquetResult<()> {
-        // Track the old row group's bytes that will become dead space.
-        let rg_idx = row_group_id as usize;
-        if rg_idx < self.file_metadata.row_groups.len() {
-            let old_rg = &self.file_metadata.row_groups[rg_idx];
-            // Compressed column data size.
-            self.accumulated_unused_bytes += old_rg.compressed_size() as u64;
-            // Column index and offset index sizes per column.
-            for col in old_rg.columns() {
-                if let Some(len) = col.column_index_length() {
-                    self.accumulated_unused_bytes += len as u64;
-                }
-                if let Some(len) = col.offset_index_length() {
-                    self.accumulated_unused_bytes += len as u64;
-                }
-            }
-        }
-
         let options = self.row_group_options();
         let row_group = create_row_group(
             partition,
@@ -154,9 +165,30 @@ impl ParquetUpdater {
             false,
         )?;
 
-        self.parquet_file
-            .replace(row_group, Some(row_group_id))
-            .with_context(|_| format!("Failed to replace row group {row_group_id}"))
+        if self.is_rewrite {
+            self.parquet_file
+                .write(row_group)
+                .with_context(|_| format!("Failed to write row group {row_group_id} in rewrite mode"))
+        } else {
+            // Track the old row group's bytes that will become dead space.
+            let rg_idx = row_group_id as usize;
+            if rg_idx < self.file_metadata.row_groups.len() {
+                let old_rg = &self.file_metadata.row_groups[rg_idx];
+                self.accumulated_unused_bytes += old_rg.compressed_size() as u64;
+                for col in old_rg.columns() {
+                    if let Some(len) = col.column_index_length() {
+                        self.accumulated_unused_bytes += len as u64;
+                    }
+                    if let Some(len) = col.offset_index_length() {
+                        self.accumulated_unused_bytes += len as u64;
+                    }
+                }
+            }
+
+            self.parquet_file
+                .replace(row_group, Some(row_group_id))
+                .with_context(|_| format!("Failed to replace row group {row_group_id}"))
+        }
     }
 
     pub fn insert_row_group(&mut self, partition: &Partition, position: i16) -> ParquetResult<()> {
@@ -171,9 +203,15 @@ impl ParquetUpdater {
             false,
         )?;
 
-        self.parquet_file
-            .insert(row_group, position)
-            .with_context(|_| format!("Failed to insert row group at position {position}"))
+        if self.is_rewrite {
+            self.parquet_file
+                .write(row_group)
+                .with_context(|_| format!("Failed to write row group at position {position} in rewrite mode"))
+        } else {
+            self.parquet_file
+                .insert(row_group, position)
+                .with_context(|_| format!("Failed to insert row group at position {position}"))
+        }
     }
 
     pub fn append_row_group(&mut self, partition: &Partition) -> ParquetResult<()> {
@@ -188,15 +226,108 @@ impl ParquetUpdater {
             false,
         )?;
 
+        if self.is_rewrite {
+            self.parquet_file
+                .write(row_group)
+                .context("Failed to write row group in rewrite mode")
+        } else {
+            self.parquet_file
+                .append(row_group)
+                .context("Failed to append row group")
+        }
+    }
+
+    pub fn copy_row_group(&mut self, rg_index: i16) -> ParquetResult<()> {
+        let rg_idx = rg_index as usize;
+        if rg_idx >= self.file_metadata.row_groups.len() {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "copy_row_group: row group index {} out of range [0,{})",
+                rg_idx,
+                self.file_metadata.row_groups.len()
+            ));
+        }
+
+        let old_rg = &self.file_metadata.row_groups[rg_idx];
+        let columns_meta = old_rg.columns();
+
+        // Determine the byte range covering all column chunks and indexes in this row group.
+        let mut rg_start = u64::MAX;
+        let mut rg_end = 0u64;
+        for col in columns_meta {
+            let (start, len) = col.byte_range();
+            rg_start = rg_start.min(start);
+            rg_end = rg_end.max(start + len);
+
+            // Include column index and offset index data.
+            if let (Some(ci_offset), Some(ci_len)) = (col.column_index_offset(), col.column_index_length()) {
+                rg_end = rg_end.max(ci_offset as u64 + ci_len as u64);
+            }
+            if let (Some(oi_offset), Some(oi_len)) = (col.offset_index_offset(), col.offset_index_length()) {
+                rg_end = rg_end.max(oi_offset as u64 + oi_len as u64);
+            }
+        }
+
+        if rg_start >= rg_end {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "copy_row_group: empty byte range for row group {}",
+                rg_idx
+            ));
+        }
+
+        // Read the raw bytes from the reader file.
+        let raw_len = (rg_end - rg_start) as usize;
+        let mut raw_bytes = vec![0u8; raw_len];
+        self.reader.seek(SeekFrom::Start(rg_start))?;
+        self.reader.read_exact(&mut raw_bytes)?;
+
+        // Ensure the PAR1 file header is written before computing offsets.
+        // Without this, current_offset() returns 0, but write_raw_row_group()
+        // would then write the 4-byte PAR1 header first, making the actual data
+        // start at offset 4 while metadata offsets point to 0.
+        self.parquet_file.ensure_started().map_err(|s| {
+            ParquetError::with_descr(
+                ParquetErrorReason::Parquet2(s),
+                "Failed to write file header before raw copy",
+            )
+        })?;
+
+        // Build adjusted thrift metadata with offsets shifted to the new file position.
+        let new_offset = self.parquet_file.current_offset();
+        let offset_delta = new_offset as i64 - rg_start as i64;
+
+        // Clone the row group metadata and convert to thrift, then adjust offsets.
+        let mut thrift_rg = old_rg.clone().into_thrift();
+        for col_chunk in &mut thrift_rg.columns {
+            if let Some(ref mut meta) = col_chunk.meta_data {
+                meta.data_page_offset += offset_delta;
+                if let Some(ref mut dict_offset) = meta.dictionary_page_offset {
+                    *dict_offset += offset_delta;
+                }
+            }
+            if let Some(ref mut offset) = col_chunk.column_index_offset {
+                *offset += offset_delta;
+            }
+            if let Some(ref mut offset) = col_chunk.offset_index_offset {
+                *offset += offset_delta;
+            }
+        }
+        if let Some(ref mut fo) = thrift_rg.file_offset {
+            *fo += offset_delta;
+        }
+
         self.parquet_file
-            .append(row_group)
-            .context("Failed to append row group")
+            .write_raw_row_group(&raw_bytes, thrift_rg)
+            .map_err(|s| {
+                ParquetError::with_descr(
+                    ParquetErrorReason::Parquet2(s),
+                    &format!("Failed to raw-copy row group {rg_idx}"),
+                )
+            })
     }
 
     pub fn end(&mut self, key_value_metadata: Option<Vec<KeyValue>>) -> ParquetResult<u64> {
-        // The old footer is now dead space.
-        self.accumulated_unused_bytes += self.old_footer_size;
-
         // Build updated QDB metadata with unused_bytes and pass it as KV metadata.
         let mut qdb_meta = self
             .file_metadata
@@ -210,7 +341,13 @@ impl ParquetUpdater {
             })
             .unwrap_or_else(|| QdbMeta::new(0));
 
-        qdb_meta.unused_bytes = self.accumulated_unused_bytes;
+        if self.is_rewrite {
+            qdb_meta.unused_bytes = 0;
+        } else {
+            // The old footer is now dead space.
+            self.accumulated_unused_bytes += self.old_footer_size;
+            qdb_meta.unused_bytes = self.accumulated_unused_bytes;
+        }
 
         let qdb_meta_json = qdb_meta.serialize()?;
         let qdb_kv = KeyValue {
@@ -248,12 +385,11 @@ impl ParquetUpdater {
             ));
         }
 
-        // Read file into memory for decoding
-        let file = self.parquet_file.writer_mut();
-        let file_size = file.seek(SeekFrom::End(0))?;
-        file.seek(SeekFrom::Start(0))?;
+        // Read file into memory from the reader for decoding
+        let file_size = self.read_file_size;
+        self.reader.seek(SeekFrom::Start(0))?;
         let mut file_bytes = vec![0u8; file_size as usize];
-        file.read_exact(&mut file_bytes)?;
+        self.reader.read_exact(&mut file_bytes)?;
 
         // Create decoder from the in-memory file
         let decoder = ParquetDecoder::read(
@@ -301,9 +437,9 @@ impl ParquetUpdater {
             row_count,
         )?;
 
-        // Re-encode and replace the row group.
+        // Re-encode and write the row group.
         // SAFETY: partition references data in row_group_bufs and symbol_tables
-        // which remain alive until after replace_row_group returns.
+        // which remain alive until after the write returns.
         self.replace_row_group(&partition, rg_index)
     }
 

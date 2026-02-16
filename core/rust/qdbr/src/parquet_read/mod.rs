@@ -28,6 +28,7 @@ pub struct ParquetDecoder {
     pub(crate) metadata: FileMetaData,
     pub(crate) qdb_meta: Option<QdbMeta>,
     pub(crate) row_group_sizes_acc: AcVec<usize>,
+    pub unused_bytes: u64,
 }
 
 #[repr(C)]

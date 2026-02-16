@@ -47,6 +47,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.ReadOnlyObjList;
@@ -81,6 +82,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long sortedTimestampsAddr,
             TableWriter tableWriter,
             long srcNameTxn,
+            long txn,
             long partitionUpdateSinkAddr,
             long dedupColSinkAddr,
             long o3TimestampMin,
@@ -97,6 +99,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final int partitionIndex = tableWriter.getPartitionIndexByTimestamp(partitionTimestamp);
         final long parquetSize = tableWriter.getPartitionParquetFileSize(partitionIndex);
         long duplicateCount = 0;
+        boolean isRewrite = false;
         CairoConfiguration cairoConfiguration = tableWriter.getConfiguration();
         FilesFacade ff = tableWriter.getFilesFacade();
         try (
@@ -107,7 +110,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long parquetAddr = 0;
             try (
                     RowGroupStatBuffers rowGroupStatBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
-                    PartitionUpdater partitionUpdater = new PartitionUpdater(ff);
+                    PartitionUpdater partitionUpdater = new PartitionUpdater();
                     PartitionDescriptor partitionDescriptor = new OwnedMemoryPartitionDescriptor()
             ) {
                 parquetAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
@@ -131,12 +134,44 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final boolean statisticsEnabled = cairoConfiguration.isPartitionEncoderParquetStatisticsEnabled();
                 final boolean rawArrayEncoding = cairoConfiguration.isPartitionEncoderParquetRawArrayEncoding();
 
-                // partitionUpdater is the owner of the partitionDecoder descriptor
+                // Decide whether to rewrite the file or update in-place.
+                final long unusedBytes = partitionDecoder.metadata().getUnusedBytes();
+                isRewrite =
+                        rowGroupCount == 1
+                                || (parquetSize > 0 && (double) unusedBytes / parquetSize > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedRatio())
+                                || unusedBytes > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
+
                 final int opts = cairoConfiguration.getWriterFileOpenOpts();
+                // Two separate file descriptors are required: one for reading (metadata,
+                // row group slicing) and one for writing (appending new row groups).
+                // They must be distinct OS fds even when pointing to the same file,
+                // because the reader and writer maintain independent cursor positions.
+                // Rust closes both fds when the ParquetUpdater is dropped.
+                final int readerFd;
+                final int writerFd;
+                final long writeFileSize;
+                if (isRewrite) {
+                    // Rewrite mode: write to a new partition directory named by txn.
+                    // The old directory (srcNameTxn) is left intact and queued for removal on commit.
+                    readerFd = Files.detach(TableUtils.openRONoCache(ff, path.$(), LOG));
+                    Path newPath = Path.getThreadLocal2(pathToTable);
+                    setPathForNativePartition(newPath, timestampType, partitionBy, partitionTimestamp, txn);
+                    ff.mkdirs(newPath.slash(), cairoConfiguration.getMkDirMode());
+                    newPath.concat(PARQUET_PARTITION_NAME).$();
+                    writerFd = Files.detach(TableUtils.openRW(ff, newPath.$(), LOG, opts));
+                    writeFileSize = 0;
+                } else {
+                    readerFd = Files.detach(TableUtils.openRONoCache(ff, path.$(), LOG));
+                    writerFd = Files.detach(TableUtils.openRW(ff, path.$(), LOG, opts));
+                    writeFileSize = parquetSize;
+                }
+
                 partitionUpdater.of(
                         path.$(),
-                        opts,
+                        readerFd,
                         parquetSize,
+                        writerFd,
+                        writeFileSize,
                         timestampIndex,
                         ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
                         statisticsEnabled,
@@ -200,7 +235,20 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             break;
                         case COPY_ROW_GROUP_SLICE: {
                             final int rgSize = partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex);
-                            if (action.rgLo != 0 || action.rgHi != rgSize - 1) {
+                            final boolean isFullRange = action.rgLo == 0 && action.rgHi == rgSize - 1;
+                            if (isRewrite) {
+                                // Rewrite mode: every row group must be written to the new file.
+                                if (isFullRange) {
+                                    partitionUpdater.copyRowGroup((short) action.rowGroupIndex);
+                                } else {
+                                    partitionUpdater.sliceRowGroup(
+                                            (short) action.rowGroupIndex,
+                                            (int) action.rgLo,
+                                            (int) action.rgHi
+                                    );
+                                }
+                            } else if (!isFullRange) {
+                                // Update mode: only act on partial ranges; full row groups stay in place.
                                 partitionUpdater.sliceRowGroup(
                                         (short) action.rowGroupIndex,
                                         (int) action.rgLo,
@@ -227,19 +275,31 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     metadataPosition++;
                 }
                 partitionUpdater.updateFileMetadata();
+            } catch (Throwable e) {
+                if (isRewrite) {
+                    // Rewrite mode: original is intact. Remove the new directory.
+                    Path newPath = Path.getThreadLocal2(pathToTable);
+                    setPathForNativePartition(newPath, timestampType, partitionBy, partitionTimestamp, txn);
+                    ff.rmdir(newPath.slash());
+                }
+                throw e;
             } finally {
                 if (parquetAddr != 0) {
                     ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
                 }
             }
 
-            // Update indexes
+            // Update indexes.
+            // In rewrite mode, the new file is in a txn-named directory.
+            final long txnName = isRewrite ? txn : srcNameTxn;
+            path.of(pathToTable);
+            setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txnName);
             final long newParquetSize = Files.length(path.$());
             updateParquetIndexes(
                     partitionBy,
                     partitionTimestamp,
                     tableWriter,
-                    srcNameTxn,
+                    txnName,
                     o3Basket,
                     newPartitionSize,
                     newParquetSize,
@@ -255,25 +315,34 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             LOG.error().$("process partition error [table=").$(tableWriter.getTableToken())
                     .$(", e=").$(th)
                     .I$();
-            // the file is re-opened here because PartitionUpdater owns the file descriptor
-            path.of(pathToTable);
-            setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
-            final long fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
-            // truncate partition file to the previous uncorrupted size
-            if (!ff.truncate(fd, parquetSize)) {
-                LOG.error().$("could not truncate partition file [path=").$(path).I$();
+            if (!isRewrite) {
+                // Update mode: the file is re-opened here because PartitionUpdater owns the file descriptor.
+                // Truncate to the previous uncorrupted size.
+                path.of(pathToTable);
+                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+                final long fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
+                if (!ff.truncate(fd, parquetSize)) {
+                    LOG.error().$("could not truncate partition file [path=").$(path).I$();
+                }
+                ff.close(fd);
             }
-            ff.close(fd);
+            // Rewrite mode: original is intact, new dir already removed by the inner catch.
             tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
         } finally {
+            // Determine the parquet file size from the correct path.
             path.of(pathToTable);
-            setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+            if (isRewrite) {
+                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txn);
+            } else {
+                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+            }
             final long fileSize = Files.length(path.$());
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize - duplicateCount);
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, oldPartitionSize);
-            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, 1); // partitionMutates
+            // flags: lowInt = partitionMutates, highInt = parquetRewrite
+            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, Numbers.encodeLowHighInts(1, isRewrite ? 1 : 0));
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, fileSize); // update parquet partition file size
 
@@ -327,6 +396,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     sortedTimestampsAddr,
                     tableWriter,
                     srcNameTxn,
+                    txn,
                     partitionUpdateSinkAddr,
                     dedupColSinkAddr,
                     o3TimestampMin,

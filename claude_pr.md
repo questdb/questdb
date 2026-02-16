@@ -356,9 +356,193 @@ Test coverage:
 - Mixed overlap and gap scenarios
 - Custom threshold testing
 
-### Next Steps
+### Phase 2: Track Dead Space with `unused_bytes` (Completed)
 
-1. **Implement `COPY_O3` action**: Create new row groups from O3 data that doesn't overlap
-2. **Implement `COPY_ROW_GROUP_SLICE` action**: Handle row groups that don't need modification
-3. **Add row group splitting**: When merged result exceeds `rowGroupSize`, split into multiple row groups
-4. **Optimize**: Skip unchanged row groups entirely (currently they get rewritten)
+When a row group is replaced in-place (update mode), the old data stays in the file as dead space. Phase 2
+tracks this wasted space so the rewrite decision in Phase 3 has the data it needs.
+
+#### Rust: `QdbMeta` with `unused_bytes`
+
+Location: `core/rust/qdbr/src/parquet/qdb_metadata.rs`
+
+- Added `unused_bytes: u64` field to `QdbMeta` (serialized as JSON in a parquet KV metadata entry under key `questdb`)
+- `ParquetUpdater::replace_row_group()` now accumulates the old row group's compressed size + column/offset index sizes
+  into `accumulated_unused_bytes`
+- `ParquetUpdater::end()` adds the old footer size to `accumulated_unused_bytes`, serializes into the new footer's
+  QDB metadata
+
+#### Java: Expose `unused_bytes` via `PartitionDecoder`
+
+- Added `unusedBytesOffset()` JNI function in `parquet_read/jni.rs`
+- Added `UNUSED_BYTES_OFFSET` + `Metadata.getUnusedBytes()` to `PartitionDecoder.java`
+
+### Phase 3: Parquet File Rewrite to Prevent File Growth (Completed)
+
+This is the main change. When dead space in a parquet file exceeds a threshold, the O3 commit writes all data to a
+**fresh file** instead of appending. Untouched row groups are raw-copied (memcpy of byte ranges, no decode/re-encode).
+
+#### Rewrite Trigger
+
+Evaluated in `O3PartitionJob.processParquetPartition()`:
+
+```java
+isRewrite =
+rowGroupCount ==1
+        ||(double)unusedBytes /parquetSize >rewriteUnusedRatio  // default 0.5
+    ||unusedBytes >rewriteUnusedMaxBytes;                     // default 1 GB
+```
+
+A single-row-group file always triggers rewrite because the entire row group is re-encoded anyway and writing to a
+fresh file avoids accumulating dead space.
+
+#### Configuration Properties
+
+| Property                                                      | Default | Description                                          |
+|---------------------------------------------------------------|---------|------------------------------------------------------|
+| `cairo.partition.encoder.parquet.o3.rewrite.unused.ratio`     | `0.5`   | Rewrite when `unused_bytes / file_size` exceeds this |
+| `cairo.partition.encoder.parquet.o3.rewrite.unused.max.bytes` | `1 GB`  | Rewrite when absolute unused bytes exceeds this      |
+
+Files: `PropertyKey.java`, `CairoConfiguration.java`, `DefaultCairoConfiguration.java`,
+`CairoConfigurationWrapper.java`, `PropServerConfiguration.java`
+
+#### Split Reader/Writer File Descriptors
+
+The `PartitionUpdater` now takes **separate** reader and writer file descriptors. This is required because in rewrite
+mode the reader points to the old file while the writer points to a new empty file. Even in update mode, separate
+fds are needed so reader and writer maintain independent cursor positions.
+
+**`PartitionUpdater.of()` new signature (Java):**
+
+```java
+void of(LPSZ srcPath, int fileOpenOpts,
+        int readerFd, long readFileSize,     // old file for reading metadata/data
+        int writerFd, long writeFileSize,    // new file (0 = rewrite) or same file
+        int timestampIndex, long compressionCodec,
+        boolean statisticsEnabled, boolean rawArrayEncoding,
+        long rowGroupSize, long dataPageSize)
+```
+
+**`ParquetUpdater::new()` (Rust):**
+
+- `write_file_size == 0` → rewrite mode: creates `ParquetFile` in `Mode::Write` (fresh file)
+- `write_file_size > 0` → update mode: creates `ParquetFile` in `Mode::Update` (append), seeks writer to end
+
+#### New Rust Operations
+
+**`copy_row_group(rg_index)`** — raw-copies an entire row group from the old file to the new file:
+
+1. Reads byte range covering all column chunks + indexes from the reader
+2. Calls `ensure_started()` to write the PAR1 header before computing offsets (fixes an off-by-4 bug)
+3. Computes offset delta between old and new file positions
+4. Adjusts `data_page_offset`, `dictionary_page_offset`, `column_index_offset`, `offset_index_offset` in the thrift
+   metadata
+5. Writes raw bytes + adjusted metadata via `ParquetFile::write_raw_row_group()`
+
+**`slice_row_group(rg_index, row_lo, row_hi)`** — copies a sub-range of rows from a row group:
+
+1. Reads the entire old file into memory from the reader fd
+2. Decodes the row range using `ParquetDecoder`
+3. Extracts symbol tables from dictionary pages
+4. Re-encodes via `replace_row_group()`
+
+**Mode-aware dispatch in existing operations:**
+
+- `replace_row_group()`: rewrite → `parquet_file.write()`, update → `parquet_file.replace()` + dead space tracking
+- `insert_row_group()`: rewrite → `parquet_file.write()`, update → `parquet_file.insert()`
+- `append_row_group()`: rewrite → `parquet_file.write()`, update → `parquet_file.append()`
+- `end()`: rewrite → `unused_bytes = 0`, update → accumulates dead space
+
+#### ParquetFile Extensions
+
+Location: `core/rust/qdbr/parquet2/src/write/file.rs`
+
+- **`insert()`**: new method for inserting a row group at a specific position (for `COPY_O3` actions)
+- **`write_raw_row_group(raw_bytes, row_group)`**: writes pre-encoded bytes + metadata (for `copy_row_group`)
+- **`ensure_started()`**: writes PAR1 header if not yet written, so `current_offset()` returns the correct position
+- **`current_offset()`**: returns the current write offset
+- **`end()` Mode::Update** reworked: two-phase processing (replacements first, then insertions in ascending position
+  order), KV metadata merge-by-key instead of append
+
+#### Java: File Lifecycle in `O3PartitionJob`
+
+```
+if (isRewrite) {
+    readerFd → old file (srcNameTxn directory)
+    writerFd → new file (txn directory), writeFileSize = 0
+} else {
+    readerFd → old file
+    writerFd → same old file, writeFileSize = parquetSize
+}
+
+Execute merge actions:
+  MERGE           → mergeRowGroup() → partitionUpdater.updateRowGroup()
+  COPY_ROW_GROUP_SLICE:
+    rewrite + full range  → partitionUpdater.copyRowGroup()
+    rewrite + partial     → partitionUpdater.sliceRowGroup()
+    update  + partial     → partitionUpdater.sliceRowGroup()
+    update  + full range  → no-op (stays in place in metadata)
+  COPY_O3         → copyO3ToRowGroup() → partitionUpdater.addRowGroup()
+
+After updateFileMetadata():
+  rewrite → updateParquetIndexes() on the new txn directory
+  update  → updateParquetIndexes() on the original directory
+```
+
+**Error handling:**
+
+- Rewrite failure: original file intact, new txn directory removed by inner catch block
+- Update failure: original file truncated to `parquetSize` (restoring last known good state)
+
+#### Java: `TableWriter.o3ConsumePartitionUpdateSink`
+
+The sink consumer now receives a `parquetRewrite` flag (high int of the flags long):
+
+```java
+if(parquetRewrite){
+        txWriter.
+
+updatePartitionSizeAndTxnByRawIndex(...)  // bumps nameTxn
+    partitionRemoveCandidates.
+
+add(partitionTimestamp, srcNameTxn)  // old dir queued for removal
+}else{
+        txWriter.
+
+updatePartitionSizeByRawIndex(...)  // keeps same nameTxn
+}
+```
+
+#### Bug Fix: PAR1 Header Offset
+
+When `copy_row_group()` is the first operation on a fresh rewrite file, `current_offset()` returned 0 but
+`write_raw_row_group()` writes the 4-byte PAR1 magic header first, so data actually starts at offset 4. The metadata
+offsets were computed relative to 0, causing "Invalid thrift: protocol error" when reading back.
+
+Fix: call `ensure_started()` before `current_offset()` in `copy_row_group()` so the PAR1 header is written first and
+offsets are computed correctly.
+
+### Files Changed
+
+| File                                         | Change                                                                                                                  |
+|----------------------------------------------|-------------------------------------------------------------------------------------------------------------------------|
+| `O3ParquetMergeStrategy.java`                | New: merge strategy with `MERGE`/`COPY_ROW_GROUP_SLICE`/`COPY_O3` actions                                               |
+| `O3PartitionJob.java`                        | Rewrite decision, split fds, action dispatch, txn-based directory                                                       |
+| `TableWriter.java`                           | Sink consumer: `parquetRewrite` flag, nameTxn bump, old dir removal                                                     |
+| `PartitionUpdater.java`                      | Split reader/writer fds, `copyRowGroup()`, `sliceRowGroup()`                                                            |
+| `PartitionDecoder.java`                      | `getUnusedBytes()` accessor                                                                                             |
+| `PropertyKey.java`                           | 2 new rewrite threshold properties                                                                                      |
+| `CairoConfiguration.java`                    | 2 new interface methods                                                                                                 |
+| `DefaultCairoConfiguration.java`             | Default values (0.5 ratio, 1 GB absolute)                                                                               |
+| `CairoConfigurationWrapper.java`             | Delegation                                                                                                              |
+| `PropServerConfiguration.java`               | Parsing + getters                                                                                                       |
+| `parquet_write/update.rs`                    | Split reader/writer, rewrite/update modes, `copy_row_group`, `slice_row_group`, `insert_row_group`, dead space tracking |
+| `parquet_write/jni.rs`                       | Split fds in `create`, new `copyRowGroup`/`sliceRowGroup`/`insertRowGroup` handlers                                     |
+| `parquet2/write/file.rs`                     | `insert()`, `write_raw_row_group()`, `ensure_started()`, `current_offset()`, two-phase `end()`                          |
+| `parquet2/metadata/column_chunk_metadata.rs` | `column_index_offset()`, `offset_index_offset()` accessors                                                              |
+| `parquet2/metadata/row_metadata.rs`          | Made `into_thrift()` public                                                                                             |
+| `parquet/qdb_metadata.rs`                    | `QdbMeta` with `unused_bytes` serialization                                                                             |
+| `parquet_read/jni.rs`                        | `unusedBytesOffset()` JNI function                                                                                      |
+| `parquet_read/mod.rs`                        | `unused_bytes` field in `ParquetDecoder`                                                                                |
+| `O3ParquetMergeStrategyTest.java`            | Unit tests for merge strategy                                                                                           |
+| `O3ParquetMergeStrategyFuzzTest.java`        | Fuzz test: multi-round O3 on parquet partition                                                                          |
+| `PartitionUpdaterTest.java`                  | Updated for split fd API                                                                                                |
