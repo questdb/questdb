@@ -225,7 +225,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         private final VirtualRecord recordB;
         private final ObjList<Function> recordFunctions;
         private final RecordSink slaveAsOfJoinMapSink;
-        private final MarkoutTimeFrameHelper slaveTimeFrameHelper;
+        private final HorizonJoinTimeFrameHelper slaveTimeFrameHelper;
         private final SymbolTranslatingRecord symbolTranslatingRecord;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isDataMapBuilt;
@@ -316,7 +316,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 this.symbolTranslatingRecord = null;
             }
 
-            this.slaveTimeFrameHelper = new MarkoutTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTsScale);
+            this.slaveTimeFrameHelper = new HorizonJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTsScale);
             this.isOpen = true;
         }
 

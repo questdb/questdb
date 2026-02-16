@@ -60,6 +60,64 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinAsOfMatchAcrossPartitions() throws Exception {
+        // Tests that findAsOfRow correctly finds ASOF matches in later partitions
+        // when the bookmarked frame is entirely before the target timestamp.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts) PARTITION BY DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2000-01-01T00:00:01.000000Z', 'A', 10),
+                                ('2000-01-02T00:00:01.000000Z', 'B', 20)
+                            """
+            );
+
+            // Prices in two partitions (days):
+            // Day 1: 100 at 0.5s, 200 at 2s
+            // Day 2: 300 at 0.5s
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('2000-01-01T00:00:00.500000Z', 100.0),
+                                ('2000-01-01T00:00:02.000000Z', 200.0),
+                                ('2000-01-02T00:00:00.500000Z', 300.0)
+                            """
+            );
+
+            // With offset 0 (no ON clause → ASOF matches any slave row):
+            // Trade A at day1 00:00:01 → ASOF to latest price <= 00:00:01 → 100.0 (at day1 00:00:00.5)
+            // Trade B at day2 00:00:01 → ASOF to latest price <= day2 00:00:01 → 300.0 (at day2 00:00:00.5)
+            // Bug: bookmark from trade A's lookup causes trade B to return 200.0 (last row of day1)
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tavg
+                            A\t100.0
+                            B\t300.0
+                            """,
+                    """
+                            SELECT t.sym, avg(p.price)
+                            FROM trades AS t
+                            HORIZON JOIN prices AS p
+                            RANGE FROM 0s TO 0s STEP 1s AS h
+                            ORDER BY t.sym
+                            """,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinBothTablesEmpty() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());

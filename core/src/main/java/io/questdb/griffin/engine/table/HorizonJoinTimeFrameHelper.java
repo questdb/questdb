@@ -37,7 +37,7 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
 
 /**
  * Helper for navigating and searching through time frames for ASOF join lookups
- * in markout queries.
+ * in HORIZON JOIN queries.
  * <p>
  * Wraps a {@link TimeFrameCursor} and provides efficient ASOF-style lookups
  * (finding the last row with timestamp less or equal to target) using a combination of
@@ -46,7 +46,7 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  * Also supports forward and backward scanning to build key-to-rowId maps for keyed ASOF JOIN.
  * Watermarks are maintained internally to track scanning progress within a frame.
  */
-public class MarkoutTimeFrameHelper {
+public class HorizonJoinTimeFrameHelper {
     private static final int LINEAR_SCAN_LIMIT = 64;
     private final long lookahead;
     // Scale factor for slave timestamps to normalize to nanoseconds (1 if no scaling needed)
@@ -63,7 +63,7 @@ public class MarkoutTimeFrameHelper {
     private TimeFrameCursor timeFrameCursor;
     private int timestampIndex;
 
-    public MarkoutTimeFrameHelper(long lookahead, long slaveTsScale) {
+    public HorizonJoinTimeFrameHelper(long lookahead, long slaveTsScale) {
         this.lookahead = lookahead;
         this.slaveTsScale = slaveTsScale;
     }
@@ -209,23 +209,27 @@ public class MarkoutTimeFrameHelper {
     public long findAsOfRow(long targetTimestamp) {
         // Start from bookmarked position if available
         long rowLo = Long.MIN_VALUE;
+
+        // Track the best ASOF match found so far
+        int bestFrameIndex = -1;
+        long bestRowIndex = Long.MIN_VALUE;
+
         if (bookmarkedFrameIndex != -1) {
             timeFrameCursor.jumpTo(bookmarkedFrameIndex);
             if (timeFrameCursor.open() > 0) {
                 long frameTsHi = scaleTimestamp(timeFrame.getTimestampHi() - 1, slaveTsScale); // timestampHi is exclusive
                 if (frameTsHi <= targetTimestamp) {
-                    // Bookmarked frame is entirely <= target, use as candidate
-                    rowLo = bookmarkedRowIndex;
+                    // Bookmarked frame is entirely <= target, record as candidate
+                    // and continue scanning forward for closer matches
+                    bestFrameIndex = timeFrame.getFrameIndex();
+                    bestRowIndex = timeFrame.getRowHi() - 1;
+                    bookmarkCurrentFrame(0);
                 } else if (scaleTimestamp(timeFrame.getTimestampLo(), slaveTsScale) <= targetTimestamp) {
                     // Target is within this frame
                     rowLo = bookmarkedRowIndex;
                 }
             }
         }
-
-        // Track the best ASOF match found so far
-        int bestFrameIndex = -1;
-        long bestRowIndex = Long.MIN_VALUE;
 
         if (rowLo == Long.MIN_VALUE) {
             // Navigate through frames to find one containing or before the target

@@ -202,7 +202,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
         private final LongList offsets;
         private final VirtualRecord recordA;
         private final RecordSink slaveAsOfJoinMapSink;
-        private final MarkoutTimeFrameHelper slaveTimeFrameHelper;
+        private final HorizonJoinTimeFrameHelper slaveTimeFrameHelper;
         private final SymbolTranslatingRecord symbolTranslatingRecord;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isExhausted;
@@ -259,7 +259,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
                 this.symbolTranslatingRecord = null;
             }
 
-            this.slaveTimeFrameHelper = new MarkoutTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTsScale);
+            this.slaveTimeFrameHelper = new HorizonJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTsScale);
             this.isOpen = true;
         }
 

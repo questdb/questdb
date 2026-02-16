@@ -94,7 +94,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     protected final RecordSink ownerMasterAsOfJoinMapSink;
     protected final RecordSink ownerSlaveAsOfJoinMapSink;
     protected final ConcurrentTimeFrameCursor ownerSlaveTimeFrameCursor;
-    protected final MarkoutTimeFrameHelper ownerSlaveTimeFrameHelper;
+    protected final HorizonJoinTimeFrameHelper ownerSlaveTimeFrameHelper;
     protected final SymbolTranslatingRecord ownerSymbolTranslatingRecord;
     protected final ObjList<GroupByAllocator> perWorkerAllocators;
     protected final ObjList<Map> perWorkerAsOfJoinMaps;
@@ -107,7 +107,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     protected final ObjList<RecordSink> perWorkerMasterAsOfJoinMapSinks;
     protected final ObjList<RecordSink> perWorkerSlaveAsOfJoinMapSinks;
     protected final ObjList<ConcurrentTimeFrameCursor> perWorkerSlaveTimeFrameCursors;
-    protected final ObjList<MarkoutTimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
+    protected final ObjList<HorizonJoinTimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
     // Per-worker symbol translating records for integer-based symbol key comparison.
     // Null when there are no symbol columns in the ASOF join key.
     protected final ObjList<SymbolTranslatingRecord> perWorkerSymbolTranslatingRecords;
@@ -228,12 +228,12 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         // Create time frame cursors from slave factory - one per worker + owner
         final long lookahead = configuration.getSqlAsOfJoinLookAhead();
         this.ownerSlaveTimeFrameCursor = slaveFactory.newTimeFrameCursor();
-        this.ownerSlaveTimeFrameHelper = new MarkoutTimeFrameHelper(lookahead, slaveTsScale);
+        this.ownerSlaveTimeFrameHelper = new HorizonJoinTimeFrameHelper(lookahead, slaveTsScale);
         this.perWorkerSlaveTimeFrameCursors = new ObjList<>(slotCount);
         this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(slotCount);
         for (int i = 0; i < slotCount; i++) {
             perWorkerSlaveTimeFrameCursors.add(slaveFactory.newTimeFrameCursor());
-            perWorkerSlaveTimeFrameHelpers.add(new MarkoutTimeFrameHelper(lookahead, slaveTsScale));
+            perWorkerSlaveTimeFrameHelpers.add(new HorizonJoinTimeFrameHelper(lookahead, slaveTsScale));
         }
 
         // Per-worker ASOF maps and SingleRecordSink targets for key comparison
@@ -471,7 +471,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     /**
      * Get the time frame helper for the given slot.
      */
-    public MarkoutTimeFrameHelper getSlaveTimeFrameHelper(int slotId) {
+    public HorizonJoinTimeFrameHelper getSlaveTimeFrameHelper(int slotId) {
         if (slotId == -1) {
             return ownerSlaveTimeFrameHelper;
         }
