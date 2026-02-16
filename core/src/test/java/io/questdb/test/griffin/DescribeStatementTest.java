@@ -171,8 +171,120 @@ public class DescribeStatementTest extends AbstractCairoTest {
 
     @Test
     public void testDescribeNonExistentTable() throws Exception {
+        assertMemoryLeak(() -> assertException("DESCRIBE (SELECT * FROM non_existent_table)", 38, "table does not exist [table=non_existent_table]"));
+    }
+
+    @Test
+    public void testDescribeRepeated() throws Exception {
         assertMemoryLeak(() -> {
-            assertException("DESCRIBE (SELECT * FROM non_existent_table)", 38, "table does not exist [table=non_existent_table]");
+            execute("CREATE TABLE test_table (id INT, name STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            String expected = """
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tname\tSTRING
+                    2\tts\tTIMESTAMP
+                    """;
+            assertSql(expected, "DESCRIBE (SELECT * FROM test_table)");
+            assertSql(expected, "DESCRIBE (SELECT * FROM test_table)");
+        });
+    }
+
+    @Test
+    public void testDescribeResultFiltering() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT, name STRING, value DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+
+            assertSql("""
+                    column_name
+                    id
+                    """, "SELECT column_name FROM describe((SELECT * FROM test_table)) WHERE data_type = 'INT'");
+        });
+    }
+
+    @Test
+    public void testDescribeResultOrdering() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (b INT, a STRING, c DOUBLE)");
+
+            assertSql("""
+                    column_name\tdata_type
+                    a\tSTRING
+                    b\tINT
+                    c\tDOUBLE
+                    """, "SELECT column_name, data_type FROM describe((SELECT * FROM test_table)) ORDER BY column_name");
+        });
+    }
+
+    @Test
+    public void testDescribeSchemaChangeAddColumnWithData() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT, name STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO test_table VALUES (1, 'alice', '2024-01-01T00:00:00.000000Z'), (2, 'bob', '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tname\tSTRING
+                    2\tts\tTIMESTAMP
+                    """, "DESCRIBE (SELECT * FROM test_table)");
+
+            execute("ALTER TABLE test_table ADD COLUMN score DOUBLE");
+            execute("INSERT INTO test_table VALUES (3, 'carol', '2024-01-03T00:00:00.000000Z', 99.5)");
+            drainWalQueue();
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tname\tSTRING
+                    2\tts\tTIMESTAMP
+                    3\tscore\tDOUBLE
+                    """, "DESCRIBE (SELECT * FROM test_table)");
+        });
+    }
+
+    @Test
+    public void testDescribeSchemaChangeAfterDescribe() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT, name STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tname\tSTRING
+                    2\tts\tTIMESTAMP
+                    """, "DESCRIBE (SELECT * FROM test_table)");
+
+            execute("ALTER TABLE test_table ADD COLUMN value DOUBLE");
+            drainWalQueue();
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tname\tSTRING
+                    2\tts\tTIMESTAMP
+                    3\tvalue\tDOUBLE
+                    """, "DESCRIBE (SELECT * FROM test_table)");
+        });
+    }
+
+    @Test
+    public void testDescribeSchemaChangeDropColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT, name STRING, value DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            execute("ALTER TABLE test_table DROP COLUMN value");
+            drainWalQueue();
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tname\tSTRING
+                    2\tts\tTIMESTAMP
+                    """, "DESCRIBE (SELECT * FROM test_table)");
         });
     }
 
@@ -304,22 +416,6 @@ public class DescribeStatementTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDescribeRepeated() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE test_table (id INT, name STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-            String expected = """
-                    ordinal_position\tcolumn_name\tdata_type
-                    0\tid\tINT
-                    1\tname\tSTRING
-                    2\tts\tTIMESTAMP
-                    """;
-            assertSql(expected, "DESCRIBE (SELECT * FROM test_table)");
-            assertSql(expected, "DESCRIBE (SELECT * FROM test_table)");
-        });
-    }
-
-    @Test
     public void testDescribeUnion() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE table1 (id INT, name STRING)");
@@ -330,6 +426,36 @@ public class DescribeStatementTest extends AbstractCairoTest {
                     0\tid\tINT
                     1\tname\tSTRING
                     """, "DESCRIBE (SELECT * FROM table1 UNION ALL SELECT * FROM table2)");
+        });
+    }
+
+    @Test
+    public void testDescribeView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT, name STRING, value DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE VIEW test_view AS SELECT id, value FROM test_table");
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tvalue\tDOUBLE
+                    """, "DESCRIBE (SELECT * FROM test_view)");
+        });
+    }
+
+    @Test
+    public void testDescribeWalTableWithSymbols() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (sym SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO test_table VALUES ('A', 1.0, '2024-01-01T00:00:00.000000Z')");
+            drainWalQueue();
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tsym\tSYMBOL
+                    1\tval\tDOUBLE
+                    2\tts\tTIMESTAMP
+                    """, "DESCRIBE (SELECT * FROM test_table)");
         });
     }
 }
