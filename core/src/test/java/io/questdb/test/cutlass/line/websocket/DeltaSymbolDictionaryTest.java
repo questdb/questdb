@@ -580,11 +580,11 @@ public class DeltaSymbolDictionaryTest {
             // Advance and verify
             cursor.advanceRow();
             Assert.assertEquals(0, cursor.getSymbolIndex());
-            Assert.assertEquals("AAPL", cursor.getSymbolString());
+            Assert.assertEquals("AAPL", cursor.getSymbolCharSequence().toString());
 
             cursor.advanceRow();
             Assert.assertEquals(1, cursor.getSymbolIndex());
-            Assert.assertEquals("GOOG", cursor.getSymbolString());
+            Assert.assertEquals("GOOG", cursor.getSymbolCharSequence().toString());
 
             Assert.assertTrue(cursor.isDeltaMode());
         } finally {

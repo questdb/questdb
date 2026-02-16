@@ -633,8 +633,14 @@ public interface ColumnarRowAppender {
      * @param initialSymbolCount committed symbol count for stability check
      * @return true if all symbols written successfully
      */
-    boolean putSymbolColumn(int columnIndex, QwpSymbolColumnCursor cursor, int rowCount,
-                            ConnectionSymbolCache symbolCache, long tableId, int initialSymbolCount);
+    boolean putSymbolColumn(
+            int columnIndex,
+            QwpSymbolColumnCursor cursor,
+            int rowCount,
+            ConnectionSymbolCache symbolCache,
+            long tableId,
+            int initialSymbolCount
+    );
 
     /**
      * Writes a SYMBOL column cursor to a STRING column.

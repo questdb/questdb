@@ -24,11 +24,27 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitFailedException;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.wal.ColumnarRowAppender;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.cutlass.qwp.protocol.*;
+import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpBooleanColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpColumnDef;
+import io.questdb.cutlass.qwp.protocol.QwpDecimalColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpFixedWidthColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpGeoHashColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpParseException;
+import io.questdb.cutlass.qwp.protocol.QwpStringColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpSymbolColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
+import io.questdb.cutlass.qwp.protocol.QwpTimestampColumnCursor;
 import io.questdb.std.Decimals;
 import io.questdb.std.QuietCloseable;
 
@@ -74,9 +90,103 @@ public class QwpWalAppender implements QuietCloseable {
         this.ilpTypes = new byte[64];
     }
 
+    /**
+     * Maps a QuestDB column type to ILP v4 type code.
+     *
+     * @param columnType QuestDB column type
+     * @return ILP v4 type code
+     */
+    public static byte mapQuestDBTypeToQwp(int columnType) {
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BOOLEAN -> TYPE_BOOLEAN;
+            case ColumnType.BYTE -> TYPE_BYTE;
+            case ColumnType.SHORT -> TYPE_SHORT;
+            case ColumnType.INT -> TYPE_INT;
+            case ColumnType.LONG -> TYPE_LONG;
+            case ColumnType.FLOAT -> TYPE_FLOAT;
+            case ColumnType.DOUBLE -> TYPE_DOUBLE;
+            case ColumnType.CHAR -> TYPE_CHAR;
+            case ColumnType.STRING -> TYPE_STRING;
+            case ColumnType.VARCHAR -> TYPE_VARCHAR;
+            case ColumnType.SYMBOL -> TYPE_SYMBOL;
+            case ColumnType.TIMESTAMP -> TYPE_TIMESTAMP;
+            case ColumnType.DATE -> TYPE_DATE;
+            case ColumnType.UUID -> TYPE_UUID;
+            case ColumnType.LONG256 -> TYPE_LONG256;
+            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG -> TYPE_GEOHASH;
+            default -> throw new IllegalArgumentException("Unsupported QuestDB type: " + columnType);
+        };
+    }
+
+    /**
+     * Maps an ILP v4 type code to QuestDB column type.
+     *
+     * @param ilpType ILP v4 type code
+     * @return QuestDB column type
+     */
+    public static int mapQwpTypeToQuestDB(int ilpType) {
+        return switch (ilpType) {
+            case TYPE_BOOLEAN -> ColumnType.BOOLEAN;
+            case TYPE_BYTE -> ColumnType.BYTE;
+            case TYPE_SHORT -> ColumnType.SHORT;
+            case TYPE_CHAR -> ColumnType.CHAR;
+            case TYPE_INT -> ColumnType.INT;
+            case TYPE_LONG -> ColumnType.LONG;
+            case TYPE_FLOAT -> ColumnType.FLOAT;
+            case TYPE_DOUBLE -> ColumnType.DOUBLE;
+            case TYPE_STRING, TYPE_VARCHAR -> ColumnType.VARCHAR;
+            case TYPE_SYMBOL -> ColumnType.SYMBOL;
+            case TYPE_TIMESTAMP -> ColumnType.TIMESTAMP;
+            case TYPE_TIMESTAMP_NANOS -> ColumnType.TIMESTAMP_NANO;
+            case TYPE_DATE -> ColumnType.DATE;
+            case TYPE_UUID -> ColumnType.UUID;
+            case TYPE_LONG256 -> ColumnType.LONG256;
+            case TYPE_GEOHASH -> ColumnType.GEOLONG; // Default to GEOLONG, precision handled separately
+            case TYPE_DOUBLE_ARRAY -> ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, false);
+            case TYPE_LONG_ARRAY ->
+                    throw new IllegalArgumentException("Long arrays are not supported, only double arrays");
+            case TYPE_DECIMAL64 -> ColumnType.DECIMAL64;
+            case TYPE_DECIMAL128 -> ColumnType.DECIMAL128;
+            case TYPE_DECIMAL256 -> ColumnType.DECIMAL256;
+            default -> throw new IllegalArgumentException("Unknown ILP v4 type: " + ilpType);
+        };
+    }
+
+    /**
+     * Appends a table block using the streaming cursor API (zero-allocation).
+     * <p>
+     * This method processes the table block row-by-row using flyweight cursors,
+     * avoiding intermediate object allocations on the hot path.
+     *
+     * @param securityContext security context for authorization
+     * @param tableBlock      streaming table block cursor
+     * @param tud             table update details
+     * @throws CommitFailedException if commit fails
+     * @throws QwpParseException     if parsing fails during cursor iteration
+     */
+    public void appendToWalStreaming(SecurityContext securityContext, QwpTableBlockCursor tableBlock,
+                                     TableUpdateDetails tud) throws CommitFailedException, QwpParseException {
+        while (!tud.isDropped()) {
+            try {
+                appendToWalStreaming0(securityContext, tableBlock, tud);
+                break;
+            } catch (MetadataChangedException e) {
+                // Retry - reset cursor and retry
+                tableBlock.resetRowIteration();
+            }
+        }
+    }
+
     @Override
     public void close() {
         // No resources to clean up - columnar path uses WalColumnarRowAppender's own resources
+    }
+
+    /**
+     * Returns the current symbol cache, or null if not set.
+     */
+    public ConnectionSymbolCache getSymbolCache() {
+        return symbolCache;
     }
 
     /**
@@ -92,129 +202,141 @@ public class QwpWalAppender implements QuietCloseable {
     }
 
     /**
-     * Returns the current symbol cache, or null if not set.
+     * Creates a CairoException for unsupported type coercions.
      */
-    public ConnectionSymbolCache getSymbolCache() {
-        return symbolCache;
+    private static CairoException coercionNotSupportedException(byte ilpType, int columnType,
+                                                                QwpTableBlockCursor tableBlock, int col) {
+        return CairoException.nonCritical()
+                .put("type coercion from ")
+                .put(getIlpTypeName(ilpType))
+                .put(" to ")
+                .put(ColumnType.nameOf(columnType))
+                .put(" is not supported [column=")
+                .put(tableBlock.getColumnDef(col).getName())
+                .put(']');
     }
 
     /**
-     * Appends a table block using the streaming cursor API (zero-allocation).
-     * <p>
-     * This method processes the table block row-by-row using flyweight cursors,
-     * avoiding intermediate object allocations on the hot path.
+     * Returns a human-readable name for an ILP v4 type code.
      *
-     * @param securityContext security context for authorization
-     * @param tableBlock      streaming table block cursor
-     * @param tud             table update details
-     * @throws CommitFailedException if commit fails
-     * @throws QwpParseException   if parsing fails during cursor iteration
+     * @param ilpType ILP v4 type code
+     * @return human-readable type name
      */
-    public void appendToWalStreaming(SecurityContext securityContext, QwpTableBlockCursor tableBlock,
-                                     TableUpdateDetails tud) throws CommitFailedException, QwpParseException {
-        while (!tud.isDropped()) {
-            try {
-                appendToWalStreaming0(securityContext, tableBlock, tud);
-                break;
-            } catch (MetadataChangedException e) {
-                // Retry - reset cursor and retry
-                tableBlock.resetRowIteration();
+    private static String getIlpTypeName(byte ilpType) {
+        return switch (ilpType & TYPE_MASK) {
+            case TYPE_BOOLEAN -> "BOOLEAN";
+            case TYPE_BYTE -> "BYTE";
+            case TYPE_SHORT -> "SHORT";
+            case TYPE_INT -> "INT";
+            case TYPE_LONG -> "LONG";
+            case TYPE_FLOAT -> "FLOAT";
+            case TYPE_DOUBLE -> "DOUBLE";
+            case TYPE_STRING -> "STRING";
+            case TYPE_VARCHAR -> "VARCHAR";
+            case TYPE_SYMBOL -> "SYMBOL";
+            case TYPE_TIMESTAMP -> "TIMESTAMP";
+            case TYPE_TIMESTAMP_NANOS -> "TIMESTAMP_NANOS";
+            case TYPE_DATE -> "DATE";
+            case TYPE_UUID -> "UUID";
+            case TYPE_LONG256 -> "LONG256";
+            case TYPE_GEOHASH -> "GEOHASH";
+            case TYPE_DOUBLE_ARRAY -> "DOUBLE_ARRAY";
+            case TYPE_LONG_ARRAY -> "LONG_ARRAY";
+            case TYPE_DECIMAL64 -> "DECIMAL64";
+            case TYPE_DECIMAL128 -> "DECIMAL128";
+            case TYPE_DECIMAL256 -> "DECIMAL256";
+            default -> "UNKNOWN(" + ilpType + ")";
+        };
+    }
+
+    /**
+     * Checks whether a fixed-width wire type can be coerced to the target column type.
+     * Only types within the same family are allowed (e.g., integer↔integer, float↔float),
+     * plus integer→float/double cross-family coercion.
+     * Other cross-family coercions (e.g., UUID→SHORT) are rejected to prevent silent data corruption.
+     */
+    private static boolean isFixedTypeCoercionAllowed(byte ilpType, int columnType) {
+        byte wireType = (byte) (ilpType & TYPE_MASK);
+        int colTag = ColumnType.tagOf(columnType);
+        return switch (wireType) {
+            case TYPE_BYTE, TYPE_SHORT, TYPE_INT, TYPE_LONG -> colTag == ColumnType.BYTE
+                    || colTag == ColumnType.SHORT || colTag == ColumnType.INT || colTag == ColumnType.LONG
+                    || colTag == ColumnType.FLOAT || colTag == ColumnType.DOUBLE
+                    || colTag == ColumnType.DATE;
+            case TYPE_FLOAT, TYPE_DOUBLE -> colTag == ColumnType.BYTE
+                    || colTag == ColumnType.SHORT || colTag == ColumnType.INT || colTag == ColumnType.LONG
+                    || colTag == ColumnType.FLOAT || colTag == ColumnType.DOUBLE;
+            case TYPE_UUID -> colTag == ColumnType.UUID;
+            case TYPE_DATE -> colTag == ColumnType.DATE;
+            case TYPE_LONG256 -> colTag == ColumnType.LONG256;
+            case TYPE_GEOHASH -> colTag == ColumnType.GEOBYTE || colTag == ColumnType.GEOSHORT
+                    || colTag == ColumnType.GEOINT || colTag == ColumnType.GEOLONG;
+            case TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS -> colTag == ColumnType.TIMESTAMP;
+            default -> false;
+        };
+    }
+
+    /**
+     * Checks whether the ILP wire type is a floating-point type (FLOAT, DOUBLE).
+     */
+    private static boolean isFloatWireType(byte ilpType) {
+        byte wireType = (byte) (ilpType & TYPE_MASK);
+        return wireType == TYPE_FLOAT || wireType == TYPE_DOUBLE;
+    }
+
+    /**
+     * Checks whether the ILP wire type is an integer type (BYTE, SHORT, INT, LONG).
+     */
+    private static boolean isIntegerWireType(byte ilpType) {
+        byte wireType = (byte) (ilpType & TYPE_MASK);
+        return wireType == TYPE_BYTE || wireType == TYPE_SHORT
+                || wireType == TYPE_INT || wireType == TYPE_LONG;
+    }
+
+    /**
+     * Maps an ILP v4 type code to QuestDB column type, with cursor access for decimal scale.
+     *
+     * @param ilpType    ILP v4 type code
+     * @param tableBlock table block cursor for accessing decimal scale
+     * @param colIndex   column index
+     * @return QuestDB column type
+     */
+    private static int mapQwpTypeToQuestDB(int ilpType, QwpTableBlockCursor tableBlock, int colIndex) {
+        // For decimal types, we need to get the scale from the cursor
+        switch (ilpType) {
+            case TYPE_DECIMAL64: {
+                int scale = tableBlock.getDecimalColumn(colIndex).getScale() & 0xFF;
+                int precision = Decimals.getDecimalTagPrecision(ColumnType.DECIMAL64);
+                return ColumnType.getDecimalType(ColumnType.DECIMAL64, precision, scale);
             }
+            case TYPE_DECIMAL128: {
+                int scale = tableBlock.getDecimalColumn(colIndex).getScale() & 0xFF;
+                int precision = Decimals.getDecimalTagPrecision(ColumnType.DECIMAL128);
+                return ColumnType.getDecimalType(ColumnType.DECIMAL128, precision, scale);
+            }
+            case TYPE_DECIMAL256: {
+                int scale = tableBlock.getDecimalColumn(colIndex).getScale() & 0xFF;
+                int precision = Decimals.getDecimalTagPrecision(ColumnType.DECIMAL256);
+                return ColumnType.getDecimalType(ColumnType.DECIMAL256, precision, scale);
+            }
+            default:
+                return mapQwpTypeToQuestDB(ilpType);
         }
     }
 
-    private void appendToWalStreaming0(SecurityContext securityContext, QwpTableBlockCursor tableBlock,
-                                       TableUpdateDetails tud) throws CommitFailedException, MetadataChangedException, QwpParseException {
-        int columnCount = tableBlock.getColumnCount();
-        int rowCount = tableBlock.getRowCount();
-
-        if (rowCount == 0) {
-            return;
-        }
-
-        // Ensure mapping arrays are large enough
-        if (columnIndexMap.length < columnCount) {
-            columnIndexMap = new int[columnCount];
-            columnTypeMap = new int[columnCount];
-            ilpTypes = new byte[columnCount];
-        }
-
-        TableWriterAPI writer = tud.getWriter();
-        if (writer == null) {
-            throw CairoException.nonCritical()
-                    .put("writer is null for table [table=")
-                    .put(tud.getTableNameUtf16())
-                    .put(']');
-        }
-        TableRecordMetadata metadata = writer.getMetadata();
-        int timestampIndex = tud.getTimestampIndex();
-
-        // Phase 1: Resolve column indices and create missing columns
-        int timestampColumnInBlock = -1;
-        for (int i = 0; i < columnCount; i++) {
-            QwpColumnDef colDef = tableBlock.getColumnDef(i);
-            String columnName = colDef.getName();
-            byte colType = colDef.getTypeCode();
-            ilpTypes[i] = colType;
-
-            int columnWriterIndex;
-
-            if (columnName.isEmpty() && (colType == TYPE_TIMESTAMP || colType == TYPE_TIMESTAMP_NANOS)) {
-                if (timestampIndex < 0) {
-                    throw CairoException.nonCritical()
-                            .put("designated timestamp provided but table has no designated timestamp [table=")
-                            .put(tud.getTableNameUtf16())
-                            .put(']');
-                }
-                columnWriterIndex = timestampIndex;
-                timestampColumnInBlock = i;
-            } else {
-                columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
-
-                if (columnWriterIndex < 0) {
-                    if (autoCreateNewColumns && TableUtils.isValidColumnName(columnName, maxFileNameLength)) {
-                        securityContext.authorizeAlterTableAddColumn(writer.getTableToken());
-                        try {
-                            int newColumnType = mapQwpTypeToQuestDB(colDef.getTypeCode(), tableBlock, i);
-                            writer.addColumn(columnName, newColumnType, securityContext);
-                            columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
-                        } catch (CairoException e) {
-                            columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
-                            if (columnWriterIndex < 0) {
-                                throw e;
-                            }
-                        }
-                    } else if (!autoCreateNewColumns) {
-                        throw CairoException.nonCritical()
-                                .put("new columns not allowed [table=")
-                                .put(tud.getTableNameUtf16())
-                                .put(", column=")
-                                .put(columnName)
-                                .put(']');
-                    } else {
-                        throw CairoException.nonCritical()
-                                .put("invalid column name [table=")
-                                .put(tud.getTableNameUtf16())
-                                .put(", column=")
-                                .put(columnName)
-                                .put(']');
-                    }
-                }
-
-                if (columnWriterIndex == timestampIndex) {
-                    timestampColumnInBlock = i;
-                }
-            }
-
-            int columnType = metadata.getColumnType(columnWriterIndex);
-            columnIndexMap[i] = columnWriterIndex;
-            columnTypeMap[i] = columnType;
-        }
-
-        // Phase 2: Write data - always use columnar path
-        // Writer is always a WalWriter in this context (ILP v4 only supports WAL tables)
-        WalWriter walWriter = (WalWriter) writer;
-        appendToWalColumnar(tableBlock, walWriter, timestampColumnInBlock, columnCount, rowCount, tud);
+    /**
+     * Creates a CairoException for type mismatches.
+     */
+    private static CairoException typeMismatchException(byte ilpType, int columnType,
+                                                        QwpTableBlockCursor tableBlock, int col) {
+        return CairoException.nonCritical()
+                .put("cannot write ")
+                .put(getIlpTypeName(ilpType))
+                .put(" to column [column=")
+                .put(tableBlock.getColumnDef(col).getName())
+                .put(", type=")
+                .put(ColumnType.nameOf(columnType))
+                .put(']');
     }
 
     /**
@@ -223,12 +345,12 @@ public class QwpWalAppender implements QuietCloseable {
      * This method processes entire columns at once rather than row-by-row,
      * enabling direct memory copies for compatible column types.
      *
-     * @param tableBlock          streaming table block cursor
-     * @param walWriter           the WAL writer
+     * @param tableBlock             streaming table block cursor
+     * @param walWriter              the WAL writer
      * @param timestampColumnInBlock index of designated timestamp in block, or -1
-     * @param columnCount         number of columns
-     * @param rowCount            number of rows
-     * @param tud                 table update details
+     * @param columnCount            number of columns
+     * @param rowCount               number of rows
+     * @param tud                    table update details
      */
     private void appendToWalColumnar(QwpTableBlockCursor tableBlock, WalWriter walWriter,
                                      int timestampColumnInBlock, int columnCount, int rowCount,
@@ -382,11 +504,14 @@ public class QwpWalAppender implements QuietCloseable {
                         } else if (cursor instanceof QwpStringColumnCursor strCursor) {
                             int colTag = ColumnType.tagOf(columnType);
                             switch (colTag) {
-                                case ColumnType.UUID -> appender.putStringToUuidColumn(columnIndex, strCursor, rowCount);
-                                case ColumnType.LONG256 -> appender.putStringToLong256Column(columnIndex, strCursor, rowCount);
+                                case ColumnType.UUID ->
+                                        appender.putStringToUuidColumn(columnIndex, strCursor, rowCount);
+                                case ColumnType.LONG256 ->
+                                        appender.putStringToLong256Column(columnIndex, strCursor, rowCount);
                                 case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
                                         appender.putStringToGeoHashColumn(columnIndex, strCursor, rowCount, columnType);
-                                default -> appender.putStringToNumericColumn(columnIndex, strCursor, rowCount, columnType);
+                                default ->
+                                        appender.putStringToNumericColumn(columnIndex, strCursor, rowCount, columnType);
                             }
                         } else {
                             throw typeMismatchException(ilpType, columnType, tableBlock, col);
@@ -497,8 +622,14 @@ public class QwpWalAppender implements QuietCloseable {
                             if (symbolCache != null && symCursor.isDeltaMode()) {
                                 long tableId = tud.getTableToken().getTableId();
                                 int initialSymbolCount = walWriter.getSymbolCountWatermark(columnIndex);
-                                appender.putSymbolColumn(columnIndex, symCursor, rowCount,
-                                                         symbolCache, tableId, initialSymbolCount);
+                                appender.putSymbolColumn(
+                                        columnIndex,
+                                        symCursor,
+                                        rowCount,
+                                        symbolCache,
+                                        tableId,
+                                        initialSymbolCount
+                                );
                             } else {
                                 appender.putSymbolColumn(columnIndex, symCursor, rowCount);
                             }
@@ -615,6 +746,100 @@ public class QwpWalAppender implements QuietCloseable {
         }
     }
 
+    private void appendToWalStreaming0(SecurityContext securityContext, QwpTableBlockCursor tableBlock,
+                                       TableUpdateDetails tud) throws CommitFailedException, MetadataChangedException, QwpParseException {
+        int columnCount = tableBlock.getColumnCount();
+        int rowCount = tableBlock.getRowCount();
+
+        if (rowCount == 0) {
+            return;
+        }
+
+        // Ensure mapping arrays are large enough
+        if (columnIndexMap.length < columnCount) {
+            columnIndexMap = new int[columnCount];
+            columnTypeMap = new int[columnCount];
+            ilpTypes = new byte[columnCount];
+        }
+
+        TableWriterAPI writer = tud.getWriter();
+        if (writer == null) {
+            throw CairoException.nonCritical()
+                    .put("writer is null for table [table=")
+                    .put(tud.getTableNameUtf16())
+                    .put(']');
+        }
+        TableRecordMetadata metadata = writer.getMetadata();
+        int timestampIndex = tud.getTimestampIndex();
+
+        // Phase 1: Resolve column indices and create missing columns
+        int timestampColumnInBlock = -1;
+        for (int i = 0; i < columnCount; i++) {
+            QwpColumnDef colDef = tableBlock.getColumnDef(i);
+            String columnName = colDef.getName();
+            byte colType = colDef.getTypeCode();
+            ilpTypes[i] = colType;
+
+            int columnWriterIndex;
+
+            if (columnName.isEmpty() && (colType == TYPE_TIMESTAMP || colType == TYPE_TIMESTAMP_NANOS)) {
+                if (timestampIndex < 0) {
+                    throw CairoException.nonCritical()
+                            .put("designated timestamp provided but table has no designated timestamp [table=")
+                            .put(tud.getTableNameUtf16())
+                            .put(']');
+                }
+                columnWriterIndex = timestampIndex;
+                timestampColumnInBlock = i;
+            } else {
+                columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
+
+                if (columnWriterIndex < 0) {
+                    if (autoCreateNewColumns && TableUtils.isValidColumnName(columnName, maxFileNameLength)) {
+                        securityContext.authorizeAlterTableAddColumn(writer.getTableToken());
+                        try {
+                            int newColumnType = mapQwpTypeToQuestDB(colDef.getTypeCode(), tableBlock, i);
+                            writer.addColumn(columnName, newColumnType, securityContext);
+                            columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
+                        } catch (CairoException e) {
+                            columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
+                            if (columnWriterIndex < 0) {
+                                throw e;
+                            }
+                        }
+                    } else if (!autoCreateNewColumns) {
+                        throw CairoException.nonCritical()
+                                .put("new columns not allowed [table=")
+                                .put(tud.getTableNameUtf16())
+                                .put(", column=")
+                                .put(columnName)
+                                .put(']');
+                    } else {
+                        throw CairoException.nonCritical()
+                                .put("invalid column name [table=")
+                                .put(tud.getTableNameUtf16())
+                                .put(", column=")
+                                .put(columnName)
+                                .put(']');
+                    }
+                }
+
+                if (columnWriterIndex == timestampIndex) {
+                    timestampColumnInBlock = i;
+                }
+            }
+
+            int columnType = metadata.getColumnType(columnWriterIndex);
+            columnIndexMap[i] = columnWriterIndex;
+            columnTypeMap[i] = columnType;
+        }
+
+        // Phase 2: Write data - always use columnar path
+        // Writer is always a WalWriter in this context (ILP v4 only supports WAL tables)
+        WalWriter walWriter = (WalWriter) writer;
+        appendToWalColumnar(tableBlock, walWriter, timestampColumnInBlock, columnCount, rowCount, tud);
+    }
+
     /**
      * Writes server-assigned timestamp for all rows (atNow case).
      * The designated timestamp uses 128-bit format: (timestamp, rowId) pairs.
@@ -630,205 +855,6 @@ public class QwpWalAppender implements QuietCloseable {
             dataMem.putLong128(timestamp, startRowId + row);
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
-    }
-
-    /**
-     * Maps an ILP v4 type code to QuestDB column type, with cursor access for decimal scale.
-     *
-     * @param ilpType    ILP v4 type code
-     * @param tableBlock table block cursor for accessing decimal scale
-     * @param colIndex   column index
-     * @return QuestDB column type
-     */
-    private static int mapQwpTypeToQuestDB(int ilpType, QwpTableBlockCursor tableBlock, int colIndex) {
-        // For decimal types, we need to get the scale from the cursor
-        switch (ilpType) {
-            case TYPE_DECIMAL64: {
-                int scale = tableBlock.getDecimalColumn(colIndex).getScale() & 0xFF;
-                int precision = Decimals.getDecimalTagPrecision(ColumnType.DECIMAL64);
-                return ColumnType.getDecimalType(ColumnType.DECIMAL64, precision, scale);
-            }
-            case TYPE_DECIMAL128: {
-                int scale = tableBlock.getDecimalColumn(colIndex).getScale() & 0xFF;
-                int precision = Decimals.getDecimalTagPrecision(ColumnType.DECIMAL128);
-                return ColumnType.getDecimalType(ColumnType.DECIMAL128, precision, scale);
-            }
-            case TYPE_DECIMAL256: {
-                int scale = tableBlock.getDecimalColumn(colIndex).getScale() & 0xFF;
-                int precision = Decimals.getDecimalTagPrecision(ColumnType.DECIMAL256);
-                return ColumnType.getDecimalType(ColumnType.DECIMAL256, precision, scale);
-            }
-            default:
-                return mapQwpTypeToQuestDB(ilpType);
-        }
-    }
-
-    /**
-     * Maps an ILP v4 type code to QuestDB column type.
-     *
-     * @param ilpType ILP v4 type code
-     * @return QuestDB column type
-     */
-    public static int mapQwpTypeToQuestDB(int ilpType) {
-        return switch (ilpType) {
-            case TYPE_BOOLEAN -> ColumnType.BOOLEAN;
-            case TYPE_BYTE -> ColumnType.BYTE;
-            case TYPE_SHORT -> ColumnType.SHORT;
-            case TYPE_CHAR -> ColumnType.CHAR;
-            case TYPE_INT -> ColumnType.INT;
-            case TYPE_LONG -> ColumnType.LONG;
-            case TYPE_FLOAT -> ColumnType.FLOAT;
-            case TYPE_DOUBLE -> ColumnType.DOUBLE;
-            case TYPE_STRING, TYPE_VARCHAR -> ColumnType.VARCHAR;
-            case TYPE_SYMBOL -> ColumnType.SYMBOL;
-            case TYPE_TIMESTAMP -> ColumnType.TIMESTAMP;
-            case TYPE_TIMESTAMP_NANOS -> ColumnType.TIMESTAMP_NANO;
-            case TYPE_DATE -> ColumnType.DATE;
-            case TYPE_UUID -> ColumnType.UUID;
-            case TYPE_LONG256 -> ColumnType.LONG256;
-            case TYPE_GEOHASH -> ColumnType.GEOLONG; // Default to GEOLONG, precision handled separately
-            case TYPE_DOUBLE_ARRAY -> ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, false);
-            case TYPE_LONG_ARRAY -> throw new IllegalArgumentException("Long arrays are not supported, only double arrays");
-            case TYPE_DECIMAL64 -> ColumnType.DECIMAL64;
-            case TYPE_DECIMAL128 -> ColumnType.DECIMAL128;
-            case TYPE_DECIMAL256 -> ColumnType.DECIMAL256;
-            default -> throw new IllegalArgumentException("Unknown ILP v4 type: " + ilpType);
-        };
-    }
-
-    /**
-     * Maps a QuestDB column type to ILP v4 type code.
-     *
-     * @param columnType QuestDB column type
-     * @return ILP v4 type code
-     */
-    public static byte mapQuestDBTypeToQwp(int columnType) {
-        return switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BOOLEAN -> TYPE_BOOLEAN;
-            case ColumnType.BYTE -> TYPE_BYTE;
-            case ColumnType.SHORT -> TYPE_SHORT;
-            case ColumnType.INT -> TYPE_INT;
-            case ColumnType.LONG -> TYPE_LONG;
-            case ColumnType.FLOAT -> TYPE_FLOAT;
-            case ColumnType.DOUBLE -> TYPE_DOUBLE;
-            case ColumnType.CHAR -> TYPE_CHAR;
-            case ColumnType.STRING -> TYPE_STRING;
-            case ColumnType.VARCHAR -> TYPE_VARCHAR;
-            case ColumnType.SYMBOL -> TYPE_SYMBOL;
-            case ColumnType.TIMESTAMP -> TYPE_TIMESTAMP;
-            case ColumnType.DATE -> TYPE_DATE;
-            case ColumnType.UUID -> TYPE_UUID;
-            case ColumnType.LONG256 -> TYPE_LONG256;
-            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG -> TYPE_GEOHASH;
-            default -> throw new IllegalArgumentException("Unsupported QuestDB type: " + columnType);
-        };
-    }
-
-    /**
-     * Checks whether the ILP wire type is a floating-point type (FLOAT, DOUBLE).
-     */
-    private static boolean isFloatWireType(byte ilpType) {
-        byte wireType = (byte) (ilpType & TYPE_MASK);
-        return wireType == TYPE_FLOAT || wireType == TYPE_DOUBLE;
-    }
-
-    /**
-     * Checks whether the ILP wire type is an integer type (BYTE, SHORT, INT, LONG).
-     */
-    private static boolean isIntegerWireType(byte ilpType) {
-        byte wireType = (byte) (ilpType & TYPE_MASK);
-        return wireType == TYPE_BYTE || wireType == TYPE_SHORT
-                || wireType == TYPE_INT || wireType == TYPE_LONG;
-    }
-
-    /**
-     * Checks whether a fixed-width wire type can be coerced to the target column type.
-     * Only types within the same family are allowed (e.g., integer↔integer, float↔float),
-     * plus integer→float/double cross-family coercion.
-     * Other cross-family coercions (e.g., UUID→SHORT) are rejected to prevent silent data corruption.
-     */
-    private static boolean isFixedTypeCoercionAllowed(byte ilpType, int columnType) {
-        byte wireType = (byte) (ilpType & TYPE_MASK);
-        int colTag = ColumnType.tagOf(columnType);
-        return switch (wireType) {
-            case TYPE_BYTE, TYPE_SHORT, TYPE_INT, TYPE_LONG -> colTag == ColumnType.BYTE
-                    || colTag == ColumnType.SHORT || colTag == ColumnType.INT || colTag == ColumnType.LONG
-                    || colTag == ColumnType.FLOAT || colTag == ColumnType.DOUBLE
-                    || colTag == ColumnType.DATE;
-            case TYPE_FLOAT, TYPE_DOUBLE -> colTag == ColumnType.BYTE
-                    || colTag == ColumnType.SHORT || colTag == ColumnType.INT || colTag == ColumnType.LONG
-                    || colTag == ColumnType.FLOAT || colTag == ColumnType.DOUBLE;
-            case TYPE_UUID -> colTag == ColumnType.UUID;
-            case TYPE_DATE -> colTag == ColumnType.DATE;
-            case TYPE_LONG256 -> colTag == ColumnType.LONG256;
-            case TYPE_GEOHASH -> colTag == ColumnType.GEOBYTE || colTag == ColumnType.GEOSHORT
-                    || colTag == ColumnType.GEOINT || colTag == ColumnType.GEOLONG;
-            case TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS -> colTag == ColumnType.TIMESTAMP;
-            default -> false;
-        };
-    }
-
-    /**
-     * Creates a CairoException for unsupported type coercions.
-     */
-    private static CairoException coercionNotSupportedException(byte ilpType, int columnType,
-                                                                 QwpTableBlockCursor tableBlock, int col) {
-        return CairoException.nonCritical()
-                .put("type coercion from ")
-                .put(getIlpTypeName(ilpType))
-                .put(" to ")
-                .put(ColumnType.nameOf(columnType))
-                .put(" is not supported [column=")
-                .put(tableBlock.getColumnDef(col).getName())
-                .put(']');
-    }
-
-    /**
-     * Creates a CairoException for type mismatches.
-     */
-    private static CairoException typeMismatchException(byte ilpType, int columnType,
-                                                         QwpTableBlockCursor tableBlock, int col) {
-        return CairoException.nonCritical()
-                .put("cannot write ")
-                .put(getIlpTypeName(ilpType))
-                .put(" to column [column=")
-                .put(tableBlock.getColumnDef(col).getName())
-                .put(", type=")
-                .put(ColumnType.nameOf(columnType))
-                .put(']');
-    }
-
-    /**
-     * Returns a human-readable name for an ILP v4 type code.
-     *
-     * @param ilpType ILP v4 type code
-     * @return human-readable type name
-     */
-    private static String getIlpTypeName(byte ilpType) {
-        return switch (ilpType & TYPE_MASK) {
-            case TYPE_BOOLEAN -> "BOOLEAN";
-            case TYPE_BYTE -> "BYTE";
-            case TYPE_SHORT -> "SHORT";
-            case TYPE_INT -> "INT";
-            case TYPE_LONG -> "LONG";
-            case TYPE_FLOAT -> "FLOAT";
-            case TYPE_DOUBLE -> "DOUBLE";
-            case TYPE_STRING -> "STRING";
-            case TYPE_VARCHAR -> "VARCHAR";
-            case TYPE_SYMBOL -> "SYMBOL";
-            case TYPE_TIMESTAMP -> "TIMESTAMP";
-            case TYPE_TIMESTAMP_NANOS -> "TIMESTAMP_NANOS";
-            case TYPE_DATE -> "DATE";
-            case TYPE_UUID -> "UUID";
-            case TYPE_LONG256 -> "LONG256";
-            case TYPE_GEOHASH -> "GEOHASH";
-            case TYPE_DOUBLE_ARRAY -> "DOUBLE_ARRAY";
-            case TYPE_LONG_ARRAY -> "LONG_ARRAY";
-            case TYPE_DECIMAL64 -> "DECIMAL64";
-            case TYPE_DECIMAL128 -> "DECIMAL128";
-            case TYPE_DECIMAL256 -> "DECIMAL256";
-            default -> "UNKNOWN(" + ilpType + ")";
-        };
     }
 
 }

@@ -79,6 +79,7 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
  */
 public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseable {
 
+    private final Decimal256 decimal = new Decimal256();
     private final DirectArray reusableArray = new DirectArray();
     private final StringSink strSink = new StringSink();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
@@ -358,19 +359,54 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
 
         cursor.resetRowPosition();
         try {
-            for (int row = 0; row < rowCount; row++) {
-                cursor.advanceRow();
-                if (cursor.isNull()) {
-                    VarcharTypeDriver.appendValue(auxMem, dataMem, null);
-                } else {
-                    Decimal256 decimal = Misc.getThreadLocalDecimal256();
-                    loadDecimalFromCursor(decimal, cursor, wireType);
-                    decimal.setScale(wireScale);
-                    Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
-                    sink.clear();
-                    decimal.toSink(sink);
-                    VarcharTypeDriver.appendValue(auxMem, dataMem, sink);
+            switch (wireType) {
+                case TYPE_DECIMAL64 -> {
+                    for (int row = 0; row < rowCount; row++) {
+                        cursor.advanceRow();
+                        if (cursor.isNull()) {
+                            VarcharTypeDriver.appendValue(auxMem, dataMem, null);
+                        } else {
+                            decimal.ofRaw(cursor.getDecimal64());
+                            decimal.setScale(wireScale);
+                            utf8Sink.clear();
+                            decimal.toSink(utf8Sink);
+                            VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Sink);
+                        }
+                    }
                 }
+                case TYPE_DECIMAL128 -> {
+                    for (int row = 0; row < rowCount; row++) {
+                        cursor.advanceRow();
+                        if (cursor.isNull()) {
+                            VarcharTypeDriver.appendValue(auxMem, dataMem, null);
+                        } else {
+                            decimal.ofRaw(cursor.getDecimal128Hi(), cursor.getDecimal128Lo());
+                            decimal.setScale(wireScale);
+                            utf8Sink.clear();
+                            decimal.toSink(utf8Sink);
+                            VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Sink);
+                        }
+                    }
+                }
+                case TYPE_DECIMAL256 -> {
+                    for (int row = 0; row < rowCount; row++) {
+                        cursor.advanceRow();
+                        if (cursor.isNull()) {
+                            VarcharTypeDriver.appendValue(auxMem, dataMem, null);
+                        } else {
+                            decimal.ofRaw(
+                                    cursor.getDecimal256Hh(), cursor.getDecimal256Hl(),
+                                    cursor.getDecimal256Lh(), cursor.getDecimal256Ll()
+                            );
+                            decimal.setScale(wireScale);
+                            utf8Sink.clear();
+                            decimal.toSink(utf8Sink);
+                            VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Sink);
+                        }
+                    }
+                }
+                default -> throw CairoException.nonCritical()
+                        .put("unknown decimal wire type: ").put(wireType);
             }
         } catch (QwpParseException e) {
             throw CairoException.nonCritical().put("failed to convert DECIMAL to VARCHAR");
@@ -379,8 +415,14 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putFixedColumn(int columnIndex, long valuesAddress, int valueCount,
-                               int valueSize, long nullBitmapAddress, int rowCount) {
+    public void putFixedColumn(
+            int columnIndex,
+            long valuesAddress,
+            int valueCount,
+            int valueSize,
+            long nullBitmapAddress,
+            int rowCount
+    ) {
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
@@ -390,16 +432,141 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             // Fast path: no nulls, direct memory copy
             dataMem.putBlockOfBytes(valuesAddress, (long) valueCount * valueSize);
         } else {
-            // Slow path: expand sparse to dense, inserting null sentinels
+            // Expand sparse to dense, inserting null sentinels
             int valueIdx = 0;
-            for (int row = 0; row < rowCount; row++) {
-                if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
-                    writeNullSentinel(dataMem, columnType);
-                } else {
-                    // Copy value from packed array
-                    dataMem.putBlockOfBytes(valuesAddress + (long) valueIdx * valueSize, valueSize);
-                    valueIdx++;
+            switch (ColumnType.tagOf(columnType)) {
+                case ColumnType.BOOLEAN, ColumnType.BYTE -> {
+                    for (int row = 0; row < rowCount; row++) {
+                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+                            dataMem.putByte((byte) 0);
+                        } else {
+                            dataMem.putByte(Unsafe.getUnsafe().getByte(valuesAddress + valueIdx));
+                            valueIdx++;
+                        }
+                    }
                 }
+                case ColumnType.SHORT, ColumnType.CHAR -> {
+                    for (int row = 0; row < rowCount; row++) {
+                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+                            dataMem.putShort((short) 0);
+                        } else {
+                            dataMem.putShort(Unsafe.getUnsafe().getShort(valuesAddress + (long) valueIdx * 2));
+                            valueIdx++;
+                        }
+                    }
+                }
+                case ColumnType.INT -> {
+                    for (int row = 0; row < rowCount; row++) {
+                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+                            dataMem.putInt(Numbers.INT_NULL);
+                        } else {
+                            dataMem.putInt(Unsafe.getUnsafe().getInt(valuesAddress + (long) valueIdx * 4));
+                            valueIdx++;
+                        }
+                    }
+                }
+                case ColumnType.FLOAT -> {
+                    for (int row = 0; row < rowCount; row++) {
+                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+                            dataMem.putFloat(Float.NaN);
+                        } else {
+                            dataMem.putFloat(Unsafe.getUnsafe().getFloat(valuesAddress + (long) valueIdx * 4));
+                            valueIdx++;
+                        }
+                    }
+                }
+                case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP -> {
+                    for (int row = 0; row < rowCount; row++) {
+                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+                            dataMem.putLong(Numbers.LONG_NULL);
+                        } else {
+                            dataMem.putLong(Unsafe.getUnsafe().getLong(valuesAddress + (long) valueIdx * 8));
+                            valueIdx++;
+                        }
+                    }
+                }
+                case ColumnType.DOUBLE -> {
+                    for (int row = 0; row < rowCount; row++) {
+                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+                            dataMem.putDouble(Double.NaN);
+                        } else {
+                            dataMem.putDouble(Unsafe.getUnsafe().getDouble(valuesAddress + (long) valueIdx * 8));
+                            valueIdx++;
+                        }
+                    }
+                }
+                case ColumnType.UUID, ColumnType.LONG128 -> {
+                    for (int row = 0; row < rowCount; row++) {
+                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+                            dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL);
+                        } else {
+                            long addr = valuesAddress + (long) valueIdx * 16;
+                            dataMem.putLong128(
+                                    Unsafe.getUnsafe().getLong(addr),
+                                    Unsafe.getUnsafe().getLong(addr + 8)
+                            );
+                            valueIdx++;
+                        }
+                    }
+                }
+                case ColumnType.LONG256 -> {
+                    for (int row = 0; row < rowCount; row++) {
+                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+                            dataMem.putLong256(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+                        } else {
+                            long addr = valuesAddress + (long) valueIdx * 32;
+                            dataMem.putLong256(
+                                    Unsafe.getUnsafe().getLong(addr),
+                                    Unsafe.getUnsafe().getLong(addr + 8),
+                                    Unsafe.getUnsafe().getLong(addr + 16),
+                                    Unsafe.getUnsafe().getLong(addr + 24)
+                            );
+                            valueIdx++;
+                        }
+                    }
+                }
+                case ColumnType.GEOBYTE -> {
+                    for (int row = 0; row < rowCount; row++) {
+                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+                            dataMem.putByte(GeoHashes.BYTE_NULL);
+                        } else {
+                            dataMem.putByte(Unsafe.getUnsafe().getByte(valuesAddress + valueIdx));
+                            valueIdx++;
+                        }
+                    }
+                }
+                case ColumnType.GEOSHORT -> {
+                    for (int row = 0; row < rowCount; row++) {
+                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+                            dataMem.putShort(GeoHashes.SHORT_NULL);
+                        } else {
+                            dataMem.putShort(Unsafe.getUnsafe().getShort(valuesAddress + (long) valueIdx * 2));
+                            valueIdx++;
+                        }
+                    }
+                }
+                case ColumnType.GEOINT -> {
+                    for (int row = 0; row < rowCount; row++) {
+                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+                            dataMem.putInt(GeoHashes.INT_NULL);
+                        } else {
+                            dataMem.putInt(Unsafe.getUnsafe().getInt(valuesAddress + (long) valueIdx * 4));
+                            valueIdx++;
+                        }
+                    }
+                }
+                case ColumnType.GEOLONG -> {
+                    for (int row = 0; row < rowCount; row++) {
+                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+                            dataMem.putLong(GeoHashes.NULL);
+                        } else {
+                            dataMem.putLong(Unsafe.getUnsafe().getLong(valuesAddress + (long) valueIdx * 8));
+                            valueIdx++;
+                        }
+                    }
+                }
+                default -> throw CairoException.nonCritical()
+                        .put("unsupported column type for direct copy: ").put(ColumnType.nameOf(columnType));
             }
         }
 
@@ -407,9 +574,15 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putFixedColumnNarrowing(int columnIndex, long valuesAddress, int valueCount,
-                                        int sourceValueSize, long nullBitmapAddress, int rowCount,
-                                        int columnType) {
+    public void putFixedColumnNarrowing(
+            int columnIndex,
+            long valuesAddress,
+            int valueCount,
+            int sourceValueSize,
+            long nullBitmapAddress,
+            int rowCount,
+            int columnType
+    ) {
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
@@ -1534,7 +1707,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     } catch (NumericException e) {
                         throw CairoException.nonCritical()
                                 .put("cannot parse UUID from string [value=")
-                                .put(value.toString())
+                                .put(value)
                                 .put(", column=").put(walWriter.getMetadata().getColumnName(columnIndex))
                                 .put(']');
                     }
@@ -1598,7 +1771,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     }
 
                     symbolCache.recordMiss();
-                    String symbolValue = cursor.getSymbolString();
+                    CharSequence symbolValue = cursor.getSymbolCharSequence();
                     if (symbolValue == null) {
                         dataMem.putInt(SymbolTable.VALUE_IS_NULL);
                         continue;
@@ -1618,12 +1791,14 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                         continue;
                     }
 
-                    String symbolValue = cursor.getSymbolString();
-                    if (symbolValue == null) {
+                    DirectUtf8Sequence utf8Value = cursor.getSymbolUtf8();
+                    if (utf8Value == null) {
                         dataMem.putInt(SymbolTable.VALUE_IS_NULL);
                         continue;
                     }
 
+                    strSink.clear();
+                    CharSequence symbolValue = Utf8s.directUtf8ToUtf16(utf8Value, strSink);
                     int symbolKey = walWriter.resolveSymbol(columnIndex, symbolValue, symbolMapReader);
                     dataMem.putInt(symbolKey);
                 }
@@ -1649,7 +1824,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 if (cursor.isNull()) {
                     StringTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
                 } else {
-                    String symbolValue = cursor.getSymbolString();
+                    CharSequence symbolValue = cursor.getSymbolCharSequence();
                     if (symbolValue == null) {
                         StringTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
                     } else {
@@ -1681,8 +1856,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     if (utf8Value != null) {
                         VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Value);
                     } else {
-                        // delta mode: getSymbolUtf8() returns null, fall back to string
-                        String symbolValue = cursor.getSymbolString();
+                        // delta mode: getSymbolUtf8() returns null, fall back to CharSequence
+                        CharSequence symbolValue = cursor.getSymbolCharSequence();
                         if (symbolValue == null) {
                             VarcharTypeDriver.appendValue(auxMem, dataMem, null);
                         } else {
@@ -1700,8 +1875,14 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putTimestampColumn(int columnIndex, long valuesAddress, int valueCount,
-                                   long nullBitmapAddress, int rowCount, long startRowId) {
+    public void putTimestampColumn(
+            int columnIndex,
+            long valuesAddress,
+            int valueCount,
+            long nullBitmapAddress,
+            int rowCount,
+            long startRowId
+    ) {
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);

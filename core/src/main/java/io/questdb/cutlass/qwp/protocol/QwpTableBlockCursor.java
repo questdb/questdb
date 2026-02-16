@@ -52,51 +52,269 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
  */
 public class QwpTableBlockCursor implements Mutable {
 
-    private final QwpTableHeader tableHeader = new QwpTableHeader();
-    private final QwpSchema.ParseResult parseResult = new QwpSchema.ParseResult();
-
     // Column cursors (reused across table blocks)
     private final ObjList<QwpColumnCursor> columnCursors = new ObjList<>();
-
-    // Cached null flags per column for current row (avoids megamorphic isNull() calls)
-    private boolean[] columnNullFlags = new boolean[16];
-
+    private final QwpSchema.ParseResult parseResult = new QwpSchema.ParseResult();
+    private final QwpTableHeader tableHeader = new QwpTableHeader();
+    private int arrayColumnCount;
+    private int[] arrayColumnIndices = new int[16];
+    private int booleanColumnCount;
     // Type-bucketed column indices for monomorphic advanceRow() calls
     private int[] booleanColumnIndices = new int[16];
-    private int[] fixedWidthColumnIndices = new int[16];
-    private int[] timestampColumnIndices = new int[16];
-    private int[] stringColumnIndices = new int[16];
-    private int[] symbolColumnIndices = new int[16];
-    private int[] geoHashColumnIndices = new int[16];
-    private int[] arrayColumnIndices = new int[16];
-    private int[] decimalColumnIndices = new int[16];
-    private int booleanColumnCount;
-    private int fixedWidthColumnCount;
-    private int timestampColumnCount;
-    private int stringColumnCount;
-    private int symbolColumnCount;
-    private int geoHashColumnCount;
-    private int arrayColumnCount;
-    private int decimalColumnCount;
-
-    // Schema cache reference
-    private QwpSchemaCache schemaCache;
-
-    // Delta symbol dictionary support
-    private ObjList<String> connectionSymbolDict;
-    private boolean deltaSymbolDictEnabled;
-
-    // Table state
-    private int rowCount;
-    private int columnCount;
-    private int currentRow;
-    private boolean gorillaEnabled;
-
-    // Column definitions from schema
-    private QwpColumnDef[] columnDefs;
-
     // Wire position tracking
     private int bytesConsumed;
+    private int columnCount;
+    // Column definitions from schema
+    private QwpColumnDef[] columnDefs;
+    // Cached null flags per column for current row (avoids megamorphic isNull() calls)
+    private boolean[] columnNullFlags = new boolean[16];
+    // Delta symbol dictionary support
+    private ObjList<String> connectionSymbolDict;
+    private int currentRow;
+    private int decimalColumnCount;
+    private int[] decimalColumnIndices = new int[16];
+    private boolean deltaSymbolDictEnabled;
+    private int fixedWidthColumnCount;
+    private int[] fixedWidthColumnIndices = new int[16];
+    private int geoHashColumnCount;
+    private int[] geoHashColumnIndices = new int[16];
+    private boolean gorillaEnabled;
+    // Table state
+    private int rowCount;
+    // Schema cache reference
+    private QwpSchemaCache schemaCache;
+    private int stringColumnCount;
+    private int[] stringColumnIndices = new int[16];
+    private int symbolColumnCount;
+    private int[] symbolColumnIndices = new int[16];
+    private int timestampColumnCount;
+    private int[] timestampColumnIndices = new int[16];
+
+    @Override
+    public void clear() {
+        tableHeader.reset();
+        parseResult.clear();
+        rowCount = 0;
+        columnCount = 0;
+        currentRow = -1;
+        gorillaEnabled = false;
+        columnDefs = null;
+        bytesConsumed = 0;
+        schemaCache = null;
+        connectionSymbolDict = null;
+        deltaSymbolDictEnabled = false;
+
+        // Reset type bucket counts
+        booleanColumnCount = 0;
+        fixedWidthColumnCount = 0;
+        timestampColumnCount = 0;
+        stringColumnCount = 0;
+        symbolColumnCount = 0;
+        geoHashColumnCount = 0;
+        arrayColumnCount = 0;
+        decimalColumnCount = 0;
+
+        // Clear all column cursors
+        for (int i = 0; i < columnCursors.size(); i++) {
+            QwpColumnCursor cursor = columnCursors.getQuick(i);
+            if (cursor != null) {
+                cursor.clear();
+            }
+        }
+    }
+
+    /**
+     * Returns the column cursor cast to array type.
+     */
+    public QwpArrayColumnCursor getArrayColumn(int index) {
+        return (QwpArrayColumnCursor) columnCursors.getQuick(index);
+    }
+
+    /**
+     * Returns the column cursor cast to boolean type.
+     */
+    public QwpBooleanColumnCursor getBooleanColumn(int index) {
+        return (QwpBooleanColumnCursor) columnCursors.getQuick(index);
+    }
+
+    /**
+     * Returns the number of bytes consumed during parsing.
+     */
+    public int getBytesConsumed() {
+        return bytesConsumed;
+    }
+
+    /**
+     * Returns the column cursor at the specified index.
+     * <p>
+     * The returned cursor is positioned at the current row after {@link #nextRow()}.
+     */
+    public final QwpColumnCursor getColumn(int index) {
+        return columnCursors.getQuick(index);
+    }
+
+    /**
+     * Returns the number of columns.
+     */
+    public int getColumnCount() {
+        return columnCount;
+    }
+
+    /**
+     * Returns the column definition at the specified index.
+     */
+    public QwpColumnDef getColumnDef(int index) {
+        return columnDefs[index];
+    }
+
+    /**
+     * Returns the current row index (0-based).
+     */
+    public int getCurrentRow() {
+        return currentRow;
+    }
+
+    /**
+     * Returns the column cursor cast to decimal type.
+     */
+    public QwpDecimalColumnCursor getDecimalColumn(int index) {
+        return (QwpDecimalColumnCursor) columnCursors.getQuick(index);
+    }
+
+    /**
+     * Returns the column cursor cast to fixed-width type.
+     */
+    public QwpFixedWidthColumnCursor getFixedWidthColumn(int index) {
+        return (QwpFixedWidthColumnCursor) columnCursors.getQuick(index);
+    }
+
+    /**
+     * Returns the column cursor cast to geohash type.
+     */
+    public QwpGeoHashColumnCursor getGeoHashColumn(int index) {
+        return (QwpGeoHashColumnCursor) columnCursors.getQuick(index);
+    }
+
+    /**
+     * Returns the number of rows in this table block.
+     */
+    public int getRowCount() {
+        return rowCount;
+    }
+
+    /**
+     * Returns the column definitions array for schema access.
+     * Note: Returns internal array directly (no copy) for zero-allocation.
+     */
+    public QwpColumnDef[] getSchema() {
+        return columnDefs;
+    }
+
+    /**
+     * Returns the column cursor cast to string type.
+     */
+    public QwpStringColumnCursor getStringColumn(int index) {
+        return (QwpStringColumnCursor) columnCursors.getQuick(index);
+    }
+
+    /**
+     * Returns the column cursor cast to symbol type.
+     */
+    public QwpSymbolColumnCursor getSymbolColumn(int index) {
+        return (QwpSymbolColumnCursor) columnCursors.getQuick(index);
+    }
+
+    /**
+     * Returns the table name as a String.
+     * <p>
+     * This allocates on first call per table block. Prefer {@link #getTableNameUtf8()}
+     * for zero-allocation access on hot paths.
+     */
+    public String getTableName() {
+        return tableHeader.getTableName();
+    }
+
+    /**
+     * Returns the table name as a UTF-8 sequence (zero allocation).
+     * <p>
+     * The returned sequence points directly to wire memory and is valid
+     * until the cursor is reused for another table block.
+     */
+    public DirectUtf8Sequence getTableNameUtf8() {
+        return tableHeader.getTableNameUtf8();
+    }
+
+    /**
+     * Returns the column cursor cast to timestamp type.
+     */
+    public QwpTimestampColumnCursor getTimestampColumn(int index) {
+        return (QwpTimestampColumnCursor) columnCursors.getQuick(index);
+    }
+
+    /**
+     * Returns whether there are more rows to iterate.
+     */
+    public boolean hasNextRow() {
+        return currentRow + 1 < rowCount;
+    }
+
+    /**
+     * Returns whether the column at the specified index is null for the current row.
+     * <p>
+     * This method provides monomorphic access to null status, avoiding the megamorphic
+     * virtual call overhead of {@code getColumn(i).isNull()}.
+     *
+     * @param index column index
+     * @return true if the column value is null for the current row
+     */
+    public boolean isColumnNull(int index) {
+        return columnNullFlags[index];
+    }
+
+    /**
+     * Advances all column cursors to the next row.
+     * <p>
+     * Caches null flags for each column to avoid megamorphic {@code isNull()} calls
+     * in consumer loops. Use {@link #isColumnNull(int)} to check null status.
+     *
+     * @throws QwpParseException if parsing fails during row advance
+     */
+    public void nextRow() throws QwpParseException {
+        currentRow++;
+        // Type-bucketed iteration for monomorphic advanceRow() calls
+        for (int i = 0; i < booleanColumnCount; i++) {
+            int col = booleanColumnIndices[i];
+            columnNullFlags[col] = getBooleanColumn(col).advanceRow();
+        }
+        for (int i = 0; i < fixedWidthColumnCount; i++) {
+            int col = fixedWidthColumnIndices[i];
+            columnNullFlags[col] = getFixedWidthColumn(col).advanceRow();
+        }
+        for (int i = 0; i < timestampColumnCount; i++) {
+            int col = timestampColumnIndices[i];
+            columnNullFlags[col] = getTimestampColumn(col).advanceRow();
+        }
+        for (int i = 0; i < stringColumnCount; i++) {
+            int col = stringColumnIndices[i];
+            columnNullFlags[col] = getStringColumn(col).advanceRow();
+        }
+        for (int i = 0; i < symbolColumnCount; i++) {
+            int col = symbolColumnIndices[i];
+            columnNullFlags[col] = getSymbolColumn(col).advanceRow();
+        }
+        for (int i = 0; i < geoHashColumnCount; i++) {
+            int col = geoHashColumnIndices[i];
+            columnNullFlags[col] = getGeoHashColumn(col).advanceRow();
+        }
+        for (int i = 0; i < arrayColumnCount; i++) {
+            int col = arrayColumnIndices[i];
+            columnNullFlags[col] = getArrayColumn(col).advanceRow();
+        }
+        for (int i = 0; i < decimalColumnCount; i++) {
+            int col = decimalColumnIndices[i];
+            columnNullFlags[col] = getDecimalColumn(col).advanceRow();
+        }
+    }
 
     /**
      * Initializes this cursor for the given table block data with delta symbol dictionary support.
@@ -174,8 +392,14 @@ public class QwpTableBlockCursor implements Mutable {
             boolean nullable = colDef.isNullable();
 
             int consumed = initializeColumnCursor(
-                    i, dataAddress + offset, dataLength - offset, rowCount,
-                    typeCode, nullable, 0, 0  // Column mapping uses index-based lookup
+                    i,
+                    dataAddress + offset,
+                    dataLength - offset,
+                    rowCount,
+                    typeCode,
+                    nullable,
+                    0,
+                    0  // Column mapping uses index-based lookup
             );
             offset += consumed;
         }
@@ -184,6 +408,16 @@ public class QwpTableBlockCursor implements Mutable {
         this.currentRow = -1;
 
         return offset;
+    }
+
+    /**
+     * Resets row iteration to the beginning.
+     */
+    public void resetRowIteration() {
+        currentRow = -1;
+        for (int i = 0; i < columnCount; i++) {
+            columnCursors.getQuick(i).resetRowPosition();
+        }
     }
 
     private void ensureColumnCursorCapacity(int capacity) {
@@ -204,8 +438,16 @@ public class QwpTableBlockCursor implements Mutable {
         }
     }
 
-    private int initializeColumnCursor(int colIndex, long dataAddress, int dataLength, int rowCount,
-                                        byte typeCode, boolean nullable, long nameAddress, int nameLength)
+    private int initializeColumnCursor(
+            int colIndex,
+            long dataAddress,
+            int dataLength,
+            int rowCount,
+            byte typeCode,
+            boolean nullable,
+            long nameAddress,
+            int nameLength
+    )
             throws QwpParseException {
         int type = typeCode & TYPE_MASK;
 
@@ -321,242 +563,6 @@ public class QwpTableBlockCursor implements Mutable {
                         QwpParseException.ErrorCode.INVALID_COLUMN_TYPE,
                         "unknown column type: " + type
                 );
-        }
-    }
-
-    /**
-     * Returns the table name as a UTF-8 sequence (zero allocation).
-     * <p>
-     * The returned sequence points directly to wire memory and is valid
-     * until the cursor is reused for another table block.
-     */
-    public DirectUtf8Sequence getTableNameUtf8() {
-        return tableHeader.getTableNameUtf8();
-    }
-
-    /**
-     * Returns the table name as a String.
-     * <p>
-     * This allocates on first call per table block. Prefer {@link #getTableNameUtf8()}
-     * for zero-allocation access on hot paths.
-     */
-    public String getTableName() {
-        return tableHeader.getTableName();
-    }
-
-    /**
-     * Returns the number of rows in this table block.
-     */
-    public int getRowCount() {
-        return rowCount;
-    }
-
-    /**
-     * Returns the number of columns.
-     */
-    public int getColumnCount() {
-        return columnCount;
-    }
-
-    /**
-     * Returns the column definition at the specified index.
-     */
-    public QwpColumnDef getColumnDef(int index) {
-        return columnDefs[index];
-    }
-
-    /**
-     * Returns the column definitions array for schema access.
-     * Note: Returns internal array directly (no copy) for zero-allocation.
-     */
-    public QwpColumnDef[] getSchema() {
-        return columnDefs;
-    }
-
-    /**
-     * Returns whether there are more rows to iterate.
-     */
-    public boolean hasNextRow() {
-        return currentRow + 1 < rowCount;
-    }
-
-    /**
-     * Advances all column cursors to the next row.
-     * <p>
-     * Caches null flags for each column to avoid megamorphic {@code isNull()} calls
-     * in consumer loops. Use {@link #isColumnNull(int)} to check null status.
-     *
-     * @throws QwpParseException if parsing fails during row advance
-     */
-    public void nextRow() throws QwpParseException {
-        currentRow++;
-        // Type-bucketed iteration for monomorphic advanceRow() calls
-        for (int i = 0; i < booleanColumnCount; i++) {
-            int col = booleanColumnIndices[i];
-            columnNullFlags[col] = getBooleanColumn(col).advanceRow();
-        }
-        for (int i = 0; i < fixedWidthColumnCount; i++) {
-            int col = fixedWidthColumnIndices[i];
-            columnNullFlags[col] = getFixedWidthColumn(col).advanceRow();
-        }
-        for (int i = 0; i < timestampColumnCount; i++) {
-            int col = timestampColumnIndices[i];
-            columnNullFlags[col] = getTimestampColumn(col).advanceRow();
-        }
-        for (int i = 0; i < stringColumnCount; i++) {
-            int col = stringColumnIndices[i];
-            columnNullFlags[col] = getStringColumn(col).advanceRow();
-        }
-        for (int i = 0; i < symbolColumnCount; i++) {
-            int col = symbolColumnIndices[i];
-            columnNullFlags[col] = getSymbolColumn(col).advanceRow();
-        }
-        for (int i = 0; i < geoHashColumnCount; i++) {
-            int col = geoHashColumnIndices[i];
-            columnNullFlags[col] = getGeoHashColumn(col).advanceRow();
-        }
-        for (int i = 0; i < arrayColumnCount; i++) {
-            int col = arrayColumnIndices[i];
-            columnNullFlags[col] = getArrayColumn(col).advanceRow();
-        }
-        for (int i = 0; i < decimalColumnCount; i++) {
-            int col = decimalColumnIndices[i];
-            columnNullFlags[col] = getDecimalColumn(col).advanceRow();
-        }
-    }
-
-    /**
-     * Returns whether the column at the specified index is null for the current row.
-     * <p>
-     * This method provides monomorphic access to null status, avoiding the megamorphic
-     * virtual call overhead of {@code getColumn(i).isNull()}.
-     *
-     * @param index column index
-     * @return true if the column value is null for the current row
-     */
-    public boolean isColumnNull(int index) {
-        return columnNullFlags[index];
-    }
-
-    /**
-     * Returns the current row index (0-based).
-     */
-    public int getCurrentRow() {
-        return currentRow;
-    }
-
-    /**
-     * Returns the column cursor at the specified index.
-     * <p>
-     * The returned cursor is positioned at the current row after {@link #nextRow()}.
-     */
-    public final QwpColumnCursor getColumn(int index) {
-        return columnCursors.getQuick(index);
-    }
-
-    /**
-     * Returns the column cursor cast to fixed-width type.
-     */
-    public QwpFixedWidthColumnCursor getFixedWidthColumn(int index) {
-        return (QwpFixedWidthColumnCursor) columnCursors.getQuick(index);
-    }
-
-    /**
-     * Returns the column cursor cast to boolean type.
-     */
-    public QwpBooleanColumnCursor getBooleanColumn(int index) {
-        return (QwpBooleanColumnCursor) columnCursors.getQuick(index);
-    }
-
-    /**
-     * Returns the column cursor cast to string type.
-     */
-    public QwpStringColumnCursor getStringColumn(int index) {
-        return (QwpStringColumnCursor) columnCursors.getQuick(index);
-    }
-
-    /**
-     * Returns the column cursor cast to symbol type.
-     */
-    public QwpSymbolColumnCursor getSymbolColumn(int index) {
-        return (QwpSymbolColumnCursor) columnCursors.getQuick(index);
-    }
-
-    /**
-     * Returns the column cursor cast to timestamp type.
-     */
-    public QwpTimestampColumnCursor getTimestampColumn(int index) {
-        return (QwpTimestampColumnCursor) columnCursors.getQuick(index);
-    }
-
-    /**
-     * Returns the column cursor cast to geohash type.
-     */
-    public QwpGeoHashColumnCursor getGeoHashColumn(int index) {
-        return (QwpGeoHashColumnCursor) columnCursors.getQuick(index);
-    }
-
-    /**
-     * Returns the column cursor cast to array type.
-     */
-    public QwpArrayColumnCursor getArrayColumn(int index) {
-        return (QwpArrayColumnCursor) columnCursors.getQuick(index);
-    }
-
-    /**
-     * Returns the column cursor cast to decimal type.
-     */
-    public QwpDecimalColumnCursor getDecimalColumn(int index) {
-        return (QwpDecimalColumnCursor) columnCursors.getQuick(index);
-    }
-
-    /**
-     * Resets row iteration to the beginning.
-     */
-    public void resetRowIteration() {
-        currentRow = -1;
-        for (int i = 0; i < columnCount; i++) {
-            columnCursors.getQuick(i).resetRowPosition();
-        }
-    }
-
-    /**
-     * Returns the number of bytes consumed during parsing.
-     */
-    public int getBytesConsumed() {
-        return bytesConsumed;
-    }
-
-    @Override
-    public void clear() {
-        tableHeader.reset();
-        parseResult.clear();
-        rowCount = 0;
-        columnCount = 0;
-        currentRow = -1;
-        gorillaEnabled = false;
-        columnDefs = null;
-        bytesConsumed = 0;
-        schemaCache = null;
-        connectionSymbolDict = null;
-        deltaSymbolDictEnabled = false;
-
-        // Reset type bucket counts
-        booleanColumnCount = 0;
-        fixedWidthColumnCount = 0;
-        timestampColumnCount = 0;
-        stringColumnCount = 0;
-        symbolColumnCount = 0;
-        geoHashColumnCount = 0;
-        arrayColumnCount = 0;
-        decimalColumnCount = 0;
-
-        // Clear all column cursors
-        for (int i = 0; i < columnCursors.size(); i++) {
-            QwpColumnCursor cursor = columnCursors.getQuick(i);
-            if (cursor != null) {
-                cursor.clear();
-            }
         }
     }
 }

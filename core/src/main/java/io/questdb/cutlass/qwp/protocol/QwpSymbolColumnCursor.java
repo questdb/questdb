@@ -27,6 +27,8 @@ package io.questdb.cutlass.qwp.protocol;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_SYMBOL;
 
@@ -48,43 +50,179 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_SYMBOL;
  */
 public final class QwpSymbolColumnCursor implements QwpColumnCursor {
 
-    private final DirectUtf8String nameUtf8 = new DirectUtf8String();
     private final QwpVarint.DecodeResult decodeResult = new QwpVarint.DecodeResult();
-
     // Pre-allocated dictionary storage (flyweights pointing to wire memory)
     private final ObjList<DirectUtf8String> dictionaryUtf8 = new ObjList<>();
-    // Lazy-populated String cache for dictionary entries
-    private final ObjList<String> dictionaryStrings = new ObjList<>();
-
-    // Configuration
-    private boolean nullable;
-    private int rowCount;
-    private int dictionarySize;
-    private boolean deltaMode;  // When true, use connectionDict instead of per-column dictionary
-
+    private final DirectUtf8String nameUtf8 = new DirectUtf8String();
+    private final StringSink utf16Sink = new StringSink();
     // External dictionary reference (for delta mode)
     private ObjList<String> connectionDict;
-
-    // Wire pointers
-    private long nullBitmapAddress;
-    private long indicesAddress;
-    private long indicesEnd;
-
+    private long currentIndexAddress;
+    private boolean currentIsNull;
     // Iteration state
     private int currentRow;
     private int currentSymbolIndex;
-    private boolean currentIsNull;
-    private long currentIndexAddress;
+    private boolean deltaMode;  // When true, use connectionDict instead of per-column dictionary
+    private int dictionarySize;
+    private long indicesAddress;
+    private long indicesEnd;
+    // Wire pointers
+    private long nullBitmapAddress;
+    // Configuration
+    private boolean nullable;
+    private int rowCount;
+
+    @Override
+    public boolean advanceRow() throws QwpParseException {
+        currentRow++;
+
+        if (nullable && nullBitmapAddress != 0) {
+            currentIsNull = QwpNullBitmap.isNull(nullBitmapAddress, currentRow);
+            if (currentIsNull) {
+                currentSymbolIndex = -1;
+                return true;
+            }
+        } else {
+            currentIsNull = false;
+        }
+
+        // Read varint index
+        QwpVarint.decode(currentIndexAddress, indicesEnd, decodeResult);
+        currentSymbolIndex = (int) decodeResult.value;
+        currentIndexAddress += decodeResult.bytesRead;
+        return false;
+    }
+
+    @Override
+    public void clear() {
+        nameUtf8.clear();
+        nullable = false;
+        rowCount = 0;
+        dictionarySize = 0;
+        deltaMode = false;
+        connectionDict = null;
+        nullBitmapAddress = 0;
+        indicesAddress = 0;
+        indicesEnd = 0;
+        // Clear dictionary flyweights
+        for (int i = 0; i < dictionaryUtf8.size(); i++) {
+            dictionaryUtf8.getQuick(i).clear();
+        }
+        resetRowPosition();
+    }
+
+    @Override
+    public int getCurrentRow() {
+        return currentRow;
+    }
+
+    /**
+     * Returns a dictionary entry by index as UTF-8.
+     *
+     * @param index dictionary index
+     * @return UTF-8 sequence, or null if delta mode
+     */
+    public DirectUtf8Sequence getDictionaryEntry(int index) {
+        if (deltaMode) {
+            return null;
+        }
+        return dictionaryUtf8.getQuick(index);
+    }
+
+    /**
+     * Returns the dictionary size.
+     */
+    public int getDictionarySize() {
+        return dictionarySize;
+    }
+
+    @Override
+    public DirectUtf8Sequence getNameUtf8() {
+        return nameUtf8;
+    }
+
+    /**
+     * Returns current row's symbol value as a CharSequence (UTF-16).
+     * <p>
+     * <b>Zero-allocation for ASCII:</b> For ASCII symbols, returns a view over wire memory.
+     * For non-ASCII, converts into an internal sink (valid until the next call).
+     * <p>
+     * In delta mode, retrieves from the connection-level dictionary.
+     *
+     * @return CharSequence value, or null if NULL
+     */
+    public CharSequence getSymbolCharSequence() {
+        if (currentIsNull || currentSymbolIndex < 0) {
+            return null;
+        }
+        if (deltaMode) {
+            if (connectionDict != null && currentSymbolIndex < connectionDict.size()) {
+                return connectionDict.getQuick(currentSymbolIndex);
+            }
+            return null;
+        }
+        utf16Sink.clear();
+        return Utf8s.directUtf8ToUtf16(dictionaryUtf8.getQuick(currentSymbolIndex), utf16Sink);
+    }
+
+    /**
+     * Returns current row's symbol index into the dictionary.
+     *
+     * @return dictionary index (0-based), or -1 if NULL
+     */
+    public int getSymbolIndex() {
+        return currentSymbolIndex;
+    }
+
+    /**
+     * Returns current row's symbol value as a UTF-8 sequence.
+     * <p>
+     * <b>Zero-allocation:</b> Returns a flyweight from the dictionary.
+     * <p>
+     * <b>Note:</b> Returns null in delta mode (use {@link #getSymbolCharSequence()} instead).
+     *
+     * @return UTF-8 sequence from dictionary, or null if NULL or delta mode
+     */
+    public DirectUtf8Sequence getSymbolUtf8() {
+        if (currentIsNull || currentSymbolIndex < 0 || deltaMode) {
+            return null;
+        }
+        return dictionaryUtf8.getQuick(currentSymbolIndex);
+    }
+
+    @Override
+    public byte getTypeCode() {
+        return TYPE_SYMBOL;
+    }
+
+    /**
+     * Returns whether this cursor is using delta mode (connection dictionary).
+     *
+     * @return true if delta mode is enabled
+     */
+    public boolean isDeltaMode() {
+        return deltaMode;
+    }
+
+    @Override
+    public boolean isNull() {
+        return currentIsNull;
+    }
+
+    @Override
+    public boolean isNullable() {
+        return nullable;
+    }
 
     /**
      * Initializes this cursor for the given column data.
      *
-     * @param dataAddress   address of column data
-     * @param dataLength    available bytes
-     * @param rowCount      number of rows
-     * @param nullable      whether column is nullable
-     * @param nameAddress   address of column name UTF-8 bytes
-     * @param nameLength    column name length in bytes
+     * @param dataAddress address of column data
+     * @param dataLength  available bytes
+     * @param rowCount    number of rows
+     * @param nullable    whether column is nullable
+     * @param nameAddress address of column name UTF-8 bytes
+     * @param nameLength  column name length in bytes
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if parsing fails
      */
@@ -106,8 +244,15 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if parsing fails
      */
-    public int of(long dataAddress, int dataLength, int rowCount, boolean nullable,
-                  long nameAddress, int nameLength, ObjList<String> connectionDict) throws QwpParseException {
+    public int of(
+            long dataAddress,
+            int dataLength,
+            int rowCount,
+            boolean nullable,
+            long nameAddress,
+            int nameLength,
+            ObjList<String> connectionDict
+    ) throws QwpParseException {
         this.nullable = nullable;
         this.rowCount = rowCount;
         this.nameUtf8.of(nameAddress, nameAddress + nameLength);
@@ -144,10 +289,6 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
 
                 DirectUtf8String entry = dictionaryUtf8.getQuick(i);
                 entry.of(dataAddress + offset, dataAddress + offset + stringLen);
-                // Clear cached String for this entry
-                if (i < dictionaryStrings.size()) {
-                    dictionaryStrings.setQuick(i, null);
-                }
                 offset += stringLen;
             }
         }
@@ -170,61 +311,6 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
         return (int) (tempAddress - dataAddress);
     }
 
-    private void ensureDictionaryCapacity(int capacity) {
-        while (dictionaryUtf8.size() < capacity) {
-            dictionaryUtf8.add(new DirectUtf8String());
-        }
-        while (dictionaryStrings.size() < capacity) {
-            dictionaryStrings.add(null);
-        }
-    }
-
-    @Override
-    public DirectUtf8Sequence getNameUtf8() {
-        return nameUtf8;
-    }
-
-    @Override
-    public byte getTypeCode() {
-        return TYPE_SYMBOL;
-    }
-
-    @Override
-    public boolean isNullable() {
-        return nullable;
-    }
-
-    @Override
-    public boolean isNull() {
-        return currentIsNull;
-    }
-
-    @Override
-    public boolean advanceRow() throws QwpParseException {
-        currentRow++;
-
-        if (nullable && nullBitmapAddress != 0) {
-            currentIsNull = QwpNullBitmap.isNull(nullBitmapAddress, currentRow);
-            if (currentIsNull) {
-                currentSymbolIndex = -1;
-                return true;
-            }
-        } else {
-            currentIsNull = false;
-        }
-
-        // Read varint index
-        QwpVarint.decode(currentIndexAddress, indicesEnd, decodeResult);
-        currentSymbolIndex = (int) decodeResult.value;
-        currentIndexAddress += decodeResult.bytesRead;
-        return false;
-    }
-
-    @Override
-    public int getCurrentRow() {
-        return currentRow;
-    }
-
     @Override
     public void resetRowPosition() {
         currentRow = -1;
@@ -233,109 +319,9 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
         currentIndexAddress = indicesAddress;
     }
 
-    @Override
-    public void clear() {
-        nameUtf8.clear();
-        nullable = false;
-        rowCount = 0;
-        dictionarySize = 0;
-        deltaMode = false;
-        connectionDict = null;
-        nullBitmapAddress = 0;
-        indicesAddress = 0;
-        indicesEnd = 0;
-        // Clear dictionary flyweights
-        for (int i = 0; i < dictionaryUtf8.size(); i++) {
-            dictionaryUtf8.getQuick(i).clear();
+    private void ensureDictionaryCapacity(int capacity) {
+        while (dictionaryUtf8.size() < capacity) {
+            dictionaryUtf8.add(new DirectUtf8String());
         }
-        // Clear cached strings
-        for (int i = 0; i < dictionaryStrings.size(); i++) {
-            dictionaryStrings.setQuick(i, null);
-        }
-        resetRowPosition();
-    }
-
-    /**
-     * Returns the dictionary size.
-     */
-    public int getDictionarySize() {
-        return dictionarySize;
-    }
-
-    /**
-     * Returns current row's symbol index into the dictionary.
-     *
-     * @return dictionary index (0-based), or -1 if NULL
-     */
-    public int getSymbolIndex() {
-        return currentSymbolIndex;
-    }
-
-    /**
-     * Returns current row's symbol value as a UTF-8 sequence.
-     * <p>
-     * <b>Zero-allocation:</b> Returns a flyweight from the dictionary.
-     * <p>
-     * <b>Note:</b> Returns null in delta mode (use {@link #getSymbolString()} instead).
-     *
-     * @return UTF-8 sequence from dictionary, or null if NULL or delta mode
-     */
-    public DirectUtf8Sequence getSymbolUtf8() {
-        if (currentIsNull || currentSymbolIndex < 0 || deltaMode) {
-            return null;
-        }
-        return dictionaryUtf8.getQuick(currentSymbolIndex);
-    }
-
-    /**
-     * Returns current row's symbol value as a String.
-     * <p>
-     * <b>Lazy allocation:</b> String is created on first access per dictionary entry,
-     * then cached for subsequent accesses.
-     * <p>
-     * In delta mode, retrieves from the connection-level dictionary.
-     *
-     * @return String value, or null if NULL
-     */
-    public String getSymbolString() {
-        if (currentIsNull || currentSymbolIndex < 0) {
-            return null;
-        }
-        if (deltaMode) {
-            // In delta mode, use connection dictionary
-            if (connectionDict != null && currentSymbolIndex < connectionDict.size()) {
-                return connectionDict.getQuick(currentSymbolIndex);
-            }
-            return null;
-        }
-        // Standard mode: use per-column dictionary
-        String cached = dictionaryStrings.getQuick(currentSymbolIndex);
-        if (cached == null) {
-            cached = dictionaryUtf8.getQuick(currentSymbolIndex).toString();
-            dictionaryStrings.setQuick(currentSymbolIndex, cached);
-        }
-        return cached;
-    }
-
-    /**
-     * Returns whether this cursor is using delta mode (connection dictionary).
-     *
-     * @return true if delta mode is enabled
-     */
-    public boolean isDeltaMode() {
-        return deltaMode;
-    }
-
-    /**
-     * Returns a dictionary entry by index as UTF-8.
-     *
-     * @param index dictionary index
-     * @return UTF-8 sequence, or null if delta mode
-     */
-    public DirectUtf8Sequence getDictionaryEntry(int index) {
-        if (deltaMode) {
-            return null;
-        }
-        return dictionaryUtf8.getQuick(index);
     }
 }
