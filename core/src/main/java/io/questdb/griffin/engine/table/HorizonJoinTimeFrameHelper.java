@@ -229,7 +229,7 @@ public class HorizonJoinTimeFrameHelper {
                     // bookmarkedRowIndex has timestamp > target (stale bookmark from a
                     // previous page frame), fall back to searching from frame start.
                     if (bookmarkedRowIndex < timeFrame.getRowHi()) {
-                        timeFrameCursor.recordAtRowIndex(record, bookmarkedRowIndex);
+                        timeFrameCursor.recordAt(record, bookmarkedFrameIndex, bookmarkedRowIndex);
                         if (scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale) <= targetTimestamp) {
                             rowLo = bookmarkedRowIndex;
                         } else {
