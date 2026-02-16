@@ -420,7 +420,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     }
 
     public void reset() {
-        // reset() must not be called if there are any tasks in progress that use this page frame sequence:
+        // reset() must be called only if there are no tasks in progress for this page frame sequence
         assert frameCount == 0 || reduceFinishedCounter.get() == dispatchStartFrameIndex;
 
         // prepare different frame sequence using the same object instance
