@@ -10018,34 +10018,20 @@ public class SqlOptimiser implements Mutable {
             ObjList<ExpressionNode> groupByColumns,
             QueryModel baseModel
     ) throws SqlException {
-        // Count non-aggregate columns from the original SELECT columns
-        int implicitKeyCount = 0;
-
-        for (int i = 0, n = selectColumns.size(); i < n; i++) {
-            QueryColumn qc = selectColumns.getQuick(i);
-            ExpressionNode ast = qc.getAst();
-            // Check if the column contains an aggregate function (root or children)
-            boolean isAggregate = ast.type == FUNCTION && ast.windowExpression == null
-                    && functionParser.getFunctionFactoryCache().isGroupBy(ast.token);
-            if (!isAggregate) {
-                isAggregate = checkForChildAggregates(ast);
-            }
-            // Non-aggregate columns are implicit GROUP BY keys
-            if (!isAggregate) {
-                implicitKeyCount++;
+        // Get the horizon alias to handle h.offset -> offset matching
+        // The horizon alias is stored on the synthetic offset model (CROSS JOIN model with HorizonJoinContext)
+        CharSequence horizonAlias = null;
+        ObjList<QueryModel> joinModels = baseModel.getJoinModels();
+        for (int jm = 0, jmn = joinModels.size(); jm < jmn; jm++) {
+            QueryModel jModel = joinModels.getQuick(jm);
+            HorizonJoinContext hjc = jModel.getHorizonJoinContext();
+            if (hjc.getMode() != HorizonJoinContext.MODE_NONE && hjc.getAlias() != null) {
+                horizonAlias = hjc.getAlias().token;
+                break;
             }
         }
 
-        // Check count matches
-        if (groupByColumns.size() != implicitKeyCount) {
-            throw SqlException.$(groupByColumns.getQuick(0).position, "HORIZON JOIN GROUP BY column count (")
-                    .put(groupByColumns.size())
-                    .put(") must match non-aggregate SELECT column count (")
-                    .put(implicitKeyCount)
-                    .put(')');
-        }
-
-        // Validate each GROUP BY column matches an implicit key
+        // Validate each GROUP BY column matches a non-aggregate SELECT column
         for (int i = 0, n = groupByColumns.size(); i < n; i++) {
             ExpressionNode groupByCol = groupByColumns.getQuick(i);
 
@@ -10075,19 +10061,6 @@ public class SqlOptimiser implements Mutable {
             boolean found = false;
             int dotPos = Chars.indexOf(groupByCol.token, '.');
             boolean groupByHasTablePrefix = dotPos >= 0;
-
-            // Get the horizon alias to handle h.offset -> offset matching
-            // The horizon alias is stored on the synthetic offset model (CROSS JOIN model with HorizonJoinContext)
-            CharSequence horizonAlias = null;
-            ObjList<QueryModel> joinModels = baseModel.getJoinModels();
-            for (int jm = 0, jmn = joinModels.size(); jm < jmn; jm++) {
-                QueryModel jModel = joinModels.getQuick(jm);
-                HorizonJoinContext hjc = jModel.getHorizonJoinContext();
-                if (hjc.getMode() != HorizonJoinContext.MODE_NONE && hjc.getAlias() != null) {
-                    horizonAlias = hjc.getAlias().token;
-                    break;
-                }
-            }
 
             // If GROUP BY column has a prefix that matches the horizon alias (e.g., h.offset),
             // we need to compare with the suffix (offset) since SELECT uses just the column name
@@ -10144,6 +10117,75 @@ public class SqlOptimiser implements Mutable {
 
             if (!found) {
                 throw SqlException.$(groupByCol.position, "HORIZON JOIN GROUP BY column must match a non-aggregate SELECT column");
+            }
+        }
+
+        // Check that all non-aggregate SELECT columns are covered by GROUP BY
+        for (int i = 0, n = selectColumns.size(); i < n; i++) {
+            QueryColumn selectCol = selectColumns.getQuick(i);
+            ExpressionNode selectAst = selectCol.getAst();
+
+            // Skip aggregate columns
+            boolean isAggregate = selectAst.type == FUNCTION && selectAst.windowExpression == null
+                    && functionParser.getFunctionFactoryCache().isGroupBy(selectAst.token);
+            if (!isAggregate) {
+                isAggregate = checkForChildAggregates(selectAst);
+            }
+            if (isAggregate) {
+                continue;
+            }
+
+            boolean covered = false;
+            for (int j = 0, m = groupByColumns.size(); j < m; j++) {
+                ExpressionNode groupByCol = groupByColumns.getQuick(j);
+
+                // Handle GROUP BY column index (e.g., GROUP BY 1, 2)
+                if (groupByCol.type == CONSTANT) {
+                    try {
+                        int columnIdx = Numbers.parseInt(groupByCol.token);
+                        if (columnIdx >= 1 && columnIdx <= selectColumns.size() && (columnIdx - 1) == i) {
+                            covered = true;
+                            break;
+                        }
+                    } catch (NumericException e) {
+                        // Not a valid number, fall through to expression matching
+                    }
+                }
+
+                // Expression comparison (with table prefix handling)
+                if (compareExpressionsWithTablePrefixes(groupByCol, selectAst)) {
+                    covered = true;
+                    break;
+                }
+
+                // Check if GROUP BY literal appears in SELECT expression
+                if (expressionContainsLiteral(selectAst, groupByCol.token)) {
+                    covered = true;
+                    break;
+                }
+
+                // Handle horizon alias prefix (e.g., h.offset -> offset)
+                int dotPos = Chars.indexOf(groupByCol.token, '.');
+                if (dotPos >= 0 && horizonAlias != null) {
+                    CharSequence prefix = groupByCol.token.subSequence(0, dotPos);
+                    if (Chars.equalsIgnoreCase(prefix, horizonAlias)) {
+                        CharSequence withoutPrefix = groupByCol.token.subSequence(dotPos + 1, groupByCol.token.length());
+                        if (expressionContainsLiteral(selectAst, withoutPrefix)) {
+                            covered = true;
+                            break;
+                        }
+                    }
+                }
+
+                // Alias match (only if GROUP BY doesn't have table prefix)
+                if (dotPos < 0 && Chars.equalsIgnoreCase(groupByCol.token, selectCol.getAlias())) {
+                    covered = true;
+                    break;
+                }
+            }
+
+            if (!covered) {
+                throw SqlException.$(selectAst.position, "non-aggregate column must be included in HORIZON JOIN GROUP BY clause");
             }
         }
     }

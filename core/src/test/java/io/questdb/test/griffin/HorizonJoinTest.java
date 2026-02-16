@@ -1696,8 +1696,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
                             "RANGE FROM 0s TO 1s STEP 1s AS h " +
                             "GROUP BY h.offset, t.sym, t.qty",
-                    140,
-                    "HORIZON JOIN GROUP BY column count (3) must match non-aggregate SELECT column count (2)"
+                    157,
+                    "HORIZON JOIN GROUP BY column must match a non-aggregate SELECT column"
             );
         });
     }
@@ -1736,8 +1736,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
                             "RANGE FROM 0s TO 1s STEP 1s AS h " +
                             "GROUP BY h.offset",
-                    140,
-                    "HORIZON JOIN GROUP BY column count (1) must match non-aggregate SELECT column count (2)"
+                    17,
+                    "non-aggregate column must be included in HORIZON JOIN GROUP BY clause"
             );
         });
     }
