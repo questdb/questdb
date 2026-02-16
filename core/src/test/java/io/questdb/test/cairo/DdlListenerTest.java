@@ -108,4 +108,21 @@ public class DdlListenerTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testDropTableIfExistsDoesNotFireListener() throws Exception {
+        assertMemoryLeak(() -> {
+            final int[] dropCounter = new int[1];
+
+            engine.setDdlListener(new DefaultDdlListener() {
+                @Override
+                public void onTableDropped(String tableName, boolean cascadePermissions) {
+                    dropCounter[0]++;
+                }
+            });
+
+            engine.execute("DROP TABLE IF EXISTS non_existent_table");
+            Assert.assertEquals(0, dropCounter[0]);
+        });
+    }
 }
