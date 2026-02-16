@@ -4680,8 +4680,13 @@ public class SqlOptimiser implements Mutable {
     private void moveWhereInsideSubQueries(QueryModel model) throws SqlException {
         if (
                 model.getSelectModelType() != SELECT_MODEL_DISTINCT
-                        // in theory, we could push down predicates as long as they align with ALL partition by clauses and remove whole partition(s)
+                        // in theory, we could push down predicates as long as they align with ALL partition by clauses
+                        // and remove whole partition(s)
                         && model.getSelectModelType() != SELECT_MODEL_WINDOW
+                        // don't push predicates into HORIZON JOIN models because offset pseudo-table filters
+                        // (e.g. PIVOT-generated IN filters) would end up on the synthetic offset model, which
+                        // is not supported; instead, let generateFilter apply them as a post-filter
+                        && model.getSelectModelType() != SELECT_MODEL_HORIZON_JOIN
         ) {
             model.getParsedWhere().clear();
             final ObjList<ExpressionNode> nodes = model.parseWhereClause();
