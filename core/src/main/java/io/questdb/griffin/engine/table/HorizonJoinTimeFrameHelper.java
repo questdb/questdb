@@ -227,6 +227,31 @@ public class HorizonJoinTimeFrameHelper {
                 } else if (scaleTimestamp(timeFrame.getTimestampLo(), slaveTsScale) <= targetTimestamp) {
                     // Target is within this frame
                     rowLo = bookmarkedRowIndex;
+                } else {
+                    // Target is before bookmarked frame. Scan backward from the bookmark
+                    // to find the frame containing or just before the target. This handles
+                    // non-monotonic horizon timestamps across master page frames.
+                    int frameIndex = bookmarkedFrameIndex;
+                    while (--frameIndex >= 0) {
+                        timeFrameCursor.jumpTo(frameIndex);
+                        if (timeFrameCursor.open() == 0) {
+                            continue;
+                        }
+                        final long tsLo = scaleTimestamp(timeFrame.getTimestampLo(), slaveTsScale);
+                        final long tsHi = scaleTimestamp(timeFrame.getTimestampHi() - 1, slaveTsScale);
+                        if (tsHi <= targetTimestamp) {
+                            // Frame is entirely <= target, use as candidate
+                            bestFrameIndex = timeFrame.getFrameIndex();
+                            bestRowIndex = timeFrame.getRowHi() - 1;
+                            bookmarkCurrentFrame(0);
+                            break;
+                        } else if (tsLo <= targetTimestamp) {
+                            // Target is within this frame
+                            rowLo = timeFrame.getRowLo();
+                            break;
+                        }
+                        // Frame is entirely after target, keep scanning backward
+                    }
                 }
             }
         }
@@ -500,17 +525,17 @@ public class HorizonJoinTimeFrameHelper {
     /**
      * Reset state for processing a new master page frame.
      * <p>
-     * Resets all state including the bookmark position. The bookmark cannot be
-     * preserved across master page frames because horizon timestamps (master_ts + offset)
-     * can decrease between consecutive page frames when different offsets dominate,
-     * causing the bookmark to point ahead of valid ASOF matches.
+     * Resets forward/backward watermarks (used for keyed ASOF caching within a frame),
+     * but preserves the bookmark position (used by findAsOfRow) to speed up ASOF lookups
+     * when timestamps increase across frames. findAsOfRow() handles the case where horizon
+     * timestamps decrease between frames by scanning backward from the bookmark.
      */
     public void toTop() {
         if (timeFrameCursor != null) {
             timeFrameCursor.toTop();
         }
-        bookmarkedFrameIndex = -1;
-        bookmarkedRowIndex = Long.MIN_VALUE;
+        // Note: bookmarkedFrameIndex/bookmarkedRowIndex are intentionally NOT reset.
+        // They help findAsOfRow() start closer to the target when processing subsequent frames.
         forwardWatermark = Long.MIN_VALUE;
         backwardWatermark = Long.MAX_VALUE;
     }
