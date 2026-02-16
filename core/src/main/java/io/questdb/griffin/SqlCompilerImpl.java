@@ -2317,6 +2317,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     executionContext.getSecurityContext().authorizeAlterTableDedupEnable(tableToken);
                     alterTableDedupEnable(tableNamePosition, tableToken, tableMetadata, lexer);
                 }
+            } else if (isEnableKeyword(tok)) {
+                compileAlterTableEnableExt(tok, tableToken, tableNamePosition);
+            } else if (isDisableKeyword(tok)) {
+                compileAlterTableDisableExt(tok, tableToken, tableNamePosition);
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
             }
@@ -4837,6 +4841,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.$(lexer.lastTokenPosition(), "'ttl' or 'refresh' expected");
     }
 
+    protected void compileAlterTableDisableExt(CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+        LOG.debug().$(ALTER_TABLE_EXPECTED_TOKEN_DESCR).$(" expected [tableToken=").$(tableToken)
+                .$(", tableNamePosition=").$(tableNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
+    }
+
     protected void compileAlterTableDropExt(CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
         LOG.debug().$("'column' or 'partition' expected [tableToken=").$(tableToken)
                 .$(", tableNamePosition=").$(tableNamePosition)
@@ -4845,6 +4859,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.getPosition(), "'column' or 'partition' expected");
         }
         throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
+    }
+
+    protected void compileAlterTableEnableExt(CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+        LOG.debug().$(ALTER_TABLE_EXPECTED_TOKEN_DESCR).$(" expected [tableToken=").$(tableToken)
+                .$(", tableNamePosition=").$(tableNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
     }
 
     protected void compileAlterTableSetExt(CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
