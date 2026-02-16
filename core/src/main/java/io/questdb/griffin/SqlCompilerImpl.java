@@ -1773,6 +1773,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try (TableRecordMetadata tableMetadata = engine.getTableMetadata(matViewToken)) {
             tok = expectToken(lexer, "'alter' or 'resume' or 'suspend'");
             if (isAlterKeyword(tok)) {
+                securityContext.authorizeMatViewAlter(matViewToken);
                 expectKeyword(lexer, "column");
                 final int columnNamePosition = lexer.getPosition();
                 tok = expectToken(lexer, "column name");
