@@ -51,12 +51,24 @@ import io.questdb.cutlass.qwp.protocol.QwpTimestampColumnCursor;
 import io.questdb.cutlass.line.tcp.ClientSymbolCache;
 import io.questdb.cutlass.line.tcp.ConnectionSymbolCache;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.Misc;
+import io.questdb.std.NumericException;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Uuid;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.str.CharSink;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_CHAR;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_DATE;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_DECIMAL128;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_DECIMAL256;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_DECIMAL64;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_LONG256;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_MASK;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_TIMESTAMP;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_TIMESTAMP_NANOS;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_UUID;
 import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
@@ -717,6 +729,445 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
+    public void putStringToBooleanColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    dataMem.putByte((byte) 0);
+                } else {
+                    DirectUtf8Sequence value = cursor.getUtf8Value();
+                    int size = value.size();
+                    if (size == 1) {
+                        byte b = value.byteAt(0);
+                        if (b == '1') {
+                            dataMem.putByte((byte) 1);
+                        } else if (b == '0') {
+                            dataMem.putByte((byte) 0);
+                        } else {
+                            throw CairoException.nonCritical()
+                                    .put("cannot parse boolean from string [value=")
+                                    .put(value.toString())
+                                    .put(", column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                                    .put(']');
+                        }
+                    } else if (size == 4 && Utf8s.equalsIgnoreCaseAscii("true", value)) {
+                        dataMem.putByte((byte) 1);
+                    } else if (size == 5 && Utf8s.equalsIgnoreCaseAscii("false", value)) {
+                        dataMem.putByte((byte) 0);
+                    } else {
+                        throw CairoException.nonCritical()
+                                .put("cannot parse boolean from string [value=")
+                                .put(value.toString())
+                                .put(", column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                                .put(']');
+                    }
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert STRING to BOOLEAN", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putStringToDecimalColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        int columnScale = ColumnType.getDecimalScale(columnType);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    writeNullSentinel(dataMem, columnType);
+                } else {
+                    DirectUtf8Sequence value = cursor.getUtf8Value();
+                    try {
+                        BigDecimal bd = new BigDecimal(value.toString());
+                        bd = bd.setScale(columnScale, RoundingMode.HALF_UP);
+                        Decimal256 decimal = Decimal256.fromBigDecimal(bd);
+                        writeDecimalValue(dataMem, decimal, columnType, columnIndex);
+                    } catch (NumberFormatException e) {
+                        throw CairoException.nonCritical()
+                                .put("cannot parse decimal from string [value=")
+                                .put(value.toString())
+                                .put(", column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                                .put(']');
+                    } catch (NumericException e) {
+                        throw CairoException.nonCritical()
+                                .put("cannot parse decimal from string [value=")
+                                .put(value.toString())
+                                .put(", column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                                .put(']');
+                    }
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert STRING to decimal", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putStringToGeoHashColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        int typeBits = ColumnType.getGeoHashBits(columnType);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    switch (ColumnType.tagOf(columnType)) {
+                        case ColumnType.GEOBYTE -> dataMem.putByte(GeoHashes.BYTE_NULL);
+                        case ColumnType.GEOSHORT -> dataMem.putShort(GeoHashes.SHORT_NULL);
+                        case ColumnType.GEOINT -> dataMem.putInt(GeoHashes.INT_NULL);
+                        case ColumnType.GEOLONG -> dataMem.putLong(GeoHashes.NULL);
+                        default -> throw new UnsupportedOperationException(
+                                "Invalid GeoHash column type: " + ColumnType.nameOf(columnType));
+                    }
+                } else {
+                    DirectUtf8Sequence value = cursor.getUtf8Value();
+                    try {
+                        CharSequence cs = value.asAsciiCharSequence();
+                        long geohash = GeoHashes.fromStringTruncatingNl(cs, 0, value.size(), typeBits);
+                        switch (ColumnType.tagOf(columnType)) {
+                            case ColumnType.GEOBYTE -> dataMem.putByte((byte) geohash);
+                            case ColumnType.GEOSHORT -> dataMem.putShort((short) geohash);
+                            case ColumnType.GEOINT -> dataMem.putInt((int) geohash);
+                            case ColumnType.GEOLONG -> dataMem.putLong(geohash);
+                            default -> throw new UnsupportedOperationException(
+                                    "Invalid GeoHash column type: " + ColumnType.nameOf(columnType));
+                        }
+                    } catch (NumericException e) {
+                        throw CairoException.nonCritical()
+                                .put("cannot parse geohash from string [value=")
+                                .put(value.toString())
+                                .put(", column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                                .put(']');
+                    }
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert STRING to GeoHash", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putStringToLong256Column(int columnIndex, QwpStringColumnCursor cursor, int rowCount) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        Long256Impl long256 = new Long256Impl();
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    dataMem.putLong256(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+                } else {
+                    DirectUtf8Sequence value = cursor.getUtf8Value();
+                    Long256Impl result = Numbers.parseLong256(value, long256);
+                    if (Long256Impl.isNull(result)) {
+                        throw CairoException.nonCritical()
+                                .put("cannot parse long256 from string [value=")
+                                .put(value.toString())
+                                .put(", column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                                .put(']');
+                    }
+                    dataMem.putLong256(result.getLong0(), result.getLong1(), result.getLong2(), result.getLong3());
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert STRING to LONG256", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putStringToNumericColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    writeNullSentinel(dataMem, columnType);
+                } else {
+                    DirectUtf8Sequence value = cursor.getUtf8Value();
+                    try {
+                        switch (ColumnType.tagOf(columnType)) {
+                            case ColumnType.BYTE -> {
+                                int v = Numbers.parseInt(value);
+                                checkIntegerRange(v, Byte.MIN_VALUE, Byte.MAX_VALUE, columnIndex, columnType);
+                                dataMem.putByte((byte) v);
+                            }
+                            case ColumnType.SHORT -> {
+                                short v = Numbers.parseShort(value);
+                                dataMem.putShort(v);
+                            }
+                            case ColumnType.INT -> {
+                                int v = Numbers.parseInt(value);
+                                dataMem.putInt(v);
+                            }
+                            case ColumnType.LONG -> {
+                                long v = Numbers.parseLong(value);
+                                dataMem.putLong(v);
+                            }
+                            case ColumnType.FLOAT -> {
+                                float v = Numbers.parseFloat(value.ptr(), value.size());
+                                dataMem.putFloat(v);
+                            }
+                            case ColumnType.DOUBLE -> {
+                                double v = Numbers.parseDouble(value.ptr(), value.size());
+                                dataMem.putDouble(v);
+                            }
+                            case ColumnType.DATE -> {
+                                long v = DateFormatUtils.parseDate(value.asAsciiCharSequence());
+                                dataMem.putLong(v);
+                            }
+                            default -> throw new UnsupportedOperationException(
+                                    "Unsupported target type: " + ColumnType.nameOf(columnType));
+                        }
+                    } catch (NumericException e) {
+                        throw CairoException.nonCritical()
+                                .put("cannot parse ").put(ColumnType.nameOf(columnType))
+                                .put(" from string [value=").put(value.toString())
+                                .put(", column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                                .put(']');
+                    }
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert STRING to " + ColumnType.nameOf(columnType), e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putStringToSymbolColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        SymbolMapReader symbolMapReader = walWriter.getSymbolMapReader(columnIndex);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    dataMem.putInt(SymbolTable.VALUE_IS_NULL);
+                } else {
+                    DirectUtf8Sequence value = cursor.getUtf8Value();
+                    String symbolValue = Utf8s.toString(value);
+                    int symbolKey = walWriter.resolveSymbol(columnIndex, symbolValue, symbolMapReader);
+                    dataMem.putInt(symbolKey);
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert STRING to SYMBOL", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putStringToTimestampColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        boolean columnIsNanos = (columnType == ColumnType.TIMESTAMP_NANO);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    dataMem.putLong(Numbers.LONG_NULL);
+                } else {
+                    DirectUtf8Sequence value = cursor.getUtf8Value();
+                    try {
+                        long micros = MicrosFormatUtils.parseTimestamp(value.asAsciiCharSequence());
+                        if (columnIsNanos) {
+                            dataMem.putLong(micros * 1000);
+                        } else {
+                            dataMem.putLong(micros);
+                        }
+                    } catch (NumericException e) {
+                        throw CairoException.nonCritical()
+                                .put("cannot parse timestamp from string [value=")
+                                .put(value.toString())
+                                .put(", column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                                .put(']');
+                    }
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert STRING to TIMESTAMP", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putStringToUuidColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL);
+                } else {
+                    DirectUtf8Sequence value = cursor.getUtf8Value();
+                    try {
+                        Uuid.checkDashesAndLength(value);
+                        long lo = Uuid.parseLo(value, 0);
+                        long hi = Uuid.parseHi(value, 0);
+                        dataMem.putLong128(lo, hi);
+                    } catch (NumericException e) {
+                        throw CairoException.nonCritical()
+                                .put("cannot parse UUID from string [value=")
+                                .put(value.toString())
+                                .put(", column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                                .put(']');
+                    }
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert STRING to UUID", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putSymbolToStringColumn(int columnIndex, QwpSymbolColumnCursor cursor, int rowCount) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    StringTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
+                } else {
+                    String symbolValue = cursor.getSymbolString();
+                    if (symbolValue == null) {
+                        StringTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
+                    } else {
+                        StringTypeDriver.appendValue(auxMem, dataMem, symbolValue);
+                    }
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert SYMBOL to STRING", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putSymbolToVarcharColumn(int columnIndex, QwpSymbolColumnCursor cursor, int rowCount) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        Utf8StringSink utf8Sink = Misc.getThreadLocalUtf8Sink();
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, null);
+                } else {
+                    DirectUtf8Sequence utf8Value = cursor.getSymbolUtf8();
+                    if (utf8Value != null) {
+                        VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Value);
+                    } else {
+                        // delta mode: getSymbolUtf8() returns null, fall back to string
+                        String symbolValue = cursor.getSymbolString();
+                        if (symbolValue == null) {
+                            VarcharTypeDriver.appendValue(auxMem, dataMem, null);
+                        } else {
+                            utf8Sink.clear();
+                            utf8Sink.put(symbolValue);
+                            VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Sink);
+                        }
+                    }
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert SYMBOL to VARCHAR", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putTimestampToStringColumn(int columnIndex, QwpTimestampColumnCursor cursor, int rowCount, byte ilpType) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        boolean wireIsNanos = (ilpType == TYPE_TIMESTAMP_NANOS);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    StringTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
+                } else {
+                    long ts = cursor.getTimestamp();
+                    long micros = wireIsNanos ? ts / 1000 : ts;
+                    io.questdb.std.str.StringSink strSink = Misc.getThreadLocalSink();
+                    strSink.clear();
+                    MicrosFormatUtils.appendDateTime(strSink, micros);
+                    StringTypeDriver.appendValue(auxMem, dataMem, strSink);
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert TIMESTAMP to STRING", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putTimestampToVarcharColumn(int columnIndex, QwpTimestampColumnCursor cursor, int rowCount, byte ilpType) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        boolean wireIsNanos = (ilpType == TYPE_TIMESTAMP_NANOS);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, null);
+                } else {
+                    long ts = cursor.getTimestamp();
+                    long micros = wireIsNanos ? ts / 1000 : ts;
+                    Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
+                    sink.clear();
+                    MicrosFormatUtils.appendDateTime(sink, micros);
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, sink);
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert TIMESTAMP to VARCHAR", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
     public boolean putSymbolColumn(int columnIndex, QwpSymbolColumnCursor cursor, int rowCount) {
         return putSymbolColumn(columnIndex, cursor, rowCount, null, 0, 0);
     }
@@ -811,6 +1262,205 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             throw new RuntimeException("Failed to parse BOOLEAN column", e);
         }
 
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putBooleanToStringColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    StringTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
+                } else {
+                    StringTypeDriver.appendValue(auxMem, dataMem, cursor.getValue() ? "true" : "false");
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert BOOLEAN to STRING", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putBooleanToVarcharColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, null);
+                } else {
+                    Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
+                    sink.clear();
+                    sink.put(cursor.getValue() ? "true" : "false");
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, sink);
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert BOOLEAN to VARCHAR", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putDecimalToStringColumn(int columnIndex, QwpDecimalColumnCursor cursor, int rowCount) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        int wireScale = cursor.getScale() & 0xFF;
+        byte wireType = cursor.getTypeCode();
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    StringTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
+                } else {
+                    Decimal256 decimal = Misc.getThreadLocalDecimal256();
+                    loadDecimalFromCursor(decimal, cursor, wireType);
+                    decimal.setScale(wireScale);
+                    io.questdb.std.str.StringSink strSink = Misc.getThreadLocalSink();
+                    strSink.clear();
+                    decimal.toSink(strSink);
+                    StringTypeDriver.appendValue(auxMem, dataMem, strSink);
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert DECIMAL to STRING", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putDecimalToVarcharColumn(int columnIndex, QwpDecimalColumnCursor cursor, int rowCount) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        int wireScale = cursor.getScale() & 0xFF;
+        byte wireType = cursor.getTypeCode();
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, null);
+                } else {
+                    Decimal256 decimal = Misc.getThreadLocalDecimal256();
+                    loadDecimalFromCursor(decimal, cursor, wireType);
+                    decimal.setScale(wireScale);
+                    Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
+                    sink.clear();
+                    decimal.toSink(sink);
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, sink);
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert DECIMAL to VARCHAR", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putFixedOtherToStringColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, byte ilpType) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    StringTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
+                } else {
+                    io.questdb.std.str.StringSink strSink = Misc.getThreadLocalSink();
+                    strSink.clear();
+                    formatFixedOtherValue(strSink, cursor, ilpType);
+                    StringTypeDriver.appendValue(auxMem, dataMem, strSink);
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert fixed column to STRING", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putFixedOtherToVarcharColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, byte ilpType) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+
+        cursor.resetRowPosition();
+        try {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, null);
+                } else {
+                    Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
+                    sink.clear();
+                    formatFixedOtherValue(sink, cursor, ilpType);
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, sink);
+                }
+            }
+        } catch (QwpParseException e) {
+            throw new RuntimeException("Failed to convert fixed column to VARCHAR", e);
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putGeoHashToStringColumn(int columnIndex, QwpGeoHashColumnCursor cursor, int rowCount) throws QwpParseException {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+
+        cursor.resetRowPosition();
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            if (cursor.isNull()) {
+                StringTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
+            } else {
+                io.questdb.std.str.StringSink strSink = Misc.getThreadLocalSink();
+                strSink.clear();
+                GeoHashes.append(cursor.getGeoHash(), cursor.getPrecision(), strSink);
+                StringTypeDriver.appendValue(auxMem, dataMem, strSink);
+            }
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putGeoHashToVarcharColumn(int columnIndex, QwpGeoHashColumnCursor cursor, int rowCount) throws QwpParseException {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+
+        cursor.resetRowPosition();
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            if (cursor.isNull()) {
+                VarcharTypeDriver.appendValue(auxMem, dataMem, null);
+            } else {
+                Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
+                sink.clear();
+                GeoHashes.append(cursor.getGeoHash(), cursor.getPrecision(), sink);
+                VarcharTypeDriver.appendValue(auxMem, dataMem, sink);
+            }
+        }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
@@ -1108,6 +1758,22 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
 
         inColumnarWrite = false;
         pendingRowCount = 0;
+    }
+
+    private static void formatFixedOtherValue(CharSink<?> sink, QwpFixedWidthColumnCursor cursor, byte ilpType) {
+        byte wireType = (byte) (ilpType & TYPE_MASK);
+        switch (wireType) {
+            case TYPE_UUID -> Numbers.appendUuid(cursor.getUuidLo(), cursor.getUuidHi(), sink);
+            case TYPE_LONG256 -> Numbers.appendLong256(
+                    cursor.getLong256_0(), cursor.getLong256_1(),
+                    cursor.getLong256_2(), cursor.getLong256_3(), sink);
+            case TYPE_DATE -> DateFormatUtils.appendDateTime(sink, cursor.getDate());
+            case TYPE_TIMESTAMP -> MicrosFormatUtils.appendDateTime(sink, cursor.getTimestamp());
+            case TYPE_TIMESTAMP_NANOS -> MicrosFormatUtils.appendDateTime(sink, cursor.getTimestamp() / 1000);
+            case TYPE_CHAR -> sink.putAscii((char) cursor.getShort());
+            default -> throw new UnsupportedOperationException(
+                    "Unsupported wire type for string conversion: " + wireType);
+        }
     }
 
     private static void loadDecimalFromCursor(Decimal256 decimal, QwpDecimalColumnCursor cursor, byte wireType) {
