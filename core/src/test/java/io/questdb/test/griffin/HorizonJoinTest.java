@@ -223,6 +223,45 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinConstantWhereFalse() throws Exception {
+        // WHERE FALSE should produce an empty result set, even with HORIZON JOIN.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 10)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 5)
+                            """
+            );
+
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "WHERE FALSE";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tsum
+                            """,
+                    sql,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinEmptyList() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());

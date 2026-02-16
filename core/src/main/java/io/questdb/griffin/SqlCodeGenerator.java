@@ -4879,7 +4879,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // Process join context for key-based matching (similar to ASOF JOIN)
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
 
-                                return generateHorizonJoinFactory(
+                                master = generateHorizonJoinFactory(
                                         parentModel,
                                         horizonContext,
                                         master,
@@ -4890,6 +4890,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         slaveMetadata,
                                         executionContext
                                 );
+                                break;
                             default:
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, joinType == JOIN_RIGHT_OUTER || joinType == JOIN_FULL_OUTER ? -1 : masterMetadata.getTimestampIndex());
