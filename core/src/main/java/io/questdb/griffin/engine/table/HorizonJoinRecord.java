@@ -24,11 +24,13 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
@@ -102,13 +104,15 @@ public class HorizonJoinRecord implements Record {
         Record src = getSourceRecord(col);
         if (src != null) {
             src.getDecimal128(columnIndices[col], sink);
+        } else {
+            sink.ofRawNull();
         }
     }
 
     @Override
     public short getDecimal16(int col) {
         Record src = getSourceRecord(col);
-        return src != null ? src.getDecimal16(columnIndices[col]) : 0;
+        return src != null ? src.getDecimal16(columnIndices[col]) : Decimals.DECIMAL16_NULL;
     }
 
     @Override
@@ -116,6 +120,8 @@ public class HorizonJoinRecord implements Record {
         Record src = getSourceRecord(col);
         if (src != null) {
             src.getDecimal256(columnIndices[col], sink);
+        } else {
+            sink.ofRawNull();
         }
     }
 
@@ -134,7 +140,7 @@ public class HorizonJoinRecord implements Record {
     @Override
     public byte getDecimal8(int col) {
         Record src = getSourceRecord(col);
-        return src != null ? src.getDecimal8(columnIndices[col]) : 0;
+        return src != null ? src.getDecimal8(columnIndices[col]) : Decimals.DECIMAL8_NULL;
     }
 
     @Override
@@ -152,25 +158,25 @@ public class HorizonJoinRecord implements Record {
     @Override
     public byte getGeoByte(int col) {
         Record src = getSourceRecord(col);
-        return src != null ? src.getGeoByte(columnIndices[col]) : 0;
+        return src != null ? src.getGeoByte(columnIndices[col]) : GeoHashes.BYTE_NULL;
     }
 
     @Override
     public int getGeoInt(int col) {
         Record src = getSourceRecord(col);
-        return src != null ? src.getGeoInt(columnIndices[col]) : 0;
+        return src != null ? src.getGeoInt(columnIndices[col]) : GeoHashes.INT_NULL;
     }
 
     @Override
     public long getGeoLong(int col) {
         Record src = getSourceRecord(col);
-        return src != null ? src.getGeoLong(columnIndices[col]) : 0;
+        return src != null ? src.getGeoLong(columnIndices[col]) : GeoHashes.NULL;
     }
 
     @Override
     public short getGeoShort(int col) {
         Record src = getSourceRecord(col);
-        return src != null ? src.getGeoShort(columnIndices[col]) : 0;
+        return src != null ? src.getGeoShort(columnIndices[col]) : GeoHashes.SHORT_NULL;
     }
 
     @Override
