@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cutlass.line.tcp.ConnectionSymbolCache;
 import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpBooleanColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpDecimalColumnCursor;
@@ -33,7 +34,6 @@ import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpStringColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpSymbolColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTimestampColumnCursor;
-import io.questdb.cutlass.line.tcp.ConnectionSymbolCache;
 
 /**
  * Interface for bulk column-oriented row appending to WAL.
@@ -71,6 +71,158 @@ public interface ColumnarRowAppender {
      * @param rowCount number of rows to be written
      */
     void beginColumnarWrite(int rowCount);
+
+    /**
+     * Cancels the current columnar write operation.
+     * <p>
+     * Rolls back any partially written column data. Must be called if an error
+     * occurs after {@link #beginColumnarWrite(int)} but before
+     * {@link #endColumnarWrite(long, long, boolean)}.
+     */
+    void cancelColumnarWrite();
+
+    /**
+     * Completes the columnar write operation.
+     * <p>
+     * Finalizes all written columns and updates internal state.
+     *
+     * @param minTimestamp the minimum timestamp in the written rows
+     * @param maxTimestamp the maximum timestamp in the written rows
+     * @param outOfOrder   whether rows are out of order
+     */
+    void endColumnarWrite(long minTimestamp, long maxTimestamp, boolean outOfOrder);
+
+    /**
+     * Writes an array column (double or long arrays, 1-N dimensions).
+     * <p>
+     * Handles multi-dimensional arrays by building the array structure from the cursor
+     * and using ArrayTypeDriver for storage.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the array column cursor
+     * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type (encoded array type)
+     * @throws QwpParseException if cursor iteration fails
+     */
+    void putArrayColumn(int columnIndex, QwpArrayColumnCursor cursor,
+                        int rowCount, int columnType) throws QwpParseException;
+
+    /**
+     * Writes a BOOLEAN column.
+     * <p>
+     * Boolean values are bit-packed in ILP v4 wire format but stored as bytes in WAL.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the boolean column cursor
+     * @param rowCount    total number of rows
+     */
+    void putBooleanColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount);
+
+    /**
+     * Writes a BOOLEAN column cursor to a STRING column.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the boolean column cursor
+     * @param rowCount    total number of rows
+     */
+    void putBooleanToStringColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount);
+
+    /**
+     * Writes a BOOLEAN column cursor to a VARCHAR column.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the boolean column cursor
+     * @param rowCount    total number of rows
+     */
+    void putBooleanToVarcharColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount);
+
+    /**
+     * Writes a CHAR column from string data.
+     * <p>
+     * Extracts the first character from each string value and writes it as a 2-byte char.
+     * For single ASCII bytes, the byte is cast directly to char. For multi-byte UTF-8,
+     * the first codepoint is decoded.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the string column cursor
+     * @param rowCount    total number of rows
+     */
+    void putCharColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount);
+
+    /**
+     * Writes a DECIMAL128 column with optional scale conversion.
+     * <p>
+     * If the wire scale differs from the column scale, values are rescaled using Decimal256.rescale().
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the decimal column cursor
+     * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type (includes scale metadata)
+     * @throws QwpParseException if cursor iteration fails
+     */
+    void putDecimal128Column(int columnIndex, QwpDecimalColumnCursor cursor,
+                             int rowCount, int columnType) throws QwpParseException;
+
+    /**
+     * Writes a DECIMAL256 column with optional scale conversion.
+     * <p>
+     * If the wire scale differs from the column scale, values are rescaled using Decimal256.rescale().
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the decimal column cursor
+     * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type (includes scale metadata)
+     * @throws QwpParseException if cursor iteration fails
+     */
+    void putDecimal256Column(int columnIndex, QwpDecimalColumnCursor cursor,
+                             int rowCount, int columnType) throws QwpParseException;
+
+    /**
+     * Writes a DECIMAL64 column with optional scale conversion.
+     * <p>
+     * If the wire scale differs from the column scale, values are rescaled using Decimal256.rescale().
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the decimal column cursor
+     * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type (includes scale metadata)
+     * @throws QwpParseException if cursor iteration fails
+     */
+    void putDecimal64Column(int columnIndex, QwpDecimalColumnCursor cursor,
+                            int rowCount, int columnType) throws QwpParseException;
+
+    /**
+     * Writes a wire DECIMAL64/128/256 column to a DECIMAL8, DECIMAL16, or DECIMAL32 column.
+     * <p>
+     * Loads the wire decimal value into Decimal256, rescales to the target column's scale,
+     * and writes the narrowed result.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the decimal column cursor
+     * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type (includes scale metadata)
+     * @throws QwpParseException if cursor iteration fails
+     */
+    void putDecimalToSmallDecimalColumn(int columnIndex, QwpDecimalColumnCursor cursor,
+                                        int rowCount, int columnType) throws QwpParseException;
+
+    /**
+     * Writes a DECIMAL column cursor to a STRING column.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the decimal column cursor
+     * @param rowCount    total number of rows
+     */
+    void putDecimalToStringColumn(int columnIndex, QwpDecimalColumnCursor cursor, int rowCount);
+
+    /**
+     * Writes a DECIMAL column cursor to a VARCHAR column.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the decimal column cursor
+     * @param rowCount    total number of rows
+     */
+    void putDecimalToVarcharColumn(int columnIndex, QwpDecimalColumnCursor cursor, int rowCount);
 
     /**
      * Writes a fixed-width column with potential nulls.
@@ -112,81 +264,26 @@ public interface ColumnarRowAppender {
                                  int columnType);
 
     /**
-     * Writes a fixed-width integer column to a STRING column.
-     * <p>
-     * Reads integer values from the cursor and converts them to their string representation.
+     * Writes a fixed-width column with non-numeric wire types (UUID, LONG256, DATE, TIMESTAMP, CHAR)
+     * to a STRING column.
      *
      * @param columnIndex the column index in the table
      * @param cursor      the fixed-width column cursor
      * @param rowCount    total number of rows
+     * @param ilpType     the ILP wire type code
      */
-    void putFixedToStringColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount);
+    void putFixedOtherToStringColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, byte ilpType);
 
     /**
-     * Writes a fixed-width integer column to a VARCHAR column.
-     * <p>
-     * Reads integer values from the cursor and converts them to their string representation.
+     * Writes a fixed-width column with non-numeric wire types (UUID, LONG256, DATE, TIMESTAMP, CHAR)
+     * to a VARCHAR column.
      *
      * @param columnIndex the column index in the table
      * @param cursor      the fixed-width column cursor
      * @param rowCount    total number of rows
+     * @param ilpType     the ILP wire type code
      */
-    void putFixedToVarcharColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount);
-
-    /**
-     * Writes a fixed-width float/double column to any DECIMAL column with scale conversion.
-     * <p>
-     * Reads floating-point values from the cursor via getDouble() and converts to
-     * the target decimal type using Decimal256.fromDouble().
-     *
-     * @param columnIndex the column index in the table
-     * @param cursor      the fixed-width column cursor (FLOAT or DOUBLE wire type)
-     * @param rowCount    total number of rows
-     * @param columnType  the target QuestDB column type (includes scale metadata)
-     */
-    void putFloatToDecimalColumn(int columnIndex, QwpFixedWidthColumnCursor cursor,
-                                  int rowCount, int columnType);
-
-    /**
-     * Writes a fixed-width float/double column to a numeric column with value conversion.
-     * <p>
-     * Handles float→integer (with whole-number and range check),
-     * float widening (FLOAT→DOUBLE), and float narrowing (DOUBLE→FLOAT).
-     *
-     * @param columnIndex the column index in the table
-     * @param cursor      the fixed-width column cursor (FLOAT or DOUBLE wire type)
-     * @param rowCount    total number of rows
-     * @param columnType  the target QuestDB column type
-     */
-    void putFloatToNumericColumn(int columnIndex, QwpFixedWidthColumnCursor cursor,
-                                  int rowCount, int columnType);
-
-    /**
-     * Writes a fixed-width float/double column to a STRING column.
-     *
-     * @param columnIndex the column index in the table
-     * @param cursor      the fixed-width column cursor (FLOAT or DOUBLE wire type)
-     * @param rowCount    total number of rows
-     */
-    void putFloatToStringColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount);
-
-    /**
-     * Writes a fixed-width float/double column to a SYMBOL column.
-     *
-     * @param columnIndex the column index in the table
-     * @param cursor      the fixed-width column cursor (FLOAT or DOUBLE wire type)
-     * @param rowCount    total number of rows
-     */
-    void putFloatToSymbolColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount);
-
-    /**
-     * Writes a fixed-width float/double column to a VARCHAR column.
-     *
-     * @param columnIndex the column index in the table
-     * @param cursor      the fixed-width column cursor (FLOAT or DOUBLE wire type)
-     * @param rowCount    total number of rows
-     */
-    void putFloatToVarcharColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount);
+    void putFixedOtherToVarcharColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, byte ilpType);
 
     /**
      * Writes a fixed-width integer column to a DECIMAL128 column with scale conversion.
@@ -245,6 +342,17 @@ public interface ColumnarRowAppender {
                                       int rowCount, int columnType);
 
     /**
+     * Writes a fixed-width integer column to a STRING column.
+     * <p>
+     * Reads integer values from the cursor and converts them to their string representation.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the fixed-width column cursor
+     * @param rowCount    total number of rows
+     */
+    void putFixedToStringColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount);
+
+    /**
      * Writes a fixed-width integer column to a SYMBOL column.
      * <p>
      * Converts the integer value to its string representation and resolves it
@@ -257,140 +365,74 @@ public interface ColumnarRowAppender {
     void putFixedToSymbolColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount);
 
     /**
-     * Writes the designated timestamp column.
+     * Writes a fixed-width integer column to a VARCHAR column.
      * <p>
-     * The designated timestamp has special handling: in WAL format, it stores 128-bit
-     * entries with (timestamp, rowId) pairs for O3 (out-of-order) processing.
-     *
-     * @param columnIndex       the column index in the table
-     * @param valuesAddress     address of timestamp values
-     * @param valueCount        number of non-null values
-     * @param nullBitmapAddress address of null bitmap (0 if not nullable)
-     * @param rowCount          total number of rows
-     * @param startRowId        starting row ID for this batch
-     */
-    void putTimestampColumn(int columnIndex, long valuesAddress, int valueCount,
-                            long nullBitmapAddress, int rowCount, long startRowId);
-
-    /**
-     * Writes a CHAR column from string data.
-     * <p>
-     * Extracts the first character from each string value and writes it as a 2-byte char.
-     * For single ASCII bytes, the byte is cast directly to char. For multi-byte UTF-8,
-     * the first codepoint is decoded.
+     * Reads integer values from the cursor and converts them to their string representation.
      *
      * @param columnIndex the column index in the table
-     * @param cursor      the string column cursor
+     * @param cursor      the fixed-width column cursor
      * @param rowCount    total number of rows
      */
-    void putCharColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount);
+    void putFixedToVarcharColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount);
 
     /**
-     * Writes a VARCHAR column.
+     * Writes a fixed-width float/double column to any DECIMAL column with scale conversion.
      * <p>
-     * Variable-length columns cannot be memcpy'd and must be processed value-by-value,
-     * but the cursor provides zero-allocation access via DirectUtf8Sequence.
+     * Reads floating-point values from the cursor via getDouble() and converts to
+     * the target decimal type using Decimal256.fromDouble().
      *
      * @param columnIndex the column index in the table
-     * @param cursor      the string column cursor
+     * @param cursor      the fixed-width column cursor (FLOAT or DOUBLE wire type)
      * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type (includes scale metadata)
      */
-    void putVarcharColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount);
+    void putFloatToDecimalColumn(int columnIndex, QwpFixedWidthColumnCursor cursor,
+                                 int rowCount, int columnType);
 
     /**
-     * Writes a STRING column.
+     * Writes a fixed-width float/double column to a numeric column with value conversion.
      * <p>
-     * STRING uses a different storage format than VARCHAR (legacy format with offset pointers).
-     * Values are converted from UTF-8 to UTF-16 for storage.
+     * Handles float→integer (with whole-number and range check),
+     * float widening (FLOAT→DOUBLE), and float narrowing (DOUBLE→FLOAT).
      *
      * @param columnIndex the column index in the table
-     * @param cursor      the string column cursor
+     * @param cursor      the fixed-width column cursor (FLOAT or DOUBLE wire type)
      * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type
      */
-    void putStringColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount);
+    void putFloatToNumericColumn(
+            int columnIndex,
+            QwpFixedWidthColumnCursor cursor,
+            int rowCount,
+            int columnType
+    );
 
     /**
-     * Writes a SYMBOL column.
-     * <p>
-     * Symbol values need to be resolved through the symbol table. Returns false
-     * if symbol resolution fails (e.g., new symbol that can't be created).
+     * Writes a fixed-width float/double column to a STRING column.
      *
      * @param columnIndex the column index in the table
-     * @param cursor      the symbol column cursor
+     * @param cursor      the fixed-width column cursor (FLOAT or DOUBLE wire type)
      * @param rowCount    total number of rows
-     * @return true if all symbols were written successfully, false if resolution failed
      */
-    boolean putSymbolColumn(int columnIndex, QwpSymbolColumnCursor cursor, int rowCount);
+    void putFloatToStringColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount);
 
     /**
-     * Writes a SYMBOL column with optional caching support.
-     * <p>
-     * When symbolCache is provided and cursor is in delta mode, avoids
-     * string allocation on cache hits by mapping clientSymbolId → tableSymbolId.
-     * <p>
-     * Cache behavior:
-     * <ul>
-     *   <li>Cache hit: writes cached tableSymbolId, skips string allocation, records hit</li>
-     *   <li>Cache miss + committed symbol: resolves, caches, writes, records miss</li>
-     *   <li>Cache miss + uncommitted symbol: resolves, DON'T cache (unstable), writes, records miss</li>
-     *   <li>Watermark changed: clears column cache before processing</li>
-     * </ul>
-     *
-     * @param columnIndex        the column index in the table
-     * @param cursor             the symbol column cursor
-     * @param rowCount           total number of rows
-     * @param symbolCache        connection-level symbol cache (null to disable caching)
-     * @param tableId            table ID for per-column cache lookup
-     * @param initialSymbolCount committed symbol count for stability check
-     * @return true if all symbols written successfully
-     */
-    boolean putSymbolColumn(int columnIndex, QwpSymbolColumnCursor cursor, int rowCount,
-                            ConnectionSymbolCache symbolCache, long tableId, int initialSymbolCount);
-
-    /**
-     * Writes a BOOLEAN column.
-     * <p>
-     * Boolean values are bit-packed in ILP v4 wire format but stored as bytes in WAL.
+     * Writes a fixed-width float/double column to a SYMBOL column.
      *
      * @param columnIndex the column index in the table
-     * @param cursor      the boolean column cursor
+     * @param cursor      the fixed-width column cursor (FLOAT or DOUBLE wire type)
      * @param rowCount    total number of rows
      */
-    void putBooleanColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount);
+    void putFloatToSymbolColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount);
 
     /**
-     * Marks a column as all-null for the current batch.
+     * Writes a fixed-width float/double column to a VARCHAR column.
      *
      * @param columnIndex the column index in the table
-     * @param columnType  the column type (needed to write correct null sentinel)
+     * @param cursor      the fixed-width column cursor (FLOAT or DOUBLE wire type)
      * @param rowCount    total number of rows
      */
-    void putNullColumn(int columnIndex, int columnType, int rowCount);
-
-    /**
-     * Writes a TIMESTAMP column with precision conversion.
-     * <p>
-     * Handles conversion between microseconds and nanoseconds based on ILP wire format
-     * and target column type:
-     * <ul>
-     *   <li>If ilpType is TYPE_TIMESTAMP_NANOS and columnType is TIMESTAMP (micros): divide by 1000</li>
-     *   <li>If ilpType is TYPE_TIMESTAMP and columnType is TIMESTAMP_NANO: multiply by 1000</li>
-     * </ul>
-     * <p>
-     * This method handles both direct-access and Gorilla-encoded timestamp cursors.
-     *
-     * @param columnIndex  the column index in the table
-     * @param cursor       the timestamp column cursor
-     * @param rowCount     total number of rows
-     * @param ilpType      the ILP wire type (TYPE_TIMESTAMP or TYPE_TIMESTAMP_NANOS)
-     * @param columnType   the target QuestDB column type
-     * @param isDesignated whether this is the designated timestamp column
-     * @param startRowId   starting row ID (needed for designated timestamps)
-     * @throws QwpParseException if cursor iteration fails
-     */
-    void putTimestampColumnWithConversion(int columnIndex, QwpTimestampColumnCursor cursor,
-                                          int rowCount, byte ilpType, int columnType,
-                                          boolean isDesignated, long startRowId) throws QwpParseException;
+    void putFloatToVarcharColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount);
 
     /**
      * Writes a GeoHash column.
@@ -406,150 +448,6 @@ public interface ColumnarRowAppender {
      */
     void putGeoHashColumn(int columnIndex, QwpGeoHashColumnCursor cursor,
                           int rowCount, int columnType) throws QwpParseException;
-
-    /**
-     * Writes a fixed-width integer column to a numeric column with value conversion.
-     * <p>
-     * Handles integer→integer widening (e.g., INT→LONG) and integer→float/double
-     * cross-family coercion. Values are read via getLong() and cast to the target type.
-     *
-     * @param columnIndex the column index in the table
-     * @param cursor      the fixed-width column cursor
-     * @param rowCount    total number of rows
-     * @param columnType  the target QuestDB column type
-     */
-    void putIntegerToNumericColumn(int columnIndex, QwpFixedWidthColumnCursor cursor,
-                                    int rowCount, int columnType);
-
-    /**
-     * Writes a DECIMAL64 column with optional scale conversion.
-     * <p>
-     * If the wire scale differs from the column scale, values are rescaled using Decimal256.rescale().
-     *
-     * @param columnIndex the column index in the table
-     * @param cursor      the decimal column cursor
-     * @param rowCount    total number of rows
-     * @param columnType  the target QuestDB column type (includes scale metadata)
-     * @throws QwpParseException if cursor iteration fails
-     */
-    void putDecimal64Column(int columnIndex, QwpDecimalColumnCursor cursor,
-                            int rowCount, int columnType) throws QwpParseException;
-
-    /**
-     * Writes a DECIMAL128 column with optional scale conversion.
-     * <p>
-     * If the wire scale differs from the column scale, values are rescaled using Decimal256.rescale().
-     *
-     * @param columnIndex the column index in the table
-     * @param cursor      the decimal column cursor
-     * @param rowCount    total number of rows
-     * @param columnType  the target QuestDB column type (includes scale metadata)
-     * @throws QwpParseException if cursor iteration fails
-     */
-    void putDecimal128Column(int columnIndex, QwpDecimalColumnCursor cursor,
-                             int rowCount, int columnType) throws QwpParseException;
-
-    /**
-     * Writes a DECIMAL256 column with optional scale conversion.
-     * <p>
-     * If the wire scale differs from the column scale, values are rescaled using Decimal256.rescale().
-     *
-     * @param columnIndex the column index in the table
-     * @param cursor      the decimal column cursor
-     * @param rowCount    total number of rows
-     * @param columnType  the target QuestDB column type (includes scale metadata)
-     * @throws QwpParseException if cursor iteration fails
-     */
-    void putDecimal256Column(int columnIndex, QwpDecimalColumnCursor cursor,
-                             int rowCount, int columnType) throws QwpParseException;
-
-    /**
-     * Writes a wire DECIMAL64/128/256 column to a DECIMAL8, DECIMAL16, or DECIMAL32 column.
-     * <p>
-     * Loads the wire decimal value into Decimal256, rescales to the target column's scale,
-     * and writes the narrowed result.
-     *
-     * @param columnIndex the column index in the table
-     * @param cursor      the decimal column cursor
-     * @param rowCount    total number of rows
-     * @param columnType  the target QuestDB column type (includes scale metadata)
-     * @throws QwpParseException if cursor iteration fails
-     */
-    void putDecimalToSmallDecimalColumn(int columnIndex, QwpDecimalColumnCursor cursor,
-                                        int rowCount, int columnType) throws QwpParseException;
-
-    /**
-     * Writes an array column (double or long arrays, 1-N dimensions).
-     * <p>
-     * Handles multi-dimensional arrays by building the array structure from the cursor
-     * and using ArrayTypeDriver for storage.
-     *
-     * @param columnIndex the column index in the table
-     * @param cursor      the array column cursor
-     * @param rowCount    total number of rows
-     * @param columnType  the target QuestDB column type (encoded array type)
-     * @throws QwpParseException if cursor iteration fails
-     */
-    void putArrayColumn(int columnIndex, QwpArrayColumnCursor cursor,
-                        int rowCount, int columnType) throws QwpParseException;
-
-    /**
-     * Writes a BOOLEAN column cursor to a STRING column.
-     *
-     * @param columnIndex the column index in the table
-     * @param cursor      the boolean column cursor
-     * @param rowCount    total number of rows
-     */
-    void putBooleanToStringColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount);
-
-    /**
-     * Writes a BOOLEAN column cursor to a VARCHAR column.
-     *
-     * @param columnIndex the column index in the table
-     * @param cursor      the boolean column cursor
-     * @param rowCount    total number of rows
-     */
-    void putBooleanToVarcharColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount);
-
-    /**
-     * Writes a DECIMAL column cursor to a STRING column.
-     *
-     * @param columnIndex the column index in the table
-     * @param cursor      the decimal column cursor
-     * @param rowCount    total number of rows
-     */
-    void putDecimalToStringColumn(int columnIndex, QwpDecimalColumnCursor cursor, int rowCount);
-
-    /**
-     * Writes a DECIMAL column cursor to a VARCHAR column.
-     *
-     * @param columnIndex the column index in the table
-     * @param cursor      the decimal column cursor
-     * @param rowCount    total number of rows
-     */
-    void putDecimalToVarcharColumn(int columnIndex, QwpDecimalColumnCursor cursor, int rowCount);
-
-    /**
-     * Writes a fixed-width column with non-numeric wire types (UUID, LONG256, DATE, TIMESTAMP, CHAR)
-     * to a STRING column.
-     *
-     * @param columnIndex the column index in the table
-     * @param cursor      the fixed-width column cursor
-     * @param rowCount    total number of rows
-     * @param ilpType     the ILP wire type code
-     */
-    void putFixedOtherToStringColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, byte ilpType);
-
-    /**
-     * Writes a fixed-width column with non-numeric wire types (UUID, LONG256, DATE, TIMESTAMP, CHAR)
-     * to a VARCHAR column.
-     *
-     * @param columnIndex the column index in the table
-     * @param cursor      the fixed-width column cursor
-     * @param rowCount    total number of rows
-     * @param ilpType     the ILP wire type code
-     */
-    void putFixedOtherToVarcharColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, byte ilpType);
 
     /**
      * Writes a GeoHash column cursor to a STRING column.
@@ -568,6 +466,45 @@ public interface ColumnarRowAppender {
      * @param rowCount    total number of rows
      */
     void putGeoHashToVarcharColumn(int columnIndex, QwpGeoHashColumnCursor cursor, int rowCount) throws QwpParseException;
+
+    /**
+     * Writes a fixed-width integer column to a numeric column with value conversion.
+     * <p>
+     * Handles integer→integer widening (e.g., INT→LONG) and integer→float/double
+     * cross-family coercion. Values are read via getLong() and cast to the target type.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the fixed-width column cursor
+     * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type
+     */
+    void putIntegerToNumericColumn(
+            int columnIndex,
+            QwpFixedWidthColumnCursor cursor,
+            int rowCount,
+            int columnType
+    );
+
+    /**
+     * Marks a column as all-null for the current batch.
+     *
+     * @param columnIndex the column index in the table
+     * @param columnType  the column type (needed to write correct null sentinel)
+     * @param rowCount    total number of rows
+     */
+    void putNullColumn(int columnIndex, int columnType, int rowCount);
+
+    /**
+     * Writes a STRING column.
+     * <p>
+     * STRING uses a different storage format than VARCHAR (legacy format with offset pointers).
+     * Values are converted from UTF-8 to UTF-16 for storage.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the string column cursor
+     * @param rowCount    total number of rows
+     */
+    void putStringColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount);
 
     /**
      * Writes a STRING column cursor to a BOOLEAN column.
@@ -662,6 +599,44 @@ public interface ColumnarRowAppender {
     void putStringToUuidColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount);
 
     /**
+     * Writes a SYMBOL column.
+     * <p>
+     * Symbol values need to be resolved through the symbol table. Returns false
+     * if symbol resolution fails (e.g., new symbol that can't be created).
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the symbol column cursor
+     * @param rowCount    total number of rows
+     * @return true if all symbols were written successfully, false if resolution failed
+     */
+    boolean putSymbolColumn(int columnIndex, QwpSymbolColumnCursor cursor, int rowCount);
+
+    /**
+     * Writes a SYMBOL column with optional caching support.
+     * <p>
+     * When symbolCache is provided and cursor is in delta mode, avoids
+     * string allocation on cache hits by mapping clientSymbolId → tableSymbolId.
+     * <p>
+     * Cache behavior:
+     * <ul>
+     *   <li>Cache hit: writes cached tableSymbolId, skips string allocation, records hit</li>
+     *   <li>Cache miss + committed symbol: resolves, caches, writes, records miss</li>
+     *   <li>Cache miss + uncommitted symbol: resolves, DON'T cache (unstable), writes, records miss</li>
+     *   <li>Watermark changed: clears column cache before processing</li>
+     * </ul>
+     *
+     * @param columnIndex        the column index in the table
+     * @param cursor             the symbol column cursor
+     * @param rowCount           total number of rows
+     * @param symbolCache        connection-level symbol cache (null to disable caching)
+     * @param tableId            table ID for per-column cache lookup
+     * @param initialSymbolCount committed symbol count for stability check
+     * @return true if all symbols written successfully
+     */
+    boolean putSymbolColumn(int columnIndex, QwpSymbolColumnCursor cursor, int rowCount,
+                            ConnectionSymbolCache symbolCache, long tableId, int initialSymbolCount);
+
+    /**
      * Writes a SYMBOL column cursor to a STRING column.
      *
      * @param columnIndex the column index in the table
@@ -678,6 +653,47 @@ public interface ColumnarRowAppender {
      * @param rowCount    total number of rows
      */
     void putSymbolToVarcharColumn(int columnIndex, QwpSymbolColumnCursor cursor, int rowCount);
+
+    /**
+     * Writes the designated timestamp column.
+     * <p>
+     * The designated timestamp has special handling: in WAL format, it stores 128-bit
+     * entries with (timestamp, rowId) pairs for O3 (out-of-order) processing.
+     *
+     * @param columnIndex       the column index in the table
+     * @param valuesAddress     address of timestamp values
+     * @param valueCount        number of non-null values
+     * @param nullBitmapAddress address of null bitmap (0 if not nullable)
+     * @param rowCount          total number of rows
+     * @param startRowId        starting row ID for this batch
+     */
+    void putTimestampColumn(int columnIndex, long valuesAddress, int valueCount,
+                            long nullBitmapAddress, int rowCount, long startRowId);
+
+    /**
+     * Writes a TIMESTAMP column with precision conversion.
+     * <p>
+     * Handles conversion between microseconds and nanoseconds based on ILP wire format
+     * and target column type:
+     * <ul>
+     *   <li>If ilpType is TYPE_TIMESTAMP_NANOS and columnType is TIMESTAMP (micros): divide by 1000</li>
+     *   <li>If ilpType is TYPE_TIMESTAMP and columnType is TIMESTAMP_NANO: multiply by 1000</li>
+     * </ul>
+     * <p>
+     * This method handles both direct-access and Gorilla-encoded timestamp cursors.
+     *
+     * @param columnIndex  the column index in the table
+     * @param cursor       the timestamp column cursor
+     * @param rowCount     total number of rows
+     * @param ilpType      the ILP wire type (TYPE_TIMESTAMP or TYPE_TIMESTAMP_NANOS)
+     * @param columnType   the target QuestDB column type
+     * @param isDesignated whether this is the designated timestamp column
+     * @param startRowId   starting row ID (needed for designated timestamps)
+     * @throws QwpParseException if cursor iteration fails
+     */
+    void putTimestampColumnWithConversion(int columnIndex, QwpTimestampColumnCursor cursor,
+                                          int rowCount, byte ilpType, int columnType,
+                                          boolean isDesignated, long startRowId) throws QwpParseException;
 
     /**
      * Writes a TIMESTAMP column cursor to a STRING column.
@@ -700,22 +716,14 @@ public interface ColumnarRowAppender {
     void putTimestampToVarcharColumn(int columnIndex, QwpTimestampColumnCursor cursor, int rowCount, byte ilpType);
 
     /**
-     * Completes the columnar write operation.
+     * Writes a VARCHAR column.
      * <p>
-     * Finalizes all written columns and updates internal state.
+     * Variable-length columns cannot be memcpy'd and must be processed value-by-value,
+     * but the cursor provides zero-allocation access via DirectUtf8Sequence.
      *
-     * @param minTimestamp the minimum timestamp in the written rows
-     * @param maxTimestamp the maximum timestamp in the written rows
-     * @param outOfOrder   whether rows are out of order
+     * @param columnIndex the column index in the table
+     * @param cursor      the string column cursor
+     * @param rowCount    total number of rows
      */
-    void endColumnarWrite(long minTimestamp, long maxTimestamp, boolean outOfOrder);
-
-    /**
-     * Cancels the current columnar write operation.
-     * <p>
-     * Rolls back any partially written column data. Must be called if an error
-     * occurs after {@link #beginColumnarWrite(int)} but before
-     * {@link #endColumnarWrite(long, long, boolean)}.
-     */
-    void cancelColumnarWrite();
+    void putVarcharColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount);
 }
