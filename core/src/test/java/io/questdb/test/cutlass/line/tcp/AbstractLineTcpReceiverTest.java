@@ -66,7 +66,6 @@ import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.After;
-import org.junit.Assert;
 
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -92,6 +91,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected static final int WAIT_NO_WAIT = 0x0;
     private final static Log LOG = LogFactory.getLog(AbstractLineTcpReceiverTest.class);
     protected final int bindPort = 9002; // Don't clash with other tests since they may run in parallel
+    protected final boolean useLegacyStringDefault = true;
     private final ThreadLocal<Socket> tlSocket = new ThreadLocal<>();
     protected String authKeyId = null;
     private final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
@@ -108,6 +108,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     };
     protected boolean autoCreateNewColumns = true;
     protected long commitIntervalDefault = 2000;
+    @SuppressWarnings("CanBeFinal")
     protected double commitIntervalFraction = 0.5;
     protected boolean disconnectOnError = false;
     protected long maintenanceInterval = 25;
@@ -117,7 +118,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     protected int partitionByDefault = PartitionBy.DAY;
     protected TestTimestampType timestampType = TestTimestampType.MICRO;
-    protected boolean useLegacyStringDefault = true;
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration(configuration) {
 
         @Override
@@ -419,7 +419,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         try (Socket socket = getSocket()) {
             sendToSocket(socket, lineData);
         } catch (Exception e) {
-            Assert.fail("Data sending failed [e=" + e + "]");
+            fail("Data sending failed [e=" + e + "]");
         }
     }
 

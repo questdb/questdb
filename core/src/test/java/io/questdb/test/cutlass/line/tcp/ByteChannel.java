@@ -24,11 +24,12 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
-import io.questdb.cutlass.line.LineChannel;
+import io.questdb.client.cutlass.line.LineChannel;
 import io.questdb.std.Unsafe;
 
 import java.util.Base64;
 
+@SuppressWarnings("unused")
 public class ByteChannel implements LineChannel {
     private static final int BUFFER_SIZE = 1024;
 

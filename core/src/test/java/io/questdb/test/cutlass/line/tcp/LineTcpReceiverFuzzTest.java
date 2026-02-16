@@ -26,8 +26,8 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.cutlass.line.AbstractLineTcpSender;
-import io.questdb.cutlass.line.LineTcpSenderV2;
+import io.questdb.client.cutlass.line.AbstractLineTcpSender;
+import io.questdb.client.cutlass.line.LineTcpSenderV2;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.Net;
