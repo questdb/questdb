@@ -413,6 +413,67 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinFilterPreservedOnParallelismDowngrade() throws Exception {
+        // When parallel HORIZON JOIN steals a filter from the master factory,
+        // but then parallelism is downgraded (e.g., due to count_distinct(varchar)
+        // not supporting parallelism), the stolen filter must still be applied.
+        assertMemoryLeak(() -> {
+            // Force parallel horizon join to trigger filter stealing
+            sqlExecutionContext.setParallelHorizonJoinEnabled(true);
+
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE orders (order_sym SYMBOL, ts #TIMESTAMP, label VARCHAR, qty LONG) TIMESTAMP(ts) PARTITION BY DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (price_sym SYMBOL, ts #TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('AAPL', '2000-01-01T00:00:01.000000Z', 'a1', 100),
+                                ('AAPL', '2000-01-01T00:00:02.000000Z', 'a2', 200),
+                                ('GOOG', '2000-01-01T00:00:03.000000Z', 'g1', 150),
+                                ('MSFT', '2000-01-01T00:00:04.000000Z', 'm1', 300)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('AAPL', '2000-01-01T00:00:00.500000Z', 100.0),
+                                ('AAPL', '2000-01-01T00:00:01.500000Z', 110.0),
+                                ('GOOG', '2000-01-01T00:00:02.500000Z', 200.0),
+                                ('MSFT', '2000-01-01T00:00:03.500000Z', 300.0)
+                            """
+            );
+
+            // concat() forces a Java filter (not symbol index), creating AsyncFilteredRecordCursorFactory.
+            // count_distinct(varchar) doesn't support parallelism, forcing downgrade to ST path.
+            // The filter stolen for the parallel path must be preserved in the ST factory.
+            assertQueryNoLeakCheck(
+                    """
+                            order_sym\tcount_distinct\tsum
+                            AAPL\t2\t300
+                            """,
+                    """
+                            SELECT t.order_sym, count_distinct(t.label), sum(t.qty)
+                            FROM orders AS t
+                            HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
+                            RANGE FROM 0s TO 0s STEP 1s AS h
+                            WHERE concat(t.order_sym, '_0') = 'AAPL_0'
+                            ORDER BY t.order_sym
+                            """,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinListTooManyOffsets() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_MAX_OFFSETS, 4);

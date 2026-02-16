@@ -3316,25 +3316,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final boolean parallelHorizonJoinEnabled = executionContext.isParallelHorizonJoinEnabled();
         boolean supportsParallelism = parallelHorizonJoinEnabled && masterFactory.supportsPageFrameCursor();
 
-        if (parallelHorizonJoinEnabled && masterFactory.supportsFilterStealing() && masterFactory.getBaseFactory().supportsPageFrameCursor()) {
-            RecordCursorFactory filterFactory = masterFactory;
-            masterFactory = masterFactory.getBaseFactory();
-            assert masterFactory.supportsPageFrameCursor();
-            compiledFilter = filterFactory.getCompiledFilter();
-            bindVarMemory = filterFactory.getBindVarMemory();
-            bindVarFunctions = filterFactory.getBindVarFunctions();
-            filter = filterFactory.getFilter();
-            filterExpr = filterFactory.getStealFilterExpr();
-            supportsParallelism = true;
-            filterFactory.halfClose();
-        }
+        // Check if filter stealing is possible, but delay the actual stealing until
+        // after the parallelism check. If parallelism gets downgraded (e.g., due to
+        // unsupported group by functions), we leave the filter in the master factory
+        // so the non-parallel path applies it correctly.
+        final boolean canStealFilter = parallelHorizonJoinEnabled
+                && masterFactory.supportsFilterStealing()
+                && masterFactory.getBaseFactory().supportsPageFrameCursor();
+        supportsParallelism |= canStealFilter;
 
         try {
-            if (supportsParallelism) {
-                // HORIZON JOIN tasks are "heavy", hence smaller frame sizes
-                masterFactory.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
-            }
-
             // Check slave factory supports TimeFrameCursor for parallel cursor creation
             if (!slaveFactory.supportsTimeFrameCursor()) {
                 throw SqlException.position(slaveModel.getJoinKeywordPosition())
@@ -3407,10 +3398,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 supportsParallelism = false;
             }
 
+            // Now that we know parallelism is confirmed, steal the filter from the
+            // master factory. If parallelism was downgraded, the filter stays in the
+            // master factory and the non-parallel path applies it correctly.
+            if (supportsParallelism && canStealFilter) {
+                RecordCursorFactory filterFactory = masterFactory;
+                masterFactory = masterFactory.getBaseFactory();
+                assert masterFactory.supportsPageFrameCursor();
+                compiledFilter = filterFactory.getCompiledFilter();
+                bindVarMemory = filterFactory.getBindVarMemory();
+                bindVarFunctions = filterFactory.getBindVarFunctions();
+                filter = filterFactory.getFilter();
+                filterExpr = filterFactory.getStealFilterExpr();
+                filterFactory.halfClose();
+            }
+
             ObjList<ObjList<Function>> perWorkerKeyFunctions = null;
             ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = null;
 
             if (supportsParallelism) {
+                // HORIZON JOIN tasks are "heavy", hence smaller frame sizes
+                masterFactory.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
+
                 // Compile per-worker inner projection functions for expression keys
                 ObjList<ObjList<Function>> perWorkerInnerProjectionFunctions = compilePerWorkerInnerProjectionFunctions(
                         executionContext,
