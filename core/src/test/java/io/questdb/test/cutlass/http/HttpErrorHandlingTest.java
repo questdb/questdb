@@ -42,6 +42,7 @@ import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.BootstrapTest;
 import io.questdb.test.tools.TestUtils;
@@ -142,6 +143,9 @@ public class HttpErrorHandlingTest extends BootstrapTest {
                                 String.valueOf(HttpURLConnection.HTTP_INTERNAL_ERROR),
                                 responseHeaders.getStatusCode()
                         );
+                        StringSink sink = new StringSink();
+                        responseHeaders.getResponse().copyTextTo(sink);
+                        TestUtils.assertContains(sink, "test security context error");
                     }
                 }
             }
