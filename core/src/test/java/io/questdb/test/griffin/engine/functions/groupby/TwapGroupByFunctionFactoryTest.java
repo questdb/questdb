@@ -126,7 +126,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     CREATE TABLE tbl AS (
                         SELECT
                             rnd_symbol('A','B','C','D','E') sym,
-                            CAST(null AS DOUBLE) price,
+                            null::DOUBLE price,
                             timestamp_sequence(0, 1000) ts
                         FROM long_sequence(100_000)
                     ) TIMESTAMP(ts)
@@ -136,13 +136,13 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym ORDER BY sym";
                     TestUtils.assertSql(engine, sqlExecutionContext, sql, sink,
                             """
-                            sym\ttwap
-                            A\tnull
-                            B\tnull
-                            C\tnull
-                            D\tnull
-                            E\tnull
-                            """);
+                                    sym\ttwap
+                                    A\tnull
+                                    B\tnull
+                                    C\tnull
+                                    D\tnull
+                                    E\tnull
+                                    """);
                 }, configuration, LOG);
             }
         });
@@ -187,11 +187,11 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     // constant price => twap = 42.0 for all groups
                     TestUtils.assertSql(engine, sqlExecutionContext, sql, sink,
                             """
-                            sym\ttwap
-                            A\t42.0
-                            B\t42.0
-                            C\t42.0
-                            """);
+                                    sym\ttwap
+                                    A\t42.0
+                                    B\t42.0
+                                    C\t42.0
+                                    """);
                 }, configuration, LOG);
             }
         });
@@ -229,7 +229,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     CREATE TABLE tbl AS (
                         SELECT
                             rnd_symbol('A','B','C','D','E') sym,
-                            CASE WHEN x > 1_000_000 THEN null ELSE rnd_double() * 100 END price,
+                            CASE WHEN x > 500_000 THEN null ELSE rnd_double() * 100 END price,
                             timestamp_sequence(0, 1000) ts
                         FROM long_sequence(1_000_000)
                     ) TIMESTAMP(ts)
@@ -247,13 +247,13 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testTwapParallelNoGroupBy() throws Exception {
         assertMemoryLeak((TestUtils.LeakProneCode) () -> {
             execute("""
-            CREATE TABLE tbl AS (
-                SELECT
-                    rnd_double() * 100 price,
-                    timestamp_sequence(0, 1000) ts
-                FROM long_sequence(1_000_000)
-            ) TIMESTAMP(ts)
-            """);
+                    CREATE TABLE tbl AS (
+                        SELECT
+                            rnd_double() * 100 price,
+                            timestamp_sequence(0, 1000) ts
+                        FROM long_sequence(1_000_000)
+                    ) TIMESTAMP(ts)
+                    """);
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
                 TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     String sql = "SELECT twap(price, ts) FROM tbl";
@@ -401,11 +401,36 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
             // Group B: weighted_sum = 100*20_000_000 = 2_000_000_000, dur = 20_000_000, twap = 100.0
             assertSql(
                     """
-                    sym\ttwap
-                    A\t16.666666666666668
-                    B\t100.0
-                    """,
+                            sym\ttwap
+                            A\t16.666666666666668
+                            B\t100.0
+                            """,
                     "SELECT sym, twap(price, ts) FROM tbl ORDER BY sym"
+            );
+        });
+    }
+
+    @Test
+    public void testTwapWithSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tbl VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T00:00:10.000000Z'),
+                    (30.0, '2024-01-01T00:00:30.000000Z'),
+                    (100.0, '2024-01-01T00:01:00.000000Z'),
+                    (200.0, '2024-01-01T00:01:20.000000Z')
+                    """);
+            // Bucket 1 (00:00:00 - 00:01:00): same as testTwapBasic = 16.666666666666668
+            // Bucket 2 (00:01:00 - 00:02:00): weighted_sum = 100*20_000_000 = 2_000_000_000, dur = 20_000_000, twap = 100.0
+            assertSql(
+                    """
+                            ts\ttwap
+                            2024-01-01T00:00:00.000000Z\t16.666666666666668
+                            2024-01-01T00:01:00.000000Z\t100.0
+                            """,
+                    "SELECT ts, twap(price, ts) FROM tbl SAMPLE BY 1m"
             );
         });
     }
@@ -427,37 +452,12 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
             // Bucket 00:02 has data: twap = 100.0
             assertSql(
                     """
-                    ts\ttwap
-                    2024-01-01T00:00:00.000000Z\t16.666666666666668
-                    2024-01-01T00:01:00.000000Z\t16.666666666666668
-                    2024-01-01T00:02:00.000000Z\t100.0
-                    """,
+                            ts\ttwap
+                            2024-01-01T00:00:00.000000Z\t16.666666666666668
+                            2024-01-01T00:01:00.000000Z\t16.666666666666668
+                            2024-01-01T00:02:00.000000Z\t100.0
+                            """,
                     "SELECT ts, twap(price, ts) FROM tbl SAMPLE BY 1m FILL(prev)"
-            );
-        });
-    }
-
-    @Test
-    public void testTwapWithSampleBy() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO tbl VALUES
-                    (10.0, '2024-01-01T00:00:00.000000Z'),
-                    (20.0, '2024-01-01T00:00:10.000000Z'),
-                    (30.0, '2024-01-01T00:00:30.000000Z'),
-                    (100.0, '2024-01-01T00:01:00.000000Z'),
-                    (200.0, '2024-01-01T00:01:20.000000Z')
-                    """);
-            // Bucket 1 (00:00:00 - 00:01:00): same as testTwapBasic = 16.666666666666668
-            // Bucket 2 (00:01:00 - 00:02:00): weighted_sum = 100*20_000_000 = 2_000_000_000, dur = 20_000_000, twap = 100.0
-            assertSql(
-                    """
-                    ts\ttwap
-                    2024-01-01T00:00:00.000000Z\t16.666666666666668
-                    2024-01-01T00:01:00.000000Z\t100.0
-                    """,
-                    "SELECT ts, twap(price, ts) FROM tbl SAMPLE BY 1m"
             );
         });
     }
