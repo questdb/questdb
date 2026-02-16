@@ -147,6 +147,11 @@ public class WaitProcessorTest {
             public HttpRequestProcessor select(HttpRequestHeader header) {
                 return null;
             }
+
+            @Override
+            public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                return null;
+            }
         };
     }
 

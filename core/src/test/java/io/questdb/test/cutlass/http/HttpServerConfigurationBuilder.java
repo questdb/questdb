@@ -34,6 +34,7 @@ import io.questdb.cutlass.http.MimeTypesCache;
 import io.questdb.cutlass.http.WaitProcessorConfiguration;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
@@ -60,6 +61,7 @@ public class HttpServerConfigurationBuilder {
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private boolean pessimisticHealthCheck = false;
     private int port = -1;
+    private QueryFutureUpdateListener queryFutureUpdateListener;
     private int receiveBufferSize = 1024 * 1024;
     private int sendBufferSize = 1024 * 1024;
     private boolean serverKeepAlive = true;
@@ -107,6 +109,11 @@ public class HttpServerConfigurationBuilder {
                 @Override
                 public NanosecondClock getNanosecondClock() {
                     return nanosecondClock;
+                }
+
+                @Override
+                public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+                    return queryFutureUpdateListener != null ? queryFutureUpdateListener : QueryFutureUpdateListener.EMPTY;
                 }
             };
             private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
@@ -335,6 +342,11 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withPessimisticHealthCheck(boolean pessimisticHealthCheck) {
         this.pessimisticHealthCheck = pessimisticHealthCheck;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withQueryFutureUpdateListener(QueryFutureUpdateListener queryFutureUpdateListener) {
+        this.queryFutureUpdateListener = queryFutureUpdateListener;
         return this;
     }
 

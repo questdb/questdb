@@ -23,8 +23,13 @@
  ******************************************************************************/
 
 #include "compiler.h"
+
+#ifdef __aarch64__
+#include "aarch64.h"
+#else
 #include "x86.h"
 #include "avx2.h"
+#endif
 
 using namespace asmjit;
 
@@ -49,14 +54,296 @@ struct JitGlobalContext
     JitRuntime rt;
 };
 
-#ifndef __aarch64__
 static JitGlobalContext gGlobalContext;
-#endif
 
 using CompiledFn = int64_t (*)(int64_t *cols, int64_t cols_count,
                                int64_t *varsize_indexes,
                                int64_t *vars, int64_t vars_count,
                                int64_t *filtered_rows, int64_t rows_count);
+
+// unlike Function, only returns the total number of filtered rows without writing row ids to a long list
+using CompiledCountOnlyFn = int64_t (*)(int64_t *cols, int64_t cols_count,
+                                        int64_t *varsize_indexes,
+                                        int64_t *vars, int64_t vars_count,
+                                        int64_t rows_count);
+
+#ifdef __aarch64__
+
+struct Function
+{
+    explicit Function(a64::Compiler &cc)
+        : c(cc), arena(4094) {
+          };
+
+    void preload_columns_and_constants(const instruction_t *istream, size_t size)
+    {
+        questdb::aarch64::preload_column_addresses(c, istream, size, data_ptr, addr_cache);
+        questdb::aarch64::preload_constants(c, istream, size, const_cache);
+    }
+
+    void compile(const instruction_t *istream, size_t size, uint32_t options)
+    {
+        bool null_check = (options >> 6) & 1;
+        int unroll_factor = 1;
+        // ARM64: always scalar (no SIMD yet)
+        scalar_loop(istream, size, null_check, unroll_factor);
+    };
+
+    void scalar_tail(const instruction_t *istream, size_t size, bool null_check, const a64::Gp &stop, int unroll_factor = 1)
+    {
+        Label l_loop = c.new_label();
+        Label l_exit = c.new_label();
+        Label l_next_row = c.new_label();
+        Label l_store_row = c.new_label();
+
+        questdb::aarch64::LabelArray labels;
+        labels.set(0, l_next_row);
+        labels.set(1, l_store_row);
+
+        c.cmp(input_index, stop);
+        c.b_ge(l_exit);
+
+        c.bind(l_loop);
+
+        for (int i = 0; i < unroll_factor; ++i)
+        {
+            value_cache.clear();
+            questdb::aarch64::emit_code(c, arena, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr,
+                                        input_index, labels, addr_cache, const_cache, value_cache);
+
+            if (!values.is_empty())
+            {
+                auto mask = values.pop();
+                c.cbz(mask.gp().w(), l_next_row);
+            }
+
+            c.bind(l_store_row);
+
+            // rows_ptr[output_index * 8] = input_index
+            a64::Gp store_addr = c.new_gp64("store_addr");
+            c.add(store_addr, rows_ptr, output_index, asmjit::a64::lsl(3));
+            c.str(input_index, a64::ptr(store_addr));
+            c.add(output_index, output_index, imm(1));
+        }
+
+        c.bind(l_next_row);
+        c.add(input_index, input_index, imm(unroll_factor));
+
+        c.cmp(input_index, stop);
+        c.b_lt(l_loop);
+        c.bind(l_exit);
+    }
+
+    void scalar_loop(const instruction_t *istream, size_t size, bool null_check, int unroll_factor = 1)
+    {
+        preload_columns_and_constants(istream, size);
+
+        if (unroll_factor > 1)
+        {
+            a64::Gp stop = c.new_gp64("stop");
+            c.mov(stop, rows_size);
+            c.sub(stop, stop, imm(unroll_factor - 1));
+            scalar_tail(istream, size, null_check, stop, unroll_factor);
+            scalar_tail(istream, size, null_check, rows_size, 1);
+        }
+        else
+        {
+            scalar_tail(istream, size, null_check, rows_size, 1);
+        }
+        c.ret(output_index);
+    }
+
+    void begin_fn()
+    {
+        auto *fn = c.add_func(FuncSignature::build<int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t>(
+            CallConvId::kCDecl));
+        data_ptr = c.new_gp_ptr("data_ptr");
+        data_size = c.new_gp64("data_size");
+
+        fn->set_arg(0, data_ptr);
+        fn->set_arg(1, data_size);
+
+        varsize_aux_ptr = c.new_gp_ptr("varsize_aux_ptr");
+
+        fn->set_arg(2, varsize_aux_ptr);
+
+        vars_ptr = c.new_gp_ptr("vars_ptr");
+        vars_size = c.new_gp64("vars_size");
+
+        fn->set_arg(3, vars_ptr);
+        fn->set_arg(4, vars_size);
+
+        rows_ptr = c.new_gp_ptr("rows_ptr");
+        rows_size = c.new_gp64("rows_size");
+
+        fn->set_arg(5, rows_ptr);
+        fn->set_arg(6, rows_size);
+
+        input_index = c.new_gp64("input_index");
+        c.mov(input_index, 0);
+
+        output_index = c.new_gp64("output_index");
+        c.mov(output_index, 0);
+    }
+
+    void end_fn()
+    {
+        c.end_func();
+    }
+
+    a64::Compiler &c;
+
+    Arena arena;
+    ArenaVector<jit_value_t> values;
+
+    a64::Gp data_ptr;
+    a64::Gp data_size;
+    a64::Gp varsize_aux_ptr;
+    a64::Gp vars_ptr;
+    a64::Gp vars_size;
+    a64::Gp rows_ptr;
+    a64::Gp rows_size;
+    a64::Gp input_index;
+    a64::Gp output_index;
+    ColumnAddressCache addr_cache;
+    ConstantCache const_cache;
+    ColumnValueCache value_cache;
+};
+
+struct CountOnlyFunction
+{
+    explicit CountOnlyFunction(a64::Compiler &cc)
+        : c(cc), arena(4094) {
+          };
+
+    void preload_columns_and_constants(const instruction_t *istream, size_t size)
+    {
+        questdb::aarch64::preload_column_addresses(c, istream, size, data_ptr, addr_cache);
+        questdb::aarch64::preload_constants(c, istream, size, const_cache);
+    }
+
+    void compile(const instruction_t *istream, size_t size, uint32_t options)
+    {
+        bool null_check = (options >> 6) & 1;
+        int unroll_factor = 1;
+        scalar_loop(istream, size, null_check, unroll_factor);
+    };
+
+    void scalar_tail(const instruction_t *istream, size_t size, bool null_check, const a64::Gp &stop, int unroll_factor = 1)
+    {
+        Label l_loop = c.new_label();
+        Label l_exit = c.new_label();
+        Label l_next_row = c.new_label();
+        Label l_inc_count = c.new_label();
+
+        questdb::aarch64::LabelArray labels;
+        labels.set(0, l_next_row);
+        labels.set(1, l_inc_count);
+
+        c.cmp(input_index, stop);
+        c.b_ge(l_exit);
+
+        c.bind(l_loop);
+
+        for (int i = 0; i < unroll_factor; ++i)
+        {
+            value_cache.clear();
+            questdb::aarch64::emit_code(c, arena, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr,
+                                        input_index, labels, addr_cache, const_cache, value_cache);
+
+            if (!values.is_empty())
+            {
+                auto mask = values.pop();
+                c.cbz(mask.gp().w(), l_next_row);
+            }
+
+            c.bind(l_inc_count);
+
+            c.add(output_index, output_index, imm(1));
+        }
+
+        c.bind(l_next_row);
+        c.add(input_index, input_index, imm(unroll_factor));
+
+        c.cmp(input_index, stop);
+        c.b_lt(l_loop);
+        c.bind(l_exit);
+    }
+
+    void scalar_loop(const instruction_t *istream, size_t size, bool null_check, int unroll_factor = 1)
+    {
+        preload_columns_and_constants(istream, size);
+
+        if (unroll_factor > 1)
+        {
+            a64::Gp stop = c.new_gp64("stop");
+            c.mov(stop, rows_size);
+            c.sub(stop, stop, imm(unroll_factor - 1));
+            scalar_tail(istream, size, null_check, stop, unroll_factor);
+            scalar_tail(istream, size, null_check, rows_size, 1);
+        }
+        else
+        {
+            scalar_tail(istream, size, null_check, rows_size, 1);
+        }
+        c.ret(output_index);
+    }
+
+    void begin_fn()
+    {
+        auto *fn = c.add_func(FuncSignature::build<int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t>(
+            CallConvId::kCDecl));
+        data_ptr = c.new_gp_ptr("data_ptr");
+        data_size = c.new_gp64("data_size");
+
+        fn->set_arg(0, data_ptr);
+        fn->set_arg(1, data_size);
+
+        varsize_aux_ptr = c.new_gp_ptr("varsize_aux_ptr");
+
+        fn->set_arg(2, varsize_aux_ptr);
+
+        vars_ptr = c.new_gp_ptr("vars_ptr");
+        vars_size = c.new_gp64("vars_size");
+
+        fn->set_arg(3, vars_ptr);
+        fn->set_arg(4, vars_size);
+
+        rows_size = c.new_gp64("rows_size");
+
+        fn->set_arg(5, rows_size);
+
+        input_index = c.new_gp64("input_index");
+        c.mov(input_index, 0);
+
+        output_index = c.new_gp64("output_index");
+        c.mov(output_index, 0);
+    }
+
+    void end_fn()
+    {
+        c.end_func();
+    }
+
+    a64::Compiler &c;
+
+    Arena arena;
+    ArenaVector<jit_value_t> values;
+
+    a64::Gp data_ptr;
+    a64::Gp data_size;
+    a64::Gp varsize_aux_ptr;
+    a64::Gp vars_ptr;
+    a64::Gp vars_size;
+    a64::Gp rows_size;
+    a64::Gp input_index;
+    a64::Gp output_index;
+    ColumnAddressCache addr_cache;
+    ConstantCache const_cache;
+    ColumnValueCache value_cache;
+};
+
+#else // x86
 
 struct Function
 {
@@ -317,12 +604,6 @@ struct Function
     ColumnValueCache value_cache;
 };
 
-// unlike Function, only returns the total number of filtered rows without writing row ids to a long list
-using CompiledCountOnlyFn = int64_t (*)(int64_t *cols, int64_t cols_count,
-                                        int64_t *varsize_indexes,
-                                        int64_t *vars, int64_t vars_count,
-                                        int64_t rows_count);
-
 struct CountOnlyFunction
 {
     explicit CountOnlyFunction(x86::Compiler &cc)
@@ -457,23 +738,17 @@ struct CountOnlyFunction
         c.cmp(input_index, stop);
         c.jge(l_tail);
 
-        // For 2-byte (step == 16), 4-byte (step == 8), and 8-byte (step == 4) values,
-        // use vpsub accumulator optimization.
-        // vpcmpeqq/vpcmpeqd/vpcmpeqw produces -1 for matches, 0 for non-matches.
-        // vpsubq/vpsubd acc, acc, mask subtracts -1 (adds 1) for matches, subtracts 0 (no-op) otherwise.
-        // This avoids vector-to-scalar domain crossing (vmovmskpd/vmovmskps) on each iteration.
         Vec acc;
-        Vec ones; // for step == 16: 16 x i16 all-ones to use with vpmaddwd
+        Vec ones;
         if (step == 4 || step == 8 || step == 16)
         {
             acc = c.new_ymm("acc");
             c.vpxor(acc, acc, acc); // acc = 0
             if (step == 16)
             {
-                // Create constant with 16 x i16 value of 1 for vpmaddwd
                 ones = c.new_ymm("ones");
-                c.vpcmpeqd(ones, ones, ones); // all bits set (-1)
-                c.vpsrlw(ones, ones, 15);     // shift right 15 bits: -1 -> 1 for each i16
+                c.vpcmpeqd(ones, ones, ones);
+                c.vpsrlw(ones, ones, 15);
             }
         }
 
@@ -488,19 +763,17 @@ struct CountOnlyFunction
 
             if (step == 4)
             {
-                c.vpsubq(acc, acc, mask.vec()); // acc -= mask (subtracting -1 adds 1)
+                c.vpsubq(acc, acc, mask.vec());
             }
             else if (step == 8)
             {
-                c.vpsubd(acc, acc, mask.vec()); // acc -= mask (32-bit version)
+                c.vpsubd(acc, acc, mask.vec());
             }
             else if (step == 16)
             {
-                // 16 x i16 mask -> 8 x i32 using vpmaddwd (pairs of i16 multiplied by 1 and summed)
-                // mask[i16] is -1 or 0, so pairs sum to -2, -1, or 0
                 Vec pairs = c.new_ymm("pairs");
-                c.vpmaddwd(pairs, mask.vec(), ones); // 16 x i16 -> 8 x i32
-                c.vpsubd(acc, acc, pairs);           // acc -= pairs
+                c.vpmaddwd(pairs, mask.vec(), ones);
+                c.vpsubd(acc, acc, pairs);
             }
             else
             {
@@ -509,41 +782,35 @@ struct CountOnlyFunction
                 c.add(output_index, bits.r64());
             }
 
-            c.add(input_index, step); // index += step
+            c.add(input_index, step);
         }
 
         c.cmp(input_index, stop);
-        c.jl(l_loop); // index < stop
+        c.jl(l_loop);
 
-        // Horizontal sum of the lanes in acc and store to output_index.
-        // This is placed before l_tail so that when we skip the SIMD loop entirely
-        // (rows_size < step), we jump directly to l_tail without executing this code.
-        // This also avoids unnecessary register spilling across the label boundary.
         if (step == 4)
         {
-            // 4 x i64 -> i64
             Vec xmm_acc = acc.xmm();
             Vec xmm_tmp = c.new_xmm("hsum_tmp");
-            c.vextracti128(xmm_tmp, acc, 1);     // extract high 128 bits
-            c.vpaddq(xmm_acc, xmm_acc, xmm_tmp); // add high to low (2 x i64)
-            c.vpshufd(xmm_tmp, xmm_acc, 0x4E);   // swap the two i64 halves
-            c.vpaddq(xmm_acc, xmm_acc, xmm_tmp); // final sum in low 64 bits
-            c.vmovq(output_index, xmm_acc);      // move to output_index
+            c.vextracti128(xmm_tmp, acc, 1);
+            c.vpaddq(xmm_acc, xmm_acc, xmm_tmp);
+            c.vpshufd(xmm_tmp, xmm_acc, 0x4E);
+            c.vpaddq(xmm_acc, xmm_acc, xmm_tmp);
+            c.vmovq(output_index, xmm_acc);
         }
         else if (step == 8 || step == 16)
         {
-            // 8 x i32 -> i32 -> i64 (row count is guaranteed < 2^31)
             Vec xmm_acc = acc.xmm();
             Vec xmm_tmp = c.new_xmm("hsum_tmp");
-            c.vextracti128(xmm_tmp, acc, 1);     // extract high 4 x i32
-            c.vpaddd(xmm_acc, xmm_acc, xmm_tmp); // add high to low (4 x i32)
-            c.vpshufd(xmm_tmp, xmm_acc, 0x4E);   // rotate by 2 i32s
-            c.vpaddd(xmm_acc, xmm_acc, xmm_tmp); // 2 x i32 partial sums
-            c.vpshufd(xmm_tmp, xmm_acc, 0xB1);   // rotate by 1 i32
-            c.vpaddd(xmm_acc, xmm_acc, xmm_tmp); // final sum in low 32 bits
+            c.vextracti128(xmm_tmp, acc, 1);
+            c.vpaddd(xmm_acc, xmm_acc, xmm_tmp);
+            c.vpshufd(xmm_tmp, xmm_acc, 0x4E);
+            c.vpaddd(xmm_acc, xmm_acc, xmm_tmp);
+            c.vpshufd(xmm_tmp, xmm_acc, 0xB1);
+            c.vpaddd(xmm_acc, xmm_acc, xmm_tmp);
             Gp hsum = c.new_gp32("hsum");
-            c.vmovd(hsum, xmm_acc);          // move to 32-bit reg (zero-extends)
-            c.mov(output_index, hsum.r64()); // move to output_index
+            c.vmovd(hsum, xmm_acc);
+            c.mov(output_index, hsum.r64());
         }
 
         c.bind(l_tail);
@@ -607,6 +874,8 @@ struct CountOnlyFunction
     ColumnValueCache value_cache;
 };
 
+#endif // __aarch64__
+
 void fillJitErrorObject(JNIEnv *e, jobject error, Error code, const char *msg)
 {
     if (!msg)
@@ -641,7 +910,6 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
                                                     jint options,
                                                     jobject error)
 {
-#ifndef __aarch64__
     auto size = static_cast<size_t>(filterSize) / sizeof(instruction_t);
     if (filterAddress <= 0 || size <= 0)
     {
@@ -663,7 +931,11 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
     JitErrorHandler errorHandler;
     code.set_error_handler(&errorHandler);
 
+#ifdef __aarch64__
+    a64::Compiler c(&code);
+#else
     x86::Compiler c(&code);
+#endif
     Function function(c);
 
     CompiledFn fn;
@@ -693,9 +965,6 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
     }
 
     return reinterpret_cast<jlong>(fn);
-#else
-    return 0;
-#endif
 }
 
 JNIEXPORT jlong JNICALL
@@ -706,7 +975,6 @@ Java_io_questdb_jit_FiltersCompiler_compileCountOnlyFunction(JNIEnv *e,
                                                              jint options,
                                                              jobject error)
 {
-#ifndef __aarch64__
     auto size = static_cast<size_t>(filterSize) / sizeof(instruction_t);
     if (filterAddress <= 0 || size <= 0)
     {
@@ -728,7 +996,11 @@ Java_io_questdb_jit_FiltersCompiler_compileCountOnlyFunction(JNIEnv *e,
     JitErrorHandler errorHandler;
     code.set_error_handler(&errorHandler);
 
+#ifdef __aarch64__
+    a64::Compiler c(&code);
+#else
     x86::Compiler c(&code);
+#endif
     CountOnlyFunction function(c);
 
     CompiledCountOnlyFn fn;
@@ -758,18 +1030,13 @@ Java_io_questdb_jit_FiltersCompiler_compileCountOnlyFunction(JNIEnv *e,
     }
 
     return reinterpret_cast<jlong>(fn);
-#else
-    return 0;
-#endif
 }
 
 JNIEXPORT void JNICALL
 Java_io_questdb_jit_FiltersCompiler_freeFunction(JNIEnv *e, jclass cl, jlong fnAddress)
 {
-#ifndef __aarch64__
     auto fn = reinterpret_cast<void *>(fnAddress);
     gGlobalContext.rt.release(fn);
-#endif
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv *e,
@@ -783,7 +1050,6 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv 
                                                                          jlong filteredRowsAddress,
                                                                          jlong rowsCount)
 {
-#ifndef __aarch64__
     auto fn = reinterpret_cast<CompiledFn>(fnAddress);
     return fn(reinterpret_cast<int64_t *>(colsAddress),
               colsSize,
@@ -792,9 +1058,6 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv 
               varsSize,
               reinterpret_cast<int64_t *>(filteredRowsAddress),
               rowsCount);
-#else
-    return 0;
-#endif
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callCountOnlyFunction(JNIEnv *e,
@@ -807,7 +1070,6 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callCountOnlyFunctio
                                                                                   jlong varsSize,
                                                                                   jlong rowsCount)
 {
-#ifndef __aarch64__
     auto fn = reinterpret_cast<CompiledCountOnlyFn>(fnAddress);
     return fn(reinterpret_cast<int64_t *>(colsAddress),
               colsSize,
@@ -815,7 +1077,4 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callCountOnlyFunctio
               reinterpret_cast<int64_t *>(varsAddress),
               varsSize,
               rowsCount);
-#else
-    return 0;
-#endif
 }

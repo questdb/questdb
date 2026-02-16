@@ -352,6 +352,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public void setStreamingMode(boolean enabled) {
+            baseCursor.setStreamingMode(enabled);
+        }
+
+        @Override
         public long size() {
             return baseCursor.size();
         }

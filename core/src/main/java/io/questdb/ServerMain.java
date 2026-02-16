@@ -53,8 +53,8 @@ import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.Clock;
 import io.questdb.std.Uuid;
+import io.questdb.std.datetime.Clock;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 

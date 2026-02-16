@@ -100,6 +100,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean parallelReadParquetEnabled;
     private boolean parallelTopKEnabled;
     private boolean parallelWindowJoinEnabled;
+    private QueryFutureUpdateListener queryFutureUpdateListener = QueryFutureUpdateListener.EMPTY;
     private Rnd random;
     private long requestFd = -1;
     private boolean useSimpleCircuitBreaker;
@@ -289,7 +290,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public QueryFutureUpdateListener getQueryFutureUpdateListener() {
-        return QueryFutureUpdateListener.EMPTY;
+        return queryFutureUpdateListener;
     }
 
     @Override
@@ -469,6 +470,10 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.nowNanos = driver.toNanos(now);
         this.nowTimestampType = nowTimestampType;
         this.clockUseNow = true;
+    }
+
+    public void setQueryFutureUpdateListener(QueryFutureUpdateListener listener) {
+        this.queryFutureUpdateListener = listener != null ? listener : QueryFutureUpdateListener.EMPTY;
     }
 
     @Override

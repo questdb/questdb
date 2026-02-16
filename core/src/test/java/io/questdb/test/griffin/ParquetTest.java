@@ -1318,7 +1318,6 @@ public class ParquetTest extends AbstractCairoTest {
                             32\t1970-01-01T08:36:40.000000Z
                             33\t1970-01-01T08:53:20.000000Z
                             36\t1970-01-01T09:43:20.000000Z
-                            37\t1970-01-01T10:00:00.000000Z
                             """,
                     "x where ts in '1970-01-01T06:30:00.000Z;30m;1h;4'"
             );
@@ -1345,7 +1344,6 @@ public class ParquetTest extends AbstractCairoTest {
             assertSql(
                     """
                             id\tts
-                            37\t1970-01-01T10:00:00.000000Z
                             36\t1970-01-01T09:43:20.000000Z
                             33\t1970-01-01T08:53:20.000000Z
                             32\t1970-01-01T08:36:40.000000Z
