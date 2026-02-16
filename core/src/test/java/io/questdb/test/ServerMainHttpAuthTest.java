@@ -24,14 +24,14 @@
 
 package io.questdb.test;
 
-import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.client.DefaultHttpClientConfiguration;
 import io.questdb.client.Sender;
-import io.questdb.cutlass.http.client.HttpClient;
-import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.client.cutlass.http.client.HttpClient;
+import io.questdb.client.cutlass.http.client.HttpClientFactory;
+import io.questdb.client.cutlass.line.LineSenderException;
+import io.questdb.client.std.str.DirectUtf8Sequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -96,7 +96,7 @@ public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
                 ) {
                     responseHeaders.await();
                     DirectUtf8Sequence statusCode = responseHeaders.getStatusCode();
-                    TestUtils.assertEquals("401", statusCode);
+                    TestUtils.assertEquals("401", statusCode.asAsciiCharSequence());
                 }
             }
         });
@@ -115,7 +115,7 @@ public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
                     try (HttpClient.ResponseHeaders responseHeaders = httpClient.newRequest("localhost", HTTP_MIN_PORT).GET().url("/health").send()) {
                         responseHeaders.await();
                         DirectUtf8Sequence statusCode = responseHeaders.getStatusCode();
-                        TestUtils.assertEquals("200", statusCode);
+                        TestUtils.assertEquals("200", statusCode.asAsciiCharSequence());
                     }
                 }
             }
@@ -136,7 +136,7 @@ public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
                 ) {
                     responseHeaders.await();
                     DirectUtf8Sequence statusCode = responseHeaders.getStatusCode();
-                    TestUtils.assertEquals("401", statusCode);
+                    TestUtils.assertEquals("401", statusCode.asAsciiCharSequence());
                 }
             }
         });
@@ -157,7 +157,7 @@ public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
                 ) {
                     responseHeaders.await();
                     DirectUtf8Sequence statusCode = responseHeaders.getStatusCode();
-                    TestUtils.assertEquals("200", statusCode);
+                    TestUtils.assertEquals("200", statusCode.asAsciiCharSequence());
                 }
             }
         });
