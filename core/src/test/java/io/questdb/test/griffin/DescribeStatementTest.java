@@ -304,6 +304,22 @@ public class DescribeStatementTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDescribeRepeated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT, name STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            String expected = """
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tname\tSTRING
+                    2\tts\tTIMESTAMP
+                    """;
+            assertSql(expected, "DESCRIBE (SELECT * FROM test_table)");
+            assertSql(expected, "DESCRIBE (SELECT * FROM test_table)");
+        });
+    }
+
+    @Test
     public void testDescribeUnion() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE table1 (id INT, name STRING)");
