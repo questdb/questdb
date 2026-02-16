@@ -40,6 +40,10 @@ public interface SecurityContext extends Mutable {
     // Either tried to authenticate and failed, or did not try to authenticate at all.
     byte AUTH_TYPE_NONE = 0;
 
+    void authorizeAlterMatViewSetRefreshLimit(TableToken tableToken);
+
+    void authorizeAlterMatViewSetRefreshType(TableToken tableToken);
+
     void authorizeAlterTableAddColumn(TableToken tableToken);
 
     void authorizeAlterTableAddIndex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);

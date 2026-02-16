@@ -47,6 +47,14 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeAlterMatViewSetRefreshLimit(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterMatViewSetRefreshType(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeAlterTableAddColumn(TableToken tableToken) {
     }
 

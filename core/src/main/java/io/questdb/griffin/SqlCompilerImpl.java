@@ -1881,6 +1881,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     if (isLimitKeyword(tok)) {
                         // SET REFRESH LIMIT
                         final int limitHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
+                        securityContext.authorizeAlterMatViewSetRefreshLimit(matViewToken);
                         final AlterOperationBuilder setRefreshLimit = alterOperationBuilder.ofSetMatViewRefreshLimit(
                                 matViewNamePosition,
                                 matViewToken,
@@ -2030,6 +2031,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
                         }
 
+                        securityContext.authorizeAlterMatViewSetRefreshType(matViewToken);
                         final AlterOperationBuilder setTimer = alterOperationBuilder.ofSetMatViewRefresh(
                                 matViewNamePosition,
                                 matViewToken,
@@ -2049,7 +2051,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.$(lexer.lastTokenPosition(), "'immediate' or 'manual' or 'period' or 'every' or 'limit' expected");
                     }
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'ttl' or 'refresh' or 'start' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "'ttl' or 'refresh' expected");
                 }
             } else if (isResumeKeyword(tok)) {
                 parseResumeWal(matViewToken, matViewNamePosition, executionContext);
