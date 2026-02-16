@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
@@ -54,13 +55,18 @@ public class HorizonJoinRecord implements Record {
     private int[] columnSources;
     private long horizonTimestamp;
     private Record masterRecord;
+    private final BorrowedArray nullArray = new BorrowedArray();
     private long offsetValue;
     private Record slaveRecord;
 
     @Override
-    public @Nullable ArrayView getArray(int col, int columnType) {
+    public ArrayView getArray(int col, int columnType) {
         Record src = getSourceRecord(col);
-        return src != null ? src.getArray(columnIndices[col], columnType) : null;
+        if (src != null) {
+            return src.getArray(columnIndices[col], columnType);
+        }
+        nullArray.ofNull();
+        return nullArray;
     }
 
     @Override
