@@ -133,7 +133,7 @@ public class DecimalBinaryFormatParser implements QuietCloseable {
                 return false;
             }
             case LEN -> {
-                len = Unsafe.getUnsafe().getByte(addr);
+                len = Unsafe.getUnsafe().getByte(addr) & 0xFF;
                 if (len > 0) {
                     state = ParserState.VALUES;
                     nextBinaryPartExpectSize = len;
