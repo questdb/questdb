@@ -78,6 +78,7 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
 public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private final HorizonJoinRecordCursor cursor;
     private final RecordMetadata horizonJoinMetadata;
+    private final ObjList<Function> keyFunctions;
     private final RecordCursorFactory masterFactory;
     private final LongList offsets;
     private final ObjList<Function> recordFunctions;
@@ -85,6 +86,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
 
     public HorizonJoinRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
+            @Transient @NotNull BytecodeAssembler asm,
             @NotNull RecordMetadata metadata,
             @NotNull RecordMetadata horizonJoinMetadata,
             @NotNull RecordCursorFactory masterFactory,
@@ -93,6 +95,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @NotNull ObjList<Function> recordFunctions,
+            @NotNull ObjList<Function> keyFunctions,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Nullable ColumnTypes asOfJoinKeyTypes,
@@ -102,14 +105,13 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
             @Transient @NotNull ListColumnFilter groupByColumnFilter,
-            @NotNull ObjList<Function> keyFunctions,
             int @NotNull [] columnSources,
-            int @NotNull [] columnIndexes,
-            @Transient @NotNull BytecodeAssembler asm
+            int @NotNull [] columnIndexes
     ) {
         super(metadata);
         try {
             this.horizonJoinMetadata = horizonJoinMetadata;
+            this.keyFunctions = keyFunctions;
             this.masterFactory = masterFactory;
             this.slaveFactory = slaveFactory;
             this.offsets = offsets;
@@ -197,6 +199,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     protected void _close() {
         Misc.free(cursor);
+        Misc.freeObjList(keyFunctions);
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
         Misc.freeObjList(recordFunctions);

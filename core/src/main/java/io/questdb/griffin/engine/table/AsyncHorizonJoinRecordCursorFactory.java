@@ -93,17 +93,21 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
     public AsyncHorizonJoinRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
+            @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoEngine engine,
             @NotNull MessageBus messageBus,
             @NotNull RecordMetadata metadata,
             @NotNull RecordMetadata horizonJoinMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull RecordCursorFactory slaveFactory,
+            @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @NotNull LongList offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             @NotNull ObjList<Function> recordFunctions,
+            @NotNull ObjList<Function> keyFunctions,
+            @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Nullable ColumnTypes asOfJoinKeyTypes,
@@ -122,8 +126,6 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
             @Transient @NotNull ListColumnFilter groupByColumnFilter,
-            @NotNull ObjList<Function> keyFunctions,
-            @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
             @Nullable CompiledFilter compiledFilter,
@@ -131,9 +133,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function filter,
             @Nullable ObjList<Function> perWorkerFilters,
-            int workerCount,
-            @Transient @NotNull BytecodeAssembler asm,
-            @NotNull PageFrameReduceTaskFactory reduceTaskFactory
+            int workerCount
     ) {
         super(metadata);
         try {

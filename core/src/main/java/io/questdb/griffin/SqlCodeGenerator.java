@@ -3630,6 +3630,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (keyTypesCopy.getColumnCount() == 0) {
                     return new HorizonJoinNotKeyedRecordCursorFactory(
                             configuration,
+                            asm,
                             outerProjectionMetadata,
                             innerMetadata,
                             masterFactory,
@@ -3645,13 +3646,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             masterSymbolKeyColumnIndices,
                             slaveSymbolKeyColumnIndices,
                             columnSources,
-                            columnIndices,
-                            asm
+                            columnIndices
                     );
                 }
 
                 return new HorizonJoinRecordCursorFactory(
                         configuration,
+                        asm,
                         outerProjectionMetadata,
                         innerMetadata,
                         masterFactory,
@@ -3660,6 +3661,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         masterTimestampColumnIndex,
                         groupByFunctions,
                         new ObjList<>(tempOuterProjectionFunctions),
+                        keyFunctions,
                         keyTypesCopy,
                         valueTypesCopy,
                         asOfJoinKeyTypes,
@@ -3669,10 +3671,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         masterSymbolKeyColumnIndices,
                         slaveSymbolKeyColumnIndices,
                         groupByColumnFilter,
-                        keyFunctions,
                         columnSources,
-                        columnIndices,
-                        asm
+                        columnIndices
                 );
             }
 
@@ -3689,12 +3689,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // Non-keyed GROUP BY: produces a single output row
                 return new AsyncHorizonJoinNotKeyedRecordCursorFactory(
                         configuration,
+                        asm,
                         executionContext.getCairoEngine(),
                         executionContext.getMessageBus(),
                         outerProjectionMetadata,
                         innerMetadata,
                         masterFactory,
                         slaveFactory,
+                        reduceTaskFactory,
                         offsets,
                         masterTimestampColumnIndex,
                         groupByFunctions,
@@ -3722,9 +3724,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         bindVarFunctions,
                         filter,
                         perWorkerFilters,
-                        workerCount,
-                        asm,
-                        reduceTaskFactory
+                        workerCount
                 );
             }
 
@@ -3732,17 +3732,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Pass keyFunctions to handle expression keys (virtual columns)
             return new AsyncHorizonJoinRecordCursorFactory(
                     configuration,
+                    asm,
                     executionContext.getCairoEngine(),
                     executionContext.getMessageBus(),
                     outerProjectionMetadata,
                     innerMetadata,
                     masterFactory,
                     slaveFactory,
+                    reduceTaskFactory,
                     offsets,
                     masterTimestampColumnIndex,
                     groupByFunctions,
                     perWorkerGroupByFunctions,
                     new ObjList<>(tempOuterProjectionFunctions),
+                    keyFunctions,
+                    perWorkerKeyFunctions,
                     keyTypesCopy,
                     valueTypesCopy,
                     asOfJoinKeyTypes,
@@ -3761,8 +3765,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterSymbolKeyColumnIndices,
                     slaveSymbolKeyColumnIndices,
                     groupByColumnFilter,
-                    keyFunctions,
-                    perWorkerKeyFunctions,
                     columnSources,
                     columnIndices,
                     compiledFilter,
@@ -3770,9 +3772,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     bindVarFunctions,
                     filter,
                     perWorkerFilters,
-                    workerCount,
-                    asm,
-                    reduceTaskFactory
+                    workerCount
             );
         } catch (Throwable th) {
             Misc.free(compiledFilter);

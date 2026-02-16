@@ -82,6 +82,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
 
     public HorizonJoinNotKeyedRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
+            @Transient @NotNull BytecodeAssembler asm,
             @NotNull RecordMetadata metadata,
             @NotNull RecordMetadata horizonJoinMetadata,
             @NotNull RecordCursorFactory masterFactory,
@@ -97,8 +98,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
             int @NotNull [] columnSources,
-            int @NotNull [] columnIndexes,
-            @Transient @NotNull BytecodeAssembler asm
+            int @NotNull [] columnIndexes
     ) {
         super(metadata);
         try {

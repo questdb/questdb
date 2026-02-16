@@ -55,6 +55,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, String.valueOf(parallelHorizonJoinEnabled));
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         super.setUp();
     }
 
@@ -465,6 +466,50 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             RANGE FROM 0s TO 0s STEP 1s AS h
                             WHERE concat(t.order_sym, '_0') = 'AAPL_0'
                             ORDER BY t.order_sym
+                            """,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinKeyFunctionsFreedOnClose() throws Exception {
+        // alloc() allocates native memory that is freed in close().
+        // If keyFunctions are not freed in factory._close(), assertMemoryLeak() detects the leak.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 10)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 5)
+                            """
+            );
+
+            // alloc(1024) always returns 42, so all rows group under the same key.
+            // The important thing is that alloc() allocates tracked native memory
+            // that must be freed via Function.close() in the factory's _close().
+            assertQueryNoLeakCheck(
+                    """
+                            key\tavg_price
+                            42\t10.0
+                            """,
+                    """
+                            SELECT alloc(1024) AS key, avg(p.price) AS avg_price
+                            FROM trades AS t
+                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                            RANGE FROM 0s TO 0s STEP 1s AS h
+                            GROUP BY alloc(1024)
                             """,
                     null,
                     true,

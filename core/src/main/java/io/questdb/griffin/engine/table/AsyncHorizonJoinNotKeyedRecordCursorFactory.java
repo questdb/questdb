@@ -94,12 +94,14 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
 
     public AsyncHorizonJoinNotKeyedRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
+            @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoEngine engine,
             @NotNull MessageBus messageBus,
             @NotNull RecordMetadata metadata,
             @NotNull RecordMetadata horizonJoinMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull RecordCursorFactory slaveFactory,
+            @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @NotNull LongList offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
@@ -127,9 +129,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function filter,
             @Nullable ObjList<Function> perWorkerFilters,
-            int workerCount,
-            @Transient @NotNull BytecodeAssembler asm,
-            @NotNull PageFrameReduceTaskFactory reduceTaskFactory
+            int workerCount
     ) {
         super(metadata);
         try {
