@@ -182,6 +182,87 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_sliceRowGroup(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *mut ParquetUpdater,
+    rg_index: jshort,
+    row_lo: jint,
+    row_hi: jint,
+) {
+    if updater.is_null() {
+        panic!("ParquetUpdater pointer is null");
+    }
+
+    let parquet_updater = unsafe { &mut *updater };
+    match parquet_updater.slice_row_group(rg_index, row_lo as usize, row_hi as usize) {
+        Ok(_) => (),
+        Err(mut err) => {
+            err.add_context(format!(
+                "could not slice row group {} with range [{}, {}]",
+                rg_index, row_lo, row_hi
+            ));
+            err.add_context("error in PartitionUpdater.sliceRowGroup");
+            err.into_cairo_exception().throw(&mut env)
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_insertRowGroup(
+    mut env: JNIEnv,
+    _class: JClass,
+    parquet_updater: *mut ParquetUpdater,
+    table_name_len: u32,
+    table_name_ptr: *const u8,
+    position: jshort,
+    col_count: jint,
+    col_names_ptr: *const u8,
+    col_names_len: jint,
+    col_data_ptr: *const i64,
+    col_data_len: jlong,
+    timestamp_index: jint,
+    row_count: jlong,
+) {
+    assert!(
+        !parquet_updater.is_null(),
+        "parquet_updater pointer is null"
+    );
+    let parquet_updater = unsafe { &mut *parquet_updater };
+
+    let mut insert = || -> ParquetResult<()> {
+        let table_name = "insert";
+        let partition = create_partition_descriptor(
+            table_name.as_ptr(),
+            table_name.len() as i32,
+            col_count,
+            col_names_ptr,
+            col_names_len,
+            col_data_ptr,
+            col_data_len,
+            row_count,
+            timestamp_index,
+        )?;
+        parquet_updater.insert_row_group(&partition, position)
+    };
+
+    match insert() {
+        Ok(_) => (),
+        Err(mut err) => {
+            let table_name =
+                unsafe { slice::from_raw_parts(table_name_ptr, table_name_len as usize) };
+            let table_name =
+                std::str::from_utf8(table_name).unwrap_or("!!invalid table_dir_name utf8!!");
+            err.add_context(format!(
+                "could not insert row group at position {position} for table {table_name}"
+            ));
+            err.add_context("error in PartitionUpdater.insertRowGroup");
+            err.into_cairo_exception().throw(&mut env)
+        }
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_encodePartition(
     mut env: JNIEnv,
     _class: JClass,

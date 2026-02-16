@@ -50,7 +50,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testMultiRoundO3OnParquetPartition() throws Exception {
-        Rnd rnd = generateRandom(LOG, 612796798016125L, 1770992357965L);
+        Rnd rnd = generateRandom(LOG);
 
         // Data-only fuzz: no schema changes, drops, or truncations.
         setFuzzProbabilities(

@@ -252,7 +252,7 @@ impl<W: Write> ChunkedWriter<W> {
     }
 }
 
-struct CompressedPages {
+pub(crate) struct CompressedPages {
     pages: VecDeque<ParquetResult<CompressedPage>>,
     current: Option<CompressedPage>,
 }
@@ -727,7 +727,7 @@ fn compute_symbol_slice(
     (&keys[lower_bound..upper_bound], adjusted_column_top)
 }
 
-fn column_chunk_to_pages(
+pub(crate) fn column_chunk_to_pages(
     column: Column,
     parquet_type: ParquetType,
     chunk_offset: usize,

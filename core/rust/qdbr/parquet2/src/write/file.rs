@@ -278,6 +278,7 @@ pub struct ParquetFile<W: Write> {
     state: State,
     metadata: Option<ThriftFileMetaData>,
     mode: Mode,
+    is_insert: Vec<bool>,
 }
 
 pub enum Mode {
@@ -304,6 +305,7 @@ impl<W: Write> ParquetFile<W> {
             state: State::Initialised,
             metadata: None,
             mode: Mode::Write,
+            is_insert: vec![],
         }
     }
 
@@ -326,6 +328,7 @@ impl<W: Write> ParquetFile<W> {
             state: State::Initialised,
             metadata: None,
             mode: Mode::Write,
+            is_insert: vec![],
         }
     }
 
@@ -350,6 +353,7 @@ impl<W: Write> ParquetFile<W> {
             state: State::Initialised,
             metadata: Some(metadata.clone()), //TODO: do we need to keep it here?
             mode: Mode::Update(metadata),
+            is_insert: vec![],
         }
     }
 
@@ -363,6 +367,10 @@ impl<W: Write> ParquetFile<W> {
 
     pub fn metadata(&self) -> Option<&ThriftFileMetaData> {
         self.metadata.as_ref()
+    }
+
+    pub fn writer_mut(&mut self) -> &mut W {
+        &mut self.writer
     }
 
     fn start(&mut self) -> Result<()> {
@@ -386,7 +394,9 @@ impl<W: Write> ParquetFile<W> {
             self.start()?;
         }
         let ordinal = self.row_groups.len();
-        self.add_row_group(row_group, ordinal)
+        self.add_row_group(row_group, ordinal)?;
+        self.is_insert.push(false);
+        Ok(())
     }
 
     fn add_row_group<E>(
@@ -436,12 +446,35 @@ impl<W: Write> ParquetFile<W> {
                 } else {
                     metadata.row_groups.len() + self.row_groups.len()
                 };
-                self.add_row_group(row_group, ordinal)
+                self.add_row_group(row_group, ordinal)?;
+                self.is_insert.push(false);
+                Ok(())
             }
             _ => Err(Error::InvalidParameter(
                 "Replace can only be called in update mode".to_string(),
             )
             .into()),
+        }
+    }
+
+    pub fn insert<E>(
+        &mut self,
+        row_group: RowGroupIter<'_, E>,
+        position: i16,
+    ) -> std::result::Result<(), E>
+    where
+        E: std::error::Error + From<Error>,
+    {
+        match &self.mode {
+            Mode::Update(_) => {
+                self.add_row_group(row_group, position as usize)?;
+                self.is_insert.push(true);
+                Ok(())
+            }
+            _ => Err(Error::InvalidParameter(
+                "Insert can only be called in update mode".to_string(),
+            )
+                .into()),
         }
     }
 
@@ -485,16 +518,42 @@ impl<W: Write> ParquetFile<W> {
             }
             Mode::Update(metadata) => {
                 let mut num_rows = metadata.num_rows;
-                for group in &self.row_groups {
+                let original_rg_count = metadata.row_groups.len();
+
+                // Phase 1: replacements and appends (is_insert = false)
+                for (i, group) in self.row_groups.iter().enumerate() {
+                    if self.is_insert.get(i) == Some(&true) {
+                        continue;
+                    }
                     let ordinal = group
                         .ordinal
                         .ok_or_else(|| Error::oos("Row group ordinal is missing"))?;
-                    if ordinal < metadata.row_groups.len() as i16 {
+                    if (ordinal as usize) < original_rg_count {
                         num_rows -= metadata.row_groups[ordinal as usize].num_rows;
                         metadata.row_groups[ordinal as usize] = group.clone();
                     } else {
                         metadata.row_groups.push(group.clone());
                     }
+                    num_rows += group.num_rows;
+                }
+
+                // Phase 2: insertions (is_insert = true), in ascending ordinal order
+                let mut insertions: Vec<_> = self
+                    .row_groups
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| self.is_insert.get(*i) == Some(&true))
+                    .map(|(_, g)| {
+                        (
+                            g.ordinal.unwrap_or(0) as usize,
+                            g.clone(),
+                        )
+                    })
+                    .collect();
+                insertions.sort_by_key(|(pos, _)| *pos);
+                for (pos, group) in insertions.into_iter() {
+                    let adjusted_pos = pos.min(metadata.row_groups.len());
+                    metadata.row_groups.insert(adjusted_pos, group.clone());
                     num_rows += group.num_rows;
                 }
 

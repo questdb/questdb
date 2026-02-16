@@ -117,11 +117,22 @@ const UUID_NULL: [u8; 16] = unsafe { std::mem::transmute([i64::MIN; 2]) };
 const LONG256_NULL: [u8; 32] = unsafe { std::mem::transmute([i64::MIN; 4]) };
 const BYTE_NULL: [u8; 1] = [0u8];
 const INT_NULL: [u8; 4] = i32::MIN.to_le_bytes();
+const IPV4_NULL: [u8; 4] = 0i32.to_le_bytes();
+const GEO_INT_NULL: [u8; 4] = (-1i32).to_le_bytes();
 const SHORT_NULL: [u8; 2] = 0i16.to_le_bytes();
 const SYMBOL_NULL: [u8; 4] = i32::MIN.to_le_bytes();
 const LONG_NULL: [u8; 8] = i64::MIN.to_le_bytes();
 const DOUBLE_NULL: [u8; 8] = unsafe { std::mem::transmute([f64::NAN]) };
 const FLOAT_NULL: [u8; 4] = unsafe { std::mem::transmute([f32::NAN]) };
+
+/// Returns the correct QuestDB null sentinel for i32-based column types.
+fn int32_null(tag: ColumnTypeTag) -> &'static [u8; 4] {
+    match tag {
+        ColumnTypeTag::IPv4 => &IPV4_NULL,
+        ColumnTypeTag::GeoInt => &GEO_INT_NULL,
+        _ => &INT_NULL,
+    }
+}
 const TIMESTAMP_96_EMPTY: [u8; 12] = [0; 12];
 
 /// The local positional index as it is stored in parquet.
@@ -971,6 +982,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                     _,
                     ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
                 ) => {
+                    let null_val = int32_null(column_type.tag());
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -982,7 +994,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         &mut FixedIntColumnSink::new(
                             &mut DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
                             bufs,
-                            &INT_NULL,
+                            null_val,
                         ),
                     )?;
                     Ok(())
@@ -1012,6 +1024,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                     _,
                     ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
                 ) => {
+                    let null_val = int32_null(column_type.tag());
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -1026,7 +1039,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                                 page_row_count,
                             )?,
                             bufs,
-                            &INT_NULL,
+                            null_val,
                         ),
                     )?;
                     Ok(())
@@ -1037,13 +1050,14 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                     _,
                     ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
                 ) => {
+                    let null_val = int32_null(column_type.tag());
                     let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
                         dict_decoder,
                         page_row_count,
                         page_row_count,
-                        &INT_NULL,
+                        null_val,
                     )?;
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
@@ -1053,7 +1067,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedIntColumnSink::new(&mut slicer, bufs, &INT_NULL),
+                        &mut FixedIntColumnSink::new(&mut slicer, bufs, null_val),
                     )?;
                     Ok(())
                 }
@@ -1908,6 +1922,7 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
                 ) => {
+                    let null_val = int32_null(column_type.tag());
                     decode_page0(
                         page,
                         row_lo,
@@ -1915,7 +1930,7 @@ pub fn decode_page(
                         &mut FixedIntColumnSink::new(
                             &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
                             bufs,
-                            &INT_NULL,
+                            null_val,
                         ),
                     )?;
                     Ok(())
@@ -1941,6 +1956,7 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
                 ) => {
+                    let null_val = int32_null(column_type.tag());
                     decode_page0(
                         page,
                         row_lo,
@@ -1948,7 +1964,7 @@ pub fn decode_page(
                         &mut FixedIntColumnSink::new(
                             &mut DeltaBinaryPackedSlicer::<4>::try_new(values_buffer, row_count)?,
                             bufs,
-                            &INT_NULL,
+                            null_val,
                         ),
                     )?;
                     Ok(())
@@ -1959,19 +1975,20 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
                 ) => {
+                    let null_val = int32_null(column_type.tag());
                     let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
                         dict_decoder,
                         row_hi,
                         row_count,
-                        &INT_NULL,
+                        null_val,
                     )?;
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedIntColumnSink::new(&mut slicer, bufs, &INT_NULL),
+                        &mut FixedIntColumnSink::new(&mut slicer, bufs, null_val),
                     )?;
                     Ok(())
                 }

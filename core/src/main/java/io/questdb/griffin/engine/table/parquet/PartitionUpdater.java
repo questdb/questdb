@@ -86,6 +86,35 @@ public class PartitionUpdater implements QuietCloseable {
         updateFileMetadata(ptr);
     }
 
+    public void addRowGroup(short position, PartitionDescriptor descriptor) {
+        final int columnCount = descriptor.getColumnCount();
+        final long rowCount = descriptor.getPartitionRowCount();
+        final int timestampIndex = descriptor.getTimestampIndex();
+        try {
+            assert ptr != 0;
+            insertRowGroup(
+                    ptr,
+                    descriptor.tableName.size(),
+                    descriptor.tableName.ptr(),
+                    position,
+                    columnCount,
+                    descriptor.getColumnNamesPtr(),
+                    descriptor.getColumnNamesLen(),
+                    descriptor.getColumnDataPtr(),
+                    descriptor.getColumnDataLen(),
+                    timestampIndex,
+                    rowCount
+            );
+        } finally {
+            descriptor.clear();
+        }
+    }
+
+    public void sliceRowGroup(short rowGroupIndex, int rowLo, int rowHi) {
+        assert ptr != 0;
+        sliceRowGroup(ptr, rowGroupIndex, rowLo, rowHi);
+    }
+
     public void updateRowGroup(short rowGroupId, PartitionDescriptor descriptor) {
         final int columnCount = descriptor.getColumnCount();
         final long rowCount = descriptor.getPartitionRowCount();
@@ -125,6 +154,27 @@ public class PartitionUpdater implements QuietCloseable {
     ) throws CairoException;
 
     private static native void destroy(long impl);
+
+    private static native void insertRowGroup(
+            long impl,
+            int tableNameLen,
+            long tableNamePtr,
+            short position,
+            int columnCount,
+            long columnNamesPtr,
+            int columnNamesSize,
+            long columnDataPtr,
+            long columnDataSize,
+            int timestampIndex,
+            long rowCount
+    ) throws CairoException;
+
+    private static native void sliceRowGroup(
+            long impl,
+            short rowGroupIndex,
+            int rowLo,
+            int rowHi
+    ) throws CairoException;
 
     // throws CairoException on error
     private static native void updateFileMetadata(long impl);
