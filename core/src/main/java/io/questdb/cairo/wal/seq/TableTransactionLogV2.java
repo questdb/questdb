@@ -300,7 +300,12 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             } finally {
                 rootPath.trimTo(size);
             }
-            walDirectoryPolicy.initSequencerPart(rootPath, part);
+            int len = rootPath.size();
+            try {
+                walDirectoryPolicy.initSequencerPart(rootPath, part);
+            } finally {
+                rootPath.trimTo(len);
+            }
         }
     }
 
