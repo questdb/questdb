@@ -238,8 +238,9 @@ where
         Ok(())
     }
 
-    fn skip(&mut self, count: usize) {
+    fn skip(&mut self, count: usize) -> ParquetResult<()> {
         self.values_offset += count;
+        Ok(())
     }
 
     fn result(&self) -> ParquetResult<()> {
@@ -363,11 +364,12 @@ impl Pushable for PlainBooleanDecoder<'_> {
         Ok(())
     }
 
-    fn skip(&mut self, count: usize) {
+    fn skip(&mut self, count: usize) -> ParquetResult<()> {
         if !self.can_read_bits(count) {
-            return;
+            return Ok(());
         }
         self.bit_offset += count;
+        Ok(())
     }
 
     fn result(&self) -> ParquetResult<()> {
@@ -424,7 +426,7 @@ mod tests {
         let result = {
             let mut decoder = PlainBooleanDecoder::new(&values, 6, &mut buffers, 0);
             decoder.reserve(6).unwrap();
-            decoder.skip(1);
+            decoder.skip(1).unwrap();
             decoder.push_slice(3).unwrap();
             decoder.push_nulls(2).unwrap();
             decoder.push().unwrap();

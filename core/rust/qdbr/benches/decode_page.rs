@@ -1049,15 +1049,9 @@ fn build_cases() -> Vec<BenchCase> {
     int_notnull_cases!(cases, options, "byte", Byte, i8, i32, |np| make_i8_data(
         ROW_COUNT, np, 0
     ));
-    int_notnull_cases!(
-        cases,
-        options,
-        "short",
-        Short,
-        i16,
-        i32,
-        |np| make_i16_data(ROW_COUNT, np, 0)
-    );
+    int_notnull_cases!(cases, options, "short", Short, i16, i32, |np| {
+        make_i16_data(ROW_COUNT, np, 0)
+    });
     int_notnull_cases!(
         cases,
         options,

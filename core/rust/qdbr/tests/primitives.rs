@@ -143,6 +143,23 @@ fn run_all_combos<T: PrimitiveType>(name: &str) {
     }
 }
 
+fn rnd(s: usize) -> usize {
+    // Use a simple xorshift to generate pseudo-random data that changes more between rows, which can help catch edge cases in encoding/decoding.
+    let mut l0 = s as i64 + 1;
+    let mut l1 = s as i64 + 2;
+    let mut l2 = s as i64 + 3;
+    l0 ^= l0 << 13;
+    l0 ^= l0 >> 17;
+    l0 ^= l0 << 5;
+    l1 ^= l1 << 13;
+    l1 ^= l1 >> 17;
+    l1 ^= l1 << 5;
+    l2 ^= l2 << 13;
+    l2 ^= l2 >> 17;
+    l2 ^= l2 << 5;
+    (l0 ^ l1 ^ l2) as usize
+}
+
 // --- Boolean type ---
 
 struct Boolean;
@@ -171,7 +188,8 @@ impl PrimitiveType for GeoByte {
     const TAG: ColumnTypeTag = ColumnTypeTag::GeoByte;
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
-        let v = (s % 127) as i8;
+        let s = rnd(s);
+        let v = s as i8;
         (v as i32, v)
     }
 }
@@ -185,7 +203,8 @@ impl PrimitiveType for GeoShort {
     const TAG: ColumnTypeTag = ColumnTypeTag::GeoShort;
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
-        let v = (s % 32000) as i16;
+        let s = rnd(s);
+        let v = s as i16;
         (v as i32, v)
     }
 }
@@ -199,7 +218,8 @@ impl PrimitiveType for GeoInt {
     const TAG: ColumnTypeTag = ColumnTypeTag::GeoInt;
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
-        let v = (s % i32::MAX as usize) as i32;
+        let s = rnd(s);
+        let v = s as i32;
         (v, v)
     }
 }
@@ -213,7 +233,8 @@ impl PrimitiveType for Byte {
     const TAG: ColumnTypeTag = ColumnTypeTag::Byte;
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
-        let v = (s % 127) as i8;
+        let s = rnd(s);
+        let v = s as i8;
         (v as i32, v)
     }
 }
@@ -227,7 +248,8 @@ impl PrimitiveType for Short {
     const TAG: ColumnTypeTag = ColumnTypeTag::Short;
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
-        let v = (s % 32000) as i16;
+        let s = rnd(s);
+        let v = s as i16;
         (v as i32, v)
     }
 }
@@ -241,7 +263,8 @@ impl PrimitiveType for Int {
     const TAG: ColumnTypeTag = ColumnTypeTag::Int;
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
-        let v = (s % i32::MAX as usize) as i32;
+        let s = rnd(s);
+        let v = s as i32;
         (v, v)
     }
 }
@@ -255,7 +278,8 @@ impl PrimitiveType for IPv4 {
     const TAG: ColumnTypeTag = ColumnTypeTag::IPv4;
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
-        let v = (s % i32::MAX as usize) as i32;
+        let s = rnd(s);
+        let v = s as i32;
         (v, v)
     }
 }
@@ -271,6 +295,7 @@ impl PrimitiveType for GeoLong {
     const TAG: ColumnTypeTag = ColumnTypeTag::GeoLong;
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
+        let s = rnd(s);
         let v = s as i64;
         (v, v)
     }
@@ -285,6 +310,7 @@ impl PrimitiveType for Long {
     const TAG: ColumnTypeTag = ColumnTypeTag::Long;
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
+        let s = rnd(s);
         let v = s as i64;
         (v, v)
     }
@@ -299,6 +325,7 @@ impl PrimitiveType for Timestamp {
     const TAG: ColumnTypeTag = ColumnTypeTag::Timestamp;
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
+        let s = rnd(s);
         let v = s as i64 * 1_000_000;
         (v, v)
     }
@@ -313,6 +340,7 @@ impl PrimitiveType for Date {
     const TAG: ColumnTypeTag = ColumnTypeTag::Date;
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
+        let s = rnd(s);
         let v = s as i64 * 86_400_000;
         (v, v)
     }
@@ -329,6 +357,7 @@ impl PrimitiveType for DateInt32 {
     const LOGICAL_TYPE: Option<LogicalType> = Some(LogicalType::Date);
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
+        let s = rnd(s);
         let days = 18000 + s as i32;
         let millis = days as i64 * 86_400_000;
         (days, millis)
@@ -347,6 +376,7 @@ impl PrimitiveType for Float {
     const ENCODINGS: &[Encoding] = &[Encoding::Plain, Encoding::RleDictionary];
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
+        let s = rnd(s);
         let v = s as f32 * 0.5;
         (v, v)
     }
@@ -370,6 +400,7 @@ impl PrimitiveType for DoubleInt32 {
     });
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
+        let s = rnd(s);
         let v = s as i32;
         let expected = v as f64 / 100.0;
         (v, expected)
@@ -392,6 +423,7 @@ impl PrimitiveType for Double {
     const ENCODINGS: &[Encoding] = &[Encoding::Plain, Encoding::RleDictionary];
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
+        let s = rnd(s);
         let v = s as f64 * 0.5;
         (v, v)
     }
@@ -414,6 +446,7 @@ impl PrimitiveType for Long128 {
     const FIXED_LEN: Option<i32> = Some(16);
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
+        let s = rnd(s);
         let lo = (s as i64).to_le_bytes();
         let hi = (s as i64 + 5000).to_le_bytes();
         let mut bytes = [0u8; 16];
@@ -440,6 +473,7 @@ impl PrimitiveType for Long256 {
     const FIXED_LEN: Option<i32> = Some(32);
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
+        let s = rnd(s);
         let mut bytes = [0u8; 32];
         bytes[0..8].copy_from_slice(&(s as i64).to_le_bytes());
         bytes[8..16].copy_from_slice(&((s as i64 + 1000).to_le_bytes()));

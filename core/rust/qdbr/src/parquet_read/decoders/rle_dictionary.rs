@@ -295,8 +295,9 @@ where
         Ok(())
     }
 
-    fn skip(&mut self, count: usize) {
+    fn skip(&mut self, count: usize) -> ParquetResult<()> {
         self.inner.skip(count);
+        Ok(())
     }
 
     fn result(&self) -> ParquetResult<()> {
@@ -324,8 +325,8 @@ where
                 inner: Slicer::new(Some(decoder), RleIterator::Rle(RepeatN::new(0, 0))),
                 _phantom: std::marker::PhantomData,
                 buffers_ptr: buffers.data_vec.as_mut_ptr().cast(),
+                buffers_offset: buffers.data_vec.len() / std::mem::size_of::<U>(),
                 buffers,
-                buffers_offset: 0,
                 null_value,
             };
             res.decode()?;
@@ -336,8 +337,8 @@ where
                 inner: Slicer::new(None, RleIterator::Rle(RepeatN::new(0, row_count))),
                 _phantom: std::marker::PhantomData,
                 buffers_ptr: buffers.data_vec.as_mut_ptr().cast(),
+                buffers_offset: buffers.data_vec.len() / std::mem::size_of::<U>(),
                 buffers,
-                buffers_offset: 0,
                 null_value,
             })
         }
@@ -635,7 +636,7 @@ mod tests {
             RleDictionaryDecoder::try_new(&encoded, dict, 5, I32_NULL, &mut buffers).unwrap();
         decoder.reserve(3).unwrap();
 
-        decoder.skip(2);
+        decoder.skip(2).unwrap();
         decoder.push_slice(3).unwrap();
 
         assert!(decoder.result().is_ok());
@@ -654,7 +655,7 @@ mod tests {
         let mut decoder =
             RleDictionaryDecoder::try_new(&encoded, dict, 3, I32_NULL, &mut buffers).unwrap();
         decoder.reserve(1).unwrap();
-        decoder.skip(0);
+        decoder.skip(0).unwrap();
         decoder.push().unwrap();
 
         assert!(decoder.result().is_ok());
@@ -672,7 +673,7 @@ mod tests {
 
         let mut decoder =
             RleDictionaryDecoder::try_new(&encoded, dict, 5, I32_NULL, &mut buffers).unwrap();
-        decoder.skip(5);
+        decoder.skip(5).unwrap();
 
         assert!(decoder.result().is_ok());
         assert_eq!(read_i32_results(&buffers), Vec::<i32>::new());
@@ -696,7 +697,7 @@ mod tests {
             let mut decoder =
                 RleDictionaryDecoder::try_new(&encoded, dict, 200, I32_NULL, &mut buffers).unwrap();
             decoder.reserve(to_read).unwrap();
-            decoder.skip(skip);
+            decoder.skip(skip).unwrap();
             decoder.push_slice(to_read).unwrap();
 
             assert!(decoder.result().is_ok(), "skip={skip}");
@@ -726,7 +727,7 @@ mod tests {
         // push_nulls(2): writes [NULL, NULL]
         decoder.push_nulls(2).unwrap();
         // skip(3): positions 2,3,4 → skipped
-        decoder.skip(3);
+        decoder.skip(3).unwrap();
         // push(): position 5 → dict[5]=60
         decoder.push().unwrap();
         // push_null(): writes [NULL]
@@ -734,7 +735,7 @@ mod tests {
         // push_slice(3): positions 6,7,8 → dict[6]=70, dict[7]=80, dict[0]=10
         decoder.push_slice(3).unwrap();
         // skip(2): positions 9,10 → skipped
-        decoder.skip(2);
+        decoder.skip(2).unwrap();
         // push(): position 11 → dict[3]=40
         decoder.push().unwrap();
 
@@ -801,7 +802,7 @@ mod tests {
         let mut decoder =
             RleDictionaryDecoder::try_new(&encoded, dict, 20, I32_NULL, &mut buffers).unwrap();
         decoder.reserve(5).unwrap();
-        decoder.skip(15);
+        decoder.skip(15).unwrap();
         decoder.push_slice(5).unwrap();
 
         assert!(decoder.result().is_ok());
@@ -821,10 +822,10 @@ mod tests {
         decoder.reserve(8).unwrap();
 
         decoder.push().unwrap(); // 7
-        decoder.skip(3);
+        decoder.skip(3).unwrap();
         decoder.push_null().unwrap(); // NULL
         decoder.push_slice(3).unwrap(); // 7, 7, 7
-        decoder.skip(5);
+        decoder.skip(5).unwrap();
         decoder.push_nulls(2).unwrap(); // NULL, NULL
         decoder.push().unwrap(); // 7
 
@@ -1177,7 +1178,7 @@ mod tests {
             let mut decoder =
                 RleDictionaryDecoder::try_new(&encoded, dict, 100, I32_NULL, &mut buffers).unwrap();
             decoder.reserve(remaining).unwrap();
-            decoder.skip(skip);
+            decoder.skip(skip).unwrap();
             decoder.push_slice(remaining).unwrap();
             assert!(decoder.result().is_ok(), "skip={skip}");
             assert_eq!(

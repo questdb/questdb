@@ -11,7 +11,7 @@ use crate::parquet_read::decoders::int128::Int128ToUuidConverter;
 use crate::parquet_read::decoders::int96::{Int96Timestamp, Int96ToTimestampConverter};
 use crate::parquet_read::decoders::{
     int32::DayToMillisConverter, int32::Int32ToDoubleConverter, BasePrimitiveDictDecoder,
-    BaseVarDictDecoder, ConvertablePrimitiveDictDecoder, DeltaBinaryPackedPrimitiveDecoder,
+    BaseVarDictDecoder, ConvertablePrimitiveDictDecoder, DeltaBinaryPackedDecoder,
     FixedDictDecoder, PlainBooleanDecoder, PlainPrimitiveDecoder, RleBooleanDecoder,
     RleDictionaryDecoder, RleLocalIsGlobalSymbolDictDecoder,
 };
@@ -905,7 +905,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut DeltaBinaryPackedPrimitiveDecoder::<i8>::try_new(
+                        &mut DeltaBinaryPackedDecoder::<i8, i32>::try_new(
                             values_buffer,
                             bufs,
                             nulls::BYTE,
@@ -922,7 +922,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut DeltaBinaryPackedPrimitiveDecoder::<i8>::try_new(
+                        &mut DeltaBinaryPackedDecoder::<i8, i32>::try_new(
                             values_buffer,
                             bufs,
                             nulls::GEOHASH_BYTE,
@@ -1023,7 +1023,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut DeltaBinaryPackedPrimitiveDecoder::<i16>::try_new(
+                        &mut DeltaBinaryPackedDecoder::<i16, i32>::try_new(
                             values_buffer,
                             bufs,
                             nulls::SHORT,
@@ -1040,7 +1040,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut DeltaBinaryPackedPrimitiveDecoder::<i16>::try_new(
+                        &mut DeltaBinaryPackedDecoder::<i16, i32>::try_new(
                             values_buffer,
                             bufs,
                             nulls::GEOHASH_SHORT,
@@ -1168,7 +1168,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut DeltaBinaryPackedPrimitiveDecoder::<i32>::try_new(
+                        &mut DeltaBinaryPackedDecoder::<i32, i32>::try_new(
                             values_buffer,
                             bufs,
                             nulls::INT,
@@ -1185,7 +1185,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut DeltaBinaryPackedPrimitiveDecoder::<i32>::try_new(
+                        &mut DeltaBinaryPackedDecoder::<i32, i32>::try_new(
                             values_buffer,
                             bufs,
                             nulls::IPV4,
@@ -1202,7 +1202,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut DeltaBinaryPackedPrimitiveDecoder::<i32>::try_new(
+                        &mut DeltaBinaryPackedDecoder::<i32, i32>::try_new(
                             values_buffer,
                             bufs,
                             nulls::GEOHASH_INT,
@@ -1382,7 +1382,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut DeltaBinaryPackedPrimitiveDecoder::<i64>::try_new(
+                        &mut DeltaBinaryPackedDecoder::<i64, i64>::try_new(
                             values_buffer,
                             bufs,
                             i64::MIN,
@@ -2009,7 +2009,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut DeltaBinaryPackedPrimitiveDecoder::<i8>::try_new(
+                        &mut DeltaBinaryPackedDecoder::<i8, i32>::try_new(
                             values_buffer,
                             bufs,
                             nulls::BYTE,
@@ -2022,7 +2022,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut DeltaBinaryPackedPrimitiveDecoder::<i8>::try_new(
+                        &mut DeltaBinaryPackedDecoder::<i8, i32>::try_new(
                             values_buffer,
                             bufs,
                             nulls::GEOHASH_BYTE,
@@ -2103,7 +2103,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut DeltaBinaryPackedPrimitiveDecoder::<i16>::try_new(
+                        &mut DeltaBinaryPackedDecoder::<i16, i32>::try_new(
                             values_buffer,
                             bufs,
                             nulls::SHORT,
@@ -2116,7 +2116,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut DeltaBinaryPackedPrimitiveDecoder::<i16>::try_new(
+                        &mut DeltaBinaryPackedDecoder::<i16, i32>::try_new(
                             values_buffer,
                             bufs,
                             nulls::GEOHASH_SHORT,
@@ -2216,7 +2216,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut DeltaBinaryPackedPrimitiveDecoder::<i32>::try_new(
+                        &mut DeltaBinaryPackedDecoder::<i32, i32>::try_new(
                             values_buffer,
                             bufs,
                             nulls::INT,
@@ -2229,7 +2229,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut DeltaBinaryPackedPrimitiveDecoder::<i32>::try_new(
+                        &mut DeltaBinaryPackedDecoder::<i32, i32>::try_new(
                             values_buffer,
                             bufs,
                             nulls::IPV4,
@@ -2242,7 +2242,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut DeltaBinaryPackedPrimitiveDecoder::<i32>::try_new(
+                        &mut DeltaBinaryPackedDecoder::<i32, i32>::try_new(
                             values_buffer,
                             bufs,
                             nulls::GEOHASH_INT,
@@ -2401,7 +2401,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut DeltaBinaryPackedPrimitiveDecoder::<i64>::try_new(
+                        &mut DeltaBinaryPackedDecoder::<i64, i64>::try_new(
                             values_buffer,
                             bufs,
                             nulls::LONG,
@@ -2414,7 +2414,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut DeltaBinaryPackedPrimitiveDecoder::<i64>::try_new(
+                        &mut DeltaBinaryPackedDecoder::<i64, i64>::try_new(
                             values_buffer,
                             bufs,
                             nulls::GEOHASH_LONG,
@@ -2899,7 +2899,7 @@ fn decode_page0<T: Pushable>(
 
                     if local_skip_count > 0 {
                         let to_skip = count_ones_in_bitmap(values, 0, local_skip_count);
-                        sink.skip(to_skip);
+                        sink.skip(to_skip)?;
                         bit_offset = local_skip_count;
                     }
 
@@ -2915,7 +2915,7 @@ fn decode_page0<T: Pushable>(
                     skip_count -= local_skip_count;
                     if is_set {
                         if local_skip_count > 0 {
-                            sink.skip(local_skip_count);
+                            sink.skip(local_skip_count)?;
                         }
                         if local_push_count > 0 {
                             sink.push_slice(local_push_count)?;
@@ -2927,7 +2927,7 @@ fn decode_page0<T: Pushable>(
             };
         }
     } else {
-        sink.skip(row_lo);
+        sink.skip(row_lo)?;
         sink.push_slice(row_hi - row_lo)?;
     }
     sink.result()
@@ -3133,7 +3133,7 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
 
                     if FILL_NULLS {
                         if run_end_in_page <= row_lo {
-                            sink.skip(count_ones_in_bitmap(values, 0, length));
+                            sink.skip(count_ones_in_bitmap(values, 0, length))?;
                             current_row += length;
                             continue;
                         }
@@ -3146,7 +3146,7 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                         }
                         let run_end_pos = run_start_pos + length;
                         if (rows_filter[filter_idx] as usize + row_group_lo) >= run_end_pos {
-                            sink.skip(count_ones_in_bitmap(values, 0, length));
+                            sink.skip(count_ones_in_bitmap(values, 0, length))?;
                             current_row += length;
                             continue;
                         }
@@ -3154,7 +3154,7 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
 
                     let mut bit_offset = if FILL_NULLS && current_row < row_lo {
                         let skip_bits = row_lo - current_row;
-                        sink.skip(count_ones_in_bitmap(values, 0, skip_bits));
+                        sink.skip(count_ones_in_bitmap(values, 0, skip_bits))?;
                         skip_bits
                     } else {
                         0usize
@@ -3175,7 +3175,7 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                                 filter_idx += 1;
                             } else {
                                 if get_bit_at(values, bit_offset) {
-                                    sink.skip(1);
+                                    sink.skip(1)?;
                                 }
                                 sink.push_null()?;
                             }
@@ -3195,7 +3195,7 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                                     values,
                                     bit_offset,
                                     target_offset - bit_offset,
-                                ));
+                                ))?;
                                 bit_offset = target_offset;
                             }
 
@@ -3218,7 +3218,7 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                             values,
                             bit_offset,
                             length - bit_offset,
-                        ));
+                        ))?;
                     }
 
                     current_row += length;
@@ -3230,7 +3230,7 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                     if FILL_NULLS {
                         if run_end_in_page <= row_lo {
                             if is_set {
-                                sink.skip(length);
+                                sink.skip(length)?;
                             }
                             current_row += length;
                             continue;
@@ -3245,7 +3245,7 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                         let run_end_pos = run_start_pos + length;
                         if (rows_filter[filter_idx] as usize + row_group_lo) >= run_end_pos {
                             if is_set {
-                                sink.skip(length);
+                                sink.skip(length)?;
                             }
                             current_row += length;
                             continue;
@@ -3255,7 +3255,7 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                     let mut row_offset = if FILL_NULLS && current_row < row_lo {
                         let skip_rows = row_lo - current_row;
                         if is_set {
-                            sink.skip(skip_rows);
+                            sink.skip(skip_rows)?;
                         }
                         skip_rows
                     } else {
@@ -3277,7 +3277,7 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                                 filter_idx += 1;
                             } else {
                                 if is_set {
-                                    sink.skip(1);
+                                    sink.skip(1)?;
                                 }
                                 sink.push_null()?;
                             }
@@ -3294,7 +3294,7 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                             }
 
                             if is_set && row_offset < target_offset {
-                                sink.skip(target_offset - row_offset);
+                                sink.skip(target_offset - row_offset)?;
                             }
                             row_offset = target_offset;
 
@@ -3313,7 +3313,7 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                     }
 
                     if is_set && row_offset < length {
-                        sink.skip(length - row_offset);
+                        sink.skip(length - row_offset)?;
                     }
 
                     current_row += length;
@@ -3324,7 +3324,7 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
         // No null bitmap - all values are non-null
         if FILL_NULLS {
             let mut page_row = row_lo;
-            sink.skip(row_lo);
+            sink.skip(row_lo)?;
 
             while output_row < row_hi {
                 let abs_row = page_row_start + page_row;
@@ -3335,7 +3335,7 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                     sink.push()?;
                     filter_idx += 1;
                 } else {
-                    sink.skip(1);
+                    sink.skip(1)?;
                     sink.push_null()?;
                 }
                 page_row += 1;
@@ -3343,7 +3343,7 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
             }
 
             if page_row < page_row_count {
-                sink.skip(page_row_count - page_row);
+                sink.skip(page_row_count - page_row)?;
             }
         } else {
             let mut i = 0usize;
@@ -3369,14 +3369,14 @@ fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                     consecutive += 1;
                 }
 
-                sink.skip(first_row - prev_row_end);
+                sink.skip(first_row - prev_row_end)?;
                 sink.push_slice(consecutive)?;
                 prev_row_end = first_row + consecutive;
                 i += consecutive;
             }
 
             if prev_row_end < page_row_count {
-                sink.skip(page_row_count - prev_row_end);
+                sink.skip(page_row_count - prev_row_end)?;
             }
         }
     }
@@ -5654,7 +5654,12 @@ mod tests {
             self.bits.extend(std::iter::repeat(false).take(count));
             Ok(())
         }
-        fn skip(&mut self, _count: usize) {}
+        fn skip(
+            &mut self,
+            _count: usize,
+        ) -> super::super::super::parquet::error::ParquetResult<()> {
+            Ok(())
+        }
         fn result(&self) -> super::super::super::parquet::error::ParquetResult<()> {
             Ok(())
         }

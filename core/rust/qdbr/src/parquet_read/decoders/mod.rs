@@ -15,13 +15,14 @@ mod plain;
 mod rle;
 /// Hybrid RLE + dictionary index decoder (`RLE_DICTIONARY`).
 mod rle_dictionary;
+mod unpack;
 
 pub use self::dictionary::{
     BasePrimitiveDictDecoder, BaseVarDictDecoder, ConvertablePrimitiveDictDecoder,
     FixedDictDecoder, RleLocalIsGlobalSymbolDictDecoder, VarDictDecoder,
 };
 pub use converters::*;
-pub use delta_binary_packed::DeltaBinaryPackedPrimitiveDecoder;
+pub use delta_binary_packed::DeltaBinaryPackedDecoder;
 pub use plain::{PlainBooleanDecoder, PlainPrimitiveDecoder};
 pub use rle::{RepeatN, RleBooleanDecoder, RleIterator};
 pub use rle_dictionary::RleDictionaryDecoder;

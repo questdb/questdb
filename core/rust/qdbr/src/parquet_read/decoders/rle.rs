@@ -435,10 +435,11 @@ impl Pushable for RleBooleanDecoder<'_> {
         Ok(())
     }
 
-    fn skip(&mut self, count: usize) {
+    fn skip(&mut self, count: usize) -> ParquetResult<()> {
         if count > 0 {
             self.skip_values(count);
         }
+        Ok(())
     }
 
     fn result(&self) -> ParquetResult<()> {
@@ -515,7 +516,7 @@ mod tests {
             let mut decoder =
                 RleBooleanDecoder::try_new(&encoded, values.len(), &mut buffers, 9).unwrap();
             decoder.reserve(6).unwrap();
-            decoder.skip(1);
+            decoder.skip(1).unwrap();
             decoder.push_slice(3).unwrap();
             decoder.push_null().unwrap();
             decoder.push().unwrap();

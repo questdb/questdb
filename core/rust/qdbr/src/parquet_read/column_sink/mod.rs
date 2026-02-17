@@ -8,6 +8,6 @@ pub trait Pushable {
     fn push_slice(&mut self, count: usize) -> ParquetResult<()>;
     fn push_null(&mut self) -> ParquetResult<()>;
     fn push_nulls(&mut self, count: usize) -> ParquetResult<()>;
-    fn skip(&mut self, count: usize);
+    fn skip(&mut self, count: usize) -> ParquetResult<()>;
     fn result(&self) -> ParquetResult<()>;
 }
