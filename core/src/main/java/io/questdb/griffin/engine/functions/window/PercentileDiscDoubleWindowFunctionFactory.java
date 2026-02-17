@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
@@ -57,14 +56,9 @@ import io.questdb.std.Unsafe;
 
 public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
+    private static final ArrayColumnTypes COLUMN_TYPES = new ArrayColumnTypes();
     private static final String NAME = "percentile_disc";
     private static final String SIGNATURE = NAME + "(DD)";
-
-    private static final ArrayColumnTypes COLUMN_TYPES = new ArrayColumnTypes();
-
-    static {
-        COLUMN_TYPES.add(ColumnType.LONG); // list pointer
-    }
 
     @Override
     public String getSignature() {
@@ -190,7 +184,6 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
                 MapValue value = key.createValue();
 
                 long listPtr;
-                long size;
 
                 if (value.isNew()) {
                     // Allocate space for size (8 bytes) + first value (8 bytes)
@@ -198,10 +191,9 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
                     listMemory.putLong(allocPtr, 1); // size
                     listMemory.putDouble(allocPtr + 8, d); // first value
                     listPtr = allocPtr;
-                    size = 1;
                 } else {
                     listPtr = value.getLong(0);
-                    size = listMemory.getLong(listPtr);
+                    long size = listMemory.getLong(listPtr);
                     // Allocate new block for size + all values
                     long newPtr = listMemory.appendAddressFor(8 + (size + 1) * 8) - listMemory.getPageAddress(0);
                     listMemory.putLong(newPtr, size + 1); // new size
@@ -211,7 +203,6 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
                     }
                     listMemory.putDouble(newPtr + 8 + size * 8, d);
                     listPtr = newPtr;
-                    size++;
                 }
 
                 value.putLong(0, listPtr);
@@ -256,7 +247,7 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
 
                     // Calculate index
                     int N = (int) Math.max(0, Math.ceil(size * multiplier) - 1);
-                    double result = listMemory.getDouble(listPtr + 8 + N * 8);
+                    double result = listMemory.getDouble(listPtr + 8 + N * 8L);
 
                     // Store result back at listPtr + 8 (first value position)
                     listMemory.putDouble(listPtr + 8, result);
@@ -292,14 +283,6 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
             listMemory.truncate();
         }
 
-        private void quickSort(long listPtr, long left, long right) {
-            if (left < right) {
-                long pi = partition(listPtr, left, right);
-                quickSort(listPtr, left, pi - 1);
-                quickSort(listPtr, pi + 1, right);
-            }
-        }
-
         private long partition(long listPtr, long left, long right) {
             double pivot = listMemory.getDouble(listPtr + right * 8);
             long i = left - 1;
@@ -312,6 +295,14 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
             }
             swap(listPtr, i + 1, right);
             return i + 1;
+        }
+
+        private void quickSort(long listPtr, long left, long right) {
+            if (left < right) {
+                long pi = partition(listPtr, left, right);
+                quickSort(listPtr, left, pi - 1);
+                quickSort(listPtr, pi + 1, right);
+            }
         }
 
         private void swap(long listPtr, long i, long j) {
@@ -399,7 +390,7 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
 
             // Calculate index
             int N = (int) Math.max(0, Math.ceil(size * multiplier) - 1);
-            result = listMemory.getDouble(N * 8);
+            result = listMemory.getDouble(N * 8L);
         }
 
         @Override
@@ -432,14 +423,6 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
             result = Double.NaN;
         }
 
-        private void quickSort(long left, long right) {
-            if (left < right) {
-                long pi = partition(left, right);
-                quickSort(left, pi - 1);
-                quickSort(pi + 1, right);
-            }
-        }
-
         private long partition(long left, long right) {
             double pivot = listMemory.getDouble(right * 8);
             long i = left - 1;
@@ -454,10 +437,22 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
             return i + 1;
         }
 
+        private void quickSort(long left, long right) {
+            if (left < right) {
+                long pi = partition(left, right);
+                quickSort(left, pi - 1);
+                quickSort(pi + 1, right);
+            }
+        }
+
         private void swap(long i, long j) {
             double temp = listMemory.getDouble(i * 8);
             listMemory.putDouble(i * 8, listMemory.getDouble(j * 8));
             listMemory.putDouble(j * 8, temp);
         }
+    }
+
+    static {
+        COLUMN_TYPES.add(ColumnType.LONG); // list pointer
     }
 }

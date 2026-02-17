@@ -220,7 +220,6 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
                 MapValue value = key.createValue();
 
                 long listPtr;
-                long size;
 
                 if (value.isNew()) {
                     // Allocate space for size (8 bytes) + first value (8 bytes)
@@ -228,10 +227,9 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
                     listMemory.putLong(allocPtr, 1); // size
                     listMemory.putDouble(allocPtr + 8, d); // first value
                     listPtr = allocPtr;
-                    size = 1;
                 } else {
                     listPtr = value.getLong(0);
-                    size = listMemory.getLong(listPtr);
+                    long size = listMemory.getLong(listPtr);
                     // Allocate new block for size + all values
                     long newPtr = listMemory.appendAddressFor(8 + (size + 1) * 8) - listMemory.getPageAddress(0);
                     listMemory.putLong(newPtr, size + 1); // new size
@@ -241,7 +239,6 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
                     }
                     listMemory.putDouble(newPtr + 8 + size * 8, d);
                     listPtr = newPtr;
-                    size++;
                 }
 
                 value.putLong(0, listPtr);

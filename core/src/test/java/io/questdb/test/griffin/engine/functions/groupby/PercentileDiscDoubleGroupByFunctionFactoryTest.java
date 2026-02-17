@@ -191,178 +191,14 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
     }
 
     @Test
-    public void testNegativeValues() throws Exception {
+    public void testNegativeOnePercentile() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            execute("insert into test values (1.0), (-1.0)");
+            execute("create table test as (select cast(x as double) x from long_sequence(100))");
+            // -1.0 should be equivalent to 1 - 1.0 = 0.0 (0th percentile)
             assertSql(
-                    "percentile_disc\n" +
-                            "-1.0\n",
-                    "select percentile_disc(x, 0.5) from test"
+                    "percentile_disc\n1.0\n",
+                    "select percentile_disc(x, -1.0) from test"
             );
-        });
-    }
-
-    @Test
-    public void testPercentileAllNulls() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test (x long)");
-            execute("insert into test values (null), (null), (null)");
-            assertSql(
-                    "percentile_disc\n" +
-                            "null\n",
-                    "select percentile_disc(x, 0.5) from test"
-            );
-        });
-    }
-
-    @Test
-    public void testPercentileAllSameValues() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test as (select 5.0 x from long_sequence(100))");
-            assertSql(
-                    "percentile_disc\n5.0\n",
-                    "select percentile_disc(x, 0.5) from test"
-            );
-        });
-    }
-
-
-    @Test
-    public void testPercentileDiscGroupBy() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test as (" +
-                    "select x % 2 as category, cast(x as double) as value from long_sequence(10)" +
-                    ")");
-            assertSql(
-                    "category\tpercentile_disc\n" +
-                            "0\t6.0\n" +
-                            "1\t5.0\n",
-                    "select category, percentile_disc(value, 0.5) from test group by category order by category"
-            );
-        });
-    }
-
-    @Test
-    public void testPercentileDiscGroupByMultipleGroups() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test as (" +
-                    "select x % 3 as category, cast(x as double) as value from long_sequence(12)" +
-                    ")");
-            // cat=0: 3, 6, 9, 12 → 50th percentile index = ceil(4*0.5)-1 = 1 → 6.0
-            // cat=1: 1, 4, 7, 10 → 50th percentile index = ceil(4*0.5)-1 = 1 → 4.0
-            // cat=2: 2, 5, 8, 11 → 50th percentile index = ceil(4*0.5)-1 = 1 → 5.0
-            assertSql(
-                    "category\tpercentile_disc\n" +
-                            "0\t6.0\n" +
-                            "1\t4.0\n" +
-                            "2\t5.0\n",
-                    "select category, percentile_disc(value, 0.5) from test group by category order by category"
-            );
-        });
-    }
-
-    @Test
-    public void testPercentileDiscGroupByWithNulls() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test as (" +
-                    "select x % 2 as category, " +
-                    "case when x % 4 = 0 then null else cast(x as double) end as value " +
-                    "from long_sequence(10)" +
-                    ")");
-            // cat=0: 2, null, 6, null, 10 → non-null: 2, 6, 10 (3 values) → 50th: ceil(3*0.5)-1 = 1 → 6.0
-            // cat=1: 1, 3, 5, 7, 9 (5 values) → 50th: ceil(5*0.5)-1 = 2 → 5.0
-            assertSql(
-                    "category\tpercentile_disc\n" +
-                            "0\t6.0\n" +
-                            "1\t5.0\n",
-                    "select category, percentile_disc(value, 0.5) from test group by category order by category"
-            );
-        });
-    }
-
-    @Test
-    public void testPercentileEmptyTable() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            assertSql(
-                    "percentile_disc\n" +
-                            "null\n",
-                    "select percentile_disc(x, 0.5) from test"
-            );
-        });
-    }
-
-    @Test
-    public void testPercentilePackedAllNulls() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test (x long)");
-            execute("insert into test values (null), (null), (null)");
-            assertSql(
-                    "percentile_disc\n" +
-                            "null\n",
-                    "select percentile_disc(x, 0.5) from test"
-            );
-        });
-    }
-
-    @Test
-    public void testPercentilePackedEmptyTable() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            assertSql(
-                    "percentile_disc\n" +
-                            "null\n",
-                    "select percentile_disc(x, 0.5) from test"
-            );
-        });
-    }
-
-    @Test
-    public void testPercentilePackedWithPercentileBindVariable() throws Exception {
-        bindVariableService.setDouble(0, 0.5);
-        assertMemoryLeak(() -> {
-            execute("create table test as (select 5.0 x from long_sequence(100))");
-            assertSql(
-                    "percentile_disc\n5.0\n",
-                    "select percentile_disc(x, $1) from test"
-            );
-        });
-    }
-
-    @Test
-    public void testPercentileSomeNulls() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            execute("insert into test values (1.0), (null), (null), (null)");
-            assertSql(
-                    "percentile_disc\n" +
-                            "1.0\n",
-                    "select percentile_disc(x, 0.5) from test"
-            );
-        });
-    }
-
-    @Test
-    public void testPercentileWithPercentileBindVariable() throws Exception {
-        bindVariableService.setDouble(0, 0.5);
-        assertMemoryLeak(() -> {
-            execute("create table test as (select 5.0 x from long_sequence(100))");
-            assertSql(
-                    "percentile_disc\n5.0\n",
-                    "select percentile_disc(x, $1) from test"
-            );
-        });
-    }
-
-    @Test
-    public void testWithKnownData() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(txDdl);
-            execute(txDml);
-            assertSql("percentile_disc\n" +
-                            "289.615\n",
-                    "select percentile_disc(value, 0.95) from tx_traffic");
         });
     }
 
@@ -395,14 +231,197 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
     }
 
     @Test
-    public void testNegativeOnePercentile() throws Exception {
+    public void testNegativeValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as double) x from long_sequence(100))");
-            // -1.0 should be equivalent to 1 - 1.0 = 0.0 (0th percentile)
+            execute("create table test (x double)");
+            execute("insert into test values (1.0), (-1.0)");
             assertSql(
-                    "percentile_disc\n1.0\n",
-                    "select percentile_disc(x, -1.0) from test"
+                    """
+                            percentile_disc
+                            -1.0
+                            """,
+                    "select percentile_disc(x, 0.5) from test"
             );
+        });
+    }
+
+    @Test
+    public void testPercentileAllNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (x long)");
+            execute("insert into test values (null), (null), (null)");
+            assertSql(
+                    """
+                            percentile_disc
+                            null
+                            """,
+                    "select percentile_disc(x, 0.5) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testPercentileAllSameValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (select 5.0 x from long_sequence(100))");
+            assertSql(
+                    "percentile_disc\n5.0\n",
+                    "select percentile_disc(x, 0.5) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testPercentileDiscGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (" +
+                    "select x % 2 as category, cast(x as double) as value from long_sequence(10)" +
+                    ")");
+            assertSql(
+                    """
+                            category\tpercentile_disc
+                            0\t6.0
+                            1\t5.0
+                            """,
+                    "select category, percentile_disc(value, 0.5) from test group by category order by category"
+            );
+        });
+    }
+
+    @Test
+    public void testPercentileDiscGroupByMultipleGroups() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (" +
+                    "select x % 3 as category, cast(x as double) as value from long_sequence(12)" +
+                    ")");
+            // cat=0: 3, 6, 9, 12 → 50th percentile index = ceil(4*0.5)-1 = 1 → 6.0
+            // cat=1: 1, 4, 7, 10 → 50th percentile index = ceil(4*0.5)-1 = 1 → 4.0
+            // cat=2: 2, 5, 8, 11 → 50th percentile index = ceil(4*0.5)-1 = 1 → 5.0
+            assertSql(
+                    """
+                            category\tpercentile_disc
+                            0\t6.0
+                            1\t4.0
+                            2\t5.0
+                            """,
+                    "select category, percentile_disc(value, 0.5) from test group by category order by category"
+            );
+        });
+    }
+
+    @Test
+    public void testPercentileDiscGroupByWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (" +
+                    "select x % 2 as category, " +
+                    "case when x % 4 = 0 then null else cast(x as double) end as value " +
+                    "from long_sequence(10)" +
+                    ")");
+            // cat=0: 2, null, 6, null, 10 → non-null: 2, 6, 10 (3 values) → 50th: ceil(3*0.5)-1 = 1 → 6.0
+            // cat=1: 1, 3, 5, 7, 9 (5 values) → 50th: ceil(5*0.5)-1 = 2 → 5.0
+            assertSql(
+                    """
+                            category\tpercentile_disc
+                            0\t6.0
+                            1\t5.0
+                            """,
+                    "select category, percentile_disc(value, 0.5) from test group by category order by category"
+            );
+        });
+    }
+
+    @Test
+    public void testPercentileEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (x double)");
+            assertSql(
+                    """
+                            percentile_disc
+                            null
+                            """,
+                    "select percentile_disc(x, 0.5) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testPercentilePackedAllNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (x long)");
+            execute("insert into test values (null), (null), (null)");
+            assertSql(
+                    """
+                            percentile_disc
+                            null
+                            """,
+                    "select percentile_disc(x, 0.5) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testPercentilePackedEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (x double)");
+            assertSql(
+                    """
+                            percentile_disc
+                            null
+                            """,
+                    "select percentile_disc(x, 0.5) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testPercentilePackedWithPercentileBindVariable() throws Exception {
+        bindVariableService.setDouble(0, 0.5);
+        assertMemoryLeak(() -> {
+            execute("create table test as (select 5.0 x from long_sequence(100))");
+            assertSql(
+                    "percentile_disc\n5.0\n",
+                    "select percentile_disc(x, $1) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testPercentileSomeNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (x double)");
+            execute("insert into test values (1.0), (null), (null), (null)");
+            assertSql(
+                    """
+                            percentile_disc
+                            1.0
+                            """,
+                    "select percentile_disc(x, 0.5) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testPercentileWithPercentileBindVariable() throws Exception {
+        bindVariableService.setDouble(0, 0.5);
+        assertMemoryLeak(() -> {
+            execute("create table test as (select 5.0 x from long_sequence(100))");
+            assertSql(
+                    "percentile_disc\n5.0\n",
+                    "select percentile_disc(x, $1) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testWithKnownData() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(txDdl);
+            execute(txDml);
+            assertSql("""
+                            percentile_disc
+                            289.615
+                            """,
+                    "select percentile_disc(value, 0.95) from tx_traffic");
         });
     }
 }
