@@ -81,17 +81,9 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
         WindowContext windowContext = sqlExecutionContext.getWindowContext();
         windowContext.validate(position, false);
 
-        int framingMode = windowContext.getFramingMode();
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
-
-        long rowsLo = windowContext.getRowsLo();
-        long rowsHi = windowContext.getRowsHi();
-
-        if (rowsHi < rowsLo) {
-            throw SqlException.$(position, "percentile_disc window function does not support empty frames");
-        }
 
         // Percentile functions only support default frame over whole partition
         // Default frame is whole partition when there's no ORDER BY
