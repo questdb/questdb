@@ -114,6 +114,7 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
      * Must be called before any {@link #getInt(int)} call on symbol key columns.
      */
     public void initSources(SymbolTableSource masterSource, SymbolTableSource slaveSource) {
+        clear();
         Misc.freeIfCloseable(masterSymbolTableCache);
         Misc.freeIfCloseable(slaveSymbolTableCache);
         this.masterSource = masterSource;

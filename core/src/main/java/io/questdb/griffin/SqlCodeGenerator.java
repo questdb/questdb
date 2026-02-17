@@ -818,8 +818,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 if (Chars.equalsIgnoreCase(tableAlias, horizonAlias)) {
                     columnSources[i] = HorizonJoinRecord.SOURCE_SEQUENCE;
-                    // offset column is 0, timestamp column is 1
-                    columnIndices[i] = Chars.equalsIgnoreCase(columnName, "offset") ? 0 : 1;
+                    if (Chars.equalsIgnoreCase(columnName, "offset")) {
+                        columnIndices[i] = 0;
+                    } else if (Chars.equalsIgnoreCase(columnName, "timestamp")) {
+                        columnIndices[i] = 1;
+                    } else {
+                        throw SqlException.$(0, "unknown horizon column: ").put(columnName);
+                    }
                     continue;
                 }
                 if (slaveAlias != null && Chars.equalsIgnoreCase(tableAlias, slaveAlias)) {
@@ -3333,6 +3338,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && masterFactory.getBaseFactory().supportsPageFrameCursor();
         supportsParallelism |= canStealFilter;
 
+        JoinRecordMetadata innerMetadata = null;
+        ObjList<GroupByFunction> groupByFunctions = null;
+        ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = null;
+
         try {
             // Check slave factory supports TimeFrameCursor for parallel cursor creation
             if (!slaveFactory.supportsTimeFrameCursor()) {
@@ -3356,7 +3365,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             final CharSequence horizonAlias = horizonContext.getAlias().token;
             final CharSequence slaveAlias = slaveModel.getAlias() != null ? slaveModel.getAlias().token : slaveModel.getName();
-            final RecordMetadata innerMetadata = createHorizonJoinMetadata(
+            innerMetadata = createHorizonJoinMetadata(
                     masterAlias,
                     masterMetadata,
                     horizonAlias,
@@ -3371,7 +3380,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             listColumnFilterA.clear();
 
             final int columnCount = parentModel.getColumns().size();
-            final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
+            groupByFunctions = new ObjList<>(columnCount);
             tempInnerProjectionFunctions.clear();
             tempOuterProjectionFunctions.clear();
             final GenericRecordMetadata outerProjectionMetadata = new GenericRecordMetadata();
@@ -3422,7 +3431,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             ObjList<ObjList<Function>> perWorkerKeyFunctions = null;
-            ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = null;
 
             if (supportsParallelism) {
                 // HORIZON JOIN tasks are "heavy", hence smaller frame sizes
@@ -3454,13 +3462,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         innerMetadata
                 );
 
-                // If null (thread-safe functions), create per-worker lists that reuse owner functions
-                if (perWorkerGroupByFunctions == null) {
-                    perWorkerGroupByFunctions = new ObjList<>(workerCount);
-                    for (int i = 0; i < workerCount; i++) {
-                        perWorkerGroupByFunctions.add(groupByFunctions);
-                    }
-                }
             }
 
             final ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes().addAll(keyTypes);
@@ -3794,6 +3795,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     workerCount
             );
         } catch (Throwable th) {
+            Misc.free(innerMetadata);
+            if (perWorkerGroupByFunctions != null) {
+                for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                    Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
+                }
+            }
+            Misc.freeObjList(groupByFunctions);
             Misc.free(compiledFilter);
             Misc.free(bindVarMemory);
             Misc.freeObjList(bindVarFunctions);
