@@ -176,7 +176,7 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
                 result.applyShape();
 
                 for (int i = 0; i < resultCount; i++) {
-                    result.putDouble(i, resultMemory.getDouble(resultPtr + 8 + i * 8));
+                    result.putDouble(i, resultMemory.getDouble(resultPtr + 8 + i * 8L));
                 }
                 return result;
             }
@@ -275,7 +275,7 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
                     quickSort(listPtr + 8, 0, size - 1);
 
                     // Allocate result array: count (8 bytes) + percentile values
-                    long resultPtr = resultMemory.appendAddressFor(8 + percentileCount * 8) - resultMemory.getPageAddress(0);
+                    long resultPtr = resultMemory.appendAddressFor(8 + percentileCount * 8L) - resultMemory.getPageAddress(0);
                     resultMemory.putLong(resultPtr, percentileCount);
 
                     // Calculate each percentile with interpolation
@@ -290,14 +290,14 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
 
                         double resultValue;
                         if (lowerIndex == upperIndex) {
-                            resultValue = listMemory.getDouble(listPtr + 8 + lowerIndex * 8);
+                            resultValue = listMemory.getDouble(listPtr + 8 + lowerIndex * 8L);
                         } else {
-                            double lowerValue = listMemory.getDouble(listPtr + 8 + lowerIndex * 8);
-                            double upperValue = listMemory.getDouble(listPtr + 8 + upperIndex * 8);
+                            double lowerValue = listMemory.getDouble(listPtr + 8 + lowerIndex * 8L);
+                            double upperValue = listMemory.getDouble(listPtr + 8 + upperIndex * 8L);
                             double fraction = position - lowerIndex;
                             resultValue = lowerValue + (upperValue - lowerValue) * fraction;
                         }
-                        resultMemory.putDouble(resultPtr + 8 + i * 8, resultValue);
+                        resultMemory.putDouble(resultPtr + 8 + i * 8L, resultValue);
                     }
 
                     // Update map value to point to result
@@ -480,10 +480,10 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
                 int upperIndex = (int) Math.ceil(position);
 
                 if (lowerIndex == upperIndex) {
-                    results[i] = listMemory.getDouble(lowerIndex * 8);
+                    results[i] = listMemory.getDouble(lowerIndex * 8L);
                 } else {
-                    double lowerValue = listMemory.getDouble(lowerIndex * 8);
-                    double upperValue = listMemory.getDouble(upperIndex * 8);
+                    double lowerValue = listMemory.getDouble(lowerIndex * 8L);
+                    double upperValue = listMemory.getDouble(upperIndex * 8L);
                     double fraction = position - lowerIndex;
                     results[i] = lowerValue + (upperValue - lowerValue) * fraction;
                 }

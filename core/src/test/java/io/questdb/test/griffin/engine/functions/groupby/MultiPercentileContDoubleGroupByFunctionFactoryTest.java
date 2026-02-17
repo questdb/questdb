@@ -95,8 +95,10 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             // percentile_cont at 0.5: position = 1.5, interpolates to 2.5
             // percentile_disc at 0.5: ceil(4*0.5)-1 = 1, returns 2.0
             assertSql(
-                    "percentile_cont\tpercentile_disc\n" +
-                            "[2.5,2.5]\t[2.0,2.0]\n",
+                    """
+                            percentile_cont\tpercentile_disc
+                            [2.5,2.5]\t[2.0,2.0]
+                            """,
                     "select percentile_cont(x, ARRAY[0.5, 0.5]), percentile_disc(x, ARRAY[0.5, 0.5]) from test"
             );
         });
@@ -136,9 +138,11 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
                     "select x % 2 as category, cast(x as double) as value from long_sequence(10)" +
                     ")");
             assertSql(
-                    "category\tpercentile_cont\n" +
-                            "0\t[4.0,6.0,8.0]\n" +
-                            "1\t[3.0,5.0,7.0]\n",
+                    """
+                            category\tpercentile_cont
+                            0\t[4.0,6.0,8.0]
+                            1\t[3.0,5.0,7.0]
+                            """,
                     "select category, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) from test group by category order by category"
             );
         });
@@ -151,8 +155,10 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
                     "select 1 as category, null::double as value from long_sequence(5)" +
                     ")");
             assertSql(
-                    "category\tpercentile_cont\n" +
-                            "1\tnull\n",
+                    """
+                            category\tpercentile_cont
+                            1\tnull
+                            """,
                     "select category, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) from test group by category"
             );
         });
@@ -165,9 +171,11 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
                     "select x % 2 as category, cast(x as double) as value from long_sequence(10)" +
                     ")");
             assertSql(
-                    "category\tpercentile_cont\n" +
-                            "0\t[2.0,6.0,10.0]\n" +
-                            "1\t[1.0,5.0,9.0]\n",
+                    """
+                            category\tpercentile_cont
+                            0\t[2.0,6.0,10.0]
+                            1\t[1.0,5.0,9.0]
+                            """,
                     "select category, percentile_cont(value, ARRAY[0.0, 0.5, 1.0]) from test group by category order by category"
             );
         });
@@ -194,13 +202,15 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             //   75th: 0.75 * 1 = 0.75 → 2 + 0.75*(8-2) = 6.5
             // Similar for cat1=1
             assertSql(
-                    "cat1\tcat2\tpercentile_cont\n" +
-                            "0\t0\t[7.5,9.0,10.5]\n" +
-                            "0\t1\t[5.5,7.0,8.5]\n" +
-                            "0\t2\t[3.5,5.0,6.5]\n" +
-                            "1\t0\t[4.5,6.0,7.5]\n" +
-                            "1\t1\t[2.5,4.0,5.5]\n" +
-                            "1\t2\t[6.5,8.0,9.5]\n",
+                    """
+                            cat1\tcat2\tpercentile_cont
+                            0\t0\t[7.5,9.0,10.5]
+                            0\t1\t[5.5,7.0,8.5]
+                            0\t2\t[3.5,5.0,6.5]
+                            1\t0\t[4.5,6.0,7.5]
+                            1\t1\t[2.5,4.0,5.5]
+                            1\t2\t[6.5,8.0,9.5]
+                            """,
                     "select cat1, cat2, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) " +
                             "from test group by cat1, cat2 order by cat1, cat2"
             );
@@ -224,9 +234,11 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             //   50th: 0.50 * 4 = 2.0 → index 2 → 5.0
             //   75th: 0.75 * 4 = 3.0 → index 3 → 7.0
             assertSql(
-                    "category\tpercentile_cont\n" +
-                            "0\t[4.0,6.0,8.0]\n" +
-                            "1\t[3.0,5.0,7.0]\n",
+                    """
+                            category\tpercentile_cont
+                            0\t[4.0,6.0,8.0]
+                            1\t[3.0,5.0,7.0]
+                            """,
                     "select category, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) from test group by category order by category"
             );
         });
@@ -240,12 +252,14 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
                     ")");
             // Each group has one value, all percentiles should return that value
             assertSql(
-                    "x\tpercentile_cont\n" +
-                            "1\t[1.0,1.0,1.0]\n" +
-                            "2\t[2.0,2.0,2.0]\n" +
-                            "3\t[3.0,3.0,3.0]\n" +
-                            "4\t[4.0,4.0,4.0]\n" +
-                            "5\t[5.0,5.0,5.0]\n",
+                    """
+                            x\tpercentile_cont
+                            1\t[1.0,1.0,1.0]
+                            2\t[2.0,2.0,2.0]
+                            3\t[3.0,3.0,3.0]
+                            4\t[4.0,4.0,4.0]
+                            5\t[5.0,5.0,5.0]
+                            """,
                     "select x, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) from test group by x order by x"
             );
         });
@@ -257,8 +271,10 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             execute("create table test as (select cast(x as double) value from long_sequence(100))");
             // Test with percentiles that have more decimal places
             assertSql(
-                    "count\n" +
-                            "100\n",
+                    """
+                            count
+                            100
+                            """,
                     "select count(*) from (select value, percentile_cont(value, ARRAY[0.1, 0.25, 0.333, 0.5, 0.667, 0.75, 0.9]) over () from test)"
             );
         });
@@ -273,17 +289,19 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             // 50th: position = 0.50 * 9 = 4.5 → -0.5
             // 75th: position = 0.75 * 9 = 6.75 → 1.75
             assertSql(
-                    "value\tpercentile_cont\n" +
-                            "-5.0\t[-2.75,-0.5,1.75]\n" +
-                            "-4.0\t[-2.75,-0.5,1.75]\n" +
-                            "-3.0\t[-2.75,-0.5,1.75]\n" +
-                            "-2.0\t[-2.75,-0.5,1.75]\n" +
-                            "-1.0\t[-2.75,-0.5,1.75]\n" +
-                            "0.0\t[-2.75,-0.5,1.75]\n" +
-                            "1.0\t[-2.75,-0.5,1.75]\n" +
-                            "2.0\t[-2.75,-0.5,1.75]\n" +
-                            "3.0\t[-2.75,-0.5,1.75]\n" +
-                            "4.0\t[-2.75,-0.5,1.75]\n",
+                    """
+                            value\tpercentile_cont
+                            -5.0\t[-2.75,-0.5,1.75]
+                            -4.0\t[-2.75,-0.5,1.75]
+                            -3.0\t[-2.75,-0.5,1.75]
+                            -2.0\t[-2.75,-0.5,1.75]
+                            -1.0\t[-2.75,-0.5,1.75]
+                            0.0\t[-2.75,-0.5,1.75]
+                            1.0\t[-2.75,-0.5,1.75]
+                            2.0\t[-2.75,-0.5,1.75]
+                            3.0\t[-2.75,-0.5,1.75]
+                            4.0\t[-2.75,-0.5,1.75]
+                            """,
                     "select value, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) over () from test"
             );
         });
@@ -295,17 +313,19 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             execute("create table test as (select cast(x as double) value from long_sequence(10))");
             // Test with just two percentiles
             assertSql(
-                    "value\tpercentile_cont\n" +
-                            "1.0\t[3.25,7.75]\n" +
-                            "2.0\t[3.25,7.75]\n" +
-                            "3.0\t[3.25,7.75]\n" +
-                            "4.0\t[3.25,7.75]\n" +
-                            "5.0\t[3.25,7.75]\n" +
-                            "6.0\t[3.25,7.75]\n" +
-                            "7.0\t[3.25,7.75]\n" +
-                            "8.0\t[3.25,7.75]\n" +
-                            "9.0\t[3.25,7.75]\n" +
-                            "10.0\t[3.25,7.75]\n",
+                    """
+                            value\tpercentile_cont
+                            1.0\t[3.25,7.75]
+                            2.0\t[3.25,7.75]
+                            3.0\t[3.25,7.75]
+                            4.0\t[3.25,7.75]
+                            5.0\t[3.25,7.75]
+                            6.0\t[3.25,7.75]
+                            7.0\t[3.25,7.75]
+                            8.0\t[3.25,7.75]
+                            9.0\t[3.25,7.75]
+                            10.0\t[3.25,7.75]
+                            """,
                     "select value, percentile_cont(value, ARRAY[0.25, 0.75]) over () from test"
             );
         });
@@ -317,8 +337,10 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             execute("create table test as (select cast(x as double) value from long_sequence(10))");
             // Test with 20 percentiles
             assertSql(
-                    "count\n" +
-                            "10\n",
+                    """
+                            count
+                            10
+                            """,
                     "select count(*) from (" +
                             "select value, percentile_cont(value, ARRAY[" +
                             "0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, " +
@@ -334,8 +356,10 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             execute("create table test (x long)");
             execute("insert into test values (null), (null), (null)");
             assertSql(
-                    "percentile_cont\n" +
-                            "null\n",
+                    """
+                            percentile_cont
+                            null
+                            """,
                     "select percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
             );
         });
@@ -395,8 +419,10 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
         assertMemoryLeak(() -> {
             execute("create table test (x double)");
             assertSql(
-                    "percentile_cont\n" +
-                            "null\n",
+                    """
+                            percentile_cont
+                            null
+                            """,
                     "select percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
             );
         });
@@ -457,8 +483,10 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             // 0.90: position = 0.90 * 4 = 3.6, interpolate between 7.0 and 10.0 = 7.0 + 0.6*3 = 8.8
             // 0.50: position = 0.50 * 4 = 2.0, returns 5.0
             assertSql(
-                    "percentile_cont\n" +
-                            "[9.76,9.399999999999999,8.8,5.0]\n",
+                    """
+                            percentile_cont
+                            [9.76,9.399999999999999,8.8,5.0]
+                            """,
                     "select percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
             );
         });
@@ -481,8 +509,10 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             execute("create table test (x double)");
             execute("insert into test values (42.0)");
             assertSql(
-                    "percentile_cont\n" +
-                            "[42.0,42.0,42.0,42.0]\n",
+                    """
+                            percentile_cont
+                            [42.0,42.0,42.0,42.0]
+                            """,
                     "select percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
             );
         });
@@ -494,8 +524,10 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             execute("create table test (x double)");
             execute("insert into test values (1.0), (null), (null), (null)");
             assertSql(
-                    "percentile_cont\n" +
-                            "[1.0,1.0,1.0,1.0]\n",
+                    """
+                            percentile_cont
+                            [1.0,1.0,1.0,1.0]
+                            """,
                     "select percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
             );
         });
@@ -513,8 +545,10 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             // 0.90: position = 0.90 * 1 = 0.90, interpolate 10 + 0.90*10 = 19.0
             // 0.50: position = 0.50 * 1 = 0.50, interpolate 10 + 0.50*10 = 15.0
             assertSql(
-                    "percentile_cont\n" +
-                            "[19.8,19.5,19.0,15.0]\n",
+                    """
+                            percentile_cont
+                            [19.8,19.5,19.0,15.0]
+                            """,
                     "select percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
             );
         });
@@ -532,8 +566,10 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             // 0.90: position = 0.90 * 5 = 4.5, interpolate between 3.0 and 3.0 = 3.0
             // 0.50: position = 0.50 * 5 = 2.5, interpolate between 2.0 and 2.0 = 2.0
             assertSql(
-                    "percentile_cont\n" +
-                            "[3.0,3.0,3.0,2.0]\n",
+                    """
+                            percentile_cont
+                            [3.0,3.0,3.0,2.0]
+                            """,
                     "select percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
             );
         });
@@ -552,9 +588,11 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             // Group A: interpolate between 2.0 and 3.0
             // Group B: interpolate between 20.0 and 30.0
             assertSql(
-                    "category\tpercentile_cont\n" +
-                            "A\t[2.96,2.9,2.8,2.0]\n" +
-                            "B\t[29.6,29.0,28.0,20.0]\n",
+                    """
+                            category\tpercentile_cont
+                            A\t[2.96,2.9,2.8,2.0]
+                            B\t[29.6,29.0,28.0,20.0]
+                            """,
                     "select category, percentile_cont(value, ARRAY[0.98, 0.95, 0.90, 0.50]) from test order by category"
             );
         });
@@ -570,8 +608,10 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             // 0.95: position = 46.55, interpolate between indices 46 and 47
             // 0.90: position = 44.10, interpolate between indices 44 and 45
             // 0.50: position = 24.50, interpolate between indices 24 and 25
-            assertSql("percentile_cont\n" +
-                            "[415.8181599999982,268.20624999999984,225.85070000000002,64.8365]\n",
+            assertSql("""
+                            percentile_cont
+                            [415.8181599999982,268.20624999999984,225.85070000000002,64.8365]
+                            """,
                     "select percentile_cont(value, ARRAY[0.98, 0.95, 0.90, 0.50]) from tx_traffic");
         });
     }
@@ -588,8 +628,10 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             // 0.90: position = 0.90 * 5 = 4.5, interpolate between 5.0 and 10.0 = 5 + 0.5*5 = 7.5
             // 0.50: position = 0.50 * 5 = 2.5, interpolate between -1.0 and 1.0 = -1 + 0.5*2 = 0.0
             assertSql(
-                    "percentile_cont\n" +
-                            "[9.500000000000002,8.75,7.5,0.0]\n",
+                    """
+                            percentile_cont
+                            [9.500000000000002,8.75,7.5,0.0]
+                            """,
                     "select percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
             );
         });
@@ -616,8 +658,10 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
         assertMemoryLeak(() -> {
             execute(txDdl);
             execute(txDml);
-            assertSql("percentile_cont\n" +
-                            "[415.8181599999982,268.20624999999984,225.85070000000002,64.8365]\n",
+            assertSql("""
+                            percentile_cont
+                            [415.8181599999982,268.20624999999984,225.85070000000002,64.8365]
+                            """,
                     "select percentile_cont(value, ARRAY[0.98, 0.95, 0.90, 0.50]) from tx_traffic");
         });
     }

@@ -32,6 +32,29 @@ import org.junit.Test;
 public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testAllNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (x DOUBLE)");
+            execute("INSERT INTO test VALUES (null), (null), (null)");
+            assertSql(
+                    "approx_percentile\nnull\n",
+                    "SELECT approx_percentile(x, ARRAY[0.5, 0.95]) FROM test"
+            );
+        });
+    }
+
+    @Test
+    public void testAllSameValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT 5.0 x FROM long_sequence(100))");
+            assertSql(
+                    "approx_percentile\n[5.0,5.0,5.0]\n",
+                    "SELECT approx_percentile(x, ARRAY[0.25, 0.5, 0.75]) FROM test"
+            );
+        });
+    }
+
+    @Test
     public void testBasicMultiPercentile() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) x FROM long_sequence(100))");
@@ -65,29 +88,6 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
     }
 
     @Test
-    public void testAllNulls() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE test (x DOUBLE)");
-            execute("INSERT INTO test VALUES (null), (null), (null)");
-            assertSql(
-                    "approx_percentile\nnull\n",
-                    "SELECT approx_percentile(x, ARRAY[0.5, 0.95]) FROM test"
-            );
-        });
-    }
-
-    @Test
-    public void testAllSameValues() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE test AS (SELECT 5.0 x FROM long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n[5.0,5.0,5.0]\n",
-                    "SELECT approx_percentile(x, ARRAY[0.25, 0.5, 0.75]) FROM test"
-            );
-        });
-    }
-
-    @Test
     public void testGroupBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (category SYMBOL, value DOUBLE)");
@@ -96,12 +96,93 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
                     ('A', 1.0), ('A', 2.0), ('A', 3.0), ('A', 4.0), ('A', 5.0),
                     ('B', 10.0), ('B', 20.0), ('B', 30.0), ('B', 40.0), ('B', 50.0)
                     """);
-            String result = "category\tapprox_percentile\n" +
-                    "A\t[3.0625,5.1875]\n" +
-                    "B\t[30.5,51.5]\n";
+            String result = """
+                    category\tapprox_percentile
+                    A\t[3.0625,5.1875]
+                    B\t[30.5,51.5]
+                    """;
             assertSql(
                     result,
                     "SELECT category, approx_percentile(value, ARRAY[0.5, 1.0]) FROM test ORDER BY category"
+            );
+        });
+    }
+
+    @Test
+    public void testInvalidNegativePrecision() throws Exception {
+        assertException(
+                "SELECT approx_percentile(x::DOUBLE, ARRAY[0.5], -1) FROM long_sequence(1)",
+                48,
+                "precision must be between 0 and 5"
+        );
+    }
+
+    @Test
+    public void testInvalidPrecision() throws Exception {
+        assertException(
+                "SELECT approx_percentile(x::DOUBLE, ARRAY[0.5], 6) FROM long_sequence(1)",
+                48,
+                "precision must be between 0 and 5"
+        );
+    }
+
+    @Test
+    public void testLongInputAllNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (x LONG)");
+            execute("INSERT INTO test VALUES (null), (null), (null)");
+            assertSql(
+                    "approx_percentile\nnull\n",
+                    "SELECT approx_percentile(x, ARRAY[0.5, 0.99]) FROM test"
+            );
+        });
+    }
+
+    @Test
+    public void testLongInputHighPrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x FROM long_sequence(1000))");
+            assertSql(
+                    "approx_percentile\n[500.0,950.0]\n",
+                    "SELECT approx_percentile(x, ARRAY[0.5, 0.95], 3) FROM test"
+            );
+        });
+    }
+
+    @Test
+    public void testLongInputVariant() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
+            assertSql(
+                    "approx_percentile\n[51.0,103.0]\n",
+                    "SELECT approx_percentile(x, ARRAY[0.5, 1.0]) FROM test"
+            );
+        });
+    }
+
+    @Test
+    public void testLongInputWithPrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x FROM long_sequence(1000))");
+            assertSql(
+                    "approx_percentile\n[501.0,951.0]\n",
+                    "SELECT approx_percentile(x, ARRAY[0.5, 0.95], 2) FROM test"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiResultsMatchIndividual() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) x FROM long_sequence(100))");
+
+            String singleP50 = queryResult("SELECT approx_percentile(x, 0.5) FROM test");
+            String singleP95 = queryResult("SELECT approx_percentile(x, 0.95) FROM test");
+            String singleP100 = queryResult("SELECT approx_percentile(x, 1.0) FROM test");
+
+            assertSql(
+                    "approx_percentile\n[" + singleP50 + "," + singleP95 + "," + singleP100 + "]\n",
+                    "SELECT approx_percentile(x, ARRAY[0.5, 0.95, 1.0]) FROM test"
             );
         });
     }
@@ -130,91 +211,6 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
     }
 
     @Test
-    public void testWithPrecision() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) x FROM long_sequence(1000))");
-            assertSql(
-                    "approx_percentile\n[501.9921875,951.9921875]\n",
-                    "SELECT approx_percentile(x, ARRAY[0.5, 0.95], 2) FROM test"
-            );
-        });
-    }
-
-    @Test
-    public void testWithHighPrecision() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) x FROM long_sequence(1000))");
-            assertSql(
-                    "approx_percentile\n[500.2490234375,950.4990234375]\n",
-                    "SELECT approx_percentile(x, ARRAY[0.5, 0.95], 3) FROM test"
-            );
-        });
-    }
-
-    @Test
-    public void testInvalidPrecision() throws Exception {
-        assertException(
-                "SELECT approx_percentile(x::DOUBLE, ARRAY[0.5], 6) FROM long_sequence(1)",
-                48,
-                "precision must be between 0 and 5"
-        );
-    }
-
-    @Test
-    public void testInvalidNegativePrecision() throws Exception {
-        assertException(
-                "SELECT approx_percentile(x::DOUBLE, ARRAY[0.5], -1) FROM long_sequence(1)",
-                48,
-                "precision must be between 0 and 5"
-        );
-    }
-
-    @Test
-    public void testLongInputVariant() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n[51.0,103.0]\n",
-                    "SELECT approx_percentile(x, ARRAY[0.5, 1.0]) FROM test"
-            );
-        });
-    }
-
-    @Test
-    public void testLongInputWithPrecision() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE test AS (SELECT x FROM long_sequence(1000))");
-            assertSql(
-                    "approx_percentile\n[501.0,951.0]\n",
-                    "SELECT approx_percentile(x, ARRAY[0.5, 0.95], 2) FROM test"
-            );
-        });
-    }
-
-    @Test
-    public void testLongInputHighPrecision() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE test AS (SELECT x FROM long_sequence(1000))");
-            assertSql(
-                    "approx_percentile\n[500.0,950.0]\n",
-                    "SELECT approx_percentile(x, ARRAY[0.5, 0.95], 3) FROM test"
-            );
-        });
-    }
-
-    @Test
-    public void testLongInputAllNulls() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE test (x LONG)");
-            execute("INSERT INTO test VALUES (null), (null), (null)");
-            assertSql(
-                    "approx_percentile\nnull\n",
-                    "SELECT approx_percentile(x, ARRAY[0.5, 0.99]) FROM test"
-            );
-        });
-    }
-
-    @Test
     public void testThrowsOnNegativeDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (x DOUBLE)");
@@ -231,17 +227,23 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
     }
 
     @Test
-    public void testMultiResultsMatchIndividual() throws Exception {
+    public void testWithHighPrecision() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) x FROM long_sequence(100))");
-
-            String singleP50 = queryResult("SELECT approx_percentile(x, 0.5) FROM test");
-            String singleP95 = queryResult("SELECT approx_percentile(x, 0.95) FROM test");
-            String singleP100 = queryResult("SELECT approx_percentile(x, 1.0) FROM test");
-
+            execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) x FROM long_sequence(1000))");
             assertSql(
-                    "approx_percentile\n[" + singleP50 + "," + singleP95 + "," + singleP100 + "]\n",
-                    "SELECT approx_percentile(x, ARRAY[0.5, 0.95, 1.0]) FROM test"
+                    "approx_percentile\n[500.2490234375,950.4990234375]\n",
+                    "SELECT approx_percentile(x, ARRAY[0.5, 0.95], 3) FROM test"
+            );
+        });
+    }
+
+    @Test
+    public void testWithPrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) x FROM long_sequence(1000))");
+            assertSql(
+                    "approx_percentile\n[501.9921875,951.9921875]\n",
+                    "SELECT approx_percentile(x, ARRAY[0.5, 0.95], 2) FROM test"
             );
         });
     }

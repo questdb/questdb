@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
@@ -57,14 +56,9 @@ import io.questdb.std.Unsafe;
 
 public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
+    private static final ArrayColumnTypes COLUMN_TYPES = new ArrayColumnTypes();
     private static final String NAME = "percentile_cont";
     private static final String SIGNATURE = NAME + "(DD)";
-
-    private static final ArrayColumnTypes COLUMN_TYPES = new ArrayColumnTypes();
-
-    static {
-        COLUMN_TYPES.add(ColumnType.LONG); // list pointer
-    }
 
     @Override
     public String getSignature() {
@@ -261,10 +255,10 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
 
                     double result;
                     if (lowerIndex == upperIndex) {
-                        result = listMemory.getDouble(listPtr + 8 + lowerIndex * 8);
+                        result = listMemory.getDouble(listPtr + 8 + lowerIndex * 8L);
                     } else {
-                        double lowerValue = listMemory.getDouble(listPtr + 8 + lowerIndex * 8);
-                        double upperValue = listMemory.getDouble(listPtr + 8 + upperIndex * 8);
+                        double lowerValue = listMemory.getDouble(listPtr + 8 + lowerIndex * 8L);
+                        double upperValue = listMemory.getDouble(listPtr + 8 + upperIndex * 8L);
                         double fraction = position - lowerIndex;
                         result = lowerValue + (upperValue - lowerValue) * fraction;
                     }
@@ -303,14 +297,6 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
             listMemory.truncate();
         }
 
-        private void quickSort(long listPtr, long left, long right) {
-            if (left < right) {
-                long pi = partition(listPtr, left, right);
-                quickSort(listPtr, left, pi - 1);
-                quickSort(listPtr, pi + 1, right);
-            }
-        }
-
         private long partition(long listPtr, long left, long right) {
             double pivot = listMemory.getDouble(listPtr + right * 8);
             long i = left - 1;
@@ -323,6 +309,14 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
             }
             swap(listPtr, i + 1, right);
             return i + 1;
+        }
+
+        private void quickSort(long listPtr, long left, long right) {
+            if (left < right) {
+                long pi = partition(listPtr, left, right);
+                quickSort(listPtr, left, pi - 1);
+                quickSort(listPtr, pi + 1, right);
+            }
         }
 
         private void swap(long listPtr, long i, long j) {
@@ -414,10 +408,10 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
             int upperIndex = (int) Math.ceil(position);
 
             if (lowerIndex == upperIndex) {
-                result = listMemory.getDouble(lowerIndex * 8);
+                result = listMemory.getDouble(lowerIndex * 8L);
             } else {
-                double lowerValue = listMemory.getDouble(lowerIndex * 8);
-                double upperValue = listMemory.getDouble(upperIndex * 8);
+                double lowerValue = listMemory.getDouble(lowerIndex * 8L);
+                double upperValue = listMemory.getDouble(upperIndex * 8L);
                 double fraction = position - lowerIndex;
                 result = lowerValue + (upperValue - lowerValue) * fraction;
             }
@@ -453,14 +447,6 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
             result = Double.NaN;
         }
 
-        private void quickSort(long left, long right) {
-            if (left < right) {
-                long pi = partition(left, right);
-                quickSort(left, pi - 1);
-                quickSort(pi + 1, right);
-            }
-        }
-
         private long partition(long left, long right) {
             double pivot = listMemory.getDouble(right * 8);
             long i = left - 1;
@@ -475,10 +461,22 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
             return i + 1;
         }
 
+        private void quickSort(long left, long right) {
+            if (left < right) {
+                long pi = partition(left, right);
+                quickSort(left, pi - 1);
+                quickSort(pi + 1, right);
+            }
+        }
+
         private void swap(long i, long j) {
             double temp = listMemory.getDouble(i * 8);
             listMemory.putDouble(i * 8, listMemory.getDouble(j * 8));
             listMemory.putDouble(j * 8, temp);
         }
+    }
+
+    static {
+        COLUMN_TYPES.add(ColumnType.LONG); // list pointer
     }
 }
