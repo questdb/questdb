@@ -1446,6 +1446,7 @@ dependencies = [
  "qdb-core",
  "rand",
  "rayon",
+ "seq-macro",
  "serde",
  "serde_json",
  "tempfile",
