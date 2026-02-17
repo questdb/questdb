@@ -22,37 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.groupby;
+package io.questdb.cairo.sql.async;
 
-import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-public class LastSymbolGroupByFunction extends FirstSymbolGroupByFunction {
-    public LastSymbolGroupByFunction(@NotNull SymbolFunction arg) {
-        super(arg);
-    }
-
-    @Override
-    public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (rowId > mapValue.getLong(valueIndex)) {
-            computeFirst(mapValue, record, rowId);
-        }
-    }
-
-    @Override
-    public String getName() {
-        return "last";
-    }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        long srcRowId = srcValue.getLong(valueIndex);
-        long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId > destRowId) {
-            destValue.putLong(valueIndex, srcRowId);
-            destValue.putInt(valueIndex + 1, srcValue.getInt(valueIndex + 1));
-        }
-    }
+@FunctionalInterface
+public interface UnorderedPageFrameReducer {
+    void reduce(
+            int workerId,
+            @NotNull PageFrameMemoryRecord record,
+            int frameIndex,
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
+            @NotNull UnorderedPageFrameSequence<?> frameSequence,
+            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
+    );
 }

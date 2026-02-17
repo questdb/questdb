@@ -54,7 +54,9 @@ public class LastNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (Numbers.isFinite(arg.getDouble(record))) {
-            computeFirst(mapValue, record, rowId);
+            if (Numbers.isNull(mapValue.getDouble(valueIndex + 1)) || rowId > mapValue.getLong(valueIndex)) {
+                computeFirst(mapValue, record, rowId);
+            }
         }
     }
 
