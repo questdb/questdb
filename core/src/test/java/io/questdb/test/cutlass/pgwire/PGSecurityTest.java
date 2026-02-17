@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.pgwire.PGServer;
@@ -278,6 +279,38 @@ public class PGSecurityTest extends BasePGTest {
                     try (final Statement statement = defaultUserConnection.createStatement()) {
                         statement.execute(query);
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSecurityContextFactoryThrowsCairoException() throws Exception {
+        final PGConfiguration conf = new Port0PGConfiguration() {
+            @Override
+            public FactoryProvider getFactoryProvider() {
+                return new DefaultFactoryProvider() {
+                    @Override
+                    public @NotNull SecurityContextFactory getSecurityContextFactory() {
+                        return (principalContext, interfaceId) -> {
+                            throw CairoException.nonCritical().put("test security context error");
+                        };
+                    }
+                };
+            }
+        };
+
+        assertMemoryLeak(() -> {
+            try (
+                    final PGServer server = createPGServer(conf);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try {
+                    getConnection(server.getPort(), false, true);
+                    Assert.fail("Connection should have been denied");
+                } catch (PSQLException e) {
+                    assertContains(e.getMessage(), "test security context error");
                 }
             }
         });
