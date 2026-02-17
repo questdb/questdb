@@ -36,17 +36,17 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.async.PageFrameReduceTask;
-import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
-import io.questdb.cairo.sql.async.PageFrameReducer;
-import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.cairo.sql.async.UnorderedPageFrameReducer;
+import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -56,7 +56,6 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.jit.CompiledFilter;
-import io.questdb.mp.SCSequence;
 import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
@@ -73,17 +72,16 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilt
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
 /**
- * Factory for parallel non-keyed markout horizon query execution using PageFrameSequence.
+ * Factory for parallel non-keyed markout horizon query execution.
  * <p>
  * Produces a single output row by aggregating all master rows with their ASOF-joined slave rows
  * across all sequence offsets.
  */
 public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
-    private static final PageFrameReducer FILTER_AND_REDUCE = AsyncHorizonJoinNotKeyedRecordCursorFactory::filterAndReduce;
-    private static final PageFrameReducer REDUCE = AsyncHorizonJoinNotKeyedRecordCursorFactory::reduce;
-    private final SCSequence collectSubSeq = new SCSequence();
+    private static final UnorderedPageFrameReducer FILTER_AND_REDUCE = AsyncHorizonJoinNotKeyedRecordCursorFactory::filterAndReduce;
+    private static final UnorderedPageFrameReducer REDUCE = AsyncHorizonJoinNotKeyedRecordCursorFactory::reduce;
     private final AsyncHorizonJoinNotKeyedRecordCursor cursor;
-    private final PageFrameSequence<AsyncHorizonJoinNotKeyedAtom> frameSequence;
+    private final UnorderedPageFrameSequence<AsyncHorizonJoinNotKeyedAtom> frameSequence;
     private final ObjList<GroupByFunction> groupByFunctions;
     // Combined metadata (master + offsets pseudo-table + slave) used for GROUP BY function column references in toPlan
     private final JoinRecordMetadata horizonJoinMetadata;
@@ -102,7 +100,6 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             @NotNull JoinRecordMetadata horizonJoinMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull RecordCursorFactory slaveFactory,
-            @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @NotNull LongList offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
@@ -187,15 +184,13 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     workerCount
             );
 
-            this.frameSequence = new PageFrameSequence<>(
+            this.frameSequence = new UnorderedPageFrameSequence<>(
                     engine,
                     configuration,
                     messageBus,
                     atom,
                     filter != null ? FILTER_AND_REDUCE : REDUCE,
-                    reduceTaskFactory,
-                    workerCount,
-                    PageFrameReduceTask.TYPE_WINDOW_JOIN
+                    workerCount
             );
 
             this.cursor = new AsyncHorizonJoinNotKeyedRecordCursor(
@@ -209,18 +204,14 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
     }
 
     @Override
-    public PageFrameSequence<AsyncHorizonJoinNotKeyedAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
-        return frameSequence.of(masterFactory, executionContext, collectSubSeq, order);
-    }
-
-    @Override
     public RecordCursorFactory getBaseFactory() {
         return masterFactory;
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(execute(executionContext, collectSubSeq, ORDER_ASC), executionContext);
+        frameSequence.of(masterFactory, executionContext, ORDER_ASC);
+        cursor.of(frameSequence, executionContext);
         return cursor;
     }
 
@@ -275,28 +266,29 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
     private static void filterAndReduce(
             int workerId,
             @NotNull PageFrameMemoryRecord record,
-            @NotNull PageFrameReduceTask task,
+            int frameIndex,
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
-            @Nullable PageFrameSequence<?> stealingFrameSequence
+            @NotNull UnorderedPageFrameSequence<?> frameSequence,
+            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
     ) {
-        final long frameRowCount = task.getFrameRowCount();
-        if (frameRowCount == 0) {
+        final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
+        assert frameRowCount > 0;
+
+        @SuppressWarnings("unchecked") final AsyncHorizonJoinNotKeyedAtom atom =
+                ((UnorderedPageFrameSequence<AsyncHorizonJoinNotKeyedAtom>) frameSequence).getAtom();
+
+        final long offsetCount = atom.getOffsetCount();
+        if (offsetCount == 0) {
             return;
         }
 
-        final PageFrameSequence<AsyncHorizonJoinNotKeyedAtom> frameSequence = task.getFrameSequence(AsyncHorizonJoinNotKeyedAtom.class);
-        final AsyncHorizonJoinNotKeyedAtom atom = frameSequence.getAtom();
-
-        final long sequenceRowCount = atom.getSequenceRowCount();
-        if (sequenceRowCount == 0) {
-            return;
-        }
-
-        final PageFrameMemory frameMemory = task.populateFrameMemory();
-        record.init(frameMemory);
-
-        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == frameSequence;
+        final boolean owner = stealingFrameSequence == frameSequence;
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+
+        final AsyncFilterContext filterCtx = atom.getFilterContext();
+        final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
+        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+        record.init(frameMemory);
 
         try {
             final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
@@ -307,12 +299,23 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             final Function filter = atom.getFilter(slotId);
 
             // Apply filter to master rows
-            final DirectLongList rows = task.getFilteredRows();
+            final DirectLongList rows = filterCtx.getFilteredRows(slotId);
             rows.clear();
             if (compiledFilter == null || frameMemory.hasColumnTops()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
-                applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
+                final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
+                applyCompiledFilter(
+                        compiledFilter,
+                        filterCtx.getBindVarMemory(),
+                        filterCtx.getBindVarFunctions(),
+                        frameMemory,
+                        addressCache,
+                        filterCtx.getDataAddresses(slotId),
+                        filterCtx.getAuxAddresses(slotId),
+                        rows,
+                        frameRowCount
+                );
             }
 
             final long filteredRowCount = rows.size();
@@ -351,6 +354,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     functionUpdater
             );
         } finally {
+            frameMemoryPool.releaseParquetBuffers();
             atom.release(slotId);
         }
     }
@@ -480,28 +484,29 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
     private static void reduce(
             int workerId,
             @NotNull PageFrameMemoryRecord record,
-            @NotNull PageFrameReduceTask task,
+            int frameIndex,
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
-            @Nullable PageFrameSequence<?> stealingFrameSequence
+            @NotNull UnorderedPageFrameSequence<?> frameSequence,
+            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
     ) {
-        final long frameRowCount = task.getFrameRowCount();
-        if (frameRowCount == 0) {
+        final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
+        assert frameRowCount > 0;
+
+        @SuppressWarnings("unchecked") final AsyncHorizonJoinNotKeyedAtom atom =
+                ((UnorderedPageFrameSequence<AsyncHorizonJoinNotKeyedAtom>) frameSequence).getAtom();
+
+        final long offsetCount = atom.getOffsetCount();
+        if (offsetCount == 0) {
             return;
         }
 
-        final PageFrameSequence<AsyncHorizonJoinNotKeyedAtom> frameSequence = task.getFrameSequence(AsyncHorizonJoinNotKeyedAtom.class);
-        final AsyncHorizonJoinNotKeyedAtom atom = frameSequence.getAtom();
-
-        final long sequenceRowCount = atom.getSequenceRowCount();
-        if (sequenceRowCount == 0) {
-            return;
-        }
-
-        final PageFrameMemory frameMemory = task.populateFrameMemory();
-        record.init(frameMemory);
-
-        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == frameSequence;
+        final boolean owner = stealingFrameSequence == frameSequence;
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+
+        final AsyncFilterContext filterCtx = atom.getFilterContext();
+        final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
+        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+        record.init(frameMemory);
 
         try {
             final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
@@ -540,6 +545,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     functionUpdater
             );
         } finally {
+            frameMemoryPool.releaseParquetBuffers();
             atom.release(slotId);
         }
     }

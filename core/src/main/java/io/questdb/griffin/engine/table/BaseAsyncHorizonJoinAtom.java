@@ -65,8 +65,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMemory;
-
 /**
  * Base class for HORIZON JOIN atoms that manages common per-worker resources.
  * <p>
@@ -77,16 +75,14 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMem
  * 4. Filter resources (compiled and Java filters)
  */
 public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
-    protected final ObjList<Function> bindVarFunctions;
-    protected final MemoryCARW bindVarMemory;
-    protected final CompiledFilter compiledFilter;
+    protected final AsyncFilterContext filterCtx;
     protected final int masterTimestampColumnIndex;
     protected final long masterTimestampScale;
+    protected final long offsetCount;
     protected final LongList offsets;
     protected final GroupByAllocator ownerAllocator;
     protected final Map ownerAsOfJoinMap;
     protected final HorizonJoinRecord ownerCombinedRecord;
-    protected final Function ownerFilter;
     protected final GroupByFunctionsUpdater ownerFunctionUpdater;
     protected final ObjList<GroupByFunction> ownerGroupByFunctions;
     // Per-worker horizon timestamp iterators for sorted processing
@@ -99,7 +95,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     protected final ObjList<GroupByAllocator> perWorkerAllocators;
     protected final ObjList<Map> perWorkerAsOfJoinMaps;
     protected final ObjList<HorizonJoinRecord> perWorkerCombinedRecords;
-    protected final ObjList<Function> perWorkerFilters;
     protected final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     protected final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     protected final ObjList<AsyncHorizonTimestampIterator> perWorkerHorizonIterators;
@@ -111,8 +106,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     // Per-worker symbol translating records for integer-based symbol key comparison.
     // Null when there are no symbol columns in the ASOF join key.
     protected final ObjList<SymbolTranslatingRecord> perWorkerSymbolTranslatingRecords;
-    protected final long sequenceRowCount;
-    protected final int slotCount;
     private final HorizonJoinSymbolTableSource horizonJoinSymbolTableSource;
 
     protected BaseAsyncHorizonJoinAtom(
@@ -153,18 +146,26 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         assert perWorkerGroupByFunctions == null || perWorkerGroupByFunctions.size() == workerCount;
         assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
 
-        this.slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
         this.masterTimestampColumnIndex = masterTimestampColumnIndex;
         this.offsets = offsets;
-        this.sequenceRowCount = offsets.size();
+        this.offsetCount = offsets.size();
         this.horizonJoinSymbolTableSource = new HorizonJoinSymbolTableSource(columnSources, columnIndexes);
 
-        // Filter resources (ownership transferred from caller)
-        this.compiledFilter = compiledFilter;
-        this.bindVarMemory = bindVarMemory;
-        this.bindVarFunctions = bindVarFunctions;
-        this.ownerFilter = ownerFilter;
-        this.perWorkerFilters = perWorkerFilters;
+        // Filter and memory pool resources (ownership transferred from caller)
+        // TODO(puzpuzpuz): use late materialization
+        this.filterCtx = new AsyncFilterContext(
+                configuration,
+                compiledFilter,
+                bindVarMemory,
+                bindVarFunctions,
+                ownerFilter,
+                null, // no late materialization
+                perWorkerFilters,
+                workerCount,
+                0, // no filtered memory records
+                1, // owner memory pool capacity
+                1  // per-worker memory pool capacity
+        );
 
         // Group by functions (ownership transferred from caller)
         this.ownerGroupByFunctions = ownerGroupByFunctions;
@@ -193,9 +194,9 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
                         asOfWriteStringAsVarcharSlave,
                         writeTimestampAsNanosSlave
                 );
-                this.perWorkerMasterAsOfJoinMapSinks = new ObjList<>(slotCount);
-                this.perWorkerSlaveAsOfJoinMapSinks = new ObjList<>(slotCount);
-                for (int i = 0; i < slotCount; i++) {
+                this.perWorkerMasterAsOfJoinMapSinks = new ObjList<>(workerCount);
+                this.perWorkerSlaveAsOfJoinMapSinks = new ObjList<>(workerCount);
+                for (int i = 0; i < workerCount; i++) {
                     perWorkerMasterAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(
                             masterAsOfJoinMapSinkClass,
                             masterAsOfJoinColumnTypes,
@@ -228,24 +229,24 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             this.masterTimestampScale = masterTimestampScale;
 
             // Per-worker locks
-            this.perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
+            this.perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
 
             // Create time frame cursors from slave factory - one per worker + owner
             final long lookahead = configuration.getSqlAsOfJoinLookAhead();
             this.ownerSlaveTimeFrameCursor = slaveFactory.newTimeFrameCursor();
             this.ownerSlaveTimeFrameHelper = new HorizonJoinTimeFrameHelper(lookahead, slaveTsScale);
-            this.perWorkerSlaveTimeFrameCursors = new ObjList<>(slotCount);
-            this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(slotCount);
-            for (int i = 0; i < slotCount; i++) {
+            this.perWorkerSlaveTimeFrameCursors = new ObjList<>(workerCount);
+            this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(workerCount);
+            for (int i = 0; i < workerCount; i++) {
                 perWorkerSlaveTimeFrameCursors.add(slaveFactory.newTimeFrameCursor());
                 perWorkerSlaveTimeFrameHelpers.add(new HorizonJoinTimeFrameHelper(lookahead, slaveTsScale));
             }
 
             // Per-worker ASOF maps and SingleRecordSink targets for key comparison
             if (asOfJoinKeyTypes != null) {
-                this.perWorkerAsOfJoinMaps = new ObjList<>(slotCount);
+                this.perWorkerAsOfJoinMaps = new ObjList<>(workerCount);
                 final SingleColumnType asOfValueTypes = new SingleColumnType(ColumnType.LONG);
-                for (int i = 0; i < slotCount; i++) {
+                for (int i = 0; i < workerCount; i++) {
                     perWorkerAsOfJoinMaps.add(MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes));
                 }
                 this.ownerAsOfJoinMap = MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes);
@@ -257,8 +258,8 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             // Per-worker symbol translating records for integer-based symbol key comparison
             if (masterSymbolKeyColumnIndices != null) {
                 this.ownerSymbolTranslatingRecord = new SymbolTranslatingRecord(masterColumnCount, masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices);
-                this.perWorkerSymbolTranslatingRecords = new ObjList<>(slotCount);
-                for (int i = 0; i < slotCount; i++) {
+                this.perWorkerSymbolTranslatingRecords = new ObjList<>(workerCount);
+                for (int i = 0; i < workerCount; i++) {
                     perWorkerSymbolTranslatingRecords.add(new SymbolTranslatingRecord(masterColumnCount, masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices));
                 }
             } else {
@@ -269,13 +270,13 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             // Group by updaters
             final Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
             this.ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);
-            this.perWorkerFunctionUpdaters = new ObjList<>(slotCount);
+            this.perWorkerFunctionUpdaters = new ObjList<>(workerCount);
             if (perWorkerGroupByFunctions != null) {
-                for (int i = 0; i < slotCount; i++) {
+                for (int i = 0; i < workerCount; i++) {
                     perWorkerFunctionUpdaters.add(GroupByFunctionsUpdaterFactory.getInstance(updaterClass, perWorkerGroupByFunctions.getQuick(i)));
                 }
             } else {
-                for (int i = 0; i < slotCount; i++) {
+                for (int i = 0; i < workerCount; i++) {
                     perWorkerFunctionUpdaters.add(ownerFunctionUpdater);
                 }
             }
@@ -284,8 +285,8 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             this.ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
             GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
             if (perWorkerGroupByFunctions != null) {
-                this.perWorkerAllocators = new ObjList<>(slotCount);
-                for (int i = 0; i < slotCount; i++) {
+                this.perWorkerAllocators = new ObjList<>(workerCount);
+                for (int i = 0; i < workerCount; i++) {
                     GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration);
                     perWorkerAllocators.add(allocator);
                     GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(i), allocator);
@@ -297,8 +298,8 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             // Per-worker combined records
             this.ownerCombinedRecord = new HorizonJoinRecord();
             ownerCombinedRecord.init(columnSources, columnIndexes);
-            this.perWorkerCombinedRecords = new ObjList<>(slotCount);
-            for (int i = 0; i < slotCount; i++) {
+            this.perWorkerCombinedRecords = new ObjList<>(workerCount);
+            for (int i = 0; i < workerCount; i++) {
                 HorizonJoinRecord record = new HorizonJoinRecord();
                 record.init(columnSources, columnIndexes);
                 perWorkerCombinedRecords.add(record);
@@ -306,8 +307,8 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
 
             // Per-worker horizon timestamp iterators for sorted processing
             this.ownerHorizonIterator = new AsyncHorizonTimestampIterator(offsets);
-            this.perWorkerHorizonIterators = new ObjList<>(slotCount);
-            for (int i = 0; i < slotCount; i++) {
+            this.perWorkerHorizonIterators = new ObjList<>(workerCount);
+            for (int i = 0; i < workerCount; i++) {
                 perWorkerHorizonIterators.add(new AsyncHorizonTimestampIterator(offsets));
             }
         } catch (Throwable th) {
@@ -331,6 +332,9 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         // Clear ASOF join maps
         Misc.free(ownerAsOfJoinMap);
         Misc.freeObjListAndKeepObjects(perWorkerAsOfJoinMaps);
+
+        // Clear filter context (memory pools, etc.)
+        filterCtx.clear();
 
         // Clear symbol translating records
         Misc.clear(ownerSymbolTranslatingRecord);
@@ -361,12 +365,8 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         // Horizon timestamp iterators
         Misc.free(ownerHorizonIterator);
         Misc.freeObjList(perWorkerHorizonIterators);
-        // Filter resources
-        Misc.free(compiledFilter);
-        Misc.free(bindVarMemory);
-        Misc.freeObjList(bindVarFunctions);
-        Misc.free(ownerFilter);
-        Misc.freeObjList(perWorkerFilters);
+        // Filter and memory pool resources
+        Misc.free(filterCtx);
         // Symbol translating records
         Misc.free(ownerSymbolTranslatingRecord);
         Misc.freeObjList(perWorkerSymbolTranslatingRecords);
@@ -383,22 +383,23 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     }
 
     public ObjList<Function> getBindVarFunctions() {
-        return bindVarFunctions;
+        return filterCtx.getBindVarFunctions();
     }
 
     public MemoryCARW getBindVarMemory() {
-        return bindVarMemory;
+        return filterCtx.getBindVarMemory();
     }
 
     public CompiledFilter getCompiledFilter() {
-        return compiledFilter;
+        return filterCtx.getCompiledFilter();
     }
 
     public Function getFilter(int slotId) {
-        if (slotId == -1 || perWorkerFilters == null) {
-            return ownerFilter;
-        }
-        return perWorkerFilters.getQuick(slotId);
+        return filterCtx.getFilter(slotId);
+    }
+
+    public AsyncFilterContext getFilterContext() {
+        return filterCtx;
     }
 
     public GroupByFunctionsUpdater getFunctionUpdater(int slotId) {
@@ -459,12 +460,12 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         return offsets.getQuick(index);
     }
 
-    public ObjList<GroupByFunction> getOwnerGroupByFunctions() {
-        return ownerGroupByFunctions;
+    public long getOffsetCount() {
+        return offsetCount;
     }
 
-    public long getSequenceRowCount() {
-        return sequenceRowCount;
+    public ObjList<GroupByFunction> getOwnerGroupByFunctions() {
+        return ownerGroupByFunctions;
     }
 
     public RecordSink getSlaveAsOfJoinMapSink(int slotId) {
@@ -486,27 +487,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        // Initialize filter functions
-        if (ownerFilter != null) {
-            ownerFilter.init(symbolTableSource, executionContext);
-        }
-
-        if (perWorkerFilters != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                Function.init(perWorkerFilters, symbolTableSource, executionContext, ownerFilter);
-            } finally {
-                executionContext.setCloneSymbolTables(current);
-            }
-        }
-
-        // Initialize bind variables for compiled filter
-        if (bindVarFunctions != null) {
-            Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
-            prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
-        }
-
+        filterCtx.initFilters(symbolTableSource, executionContext);
         // Note: group by functions are initialized in initTimeFrameCursors() where we have
         // access to both master and slave symbol table sources
     }

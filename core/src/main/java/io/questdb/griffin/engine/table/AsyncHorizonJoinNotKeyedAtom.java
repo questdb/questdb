@@ -129,8 +129,8 @@ public class AsyncHorizonJoinNotKeyedAtom extends BaseAsyncHorizonJoinAtom {
         try {
             // Per-worker SimpleMapValue instances for aggregation
             this.ownerMapValue = new SimpleMapValue(valueCount);
-            this.perWorkerMapValues = new ObjList<>(slotCount);
-            for (int i = 0; i < slotCount; i++) {
+            this.perWorkerMapValues = new ObjList<>(workerCount);
+            for (int i = 0; i < workerCount; i++) {
                 perWorkerMapValues.add(new SimpleMapValue(valueCount));
             }
 
@@ -171,6 +171,16 @@ public class AsyncHorizonJoinNotKeyedAtom extends BaseAsyncHorizonJoinAtom {
         sink.val("AsyncHorizonGroupByNotKeyedAtom");
     }
 
+    private void resetMapValues() {
+        ownerFunctionUpdater.updateEmpty(ownerMapValue);
+        ownerMapValue.setNew(true);
+        for (int i = 0, n = perWorkerMapValues.size(); i < n; i++) {
+            SimpleMapValue value = perWorkerMapValues.getQuick(i);
+            ownerFunctionUpdater.updateEmpty(value);
+            value.setNew(true);
+        }
+    }
+
     @Override
     protected void clearAggregationState() {
         resetMapValues();
@@ -180,15 +190,5 @@ public class AsyncHorizonJoinNotKeyedAtom extends BaseAsyncHorizonJoinAtom {
     protected void closeAggregationState() {
         Misc.free(ownerMapValue);
         Misc.freeObjList(perWorkerMapValues);
-    }
-
-    private void resetMapValues() {
-        ownerFunctionUpdater.updateEmpty(ownerMapValue);
-        ownerMapValue.setNew(true);
-        for (int i = 0, n = perWorkerMapValues.size(); i < n; i++) {
-            SimpleMapValue value = perWorkerMapValues.getQuick(i);
-            ownerFunctionUpdater.updateEmpty(value);
-            value.setNew(true);
-        }
     }
 }

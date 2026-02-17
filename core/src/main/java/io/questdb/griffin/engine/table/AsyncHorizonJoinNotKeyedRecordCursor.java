@@ -36,8 +36,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.cairo.sql.async.PageFrameReduceTask;
-import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -45,26 +44,16 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Os;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populatePartitionTimestamps;
 
-/**
- * Cursor for parallel non-keyed markout GROUP BY using PageFrameSequence.
- * <p>
- * Produces a single output row by collecting and merging SimpleMapValue instances from all workers.
- */
 class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
-    private static final Log LOG = LogFactory.getLog(AsyncHorizonJoinNotKeyedRecordCursor.class);
-
     private final ObjList<GroupByFunction> groupByFunctions;
     private final VirtualRecord recordA;
     private final RecordCursorFactory slaveFactory;
@@ -75,8 +64,7 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
     private final DirectIntList slaveTimeFramePartitionIndexes;
     private final LongList slaveTimeFrameRowCounts = new LongList();
     private SqlExecutionContext executionContext;
-    private int frameLimit;
-    private PageFrameSequence<AsyncHorizonJoinNotKeyedAtom> frameSequence;
+    private UnorderedPageFrameSequence<AsyncHorizonJoinNotKeyedAtom> frameSequence;
     private boolean isExhausted;
     private boolean isOpen;
     private boolean isSlaveTimeFrameCacheBuilt;
@@ -113,14 +101,7 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
         if (isOpen) {
             try {
                 if (frameSequence != null) {
-                    LOG.debug()
-                            .$("closing [shard=").$(frameSequence.getShard())
-                            .$(", frameCount=").$(frameLimit)
-                            .I$();
-
-                    if (frameLimit > -1) {
-                        frameSequence.await();
-                    }
+                    frameSequence.await();
                     frameSequence.reset();
                 }
             } finally {
@@ -191,59 +172,9 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
     }
 
     private void buildValue() {
-        if (frameLimit == -1) {
-            frameSequence.prepareForDispatch();
-            frameLimit = frameSequence.getFrameCount() - 1;
-        }
-
-        int frameIndex = -1;
-        boolean allFramesActive = true;
-        try {
-            do {
-                final long cursor = frameSequence.next();
-                if (cursor > -1) {
-                    PageFrameReduceTask task = frameSequence.getTask(cursor);
-                    LOG.debug()
-                            .$("collected [shard=").$(frameSequence.getShard())
-                            .$(", frameIndex=").$(task.getFrameIndex())
-                            .$(", frameCount=").$(frameSequence.getFrameCount())
-                            .$(", active=").$(frameSequence.isActive())
-                            .$(", cursor=").$(cursor)
-                            .I$();
-                    if (task.hasError()) {
-                        throw CairoException.nonCritical()
-                                .position(task.getErrorMessagePosition())
-                                .put(task.getErrorMsg())
-                                .setCancellation(task.isCancelled())
-                                .setInterruption(task.isCancelled())
-                                .setOutOfMemory(task.isOutOfMemory());
-                    }
-
-                    allFramesActive &= frameSequence.isActive();
-                    frameIndex = task.getFrameIndex();
-
-                    frameSequence.collect(cursor, false);
-                } else if (cursor == -2) {
-                    break; // No frames to process
-                } else {
-                    Os.pause();
-                }
-            } while (frameIndex < frameLimit);
-        } catch (Throwable e) {
-            LOG.error().$("horizon join error [ex=").$(e).I$();
-            if (e instanceof CairoException ce) {
-                if (ce.isInterruption()) {
-                    throwTimeoutException();
-                } else {
-                    throw ce;
-                }
-            }
-            throw CairoException.nonCritical().put(e.getMessage());
-        }
-
-        if (!allFramesActive) {
-            throwTimeoutException();
-        }
+        frameSequence.prepareForDispatch();
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache());
+        frameSequence.dispatchAndAwait();
 
         // Merge all per-worker values into the owner value
         final AsyncHorizonJoinNotKeyedAtom atom = frameSequence.getAtom();
@@ -301,15 +232,7 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
         }
     }
 
-    private void throwTimeoutException() {
-        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
-            throw CairoException.queryCancelled();
-        } else {
-            throw CairoException.queryTimedOut();
-        }
-    }
-
-    void of(PageFrameSequence<AsyncHorizonJoinNotKeyedAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
+    void of(UnorderedPageFrameSequence<AsyncHorizonJoinNotKeyedAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         final AsyncHorizonJoinNotKeyedAtom atom = frameSequence.getAtom();
         if (!isOpen) {
             isOpen = true;
@@ -332,7 +255,6 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
 
         isValueBuilt = false;
         isSlaveTimeFrameCacheBuilt = false;
-        frameLimit = -1;
         toTop();
     }
 }

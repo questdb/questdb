@@ -37,30 +37,21 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.cairo.sql.async.PageFrameReduceTask;
-import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Os;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populatePartitionTimestamps;
 
-/**
- * Cursor for parallel markout GROUP BY using PageFrameSequence.
- */
 class AsyncHorizonJoinRecordCursor implements RecordCursor {
-    private static final Log LOG = LogFactory.getLog(AsyncHorizonJoinRecordCursor.class);
-
     private final VirtualRecord recordA;
     private final VirtualRecord recordB;
     private final ObjList<Function> recordFunctions;
@@ -72,8 +63,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
     private final DirectIntList slaveTimeFramePartitionIndexes;
     private final LongList slaveTimeFrameRowCounts = new LongList();
     private SqlExecutionContext executionContext;
-    private int frameLimit;
-    private PageFrameSequence<AsyncHorizonJoinAtom> frameSequence;
+    private UnorderedPageFrameSequence<AsyncHorizonJoinAtom> frameSequence;
     private boolean isDataMapBuilt;
     private boolean isOpen;
     private boolean isSlaveTimeFrameCacheBuilt;
@@ -110,14 +100,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
         if (isOpen) {
             try {
                 if (frameSequence != null) {
-                    LOG.debug()
-                            .$("closing [shard=").$(frameSequence.getShard())
-                            .$(", frameCount=").$(frameLimit)
-                            .I$();
-
-                    if (frameLimit > -1) {
-                        frameSequence.await();
-                    }
+                    frameSequence.await();
                     frameSequence.reset();
                 }
             } finally {
@@ -188,55 +171,9 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
     }
 
     private void buildMap() {
-        if (frameLimit == -1) {
-            frameSequence.prepareForDispatch();
-            frameLimit = frameSequence.getFrameCount() - 1;
-        }
-
-        int frameIndex = -1;
-        boolean allFramesActive = true;
-        try {
-            do {
-                final long cursor = frameSequence.next();
-                if (cursor > -1) {
-                    PageFrameReduceTask task = frameSequence.getTask(cursor);
-                    LOG.debug()
-                            .$("collected [shard=").$(frameSequence.getShard())
-                            .$(", frameIndex=").$(task.getFrameIndex())
-                            .$(", frameCount=").$(frameSequence.getFrameCount())
-                            .$(", active=").$(frameSequence.isActive())
-                            .$(", cursor=").$(cursor)
-                            .I$();
-                    if (task.hasError()) {
-                        throw CairoException.nonCritical()
-                                .position(task.getErrorMessagePosition())
-                                .put(task.getErrorMsg())
-                                .setCancellation(task.isCancelled())
-                                .setInterruption(task.isCancelled())
-                                .setOutOfMemory(task.isOutOfMemory());
-                    }
-
-                    allFramesActive &= frameSequence.isActive();
-                    frameIndex = task.getFrameIndex();
-
-                    frameSequence.collect(cursor, false);
-                } else if (cursor == -2) {
-                    break; // No frames to process
-                } else {
-                    Os.pause();
-                }
-            } while (frameIndex < frameLimit);
-        } catch (CairoException e) {
-            if (e.isInterruption()) {
-                throwTimeoutException();
-            } else {
-                throw e;
-            }
-        }
-
-        if (!allFramesActive) {
-            throwTimeoutException();
-        }
+        frameSequence.prepareForDispatch();
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache());
+        frameSequence.dispatchAndAwait();
 
         final AsyncHorizonJoinAtom atom = frameSequence.getAtom();
 
@@ -299,15 +236,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
         }
     }
 
-    private void throwTimeoutException() {
-        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
-            throw CairoException.queryCancelled();
-        } else {
-            throw CairoException.queryTimedOut();
-        }
-    }
-
-    void of(PageFrameSequence<AsyncHorizonJoinAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
+    void of(UnorderedPageFrameSequence<AsyncHorizonJoinAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         final AsyncHorizonJoinAtom atom = frameSequence.getAtom();
         if (!isOpen) {
             isOpen = true;
@@ -327,6 +256,5 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
 
         isDataMapBuilt = false;
         isSlaveTimeFrameCacheBuilt = false;
-        frameLimit = -1;
     }
 }

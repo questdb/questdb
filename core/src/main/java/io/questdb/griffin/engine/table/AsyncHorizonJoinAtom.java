@@ -173,8 +173,8 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
                     null
             );
 
-            perWorkerMapSinks = new ObjList<>(slotCount);
-            for (int i = 0; i < slotCount; i++) {
+            perWorkerMapSinks = new ObjList<>(workerCount);
+            for (int i = 0; i < workerCount; i++) {
                 final ObjList<Function> workerKeyFunctions = perWorkerKeyFunctions != null
                         ? perWorkerKeyFunctions.getQuick(i)
                         : ownerKeyFunctions;
@@ -193,8 +193,8 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
             }
 
             // Per-worker aggregation maps
-            this.perWorkerMaps = new ObjList<>(slotCount);
-            for (int i = 0; i < slotCount; i++) {
+            this.perWorkerMaps = new ObjList<>(workerCount);
+            for (int i = 0; i < workerCount; i++) {
                 perWorkerMaps.add(MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes));
             }
             this.ownerMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
