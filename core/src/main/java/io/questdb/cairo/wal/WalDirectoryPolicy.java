@@ -43,4 +43,3 @@ public interface WalDirectoryPolicy {
 
     boolean truncateFilesOnClose();
 }
-1
