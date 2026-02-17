@@ -120,7 +120,6 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
 
     // Handles percentile_disc() over (partition by x)
     static class PercentileDiscOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
-        private final CairoConfiguration configuration;
         private final MemoryARW listMemory;
         private final Function percentileFunc;
         private final int percentilePos;
@@ -138,7 +137,6 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
             super(map, partitionByRecord, partitionBySink, arg);
             this.percentileFunc = percentileFunc;
             this.percentilePos = percentilePos;
-            this.configuration = configuration;
             this.listMemory = Vm.getCARWInstance(
                     configuration.getSqlWindowStorePageSize(),
                     configuration.getSqlWindowStoreMaxPages(),
@@ -314,7 +312,6 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
 
     // Handles percentile_disc() over () - whole result set
     static class PercentileDiscOverWholeResultSetFunction extends BaseWindowFunction implements Reopenable, WindowDoubleFunction {
-        private final CairoConfiguration configuration;
         private final MemoryARW listMemory;
         private final Function percentileFunc;
         private final int percentilePos;
@@ -325,7 +322,6 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
             super(arg);
             this.percentileFunc = percentileFunc;
             this.percentilePos = percentilePos;
-            this.configuration = configuration;
             this.listMemory = Vm.getCARWInstance(
                     configuration.getSqlWindowStorePageSize(),
                     configuration.getSqlWindowStoreMaxPages(),

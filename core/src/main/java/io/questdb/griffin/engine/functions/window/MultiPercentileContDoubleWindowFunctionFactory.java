@@ -113,7 +113,6 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
 
     // Handles percentile_cont() over (partition by x) with multiple percentiles
     static class MultiPercentileContOverPartitionFunction extends BasePartitionedWindowFunction implements WindowArrayFunction {
-        private final CairoConfiguration configuration;
         private final MemoryARW listMemory;
         private final Function percentilesFunc;
         private final int percentilesPos;
@@ -133,7 +132,6 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
             super(map, partitionByRecord, partitionBySink, arg);
             this.percentilesFunc = percentilesFunc;
             this.percentilesPos = percentilesPos;
-            this.configuration = configuration;
             this.listMemory = Vm.getCARWInstance(
                     configuration.getSqlWindowStorePageSize(),
                     configuration.getSqlWindowStoreMaxPages(),
@@ -365,7 +363,6 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
 
     // Handles percentile_cont() over () - whole result set with multiple percentiles
     static class MultiPercentileContOverWholeResultSetFunction extends BaseWindowFunction implements Reopenable, WindowArrayFunction {
-        private final CairoConfiguration configuration;
         private final MemoryARW listMemory;
         private final Function percentilesFunc;
         private final int percentilesPos;
@@ -378,7 +375,6 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
             super(arg);
             this.percentilesFunc = percentilesFunc;
             this.percentilesPos = percentilesPos;
-            this.configuration = configuration;
             this.listMemory = Vm.getCARWInstance(
                     configuration.getSqlWindowStorePageSize(),
                     configuration.getSqlWindowStoreMaxPages(),
