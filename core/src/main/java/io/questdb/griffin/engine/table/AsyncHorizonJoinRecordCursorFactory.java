@@ -56,6 +56,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
+import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.BitSet;
@@ -83,7 +84,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
     private final AsyncHorizonJoinRecordCursor cursor;
     private final PageFrameSequence<AsyncHorizonJoinAtom> frameSequence;
     // Combined metadata (master + offsets pseudo-table + slave) used for GROUP BY function column references in toPlan
-    private final RecordMetadata horizonJoinMetadata;
+    private final JoinRecordMetadata horizonJoinMetadata;
     private final RecordCursorFactory masterFactory;
     // Pre-computed offset values (in microseconds)
     private final LongList offsets;
@@ -97,7 +98,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             @NotNull CairoEngine engine,
             @NotNull MessageBus messageBus,
             @NotNull RecordMetadata metadata,
-            @NotNull RecordMetadata horizonJoinMetadata,
+            @NotNull JoinRecordMetadata horizonJoinMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull RecordCursorFactory slaveFactory,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
@@ -567,7 +568,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         Misc.free(cursor);
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
+        Misc.free(horizonJoinMetadata);
         Misc.freeObjList(recordFunctions);
-        Misc.freeIfCloseable(horizonJoinMetadata);
     }
 }

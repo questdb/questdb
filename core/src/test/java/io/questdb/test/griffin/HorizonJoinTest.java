@@ -1560,11 +1560,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "ORDER BY sec_offs";
 
             assertQueryNoLeakCheck(
-                    """
-                            sec_offs\ttimestamp\tavg
-                            0\t1970-01-01T00:00:01.000000Z\t20.0
-                            1\t1970-01-01T00:00:02.000000Z\t20.0
-                            """,
+                    replaceExpectedMasterTimestamp(
+                            """
+                                    sec_offs\ttimestamp\tavg
+                                    0\t1970-01-01T00:00:01.000000Z\t20.0
+                                    1\t1970-01-01T00:00:02.000000Z\t20.0
+                                    """
+                    ),
                     sql,
                     null,
                     true,

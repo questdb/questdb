@@ -3639,18 +3639,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slaveAsOfJoinMapSink = null;
                 }
 
+                // Transfer ownership to factory constructor.
+                final JoinRecordMetadata innerMetadata0 = innerMetadata;
+                innerMetadata = null;
+                final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
+                groupByFunctions = null;
+
                 // Choose single-threaded factory based on whether there are GROUP BY keys
                 if (keyTypesCopy.getColumnCount() == 0) {
                     return new HorizonJoinNotKeyedRecordCursorFactory(
                             configuration,
                             asm,
                             outerProjectionMetadata,
-                            innerMetadata,
+                            innerMetadata0,
                             masterFactory,
                             slaveFactory,
                             offsets,
                             masterTimestampColumnIndex,
-                            groupByFunctions,
+                            groupByFunctions0,
                             valueTypesCopy.getColumnCount(),
                             asOfJoinKeyTypes,
                             masterAsOfJoinMapSink,
@@ -3667,12 +3673,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         configuration,
                         asm,
                         outerProjectionMetadata,
-                        innerMetadata,
+                        innerMetadata0,
                         masterFactory,
                         slaveFactory,
                         offsets,
                         masterTimestampColumnIndex,
-                        groupByFunctions,
+                        groupByFunctions0,
                         new ObjList<>(tempOuterProjectionFunctions),
                         keyFunctions,
                         keyTypesCopy,
@@ -3697,13 +3703,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterMetadata
             );
 
-            // Transfer ownership of filter resources to atom constructor.
-            // Null locals to prevent double-free if the constructor throws
-            // (the atom's own try/catch calls close() which frees these).
+            // Transfer ownership of resources to factory/atom constructor.
+            final JoinRecordMetadata innerMetadata0 = innerMetadata;
+            final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
+            final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions0 = perWorkerGroupByFunctions;
             final CompiledFilter compiledFilter0 = compiledFilter;
             final MemoryCARW bindVarMemory0 = bindVarMemory;
             final ObjList<Function> bindVarFunctions0 = bindVarFunctions;
             final Function filter0 = filter;
+            innerMetadata = null;
+            groupByFunctions = null;
+            perWorkerGroupByFunctions = null;
             compiledFilter = null;
             bindVarMemory = null;
             bindVarFunctions = null;
@@ -3718,14 +3728,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         executionContext.getCairoEngine(),
                         executionContext.getMessageBus(),
                         outerProjectionMetadata,
-                        innerMetadata,
+                        innerMetadata0,
                         masterFactory,
                         slaveFactory,
                         reduceTaskFactory,
                         offsets,
                         masterTimestampColumnIndex,
-                        groupByFunctions,
-                        perWorkerGroupByFunctions,
+                        groupByFunctions0,
+                        perWorkerGroupByFunctions0,
                         valueTypesCopy.getColumnCount(),
                         asOfJoinKeyTypes,
                         masterAsOfJoinMapSinkClass,
@@ -3761,14 +3771,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     executionContext.getCairoEngine(),
                     executionContext.getMessageBus(),
                     outerProjectionMetadata,
-                    innerMetadata,
+                    innerMetadata0,
                     masterFactory,
                     slaveFactory,
                     reduceTaskFactory,
                     offsets,
                     masterTimestampColumnIndex,
-                    groupByFunctions,
-                    perWorkerGroupByFunctions,
+                    groupByFunctions0,
+                    perWorkerGroupByFunctions0,
                     new ObjList<>(tempOuterProjectionFunctions),
                     keyFunctions,
                     perWorkerKeyFunctions,
@@ -3801,12 +3811,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             );
         } catch (Throwable th) {
             Misc.free(innerMetadata);
+            Misc.freeObjList(groupByFunctions);
             if (perWorkerGroupByFunctions != null) {
                 for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                     Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
                 }
             }
-            Misc.freeObjList(groupByFunctions);
             Misc.free(compiledFilter);
             Misc.free(bindVarMemory);
             Misc.freeObjList(bindVarFunctions);

@@ -58,6 +58,7 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -77,7 +78,7 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  */
 public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private final HorizonJoinRecordCursor cursor;
-    private final RecordMetadata horizonJoinMetadata;
+    private final JoinRecordMetadata horizonJoinMetadata;
     private final ObjList<Function> keyFunctions;
     private final RecordCursorFactory masterFactory;
     private final LongList offsets;
@@ -88,7 +89,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             @NotNull CairoConfiguration configuration,
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull RecordMetadata metadata,
-            @NotNull RecordMetadata horizonJoinMetadata,
+            @NotNull JoinRecordMetadata horizonJoinMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull RecordCursorFactory slaveFactory,
             @NotNull LongList offsets,
@@ -202,8 +203,8 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         Misc.freeObjList(keyFunctions);
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
+        Misc.free(horizonJoinMetadata);
         Misc.freeObjList(recordFunctions);
-        Misc.freeIfCloseable(horizonJoinMetadata);
     }
 
     private static class HorizonJoinRecordCursor implements RecordCursor {
