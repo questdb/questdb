@@ -339,6 +339,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                     asOfJoinMap.close();
                 }
                 Misc.clear(symbolTranslatingRecord);
+                Misc.free(horizonIterator);
                 isOpen = false;
             }
         }

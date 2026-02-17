@@ -282,6 +282,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
                     asOfJoinMap.close();
                 }
                 Misc.clear(symbolTranslatingRecord);
+                Misc.free(horizonIterator);
                 isOpen = false;
             }
         }
