@@ -122,6 +122,70 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBuySideOnlyMarkoutCurve() throws Exception {
+        // Markout Curve — Buy Side Only
+        // "What is my markout curve for buy trades by counterparty?"
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE fx_trades (ts #TIMESTAMP, symbol SYMBOL, counterparty SYMBOL, side SYMBOL, price DOUBLE, quantity DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE market_data (ts #TIMESTAMP, symbol SYMBOL, best_bid DOUBLE, best_ask DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO fx_trades VALUES
+                                ('2024-01-01T00:00:01.000000Z', 'EURUSD', 'CITADEL', 'BUY',  1.1005, 100.0),
+                                ('2024-01-01T00:00:02.000000Z', 'EURUSD', 'CITADEL', 'SELL', 1.0995, 200.0),
+                                ('2024-01-01T00:00:03.000000Z', 'EURUSD', 'JUMP',    'BUY',  1.1005, 150.0)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO market_data VALUES
+                                ('2024-01-01T00:00:00.500000Z', 'EURUSD', 1.0990, 1.1010),
+                                ('2024-01-01T00:00:02.500000Z', 'EURUSD', 1.1000, 1.1020),
+                                ('2024-01-01T00:00:06.500000Z', 'EURUSD', 1.1010, 1.1030)
+                            """
+            );
+
+            String sql = "SELECT" +
+                    "    t.symbol," +
+                    "    t.counterparty," +
+                    "    h.offset / " + getSecondsDivisor() + " AS sec_offs," +
+                    "    count() AS n," +
+                    "    avg((m.best_bid + m.best_ask) / 2 - t.price) / t.price * 10_000 AS avg_markout_bps," +
+                    "    sum(((m.best_bid + m.best_ask) / 2 - t.price) * t.quantity) AS total_pnl " +
+                    "FROM fx_trades t " +
+                    "HORIZON JOIN market_data m ON (symbol)" +
+                    "    RANGE FROM 0s TO 2s STEP 1s AS h " +
+                    "WHERE t.side = 'BUY' " +
+                    "GROUP BY t.symbol, t.counterparty, sec_offs, t.price " +
+                    "ORDER BY t.symbol, t.counterparty, h.offset";
+
+            assertQueryNoLeakCheck(
+                    """
+                            symbol\tcounterparty\tsec_offs\tn\tavg_markout_bps\ttotal_pnl
+                            EURUSD\tCITADEL\t0\t1\t-4.543389368468377\t-0.04999999999999449
+                            EURUSD\tCITADEL\t1\t1\t-4.543389368468377\t-0.04999999999999449
+                            EURUSD\tCITADEL\t2\t1\t4.543389368468377\t0.04999999999999449
+                            EURUSD\tJUMP\t0\t1\t4.543389368468377\t0.07499999999999174
+                            EURUSD\tJUMP\t1\t1\t4.543389368468377\t0.07499999999999174
+                            EURUSD\tJUMP\t2\t1\t4.543389368468377\t0.07499999999999174
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testISDecompositionBySymbol() throws Exception {
         // IS (Implementation Shortfall) Decomposition — By Symbol
         // Uses HORIZON JOIN + PIVOT to compute effective spread, permanent and temporary

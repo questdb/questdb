@@ -8828,6 +8828,13 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
+        // Validate HORIZON JOIN GROUP BY clause matches non-aggregate SELECT columns.
+        // This must run before SELECT column rewriting, which replaces aggregate functions
+        // and GROUP BY column references with aliases, making the original AST unrecognizable.
+        if (isHorizonJoin && hasGroupByClause) {
+            validateHorizonJoinGroupBy(columns, groupBy, baseModel);
+        }
+
         tempBoolList.setAll(groupBy.size(), false);
         nonAggSelectCount.set(0);
 
@@ -8991,11 +8998,6 @@ public class SqlOptimiser implements Mutable {
                     );
                     break;
             }
-        }
-
-        // Validate HORIZON JOIN GROUP BY clause matches non-aggregate SELECT columns
-        if (isHorizonJoin && hasGroupByClause) {
-            validateHorizonJoinGroupBy(columns, groupBy, baseModel);
         }
 
         if (explicitGroupBy && (rewriteStatus & REWRITE_STATUS_USE_DISTINCT_MODEL) == 0
