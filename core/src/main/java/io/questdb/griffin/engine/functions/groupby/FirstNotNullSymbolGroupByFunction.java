@@ -39,8 +39,12 @@ public class FirstNotNullSymbolGroupByFunction extends FirstSymbolGroupByFunctio
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (mapValue.getInt(valueIndex + 1) == SymbolTable.VALUE_IS_NULL) {
-            computeFirst(mapValue, record, rowId);
+        int val = arg.getInt(record);
+        if (val != SymbolTable.VALUE_IS_NULL) {
+            if (mapValue.getInt(valueIndex + 1) == SymbolTable.VALUE_IS_NULL || rowId < mapValue.getLong(valueIndex)) {
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putInt(valueIndex + 1, val);
+            }
         }
     }
 
@@ -58,7 +62,7 @@ public class FirstNotNullSymbolGroupByFunction extends FirstSymbolGroupByFunctio
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
         // srcRowId is non-null at this point since we know that the value is non-null
-        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || destValue.getInt(valueIndex + 1) == SymbolTable.VALUE_IS_NULL) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putInt(valueIndex + 1, srcVal);
         }
