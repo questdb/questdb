@@ -62,7 +62,7 @@ public class O3ParquetMergeStrategy {
     }
 
     /**
-     * Computes the merge strategy with default small row group threshold.
+     * Computes the merge strategy with default small row group threshold and no row group size limit.
      */
     public static void computeMergeActions(
             LongList rowGroupBounds,
@@ -77,6 +77,29 @@ public class O3ParquetMergeStrategy {
                 srcOooLo,
                 srcOooHi,
                 DEFAULT_SMALL_ROW_GROUP_THRESHOLD,
+                Integer.MAX_VALUE,
+                actions
+        );
+    }
+
+    /**
+     * Computes the merge strategy with custom small row group threshold and no row group size limit.
+     */
+    public static void computeMergeActions(
+            LongList rowGroupBounds,
+            long sortedTimestampsAddr,
+            long srcOooLo,
+            long srcOooHi,
+            int smallRowGroupThreshold,
+            ObjList<MergeAction> actions
+    ) {
+        computeMergeActions(
+                rowGroupBounds,
+                sortedTimestampsAddr,
+                srcOooLo,
+                srcOooHi,
+                smallRowGroupThreshold,
+                Integer.MAX_VALUE,
                 actions
         );
     }
@@ -99,6 +122,9 @@ public class O3ParquetMergeStrategy {
      * @param srcOooHi               End index of O3 data range (inclusive).
      * @param smallRowGroupThreshold Row groups with fewer rows than this are considered "small"
      *                               and will have adjacent non-overlapping O3 data merged into them.
+     * @param maxRowGroupSize        Maximum number of rows per COPY_O3 action. Larger ranges are split
+     *                               into multiple actions of at most this size. Use Integer.MAX_VALUE
+     *                               to disable splitting.
      * @param actions                Output list to receive computed merge actions. Will be cleared first.
      */
     public static void computeMergeActions(
@@ -107,17 +133,16 @@ public class O3ParquetMergeStrategy {
             long srcOooLo,
             long srcOooHi,
             int smallRowGroupThreshold,
+            int maxRowGroupSize,
             ObjList<MergeAction> actions
     ) {
         actions.clear();
 
         final int rowGroupCount = getRowGroupCount(rowGroupBounds);
         if (rowGroupCount == 0) {
-            // No existing row groups - all O3 data becomes a new row group
+            // No existing row groups - all O3 data becomes new row groups
             if (srcOooLo <= srcOooHi) {
-                MergeAction action = new MergeAction();
-                action.setCopyO3(srcOooLo, srcOooHi);
-                actions.add(action);
+                addCopyO3Actions(actions, srcOooLo, srcOooHi, maxRowGroupSize);
             }
             return;
         }
@@ -233,9 +258,7 @@ public class O3ParquetMergeStrategy {
         for (int rg = 0; rg < rowGroupCount; rg++) {
             // First, emit any COPY_O3 for gap before this row group
             if (gapO3Lo[rg] >= 0) {
-                MergeAction action = new MergeAction();
-                action.setCopyO3(gapO3Lo[rg], gapO3Hi[rg]);
-                actions.add(action);
+                addCopyO3Actions(actions, gapO3Lo[rg], gapO3Hi[rg], maxRowGroupSize);
             }
 
             // Then, emit action for this row group
@@ -253,9 +276,21 @@ public class O3ParquetMergeStrategy {
 
         // Finally, emit any COPY_O3 for gap after last row group
         if (gapO3Lo[rowGroupCount] >= 0) {
+            addCopyO3Actions(actions, gapO3Lo[rowGroupCount], gapO3Hi[rowGroupCount], maxRowGroupSize);
+        }
+    }
+
+    /**
+     * Emits one or more COPY_O3 actions, splitting the range into chunks of at most maxRowGroupSize.
+     */
+    private static void addCopyO3Actions(ObjList<MergeAction> actions, long o3Lo, long o3Hi, int maxRowGroupSize) {
+        long cursor = o3Lo;
+        while (cursor <= o3Hi) {
+            long chunkHi = Math.min(cursor + maxRowGroupSize - 1, o3Hi);
             MergeAction action = new MergeAction();
-            action.setCopyO3(gapO3Lo[rowGroupCount], gapO3Hi[rowGroupCount]);
+            action.setCopyO3(cursor, chunkHi);
             actions.add(action);
+            cursor = chunkHi + 1;
         }
     }
 

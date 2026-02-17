@@ -48,6 +48,8 @@ pub struct ParquetUpdater {
     accumulated_unused_bytes: u64,
     old_footer_size: u64,
     is_rewrite: bool,
+    result_file_size: u64,
+    result_unused_bytes: u64,
 }
 
 impl ParquetUpdater {
@@ -146,6 +148,8 @@ impl ParquetUpdater {
             accumulated_unused_bytes,
             old_footer_size,
             is_rewrite,
+            result_file_size: 0,
+            result_unused_bytes: 0,
         })
     }
 
@@ -251,21 +255,15 @@ impl ParquetUpdater {
         let old_rg = &self.file_metadata.row_groups[rg_idx];
         let columns_meta = old_rg.columns();
 
-        // Determine the byte range covering all column chunks and indexes in this row group.
+        // Determine the byte range covering column chunk data in this row group.
+        // Column/offset indexes are stored separately (typically after all row groups)
+        // and must not be included here, as that would copy data from other row groups.
         let mut rg_start = u64::MAX;
         let mut rg_end = 0u64;
         for col in columns_meta {
             let (start, len) = col.byte_range();
             rg_start = rg_start.min(start);
             rg_end = rg_end.max(start + len);
-
-            // Include column index and offset index data.
-            if let (Some(ci_offset), Some(ci_len)) = (col.column_index_offset(), col.column_index_length()) {
-                rg_end = rg_end.max(ci_offset as u64 + ci_len as u64);
-            }
-            if let (Some(oi_offset), Some(oi_len)) = (col.offset_index_offset(), col.offset_index_length()) {
-                rg_end = rg_end.max(oi_offset as u64 + oi_len as u64);
-            }
         }
 
         if rg_start >= rg_end {
@@ -306,12 +304,12 @@ impl ParquetUpdater {
                     *dict_offset += offset_delta;
                 }
             }
-            if let Some(ref mut offset) = col_chunk.column_index_offset {
-                *offset += offset_delta;
-            }
-            if let Some(ref mut offset) = col_chunk.offset_index_offset {
-                *offset += offset_delta;
-            }
+            // Column/offset indexes are not copied with the row group data,
+            // so clear their references to avoid dangling pointers into the old file.
+            col_chunk.column_index_offset = None;
+            col_chunk.column_index_length = None;
+            col_chunk.offset_index_offset = None;
+            col_chunk.offset_index_length = None;
         }
         if let Some(ref mut fo) = thrift_rg.file_offset {
             *fo += offset_delta;
@@ -355,15 +353,23 @@ impl ParquetUpdater {
             value: Some(qdb_meta_json),
         };
 
+        self.result_unused_bytes = qdb_meta.unused_bytes;
+
         let mut kv = key_value_metadata.unwrap_or_default();
         kv.push(qdb_kv);
 
-        self.parquet_file.end(Some(kv)).map_err(|s| {
+        let file_size = self.parquet_file.end(Some(kv)).map_err(|s| {
             ParquetError::with_descr(
                 ParquetErrorReason::Parquet2(s),
                 "could not update parquet file",
             )
-        })
+        })?;
+        self.result_file_size = file_size;
+        Ok(file_size)
+    }
+
+    pub fn result_unused_bytes(&self) -> u64 {
+        self.result_unused_bytes
     }
 
     pub fn slice_row_group(

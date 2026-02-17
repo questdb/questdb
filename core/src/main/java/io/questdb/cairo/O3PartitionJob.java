@@ -99,6 +99,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final int partitionIndex = tableWriter.getPartitionIndexByTimestamp(partitionTimestamp);
         final long parquetSize = tableWriter.getPartitionParquetFileSize(partitionIndex);
         long duplicateCount = 0;
+        long newParquetSize;
         boolean isRewrite = false;
         CairoConfiguration cairoConfiguration = tableWriter.getConfiguration();
         FilesFacade ff = tableWriter.getFilesFacade();
@@ -140,6 +141,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         rowGroupCount == 1
                                 || (parquetSize > 0 && (double) unusedBytes / parquetSize > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedRatio())
                                 || unusedBytes > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
+
+                if (isRewrite) {
+                    LOG.info().$("parquet o3 partition rewrite [table=").$(tableWriter.getTableToken())
+                            .$(", partition=").$ts(partitionTimestamp)
+                            .$(", fileSize=").$size(parquetSize)
+                            .$(", unusedBytes=").$size(unusedBytes)
+                            .$(", unusedPct=").$(parquetSize > 0 ? (100.0 * unusedBytes / parquetSize) : 0)
+                            .I$();
+                }
 
                 final int opts = cairoConfiguration.getWriterFileOpenOpts();
                 // Two separate file descriptors are required: one for reading (metadata,
@@ -201,6 +211,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         sortedTimestampsAddr,
                         srcOooLo,
                         srcOooHi,
+                        O3ParquetMergeStrategy.DEFAULT_SMALL_ROW_GROUP_THRESHOLD,
+                        rowGroupSize,
                         mergeActions
                 );
 
@@ -213,8 +225,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 for (int i = 0, n = mergeActions.size(); i < n; i++) {
                     final O3ParquetMergeStrategy.MergeAction action = mergeActions.getQuick(i);
                     switch (action.type) {
-                        case MERGE:
-                            duplicateCount += mergeRowGroup(
+                        case MERGE: {
+                            final int rgSize = partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex);
+                            LOG.info()
+                                    .$("parquet merge row group [table=").$(tableWriter.getTableToken())
+                                    .$(", partition=").$ts(partitionTimestamp)
+                                    .$(", rg=").$(action.rowGroupIndex)
+                                    .$(", dataRows=").$(rgSize)
+                                    .$(", o3Rows=").$(action.o3Hi - action.o3Lo + 1)
+                                    .I$();
+                            final long mergeDuplicates = mergeRowGroup(
                                     partitionDescriptor,
                                     partitionUpdater,
                                     parquetColumns,
@@ -232,32 +252,61 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     srcOooBatchRowSize,
                                     dedupColSinkAddr
                             );
+                            duplicateCount += mergeDuplicates;
+                            tableWriter.addPhysicallyWrittenRows(rgSize + (action.o3Hi - action.o3Lo + 1) - mergeDuplicates);
                             break;
+                        }
                         case COPY_ROW_GROUP_SLICE: {
                             final int rgSize = partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex);
                             final boolean isFullRange = action.rgLo == 0 && action.rgHi == rgSize - 1;
                             if (isRewrite) {
                                 // Rewrite mode: every row group must be written to the new file.
                                 if (isFullRange) {
+                                    LOG.info()
+                                            .$("parquet copy row group [table=").$(tableWriter.getTableToken())
+                                            .$(", partition=").$ts(partitionTimestamp)
+                                            .$(", rg=").$(action.rowGroupIndex)
+                                            .$(", rows=").$(rgSize)
+                                            .I$();
                                     partitionUpdater.copyRowGroup((short) action.rowGroupIndex);
+                                    tableWriter.addPhysicallyWrittenRows(rgSize);
                                 } else {
+                                    LOG.info()
+                                            .$("parquet slice row group [table=").$(tableWriter.getTableToken())
+                                            .$(", partition=").$ts(partitionTimestamp)
+                                            .$(", rg=").$(action.rowGroupIndex)
+                                            .$(", rows=").$(action.rgHi - action.rgLo + 1)
+                                            .I$();
                                     partitionUpdater.sliceRowGroup(
                                             (short) action.rowGroupIndex,
                                             (int) action.rgLo,
                                             (int) action.rgHi
                                     );
+                                    tableWriter.addPhysicallyWrittenRows(action.rgHi - action.rgLo + 1);
                                 }
                             } else if (!isFullRange) {
+                                LOG.info()
+                                        .$("parquet slice row group [table=").$(tableWriter.getTableToken())
+                                        .$(", partition=").$ts(partitionTimestamp)
+                                        .$(", rg=").$(action.rowGroupIndex)
+                                        .$(", rows=").$(action.rgHi - action.rgLo + 1)
+                                        .I$();
                                 // Update mode: only act on partial ranges; full row groups stay in place.
                                 partitionUpdater.sliceRowGroup(
                                         (short) action.rowGroupIndex,
                                         (int) action.rgLo,
                                         (int) action.rgHi
                                 );
+                                tableWriter.addPhysicallyWrittenRows(action.rgHi - action.rgLo + 1);
                             }
                             break;
                         }
                         case COPY_O3:
+                            LOG.info()
+                                    .$("parquet add row group from o3 [table=").$(tableWriter.getTableToken())
+                                    .$(", partition=").$ts(partitionTimestamp)
+                                    .$(", rows=").$(action.o3Hi - action.o3Lo + 1)
+                                    .I$();
                             copyO3ToRowGroup(
                                     partitionDescriptor,
                                     partitionUpdater,
@@ -270,11 +319,22 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     tableWriterMetadata,
                                     (short) metadataPosition
                             );
+                            tableWriter.addPhysicallyWrittenRows(action.o3Hi - action.o3Lo + 1);
                             break;
                     }
                     metadataPosition++;
                 }
-                partitionUpdater.updateFileMetadata();
+                newParquetSize = partitionUpdater.updateFileMetadata();
+                final long resultUnusedBytes = partitionUpdater.getResultUnusedBytes();
+                LOG.info()
+                        .$("parquet o3 partition [table=").$(tableWriter.getTableToken())
+                        .$(", partition=").$ts(partitionTimestamp)
+                        .$(", rowGroups=").$(metadataPosition)
+                        .$(", fileSize=").$size(newParquetSize)
+                        .$(", unusedBytes=").$size(resultUnusedBytes)
+                        .$(", unusedPct=").$(newParquetSize > 0 ? (100.0 * resultUnusedBytes / newParquetSize) : 0)
+                        .$(", partitionMutates=").$(isRewrite)
+                        .I$();
             } catch (Throwable e) {
                 if (isRewrite) {
                     // Rewrite mode: original is intact. Remove the new directory.
@@ -294,7 +354,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             final long txnName = isRewrite ? txn : srcNameTxn;
             path.of(pathToTable);
             setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txnName);
-            final long newParquetSize = Files.length(path.$());
             updateParquetIndexes(
                     partitionBy,
                     partitionTimestamp,
@@ -345,6 +404,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, Numbers.encodeLowHighInts(1, isRewrite ? 1 : 0));
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, fileSize); // update parquet partition file size
+
 
             tableWriter.o3CountDownDoneLatch();
             tableWriter.o3ClockDownPartitionUpdateCount();
@@ -2735,6 +2795,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     newParquetSize,
                     MemoryTag.NATIVE_PARQUET_PARTITION_DECODER
             );
+
+            final long newUnusedBytes = partitionDecoder.metadata().getUnusedBytes();
+            LOG.info()
+                    .$("parquet o3 done [table=").$(tableWriter.getTableToken())
+                    .$(", partition=").$(partitionTimestamp)
+                    .$(", rowGroups=").$(partitionDecoder.metadata().getRowGroupCount())
+                    .$(", fileSize=").$size(newParquetSize)
+                    .$(", unusedBytes=").$size(newUnusedBytes)
+                    .$(", unusedPct=").$(newParquetSize > 0 ? (100.0 * newUnusedBytes / newParquetSize) : 0)
+                    .I$();
+
             path.of(pathToTable);
             setPathForNativePartition(
                     path,

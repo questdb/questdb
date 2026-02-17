@@ -48,11 +48,17 @@ public class PartitionUpdater implements QuietCloseable {
         copyRowGroup(ptr, rowGroupIndex);
     }
 
+    public long getResultUnusedBytes() {
+        assert ptr != 0;
+        return getResultUnusedBytes(ptr);
+    }
+
     // call to this method will update file metadata
     // MUST be called after all row groups have been updated
-    public void updateFileMetadata() {
+    // returns the final file size
+    public long updateFileMetadata() {
         assert ptr != 0;
-        updateFileMetadata(ptr);
+        return updateFileMetadata(ptr);
     }
 
     public void addRowGroup(short position, PartitionDescriptor descriptor) {
@@ -163,6 +169,8 @@ public class PartitionUpdater implements QuietCloseable {
 
     private static native void destroy(long impl);
 
+    private static native long getResultUnusedBytes(long impl);
+
     private static native void insertRowGroup(
             long impl,
             int tableNameLen,
@@ -184,8 +192,8 @@ public class PartitionUpdater implements QuietCloseable {
             int rowHi
     ) throws CairoException;
 
-    // throws CairoException on error
-    private static native void updateFileMetadata(long impl);
+    // throws CairoException on error, returns file size
+    private static native long updateFileMetadata(long impl);
 
     private static native void updateRowGroup(
             long impl,

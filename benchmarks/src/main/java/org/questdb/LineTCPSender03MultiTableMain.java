@@ -33,8 +33,11 @@ import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 
 public class LineTCPSender03MultiTableMain {
+    private static final long DAY_START_US = 1_770_854_400_000_000L; // 2026-02-12T00:00:00Z in micros
+    private static final long MICROS_PER_DAY = 24 * 60 * 60 * 1_000_000L;
+
     public static void main(String[] args) {
-        int[] tables = new int[]{1, 2, 3};
+        int[] tables = new int[]{3};
         final SOCountDownLatch haltLatch = new SOCountDownLatch(tables.length);
         for (int i = 0; i < tables.length; i++) {
             int k = tables[i];
@@ -59,7 +62,8 @@ public class LineTCPSender03MultiTableMain {
                         .tag("by", "blah")
                         .field("temp", rnd.nextPositiveLong())
                         .field("ok", rnd.nextPositiveInt());
-                final long ts = clock.getTicks() * 1000L + rnd.nextLong(1_000_000_000) - 500_000_000;
+                final long ticks = DAY_START_US + clock.getTicks() % MICROS_PER_DAY;
+                final long ts = ticks * 1000L + rnd.nextLong(1_000_000_000) - 500_000_000;
                 sender.$(ts);
             }
         } finally {
